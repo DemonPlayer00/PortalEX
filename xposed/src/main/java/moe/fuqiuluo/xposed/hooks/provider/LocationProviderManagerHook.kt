@@ -23,7 +23,7 @@ import java.util.Collections
 
 object LocationProviderManagerHook {
     private val hookOnFetchLocationResult = beforeHook {
-        if (args.isEmpty() || args.isEmpty()) return@beforeHook
+        if (args.isEmpty()) return@beforeHook
         if (!FakeLoc.enable) return@beforeHook
 
         if (FakeLoc.enableDebugLog) {
