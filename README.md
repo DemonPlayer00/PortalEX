@@ -1,6 +1,4 @@
 # Portal
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ffuqiuluo%2FPortal.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ffuqiuluo%2FPortal?ref=badge_shield)
-
 
 秋夜长，殊未央，月明白露澄清光，层城绮阁遥相望。
 
@@ -58,14 +56,19 @@ location.extras?.putBoolean("is_mock", true)
 - [x] **Portal** can set the accuracy in the settings.
 - [x] **Portal** will change the bearing when moving.
 
+# Build & Releases?
+
+经过慎重考虑，开发者（们）认为此类软件需要设立一定使用门槛来防止滥用并降低影响。因此，PortalEX不会发布任何可直接使用的安装包（.apk）。您必须自行使用Android Studio或Gradle等工具自行编译。PortalEX不会提供与项目本身无关的教程。
+
+After careful consideration, the developer(s) believe that such software requires a certain usage threshold to prevent abuse and reduce impact. Therefore, PortalEX will not release any directly usable installation packages (.apk). You must compile it yourself using tools such as Android Studio or Gradle. PortalEX will not provide tutorials unrelated to the project itself.
+
 # Thanks
 
 - [GoGoGo](https://github.com/ZCShou/GoGoGo)
 - [Baidu Map SDK](https://lbsyun.baidu.com/faq/api?title=androidsdk)
 
 
-## License
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ffuqiuluo%2FPortal.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Ffuqiuluo%2FPortal?ref=badge_large)
+# License
 
 This project is a fork of [Portal](https://github.com/ella8192/Portal). The original code is available under a choice of Apache License 2.0 or GNU General Public License v3.0 or later.
 
