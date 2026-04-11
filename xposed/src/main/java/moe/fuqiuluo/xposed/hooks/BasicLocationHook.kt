@@ -3,8 +3,6 @@ package moe.fuqiuluo.xposed.hooks
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
@@ -12,9 +10,7 @@ import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.hookAllMethodsAfter
 import moe.fuqiuluo.xposed.utils.hookAllMethodsBefore
-import moe.fuqiuluo.xposed.utils.toClass
 import moe.fuqiuluo.xposed.utils.toClassOrThrow
-import kotlin.random.Random
 
 object BasicLocationHook: BaseLocationHook() {
     operator fun invoke(classLoader: ClassLoader) {

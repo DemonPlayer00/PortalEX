@@ -20,7 +20,6 @@ import moe.fuqiuluo.xposed.utils.onceHook
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
 import java.util.Collections
-import kotlin.random.Random
 
 object LocationProviderManagerHook {
     private val hookOnFetchLocationResult = beforeHook {

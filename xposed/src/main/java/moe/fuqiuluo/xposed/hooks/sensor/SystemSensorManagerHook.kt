@@ -2,9 +2,7 @@
 package moe.fuqiuluo.xposed.hooks.sensor
 
 import android.content.pm.FeatureInfo
-import android.content.pm.PackageManager
 import android.hardware.Sensor
-import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.util.ArrayMap
 import de.robv.android.xposed.XposedBridge
