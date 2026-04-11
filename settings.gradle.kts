@@ -14,6 +14,7 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         maven ( url = "https://maven.aliyun.com/nexus/content/repositories/google")
         maven ( url = "https://maven.aliyun.com/nexus/content/groups/public/" )
@@ -24,6 +25,8 @@ dependencyResolutionManagement {
         maven (url = "https://dl.bintray.com/kotlin/kotlin-eap" )
         maven (url = "https://api.xposed.info/" )
         maven (url = "https://jitpack.io" )
+
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

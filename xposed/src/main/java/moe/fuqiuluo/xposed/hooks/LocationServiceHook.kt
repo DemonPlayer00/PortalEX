@@ -10,6 +10,7 @@ import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
+import com.hjq.device.compat.DeviceOs
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
@@ -34,6 +35,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 import kotlin.uuid.ExperimentalUuidApi
+
 
 private const val MAX_SATELLITES = 35 // 北斗系统实际可见卫星数上限
 
@@ -324,6 +326,17 @@ internal object LocationServiceHook: BaseLocationHook() {
             } else {
                 args[0] as? String
             } ?: "gps"
+
+            val isNotMainStreamRom = !DeviceOs.isColorOs() && !DeviceOs.isMiui() &&
+                    !DeviceOs.isHyperOs() && !DeviceOs.isOriginOs() && !DeviceOs.isRealmeUi() &&
+                    !DeviceOs.isEmui() && !DeviceOs.isMagicOs()
+            if (provider == "network" && isNotMainStreamRom) {
+                if (FakeLoc.enableDebugLog) Logger.debug("Blocked network provider registration")
+                result = null
+                return@beforeHook
+            }
+
+
             val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
                 Logger.error("registerLocationListener: listener is null: $method")
                 return@beforeHook
