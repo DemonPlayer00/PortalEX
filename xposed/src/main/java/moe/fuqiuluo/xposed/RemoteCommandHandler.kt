@@ -63,7 +63,7 @@ object RemoteCommandHandler {
             }
             "start" -> {
                 val speed = rely.getDouble("speed", FakeLoc.speed)
-                val altitude = rely.getDouble("altitude", FakeLoc.altitude)
+                val altitude = rely.getDouble("altitude", FakeLoc.offset_altitude)
                 val accuracy = rely.getFloat("accuracy", FakeLoc.accuracy)
 
                 FakeLoc.enable = true

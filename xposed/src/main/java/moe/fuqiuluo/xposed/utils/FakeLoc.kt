@@ -101,6 +101,9 @@ object FakeLoc {
     @Volatile var longitude = 0.0
     @Volatile var altitude = 80.0
 
+    val offset_altitude : Double
+        get() = altitude + Random.nextDouble(-0.25, 0.25)
+
     @Volatile var speed = 3.05
 
     var speedAmplitude = 1.0

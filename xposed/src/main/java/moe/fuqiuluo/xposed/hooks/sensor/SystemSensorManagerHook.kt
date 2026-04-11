@@ -1,11 +1,13 @@
-@file:Suppress("UNCHECKED_CAST")
+ @file:Suppress("UNCHECKED_CAST")
 package moe.fuqiuluo.xposed.hooks.sensor
 
 import android.content.pm.FeatureInfo
 import android.content.pm.PackageManager
 import android.hardware.Sensor
+import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.util.ArrayMap
+import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
@@ -15,6 +17,7 @@ import moe.fuqiuluo.xposed.utils.hookAllMethods
 import moe.fuqiuluo.xposed.utils.hookMethodAfter
 import moe.fuqiuluo.xposed.utils.onceHook
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
+import java.lang.reflect.Modifier
 import java.util.concurrent.ConcurrentHashMap
 
 // https://github.com/Frazew/VirtualSensor/blob/master/app/src/main/java/fr/frazew/virtualgyroscope/XposedMod.java#L298
@@ -35,6 +38,25 @@ object SystemSensorManagerHook {
 
     }
 
+    private fun printClassInfo(clazz: Class<*>) {
+        XposedBridge.log("=== Class: ${clazz.name} ===")
+
+        // 打印所有字段（包括私有）
+        XposedBridge.log("Declared Fields:")
+        clazz.declaredFields.forEach { field ->
+            val modifiers = Modifier.toString(field.modifiers)
+            XposedBridge.log("  $modifiers ${field.type.simpleName} ${field.name}")
+        }
+
+        // 打印所有方法（包括私有）
+        XposedBridge.log("Declared Methods:")
+        clazz.declaredMethods.forEach { method ->
+            val modifiers = Modifier.toString(method.modifiers)
+            val params = method.parameterTypes.joinToString { it.simpleName }
+            XposedBridge.log("  $modifiers ${method.returnType.simpleName} ${method.name}($params)")
+        }
+    }
+
     private fun hookSystemSensorManager(classLoader: ClassLoader) {
         val cSystemSensorManager = XposedHelpers.findClassIfExists("android.hardware.SystemSensorManager", classLoader)
         if (cSystemSensorManager == null) {
@@ -43,6 +65,7 @@ object SystemSensorManagerHook {
             }
             return
         }
+
 
         val hookRegisterListenerImpl = beforeHook {
             val listener = args[0] as SensorEventListener
@@ -53,8 +76,8 @@ object SystemSensorManagerHook {
             val sensor = args[1] as? Sensor ?: return@beforeHook
             listenerMap[listener] = sensor.type
 
+            // Hook onSensorChanged 并修改加速度计数据
             listener.javaClass.onceHookAllMethod("onSensorChanged", beforeHook {
-
             })
         }
         cSystemSensorManager.declaredMethods.filter {
