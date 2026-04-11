@@ -66,3 +66,9 @@ location.extras?.putBoolean("is_mock", true)
 
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ffuqiuluo%2FPortal.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Ffuqiuluo%2FPortal?ref=badge_large)
+
+This project is a fork of [Portal](https://github.com/ella8192/Portal). The original code is available under a choice of Apache License 2.0 or GNU General Public License v3.0 or later.
+
+This entire fork is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+
+A copy of the original Apache License 2.0 is retained in the LICENSE.Apache-2.0 file. A copy of the GPL v3.0 license can be found in the LICENSE file.
