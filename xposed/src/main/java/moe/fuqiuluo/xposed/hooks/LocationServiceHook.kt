@@ -327,10 +327,11 @@ internal object LocationServiceHook: BaseLocationHook() {
                 args[0] as? String
             } ?: "gps"
 
-            val isNotMainStreamRom = !DeviceOs.isColorOs() && !DeviceOs.isMiui() &&
-                    !DeviceOs.isHyperOs() && !DeviceOs.isOriginOs() && !DeviceOs.isRealmeUi() &&
-                    !DeviceOs.isEmui() && !DeviceOs.isMagicOs()
-            if (provider == "network" && isNotMainStreamRom) {
+            //val isNotMainStreamRom = !DeviceOs.isColorOs() && !DeviceOs.isMiui() &&
+            //        !DeviceOs.isHyperOs() && !DeviceOs.isOriginOs() && !DeviceOs.isRealmeUi() &&
+            //        !DeviceOs.isEmui() && !DeviceOs.isMagicOs()
+            //if (provider == "network" && isNotMainStreamRom) {
+            if(provider == "network") {
                 if (FakeLoc.enableDebugLog) Logger.debug("Blocked network provider registration")
                 result = null
                 return@beforeHook
