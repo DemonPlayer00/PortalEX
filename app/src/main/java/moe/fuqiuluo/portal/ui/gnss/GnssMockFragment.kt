@@ -153,6 +153,8 @@ class GnssMockFragment : Fragment() {
                 MockServiceHelper.putConfig(locationManager, requireContext())
                 if (MockServiceHelper.startGnssMock(locationManager)) {
                     updateMockButtonState(button, "停止模拟", R.drawable.rounded_play_disabled_24)
+                    // 启动成功后自动重启GPS provider，稳定NMEA数据流
+                    restartGpsProvider()
                 } else {
                     showToast("模拟GNSS服务启动失败")
                     return@launch
@@ -161,8 +163,32 @@ class GnssMockFragment : Fragment() {
                 button.isClickable = true
             }
         }
+    }
 
-
+    /**
+     * 重启GPS Provider（模拟开关定位服务）
+     * 通过清除辅助数据命令软重启GPS引擎，避免NMEA数据失效
+     */
+    private fun restartGpsProvider() {
+        try {
+            // 需要 android.permission.ACCESS_LOCATION_EXTRA_COMMANDS 权限（普通权限，默认授予）
+            val success = locationManager.sendExtraCommand(
+                LocationManager.GPS_PROVIDER,
+                "delete_aiding_data",
+                null
+            )
+            if (success) {
+                Log.d("GnssMockFragment", "GPS模块已重置，辅助数据已清除")
+                // 短暂等待GPS重新初始化
+                Thread.sleep(200)
+            } else {
+                Log.w("GnssMockFragment", "GPS重置命令执行失败，可能设备不支持")
+            }
+        } catch (e: SecurityException) {
+            Log.e("GnssMockFragment", "缺少权限，无法重置GPS", e)
+        } catch (e: Exception) {
+            Log.e("GnssMockFragment", "重置GPS时发生异常", e)
+        }
     }
 
     private fun tryCloseService(button: MaterialButton) {
