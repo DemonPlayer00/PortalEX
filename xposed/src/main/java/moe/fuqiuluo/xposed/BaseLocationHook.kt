@@ -127,106 +127,75 @@ abstract class BaseLocationHook: BaseDivineService() {
         return location
     }
 
-    fun injectNMEA(nmeaStr: String): String? {
-        if (!FakeLoc.enable) {
-            return null
-        }
+    fun injectNMEA(nmeaStr: String): String {
+        // 未启用模拟时，直接返回原始字符串
+        if (!FakeLoc.enable) return nmeaStr
 
-        kotlin.runCatching {
+        return runCatching {
             val nmea = NMEA.valueOf(nmeaStr)
-            when(val value = nmea.value) {
-                is NmeaValue.DTM -> {
-                    return null
-                }
+            when (val value = nmea.value) {
                 is NmeaValue.GGA -> {
-                    if (value.latitude == null || value.longitude == null) {
-                        return null
-                    }
-
-                    if (value.fixQuality == 0) {
-                        return null
-                    }
-
-                    val latitudeHemisphere = if (FakeLoc.latitude >= 0) "N" else "S"
-                    val longitudeHemisphere = if (FakeLoc.longitude >= 0) "E" else "W"
-
-                    value.latitudeHemisphere = latitudeHemisphere
-                    value.longitudeHemisphere = longitudeHemisphere
-
-                    var degree = FakeLoc.latitude.toInt()
-                    var minute = (FakeLoc.latitude - degree) * 60
-                    value.latitude = degree + minute / 100
-
-                    degree = FakeLoc.longitude.toInt()
-                    minute = (FakeLoc.longitude - degree) * 60
-                    value.longitude = degree + minute / 100
-
-                    return value.toNmeaString()
+                    // 无效数据不修改，保留原始字符串
+                    if (value.latitude == null || value.longitude == null) return nmeaStr
+                    if (value.fixQuality == 0) return nmeaStr
+                    updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
+                    value.toNmeaString()
                 }
                 is NmeaValue.GNS -> {
-                    if (value.latitude == null || value.longitude == null) {
-                        return null
-                    }
-
-                    if (value.mode == "N") {
-                        return null
-                    }
-
-                    val latitudeHemisphere = if (FakeLoc.latitude >= 0) "N" else "S"
-                    val longitudeHemisphere = if (FakeLoc.longitude >= 0) "E" else "W"
-
-                    value.latitudeHemisphere = latitudeHemisphere
-                    value.longitudeHemisphere = longitudeHemisphere
-
-                    var degree = FakeLoc.latitude.toInt()
-                    var minute = (FakeLoc.latitude - degree) * 60
-                    value.latitude = degree + minute / 100
-
-                    degree = FakeLoc.longitude.toInt()
-                    minute = (FakeLoc.longitude - degree) * 60
-                    value.longitude = degree + minute / 100
-
-                    return value.toNmeaString()
-                }
-                is NmeaValue.GSA -> {
-                    return null
-                }
-                is NmeaValue.GSV -> {
-                    return null
+                    if (value.latitude == null || value.longitude == null) return nmeaStr
+                    if (value.mode == "N") return nmeaStr
+                    updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
+                    value.toNmeaString()
                 }
                 is NmeaValue.RMC -> {
-                    if (value.latitude == null || value.longitude == null) {
-                        return null
-                    }
-
-                    if (value.status == "V") {
-                        return null
-                    }
-
-                    val latitudeHemisphere = if (FakeLoc.latitude >= 0) "N" else "S"
-                    val longitudeHemisphere = if (FakeLoc.longitude >= 0) "E" else "W"
-
-                    value.latitudeHemisphere = latitudeHemisphere
-                    value.longitudeHemisphere = longitudeHemisphere
-
-                    var degree = FakeLoc.latitude.toInt()
-                    var minute = (FakeLoc.latitude - degree) * 60
-                    value.latitude = degree + minute / 100
-
-                    degree = FakeLoc.longitude.toInt()
-                    minute = (FakeLoc.longitude - degree) * 60
-                    value.longitude = degree + minute / 100
-
-                    return value.toNmeaString()
+                    if (value.latitude == null || value.longitude == null) return nmeaStr
+                    if (value.status == "V") return nmeaStr
+                    updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
+                    // 同步速度和航向（m/s → 节，1 m/s = 1.94384 knots）
+                    value.speedKnots = FakeLoc.speed * 1.94384
+                    value.trackAngle = FakeLoc.bearing
+                    value.toNmeaString()
                 }
-                is NmeaValue.VTG -> {
-                    return null
-                }
+                // 其他语句类型（DTM、GSA、GSV、VTG）不做修改，原样返回
+                else -> nmeaStr
             }
         }.onFailure {
             Logger.error("NMEA parse failed: ${it.message}, source = $nmeaStr")
-            return null
+        }.getOrDefault(nmeaStr)
+    }
+
+    // 辅助函数：更新GGA/GNS/RMC中的经纬度及半球
+    private fun updateLatLon(value: Any, lat: Double, lon: Double) {
+        val latHemisphere = if (lat >= 0) "N" else "S"
+        val lonHemisphere = if (lon >= 0) "E" else "W"
+
+        val latDeg = lat.toInt()
+        val latMin = (lat - latDeg) * 60
+        val newLat = latDeg + latMin / 100.0
+
+        val lonDeg = lon.toInt()
+        val lonMin = (lon - lonDeg) * 60
+        val newLon = lonDeg + lonMin / 100.0
+
+        when (value) {
+            is NmeaValue.GGA -> {
+                value.latitude = newLat
+                value.longitude = newLon
+                value.latitudeHemisphere = latHemisphere
+                value.longitudeHemisphere = lonHemisphere
+            }
+            is NmeaValue.GNS -> {
+                value.latitude = newLat
+                value.longitude = newLon
+                value.latitudeHemisphere = latHemisphere
+                value.longitudeHemisphere = lonHemisphere
+            }
+            is NmeaValue.RMC -> {
+                value.latitude = newLat
+                value.longitude = newLon
+                value.latitudeHemisphere = latHemisphere
+                value.longitudeHemisphere = lonHemisphere
+            }
         }
-        return null
     }
 }
