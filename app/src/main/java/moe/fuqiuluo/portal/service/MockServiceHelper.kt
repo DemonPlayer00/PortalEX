@@ -348,29 +348,53 @@ object MockServiceHelper {
     }
 
 
-    private fun startLoopBroadcastLocation(locationManager: LocationManager){
+    private fun startLoopBroadcastLocation(locationManager: LocationManager) {
         val appContext = Portal.appContext
-        val delayTime=appContext.reportDuration.toLong()
+        val delayTime = appContext.reportDuration.toLong()
+        if (isRunning) return
+        if (!appContext.loopBroadcastlocation) return
 
-        if(isRunning) return
-        if(!appContext.loopBroadcastlocation) return
+        isRunning = true
+        var lastGpsResetTime = 0L
 
-        isRunning=true
-        loopThread=Thread{
-            Log.d("MockServiceHelper","loopBoardcast: Start")
-            while(isRunning){
+        loopThread = Thread {
+            Log.d("MockServiceHelper", "loopBoardcast: Start")
+            while (isRunning) {
                 try {
+                    // 每隔 15 秒重置一次 GPS 辅助数据，防止 HAL 超时停止回调
+                    val now = System.currentTimeMillis()
+                    if (now - lastGpsResetTime > 15000) {
+                        resetGpsProvider(locationManager)
+                        lastGpsResetTime = now
+                    }
+
                     broadcastLocation(locationManager)
                     Thread.sleep(delayTime)
-                }catch (e:InterruptedException){
+                } catch (e: InterruptedException) {
                     if (FakeLoc.enableDebugLog) {
-                        Log.d("MockServiceHelper","loopBoardcast: Stop")
+                        Log.d("MockServiceHelper", "loopBoardcast: Stop")
                     }
                     break
                 }
             }
         }
         loopThread!!.start()
+    }
+
+    /**
+     * 重置 GPS 辅助数据，强制 HAL 冷启动
+     */
+    private fun resetGpsProvider(locationManager: LocationManager) {
+        try {
+            locationManager.sendExtraCommand(LocationManager.GPS_PROVIDER, "delete_aiding_data", null)
+            Thread.sleep(200)
+            // 可选：同时注入时间和星历辅助数据，加速恢复
+            locationManager.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_time_injection", null)
+            locationManager.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_xtra_injection", null)
+            Log.i("MockServiceHelper", "执行 GPS 重置，防止 HAL 超时")
+        } catch (e: Exception) {
+            Log.e("MockServiceHelper", "GPS 重置失败", e)
+        }
     }
 
     private fun stopLoopBroadcastLocation(){

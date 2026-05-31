@@ -181,6 +181,30 @@ class GnssMockFragment : Fragment() {
                 Log.d("GnssMockFragment", "GPS模块已重置，辅助数据已清除")
                 // 短暂等待GPS重新初始化
                 Thread.sleep(200)
+
+                // 注入网络时间，加速定位
+                val timeResult = locationManager.sendExtraCommand(
+                    LocationManager.GPS_PROVIDER,
+                    "force_time_injection",
+                    null
+                )
+                if (timeResult) {
+                    Log.d("GnssMockFragment", "时间注入成功")
+                } else {
+                    Log.w("GnssMockFragment", "时间注入失败，可能设备不支持")
+                }
+
+                // 注入星历辅助数据（A-GPS）
+                val xtraResult = locationManager.sendExtraCommand(
+                    LocationManager.GPS_PROVIDER,
+                    "force_xtra_injection",
+                    null
+                )
+                if (xtraResult) {
+                    Log.d("GnssMockFragment", "星历注入成功")
+                } else {
+                    Log.w("GnssMockFragment", "星历注入失败，可能设备不支持")
+                }
             } else {
                 Log.w("GnssMockFragment", "GPS重置命令执行失败，可能设备不支持")
             }
