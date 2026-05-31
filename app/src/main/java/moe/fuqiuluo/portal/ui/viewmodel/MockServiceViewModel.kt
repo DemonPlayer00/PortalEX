@@ -157,6 +157,8 @@ class MockServiceViewModel : ViewModel() {
                         rocker.autoStatus = false
                         // 重设阶段
                         routeStage = 0
+                        // 播放提示音
+                        playCompletionSound(activity)
                         break // 退出循环
                     }
 
@@ -207,6 +209,30 @@ class MockServiceViewModel : ViewModel() {
         }
 
         return rocker
+    }
+
+    private fun playCompletionSound(activity: Activity) {
+        try {
+            // 1. 播放声音
+            val ringtoneUri = android.provider.Settings.System.DEFAULT_NOTIFICATION_URI
+            val mediaPlayer = android.media.MediaPlayer.create(activity.applicationContext, ringtoneUri)
+            mediaPlayer.setOnCompletionListener { it.release() }
+            mediaPlayer.start()
+
+            // 2. 振动 0.5 秒，间隔 0.3 秒，共 2 次
+            val vibrator = activity.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            if (vibrator.hasVibrator()) {
+                val pattern = longArrayOf(0, 500, 300, 500) // 等待0ms，振动500ms，暂停300ms，再振动500ms
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(pattern, -1)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MockServiceViewModel", "播放提示音或振动失败", e)
+        }
     }
 
     fun isServiceStart(): Boolean {
