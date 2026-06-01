@@ -20,6 +20,8 @@ The purpose of this application is to help developers debug the simulation tool 
 > 3. 使用者需承诺遵守相关法律法规，因使用本软件导致的任何后果由使用者自行承担，与本项目开发者无关。
 > 4. 开发者保留在使用者违反Apache 2.0许可证条款时追究法律责任的权利。
 
+> 由于仓库中包含GPL3.0代码，该仓库使用的许可证应为GPL3.0。
+
 # Warning
 
 - 如发现任何人利用Portal进行违法活动，请收集证据并向有关部门举报。
