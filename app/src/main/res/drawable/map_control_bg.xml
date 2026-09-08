@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 地图控件浮层：35% 黑色圆角底，浅色/深色地图上均可读 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#59000000" />
+    <corners android:radius="16dp" />
+</shape>
