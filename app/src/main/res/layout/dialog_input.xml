@@ -20,10 +20,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            app:boxBackgroundMode="outline"
-            app:boxStrokeColor="@color/text_input_box_stroke"
-            app:boxStrokeWidth="1dp"
-            android:hint="输入值">
+            app:boxBackgroundMode="none"
+            app:hintEnabled="false"
+            >
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/value"
@@ -34,7 +33,8 @@
                 android:singleLine="true"
                 android:textColor="?attr/colorOnSurface"
                 android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                android:background="@android:color/transparent">
+                android:hint="输入值"
+                android:background="@drawable/edit_text_box">
 
             </com.google.android.material.textfield.TextInputEditText>
         </com.google.android.material.textfield.TextInputLayout>
