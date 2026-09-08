@@ -80,12 +80,6 @@ class RouteEditFragment : Fragment() {
     ): View {
         _binding = FragmentRouteEditBinding.inflate(inflater, container, false)
 
-        // 退回返回栈时 Fragment 实例与 ViewModel 保留、View 销毁重建：
-        // 视觉被 onViewCreated 复位（rotation=0/clip=60dp），但逻辑状态残留
-        // （mFabOpened=true）会形成「假打开」——点击第一次走收起分支无变化。
-        // 与 HomeFragment 同款：重建即复位展开状态
-        routeEditViewModel.mFabOpened = false
-
         with(baiduMapViewModel) {
             isExists = true
             baiduMap = binding.bmapView.map
