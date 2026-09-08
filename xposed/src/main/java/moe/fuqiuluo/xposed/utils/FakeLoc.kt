@@ -120,18 +120,20 @@ object FakeLoc {
 
     @Volatile var hasBearings = false
 
-    var bearing = 0.0
-        get() {
-            if (hasBearings) {
-                return field
-            } else {
-                if (field >= 360.0) {
-                    field -= 360.0
-                }
-                field += 0.5
-                return field
-            }
-        }
+    /**
+     * 当前朝向（度，0=北，顺时针）：
+     * - 应用启动时随机生成一个中心朝向（不再从 0° 固定起步）
+     * - 移动中由 move/摇杆更新为移动方向
+     * - 静止（未操作摇杆、未自动播放）时保持稳定，不再自动旋转
+     */
+    @Volatile var bearing = Random.nextDouble(0.0, 360.0)
+
+    /** 最近一次移动（move 命令）的时间，用于静止检测 */
+    @Volatile var lastMoveTimeNanos = 0L
+
+    /** 是否正在移动（摇杆操作中/自动播放中）：最近 2s 内有 move 命令 */
+    val isMoving: Boolean
+        get() = System.nanoTime() - lastMoveTimeNanos < 2_000_000_000L
 
     var accuracy = 25.0f
         set(value) {

@@ -66,6 +66,7 @@ object SystemSensorManagerHook {
     private const val TYPE_GAME_ROTATION_VECTOR = 15
     private const val EXTRA_PORTAL_SPEED = "portal_speed"
     private const val EXTRA_PORTAL_BEARING = "portal_bearing"
+    private const val EXTRA_PORTAL_MOVING = "portal_moving"
 
     // 需要注入的传感器类型（步数 + 朝向）：
     // 朝向类（ORIENTATION/ROTATION_VECTOR/GAME_ROTATION_VECTOR）驱动 App 方向——
@@ -106,9 +107,10 @@ object SystemSensorManagerHook {
     // 伪造的步计数传感器（无真实传感器时暴露给 App；事件 sensor 字段用注册时的真实 Sensor）
     private var fakeStepSensor: Sensor? = null
 
-    // 速度/朝向缓存（m/s | 度），默认慢走/朝北——来自注入位置 extras（跨进程同步）
+    // 速度/朝向/移动状态缓存（m/s | 度 | 是否移动中）——来自注入位置 extras（跨进程同步）
     @Volatile private var speedCache = 1.5
     @Volatile private var bearingCache = 0.0
+    @Volatile private var movingCache = false
 
     // 统一调度 tick 状态：步数按 cadence 浮动累计（每整步触发事件）
     @Volatile private var lastTickNanos = System.nanoTime()
@@ -136,6 +138,14 @@ object SystemSensorManagerHook {
      * 半周期重新计时。曲线：offset = side * amp * cos(π * phase)，phase∈[0,1]（峰→谷）。
      */
     private fun advanceSwing() {
+        // 静止（未操作摇杆/未自动播放）：摆动指数衰减归零——朝向稳定，指针不乱转
+        if (!movingCache) {
+            swingOffset *= 0.5
+            if (kotlin.math.abs(swingOffset) < 0.05) {
+                swingOffset = 0.0
+            }
+            return
+        }
         val now = System.nanoTime()
         var elapsed = now - swingPhaseStartNanos
         if (elapsed >= swingHalfPeriodNanos) {
@@ -243,9 +253,9 @@ object SystemSensorManagerHook {
             val dtSec = ((now - lastTickNanos) / 1_000_000_000.0).coerceIn(0.0, 1.0)
             lastTickNanos = now
 
-            // 步进：按当前速度步频浮动累计（有步数监听或朝向监听时都推进——
-            // 朝向摆动与步频同步，即使 App 只注册了朝向也要有步频节奏）
-            if (hasStepListener() || hasRotationListener()) {
+            // 步进：按当前速度步频浮动累计（仅移动中——静止时步数停、摆动停，
+            // 朝向稳定；有步数监听或朝向监听时都推进，朝向摆动与步频同步）
+            if ((hasStepListener() || hasRotationListener()) && movingCache) {
                 stepFraction += cadenceForSpeed(speedCache) / 60.0 * dtSec
                 val wholeSteps = stepFraction.toInt()
                 if (wholeSteps >= 1) {
@@ -633,6 +643,10 @@ object SystemSensorManagerHook {
             val bearing = loc.extras?.getDouble(EXTRA_PORTAL_BEARING)
             if (bearing != null) {
                 bearingCache = bearing
+            }
+            val moving = loc.extras?.getBoolean(EXTRA_PORTAL_MOVING)
+            if (moving != null) {
+                movingCache = moving
             }
         }
 

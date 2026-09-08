@@ -90,9 +90,10 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.extras = Bundle()
         }
         location.extras?.putDouble("latlon", location.latitude + location.longitude)
-        // 把当前模拟速度/朝向带给客户端进程（传感器步频/旋转注入读取，见 SystemSensorManagerHook）
+        // 把当前模拟速度/朝向/移动状态带给客户端进程（传感器步频/旋转注入读取，见 SystemSensorManagerHook）
         location.extras?.putDouble("portal_speed", FakeLoc.speed)
         location.extras?.putDouble("portal_bearing", FakeLoc.bearing)
+        location.extras?.putBoolean("portal_moving", FakeLoc.isMoving)
         location.extras?.putInt("satellites", Random.nextInt(8, 45))
         location.extras?.putInt("maxCn0", Random.nextInt(30, 50))
         location.extras?.putInt("meanCn0", Random.nextInt(20, 30))
