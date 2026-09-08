@@ -11,8 +11,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/add_route"
-            android:textAppearance="?attr/textAppearanceTitleMedium"
-            android:textColor="?attr/colorOnSurface"/>
+            android:textAppearance="?attr/textAppearanceTitleLarge"
+            android:textColor="?attr/colorOnSurface"
+            android:paddingBottom="12dp"/>
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
