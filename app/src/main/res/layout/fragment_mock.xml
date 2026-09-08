@@ -176,6 +176,7 @@
         android:tint="?attr/colorOnPrimaryContainer"
         app:fabSize="auto"
         android:visibility="gone"
-        android:layout_gravity="bottom|end"/>
+        android:layout_gravity="bottom|end"
+        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

@@ -144,7 +144,8 @@
         android:tint="?attr/colorOnPrimaryContainer"
         app:fabSize="auto"
         android:visibility="gone"
-        android:layout_gravity="bottom|end"/>
+        android:layout_gravity="bottom|end"
+        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
 
 
     <LinearLayout
@@ -159,7 +160,8 @@
             android:layout_marginBottom="@dimen/fab_margin"
             android:importantForAccessibility="no"
             app:srcCompat="@drawable/baseline_keyboard_arrow_up_24"
-            app:fabSize="normal"/>
+            app:fabSize="normal"
+        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -174,7 +176,8 @@
                 android:contentDescription="@string/add_route"
                 android:visibility="gone"
                 app:srcCompat="@drawable/baseline_route_24"
-                app:fabSize="mini"/>
+                app:fabSize="mini"
+        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
         </LinearLayout>
     </LinearLayout>
 
