@@ -34,6 +34,27 @@ class MockServiceViewModel : ViewModel() {
     val rockerCoroutineController = CoroutineController()
     val routeMockCoroutine = CoroutineRouteMock()
 
+    // 自动播放的当前朝向（度，0=北，顺时针）——按有限角速度向目标方位角平滑转向，
+    // 避免折线段切换时 App 方向计瞬间跳变；摇杆路径直接用摇杆角度，不经此值。
+    private var routeBearing = 0.0
+    private var routeBearingInitialized = false
+    private val routeTurnRate = 120.0 // 度/秒（转向角速度上限，自然转弯）
+
+    /**
+     * 向目标方位角平滑转向一步（限角速度），返回新的朝向（归一化 0..360）。
+     */
+    private fun turnTowards(current: Double, target: Double, dtSeconds: Double): Double {
+        val maxTurn = routeTurnRate * dtSeconds
+        // 归一化差值到 (-180, 180]
+        val delta = (((target - current + 180.0) % 360.0) + 360.0) % 360.0 - 180.0
+        val newBearing = if (abs(delta) <= maxTurn) {
+            current + delta
+        } else {
+            current + delta.coerceAtLeast(-maxTurn).coerceAtMost(maxTurn)
+        }
+        return ((newBearing % 360.0) + 360.0) % 360.0
+    }
+
     var isRouteStart = false
 
     var locationManager: LocationManager? = null
@@ -165,12 +186,22 @@ class MockServiceViewModel : ViewModel() {
                         azimuth += 360
                     }
 
-                    Log.d("MockServiceViewModel", "从 $currentLat, $currentLon 移动到 ${target.first}, ${target.second}, 方位角: $azimuth")
+                    // 朝向平滑过渡：首次直接对齐目标方位角（避免从 0° 大角度转），
+                    // 之后按有限角速度逐 tick 转向——折线段切换时 App 方向计平滑转动，
+                    // 而非瞬间跳变。转向同步经 move 命令写入服务端 FakeLoc.bearing。
+                    if (!routeBearingInitialized) {
+                        routeBearing = azimuth
+                        routeBearingInitialized = true
+                    } else {
+                        routeBearing = turnTowards(routeBearing, azimuth, delayTime / 1000.0)
+                    }
+
+                    Log.d("MockServiceViewModel", "从 $currentLat, $currentLon 移动到 ${target.first}, ${target.second}, 方位角: $azimuth, 朝向: $routeBearing")
                     // 与摇杆路径完全一致的速度公式：每 tick 移动 = speed / tick频率（±5% 对称抖动在 moveLocation）
                     if (!MockServiceHelper.move(
                             lm,
                             FakeLoc.speed / (1000 / delayTime),
-                            azimuth
+                            routeBearing
                         )
                     ) {
                         Log.e("MockServiceViewModel", "移动失败")
