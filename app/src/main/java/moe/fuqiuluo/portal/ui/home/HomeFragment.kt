@@ -82,8 +82,9 @@ class HomeFragment : Fragment() {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         val root: View = binding.root
 
-        // Fixed the issue that the Fab was opening incorrectly after switching back to Home for Fragments
-        homeViewModel.mFabOpened = false
+        // 注意：这里不再强制复位 mFabOpened——离开主页时的展开状态应保留，
+        // 返回时由 onResume 按逻辑状态「执行打开」呈现（视觉统一见
+        // onViewStateRestored/applyFabBarState）
 
         with(baiduMapViewModel) {
             isExists = true
@@ -338,20 +339,32 @@ class HomeFragment : Fragment() {
             }
         }
         expandBar.clipToOutline = true
-        fabBarClipWidth = collapsedFabBarWidth()
-        expandBar.invalidateOutline()
 
-        // 功能按钮初始 INVISIBLE（占位不跳变、不拦截点击、不误触）
+        // 视觉起点统一为干净收起态（onResume 再按逻辑状态执行打开）
+        applyFabBarState()
+    }
+
+    override fun onViewStateRestored(savedInstanceState: Bundle?) {
+        super.onViewStateRestored(savedInstanceState)
+
+        // saved view hierarchy state 在 onViewCreated 之后才恢复（会把
+        // rotation/visibility 覆盖回上次离开时的保存值，如 90°/VISIBLE），
+        // 而此时胶囊裁剪宽度是代码字段仍为收起圆——此处在恢复完毕后重新
+        // 统一视觉起点，消除「圆形窗+右指按钮」的半开假象
+        applyFabBarState()
+    }
+
+    /** 收起态视觉：正圆 + 按钮复位 + 功能按钮 INVISIBLE（占位不跳变、点击透视） */
+    private fun applyFabBarState() {
+        binding.fab.clearAnimation()
+        binding.fab.rotation = 0f
+        binding.fab.isClickable = true
+        fabBarClipWidth = collapsedFabBarWidth()
+        binding.fabExpandBar.invalidateOutline()
         listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd).forEach {
             it.visibility = View.INVISIBLE
             it.isEnabled = false
         }
-
-        // 复位展开按钮姿态：旋转动画写入的 rotation 会被 View saved state
-        // 记录（有 id 的 View），Fragment 重建后恢复成 90°——但胶囊 clip 是
-        // 代码字段重新初始化为圆形，导致「胶囊已收回、按钮仍旋转」的矛盾态
-        binding.fab.rotation = 0f
-        binding.fab.isClickable = true
     }
 
     /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
@@ -586,6 +599,25 @@ class HomeFragment : Fragment() {
 
         if (_binding != null)
             binding.bmapView.onResume()
+
+        // 出现时执行打开：逻辑状态为打开 → 播放展开动画
+        // （重建场景：onViewStateRestored 已把视觉置为收起，由此动画展开；
+        //  前台恢复场景：视觉本就打开，动画 from==to 无视觉变化）
+        if (homeViewModel.mFabOpened) {
+            val expandBar = binding.fabExpandBar
+            binding.fab.animate()
+                .rotation(90f)
+                .setDuration(200)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+            binding.fab.isClickable = false
+            listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd).forEach {
+                it.visibility = View.VISIBLE
+                it.isEnabled = true
+            }
+            animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
+            expandBar.postDelayed({ binding.fab.isClickable = true }, 240)
+        }
     }
 
     override fun onDestroy() {
