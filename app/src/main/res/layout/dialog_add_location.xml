@@ -13,7 +13,7 @@
             android:text="@string/add_location"
             android:textAppearance="?attr/textAppearanceTitleLarge"
             android:textColor="?attr/colorOnSurface"
-            android:paddingBottom="20dp"/>
+            android:paddingBottom="40dp"/>
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
