@@ -33,6 +33,12 @@
 
     <style name="Portal.SearchViewStyle" parent="Widget.AppCompat.SearchView" />
 
+    <!-- 悬浮按钮（FAB）圆形形状覆盖：任何主题下保持圆形 -->
+    <style name="PortalFabCircularOverlay">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
+
     <!-- M3 顶栏/弹窗 overlay：surface 顶栏（现代范式，顶栏与内容同底色） -->
     <style name="AppTheme.Portal.ToolBarOverlay" parent="ThemeOverlay.Material3.Toolbar.Surface" />
 
