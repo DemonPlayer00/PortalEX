@@ -20,7 +20,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             app:boxBackgroundMode="filled"
-            app:boxBackgroundColor="?attr/colorSurfaceVariant"
+            app:boxBackgroundColor="@android:color/transparent"
             android:hint="@string/name">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -42,7 +42,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             app:boxBackgroundMode="filled"
-            app:boxBackgroundColor="?attr/colorSurfaceVariant"
+            app:boxBackgroundColor="@android:color/transparent"
             android:hint="@string/route_set">
 
             <com.google.android.material.textfield.TextInputEditText
