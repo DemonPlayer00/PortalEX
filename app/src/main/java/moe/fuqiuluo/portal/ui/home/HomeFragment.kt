@@ -260,7 +260,10 @@ class HomeFragment : Fragment() {
                     .setDuration(200)
                     .setInterpolator(AccelerateInterpolator())
                     .withEndAction {
-                        expandBar.visibility = View.GONE
+                        // 胶囊常驻（含展开按钮），只隐藏功能按钮并复位形态
+                        expandBar.visibility = View.VISIBLE
+                        expandBar.alpha = 1f
+                        expandBar.scaleX = 1f
                         subFabList.forEach { it.visibility = View.GONE }
                         view.isClickable = true
                     }
