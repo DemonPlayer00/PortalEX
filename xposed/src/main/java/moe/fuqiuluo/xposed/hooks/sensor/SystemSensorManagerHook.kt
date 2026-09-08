@@ -111,25 +111,50 @@ object SystemSensorManagerHook {
     @Volatile private var lastTickNanos = System.nanoTime()
     private var stepFraction = 0.0
 
-    // 朝向摆动（蜜罐规避）：真实跑步时手机会随步伐轻微往复晃动，
-    // 运动校园可能检测"朝向静止/朝向与步频不同步"。这里让朝向在模拟方位上
-    // 做 ±6° 小幅摆动，每步（步频+1）调转方向，指数平滑逼近（无跳变）。
-    private const val SWING_AMPLITUDE_DEG = 6.0
-    private const val SWING_SMOOTHING = 0.4
+    // 朝向摆动（蜜罐规避）：平滑曲线（余弦波）往复。
+    // - 中轴恒定 = 模拟朝向（bearingCache），注入值 = 中轴 + swingOffset
+    // - 波峰→波谷（或反过来）为一个更新点：半周期完成时峰谷交替，
+    //   目标幅度随机抽取 5~6°（朝中间值的另一边）
+    // - 半周期持续时间 = 最新的两次步频之间的时间间隔（每步频+1 时存储）
+    // - 曲线平滑：swingOffset = side * amp * cos(π * phase)，半周期内从峰到谷
     @Volatile private var swingOffset = 0.0
-    @Volatile private var swingTarget = SWING_AMPLITUDE_DEG
+    @Volatile private var swingSide = 1.0          // 当前峰值所在侧（+1/-1）
+    @Volatile private var swingAmp = 5.5            // 当前目标峰值幅度（5~6 随机）
+    @Volatile private var swingPhaseStartNanos = System.nanoTime()
+    @Volatile private var swingHalfPeriodNanos = 500_000_000L // 半周期时长（初始 500ms）
 
-    /** 平滑逼近摆动目标（每 tick 收敛，无跳变） */
+    // 步频间隔存储：每次步频 +1 时记录（供摆动半周期时长使用）
+    @Volatile private var lastStepTimestampNanos = 0L
+
+    /**
+     * 平滑曲线推进：半周期完成 = 更新点 → 峰谷交替、随机 5~6° 新幅度、半周期重新计时。
+     * 曲线：offset = side * amp * cos(π * phase)，phase∈[0,1]（峰→谷）。
+     */
     private fun advanceSwing() {
-        swingOffset += (swingTarget - swingOffset) * SWING_SMOOTHING
-        if (kotlin.math.abs(swingTarget - swingOffset) < 0.05) {
-            swingOffset = swingTarget
+        val now = System.nanoTime()
+        var elapsed = now - swingPhaseStartNanos
+        if (elapsed >= swingHalfPeriodNanos) {
+            // 更新点：朝中间值的另一边随机抽取 5~6° 作为新目标峰值
+            swingSide = -swingSide
+            swingAmp = kotlin.random.Random.nextDouble(5.0, 6.0)
+            swingPhaseStartNanos = now
+            elapsed = 0
         }
+        val phase = (elapsed.toDouble() / swingHalfPeriodNanos).coerceIn(0.0, 1.0)
+        swingOffset = swingSide * swingAmp * Math.cos(Math.PI * phase)
     }
 
-    /** 步频 +1：调转摆动方向 */
-    private fun flipSwing() {
-        swingTarget = -swingTarget
+    /**
+     * 步频 +1：存储两次步频之间的时间间隔（过滤异常值），
+     * 作为下一次波峰-波谷（或反过来）的持续时间。
+     */
+    private fun onStepAdvance() {
+        val now = System.nanoTime()
+        val interval = now - lastStepTimestampNanos
+        lastStepTimestampNanos = now
+        if (interval in 100_000_000L..3_000_000_000L) {
+            swingHalfPeriodNanos = interval
+        }
     }
 
     // dispatchSensorEvent 兜底状态（每进程独立）
@@ -259,9 +284,9 @@ object SystemSensorManagerHook {
         }
         lastEventTimeNanos = now
         values[0] = lastStepCount.get().toFloat()
-        // 步频推进：摆动调转方向（蜜罐规避，与步伐同步）
+        // 步频推进：存储步频间隔（供摆动半周期持续时长，蜜罐规避）
         if (wholeSteps >= 1) {
-            flipSwing()
+            onStepAdvance()
         }
     }
 
@@ -333,9 +358,9 @@ object SystemSensorManagerHook {
                             Logger.debug("step injector: total=${globalSteps.get()} cadence=${cadenceForSpeed(speedCache)}/min speed=${speedCache}")
                         }
                     }
-                    // 步频 +1：朝向摆动调转方向（蜜罐规避，与步伐同步）
+                    // 步频 +1：存储两次步频间隔（供摆动半周期持续时长，蜜罐规避）
                     if (hasRotationListener()) {
-                        flipSwing()
+                        onStepAdvance()
                     }
                 }
             }
@@ -686,9 +711,9 @@ object SystemSensorManagerHook {
         }
         lastEventTimeNanos = now
         values[0] = lastStepCount.get().toFloat()
-        // 步频推进 → 摆动调转方向（蜜罐规避，与步伐同步）
+        // 步频推进：存储步频间隔（供摆动半周期持续时长，蜜罐规避）
         if (wholeSteps >= 1) {
-            flipSwing()
+            onStepAdvance()
         }
     }
 
