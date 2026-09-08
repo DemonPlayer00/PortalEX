@@ -1,9 +1,7 @@
 package moe.fuqiuluo.portal.ui.mock
 
-import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.Point
 import android.os.Bundle
 import android.util.Log
@@ -11,15 +9,10 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewOutlineProvider
-import android.view.animation.AccelerateInterpolator
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.Interpolator
 import android.widget.Toast
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.alibaba.fastjson2.JSON
 import com.alibaba.fastjson2.JSONArray
@@ -42,6 +35,7 @@ import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portal.MainActivity
 import moe.fuqiuluo.portal.Portal
+import moe.fuqiuluo.portal.android.widget.FabBarView
 import moe.fuqiuluo.portal.R
 import moe.fuqiuluo.portal.bdmap.locateMe
 import moe.fuqiuluo.portal.bdmap.setMapConfig
@@ -51,7 +45,6 @@ import moe.fuqiuluo.portal.ext.jsonHistoricalRoutes
 import moe.fuqiuluo.portal.ext.mapType
 import moe.fuqiuluo.portal.ext.wgs84
 import moe.fuqiuluo.portal.ui.viewmodel.BaiduMapViewModel
-import moe.fuqiuluo.portal.ui.viewmodel.HomeViewModel
 import java.math.BigDecimal
 import java.util.List
 import kotlin.random.Random
@@ -61,16 +54,12 @@ class RouteEditFragment : Fragment() {
     private var _binding: FragmentRouteEditBinding? = null
     private val binding get() = _binding!!
 
-    private val routeEditViewModel by viewModels<HomeViewModel>()
     private lateinit var mLocationClient: LocationClient
     private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
 
     private var mPoints: ArrayList<Pair<Double, Double>> = arrayListOf()
     private var isDrawing = false
     private var lastPoint: Pair<Double, Double>? = null
-
-    // 胶囊裁剪宽度（outline 圆角矩形右端，收起=圆/展开=胶囊）
-    private var fabBarClipWidth = 0
 
 
     override fun onCreateView(
@@ -150,53 +139,6 @@ class RouteEditFragment : Fragment() {
                     else -> moe.fuqiuluo.portal.R.id.map_type_normal
                 }
             )
-        }
-
-        binding.fab.setOnClickListener { view ->
-            val expandBar = binding.fabExpandBar
-            val subFabList = listOf(
-                binding.fabStart,
-                binding.fabRollback,
-                binding.fabComplete,
-                binding.fabMyLocation
-            )
-
-            if (!routeEditViewModel.mFabOpened) {
-                routeEditViewModel.mFabOpened = true
-                view.isClickable = false
-
-                view.animate()
-                    .rotation(90f)
-                    .setDuration(200)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
-
-                // outline 裁剪窗口向右展开：圆形 → 胶囊（右端始终圆角）
-                subFabList.forEach {
-                    it.visibility = View.VISIBLE
-                    it.isEnabled = true
-                }
-                animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
-                expandBar.postDelayed({ view.isClickable = true }, 240)
-            } else {
-                routeEditViewModel.mFabOpened = false
-                view.isClickable = false
-
-                view.animate()
-                    .rotation(0f)
-                    .setDuration(200)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
-
-                // outline 裁剪窗口向左收回：胶囊 → 圆形。功能按钮 INVISIBLE
-                // （占位不跳变、不接收触摸 → 点击透视到地图）
-                subFabList.forEach {
-                    it.visibility = View.INVISIBLE
-                    it.isEnabled = false
-                }
-                animateFabBarClip(collapsedFabBarWidth(), 200, AccelerateInterpolator())
-                expandBar.postDelayed({ view.isClickable = true }, 220)
-            }
         }
 
         mLocationClient = LocationClient(requireContext())
@@ -283,91 +225,50 @@ class RouteEditFragment : Fragment() {
             }
         }
 
-        binding.fabStart.setOnClickListener {
-            isDrawing = true;
-            mPoints = arrayListOf()
-            lastPoint = null; // 重置上一个点
-        }
-
-        binding.fabRollback.setOnClickListener {
-            // 撤回上一个点并且刷新地图
-            if (mPoints.size > 0) {
-                mPoints.removeAt(mPoints.size - 1)
-                refresh()
-            }
-        }
-
-        binding.fabComplete.setOnClickListener {
-            isDrawing = false
-            if (!showAddRouteDialog()) {
-                Toast.makeText(requireContext(), "选择路线异常", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        binding.fabMyLocation.setOnClickListener {
-            baiduMapViewModel.baiduMap.locateMe()
-        }
-
         return binding.root
     }
 
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
+    override fun onResume() {
+        super.onResume()
 
-        // 胶囊默认收缩：outline 圆角矩形裁剪（右端始终圆角）
-        val expandBar = binding.fabExpandBar
-        expandBar.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(v: View, outline: Outline) {
-                outline.setRoundRect(
-                    0, 0,
-                    fabBarClipWidth.coerceIn(0, v.width),
-                    v.height,
-                    fabBarCornerRadius()
-                )
-            }
-        }
-        expandBar.clipToOutline = true
-        fabBarClipWidth = collapsedFabBarWidth()
-        expandBar.invalidateOutline()
-
-        // 功能按钮初始 INVISIBLE（占位不跳变、不拦截点击、不误触）
-        listOf(binding.fabStart, binding.fabRollback, binding.fabComplete, binding.fabMyLocation)
-            .forEach {
-                it.visibility = View.INVISIBLE
-                it.isEnabled = false
-            }
-
-        // 复位展开按钮姿态：旋转动画写入的 rotation 会被 View saved state
-        // 记录（有 id 的 View），Fragment 重建后恢复成 90°——与胶囊 clip
-        // 重新初始化为圆形矛盾，必须显式复位
-        binding.fab.rotation = 0f
-        binding.fab.isClickable = true
-    }
-
-    /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
-    private fun collapsedFabBarWidth(): Int =
-        (60 * resources.displayMetrics.density).toInt()
-
-    /** 胶囊背景半径：高度一半（60dp → 30dp），收起态即正圆 */
-    private fun fabBarCornerRadius(): Float =
-        30f * resources.displayMetrics.density
-
-    /** 驱动 outline 裁剪宽度动画（内容零拉伸，右端始终圆角） */
-    private fun animateFabBarClip(
-        toWidth: Int,
-        duration: Long,
-        interpolator: Interpolator
-    ) {
-        val expandBar = binding.fabExpandBar
-        val fromWidth = fabBarClipWidth
-        val animator = ValueAnimator.ofInt(fromWidth, toWidth)
-        animator.duration = duration
-        animator.interpolator = interpolator
-        animator.addUpdateListener { a ->
-            fabBarClipWidth = a.animatedValue as Int
-            expandBar.invalidateOutline()
-        }
-        animator.start()
+        // 注册悬浮胶囊功能集：路线模拟 = 开始绘制 / 撤回 / 完成 / 我的位置
+        // （胶囊为 Activity 级单实例，切换功能集自动重置收起态）
+        (activity as? MainActivity)?.fabBar?.setActions(
+            listOf(
+                FabBarView.Action(
+                    R.drawable.baseline_add_location_24,
+                    getString(R.string.fab_start_route)
+                ) {
+                    isDrawing = true
+                    mPoints = arrayListOf()
+                    lastPoint = null
+                },
+                FabBarView.Action(
+                    R.drawable.baseline_rollback_24,
+                    getString(R.string.rollback)
+                ) {
+                    if (mPoints.size > 0) {
+                        mPoints.removeAt(mPoints.size - 1)
+                        refresh()
+                    }
+                },
+                FabBarView.Action(
+                    R.drawable.baseline_complete_24,
+                    getString(R.string.fab_complete_route)
+                ) {
+                    isDrawing = false
+                    if (!showAddRouteDialog()) {
+                        Toast.makeText(requireContext(), "选择路线异常", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                FabBarView.Action(
+                    R.drawable.baseline_my_location_24,
+                    getString(R.string.follow_location)
+                ) {
+                    baiduMapViewModel.baiduMap.locateMe()
+                }
+            )
+        )
     }
 
     private fun refresh() {

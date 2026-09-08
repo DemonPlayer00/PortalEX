@@ -75,6 +75,7 @@ import com.tencent.bugly.crashreport.CrashReport
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portal.android.permission.RequestPermissions
 import moe.fuqiuluo.portal.android.root.ShellUtils
+import moe.fuqiuluo.portal.android.widget.FabBarView
 import moe.fuqiuluo.portal.android.window.OverlayUtils
 import moe.fuqiuluo.portal.bdmap.Poi
 import moe.fuqiuluo.portal.bdmap.toPoi
@@ -89,6 +90,9 @@ import moe.fuqiuluo.portal.ui.viewmodel.MockServiceViewModel
 class MainActivity : AppCompatActivity() {
     private lateinit var appBarConfiguration: AppBarConfiguration
     private lateinit var binding: ActivityMainBinding
+
+    /** 悬浮胶囊单实例（挂在 Activity 布局，跨界面统一切换功能集，见 FabBarView） */
+    val fabBar: FabBarView get() = binding.appBarMain.fabBar
 
     /* Permission */
     private val requestMultiplePermissions = RequestPermissions(this)
@@ -232,6 +236,12 @@ class MainActivity : AppCompatActivity() {
                             ids.forEach { id ->
                                 menu.findItem(id)?.isVisible = key == destination.id
                             }
+                        }
+
+                        // 悬浮胶囊单实例：仅主界面/路线模拟页注册功能集（各自
+                        // Fragment onResume 中 setActions），其余目的地统一隐藏
+                        if (destination.id != R.id.nav_home && destination.id != R.id.nav_route_edit) {
+                            fabBar.setActions(emptyList())
                         }
                     }
                 })
