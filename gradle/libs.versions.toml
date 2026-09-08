@@ -1,5 +1,5 @@
 [versions]
-agp = "9.4.0"
+agp = "9.3.0"
 circularProgressButtonVersion = "1.4"
 devicecompat = "2.6"
 firebaseBom = "33.9.0"
