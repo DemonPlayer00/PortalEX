@@ -11,11 +11,11 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <androidx.cardview.widget.CardView
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/mock_location_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="4dp"
+            app:cardCornerRadius="12dp"
             android:layout_margin="8dp"
             app:cardPreventCornerOverlap="false"
             app:contentPadding="8dp">
@@ -28,8 +28,8 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/portal_mini_title_color"
-                    android:textAppearance="@style/TextAppearance.AppCompat.Inverse"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
                     android:text="@string/target_location"/>
 
                 <LinearLayout
@@ -45,16 +45,16 @@
                         android:layout_height="wrap_content"
                         android:text="@string/none"
                         android:textStyle="bold"
-                        android:textAppearance="@style/TextAppearance.AppCompat.Title"
-                        android:textColor="@color/black"/>
+                        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                        android:textColor="?attr/colorOnSurface"/>
 
                     <TextView
                         android:id="@+id/mock_location_address"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/none_none"
-                        android:textAppearance="@style/TextAppearance.AppCompat.Body1"
-                        android:textColor="@color/black"/>
+                        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                        android:textColor="?attr/colorOnSurface"/>
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -66,16 +66,16 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/latlon_display"
-                            android:textAppearance="@style/TextAppearance.AppCompat.Body2"
-                            android:textColor="@color/black"/>
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="?attr/colorOnSurface"/>
 
                         <TextView
                             android:id="@+id/mock_location_latlon"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/default_latlon"
-                            android:textAppearance="@style/TextAppearance.AppCompat.Body2"
-                            android:textColor="@color/portal_appbar_color_center"/>
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="?attr/colorPrimary"/>
 
                     </LinearLayout>
 
@@ -96,9 +96,9 @@
                             android:id="@+id/switch_mock"
                             android:layout_width="wrap_content"
                             android:layout_height="28dp"
-                            android:textColor="@color/white"
+                            android:textColor="?attr/colorOnPrimary"
                             android:text="@string/start_mock"
-                            style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                            style="@style/Widget.Material3.Button"
                             android:insetRight="0dp"
                             android:insetLeft="0dp"
                             android:insetTop="0dp"
@@ -108,7 +108,7 @@
                             app:iconGravity="textStart"
                             app:iconPadding="0dp"
                             android:padding="6dp"
-                            app:iconTint="@color/white"
+                            app:iconTint="?attr/colorOnPrimary"
                             app:cornerRadius="12dp"/>
 
                     </LinearLayout>
@@ -124,17 +124,17 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:checkMark="?android:attr/listChoiceIndicatorMultiple"
-                            android:checkMarkTint="@color/portal_mock_off"
+                            android:checkMarkTint="?attr/colorOnSurfaceVariant"
                             android:checked="false"
                             android:gravity="center"
                             android:text="@string/rocker"
-                            android:textColor="@color/portal_mock_off"
+                            android:textColor="?attr/colorOnSurfaceVariant"
                             android:textSize="12sp" />
                     </LinearLayout>
                 </LinearLayout>
 
             </LinearLayout>
-        </androidx.cardview.widget.CardView>
+        </com.google.android.material.card.MaterialCardView>
 
         <TextView
             android:layout_width="match_parent"
@@ -143,15 +143,15 @@
             android:layout_marginLeft="20dp"
             android:layout_marginRight="20dp"
             android:layout_marginBottom="4dp"
-            android:textAppearance="@style/TextAppearance.AppCompat.Inverse"
-            android:textColor="@color/portal_mini_title_color"
+            android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+            android:textColor="?attr/colorOnSurfaceVariant"
             android:text="@string/history_location"/>
 
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:layout_margin="8dp"
-            app:cardCornerRadius="6dp"
+            app:cardCornerRadius="12dp"
             app:cardPreventCornerOverlap="false"
             app:contentPadding="8dp">
 
@@ -172,8 +172,8 @@
         android:layout_marginEnd="@dimen/fab_margin"
         android:contentDescription="@string/follow_location"
         app:srcCompat="@drawable/sharp_location_off_24"
-        android:backgroundTint="@color/portal_mock_off"
-        android:tint="@color/portal_appbar_color"
+        android:backgroundTint="?attr/colorPrimaryContainer"
+        android:tint="?attr/colorOnPrimaryContainer"
         app:fabSize="auto"
         android:visibility="gone"
         android:layout_gravity="bottom|end"/>

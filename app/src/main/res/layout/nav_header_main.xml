@@ -27,7 +27,7 @@
         android:text="@string/nav_header_title"
         android:textColor="@color/theme_side_nav_text_color"
         android:textStyle="bold"
-        android:textAppearance="@style/TextAppearance.AppCompat.Body1" />
+        android:textAppearance="@style/TextAppearance.Material3.BodyMedium" />
 
     <TextView
         android:id="@+id/textView"

@@ -17,11 +17,11 @@
             android:orientation="vertical">
 
             <!-- 原有的卫星信息卡片 -->
-            <androidx.cardview.widget.CardView
+            <com.google.android.material.card.MaterialCardView
                 android:id="@+id/mock_gnss_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="4dp"
+                app:cardCornerRadius="12dp"
                 android:layout_margin="8dp"
                 app:cardPreventCornerOverlap="false"
                 app:contentPadding="8dp">
@@ -34,8 +34,8 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textColor="@color/portal_mini_title_color"
-                        android:textAppearance="@style/TextAppearance.AppCompat.Inverse"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
                         android:text="@string/satellites_info"/>
 
                     <!-- 原有的卫星信息部分 -->
@@ -98,7 +98,7 @@
                                     android:layout_height="wrap_content"
                                     android:text="@string/zero"
                                     android:gravity="center"
-                                    android:textColor="@color/black"
+                                    android:textColor="?attr/colorOnSurface"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
                                     app:layout_constraintHorizontal_weight="1"
@@ -133,7 +133,7 @@
                                     android:layout_height="wrap_content"
                                     android:text="@string/zero"
                                     android:gravity="center"
-                                    android:textColor="@color/black"
+                                    android:textColor="?attr/colorOnSurface"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
                                     app:layout_constraintHorizontal_weight="1"
@@ -168,7 +168,7 @@
                                     android:layout_height="wrap_content"
                                     android:text="0 dB-Hz"
                                     android:gravity="center"
-                                    android:textColor="@color/black"
+                                    android:textColor="?attr/colorOnSurface"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
                                     app:layout_constraintHorizontal_weight="1"
@@ -177,12 +177,12 @@
                                     app:layout_constraintTop_toTopOf="parent" />
                             </androidx.constraintlayout.widget.ConstraintLayout>
 
-                            <androidx.cardview.widget.CardView
+                            <com.google.android.material.card.MaterialCardView
                                 android:visibility="gone"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:layout_margin="4dp"
-                                app:cardCornerRadius="4dp"
+                                app:cardCornerRadius="12dp"
                                 app:cardElevation="1dp">
 
                                 <LinearLayout
@@ -227,7 +227,7 @@
                                         android:text="方位角: -- 度"
                                         android:textSize="9sp"/>
                                 </LinearLayout>
-                            </androidx.cardview.widget.CardView>
+                            </com.google.android.material.card.MaterialCardView>
 
                         </LinearLayout>
 
@@ -318,7 +318,7 @@
                                     android:layout_height="wrap_content"
                                     android:text="未知"
                                     android:gravity="center"
-                                    android:textColor="@color/black"
+                                    android:textColor="?attr/colorOnSurface"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
                                     app:layout_constraintHorizontal_weight="1"
@@ -345,9 +345,9 @@
                                 android:id="@+id/switch_gnss_mock"
                                 android:layout_width="wrap_content"
                                 android:layout_height="28dp"
-                                android:textColor="@color/white"
+                                android:textColor="?attr/colorOnPrimary"
                                 android:text="@string/start_mock"
-                                style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                                style="@style/Widget.Material3.Button"
                                 android:insetRight="0dp"
                                 android:insetLeft="0dp"
                                 android:insetTop="0dp"
@@ -357,7 +357,7 @@
                                 app:iconGravity="textStart"
                                 app:iconPadding="0dp"
                                 android:padding="6dp"
-                                app:iconTint="@color/white"
+                                app:iconTint="?attr/colorOnPrimary"
                                 app:cornerRadius="12dp"/>
 
                         </LinearLayout>
@@ -373,23 +373,23 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:checkMark="?android:attr/listChoiceIndicatorMultiple"
-                                android:checkMarkTint="@color/portal_mock_off"
+                                android:checkMarkTint="?attr/colorOnSurfaceVariant"
                                 android:checked="true"
                                 android:gravity="center"
                                 android:text="随机化卫星信息"
-                                android:textColor="@color/portal_mock_off"
+                                android:textColor="?attr/colorOnSurfaceVariant"
                                 android:textSize="12sp" />
                         </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
-            </androidx.cardview.widget.CardView>
+            </com.google.android.material.card.MaterialCardView>
 
             <!-- 新增的设置选项卡片 - 只包含四个开关 -->
-            <androidx.cardview.widget.CardView
+            <com.google.android.material.card.MaterialCardView
                 android:id="@+id/settings_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="4dp"
+                app:cardCornerRadius="12dp"
                 android:layout_margin="8dp"
                 app:cardPreventCornerOverlap="false"
                 app:contentPadding="8dp">
@@ -402,8 +402,8 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:textColor="@color/portal_mini_title_color"
-                        android:textAppearance="@style/TextAppearance.AppCompat.Inverse"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
                         android:text="功能设置"/>
 
                     <LinearLayout
@@ -445,7 +445,7 @@
                             android:padding="8dp"/>
                     </LinearLayout>
                 </LinearLayout>
-            </androidx.cardview.widget.CardView>
+            </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

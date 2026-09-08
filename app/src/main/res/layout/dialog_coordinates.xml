@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:boxBackgroundMode="filled"
-        app:boxBackgroundColor="@color/white"
+        app:boxBackgroundColor="?attr/colorSurfaceVariant"
         android:hint="@string/input_lat">
 
         <com.google.android.material.textfield.TextInputEditText
@@ -20,8 +20,8 @@
             android:imeOptions="actionNext"
             android:inputType="text"
             android:singleLine="true"
-            android:textColor="@color/portal_text_color"
-            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2">
+            android:textColor="?attr/colorOnSurface"
+            android:textAppearance="@style/TextAppearance.Material3.BodyMedium">
 
         </com.google.android.material.textfield.TextInputEditText>
     </com.google.android.material.textfield.TextInputLayout>
@@ -31,7 +31,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
         app:boxBackgroundMode="filled"
-        app:boxBackgroundColor="@color/white"
+        app:boxBackgroundColor="?attr/colorSurfaceVariant"
         android:hint="@string/input_lon">
 
         <com.google.android.material.textfield.TextInputEditText
@@ -41,8 +41,8 @@
             android:imeOptions="actionNext"
             android:inputType="text"
             android:singleLine="true"
-            android:textColor="@color/portal_text_color"
-            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2">
+            android:textColor="?attr/colorOnSurface"
+            android:textAppearance="@style/TextAppearance.Material3.BodyMedium">
 
         </com.google.android.material.textfield.TextInputEditText>
     </com.google.android.material.textfield.TextInputLayout>

@@ -66,6 +66,7 @@ import com.baidu.mapapi.search.geocode.OnGetGeoCoderResultListener
 import com.baidu.mapapi.search.geocode.ReverseGeoCodeResult
 import com.baidu.mapapi.search.sug.SuggestionSearch
 import com.baidu.mapapi.search.sug.SuggestionSearchOption
+import com.google.android.material.color.MaterialColors
 import com.google.android.material.navigation.NavigationView
 import com.tencent.bugly.crashreport.CrashReport
 import kotlinx.coroutines.launch
@@ -161,11 +162,14 @@ class MainActivity : AppCompatActivity() {
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
-        controller.isAppearanceLightStatusBars = false // 状态栏字体颜色
+        // M3：状态栏透明，图标颜色随主题（浅色=深图标 / 深色=浅图标）
+        val nightMode = resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        controller.isAppearanceLightStatusBars =
+                nightMode == android.content.res.Configuration.UI_MODE_NIGHT_NO
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
             window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
-            window.statusBarColor = ContextCompat.getColor(this, R.color.theme_appbar_color)
         }
 
         CrashReport.setUserSceneTag(this, 261771)
@@ -193,10 +197,8 @@ class MainActivity : AppCompatActivity() {
 
                 setSupportActionBar(binding.appBarMain.toolbar)
 
-                binding.appBarMain.toolbar.setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.theme_appbar_color))
                 val drawerLayout: DrawerLayout = binding.drawerLayout
                 val navView: NavigationView = binding.navView
-                navView.itemIconTintList = ContextCompat.getColorStateList(this@MainActivity, R.color.theme_nav_icon_color)
                 val navController = findNavController(R.id.nav_host_fragment_content_main)
 
                 // Passing each menu ID as a set of Ids because each
@@ -209,10 +211,6 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
-
-                binding.appBarMain.toolbar.navigationIcon?.colorFilter = PorterDuffColorFilter(
-                    ContextCompat.getColor(this@MainActivity, R.color.theme_appbar_icon_color), PorterDuff.Mode.SRC_IN
-                )
 
                 navController.addOnDestinationChangedListener(object: OnDestinationChangedListener {
                     val menuIdMapping = mapOf(
@@ -347,7 +345,9 @@ class MainActivity : AppCompatActivity() {
         val searchClose = searchView.findViewById<ImageView>(androidx.appcompat.R.id.search_close_btn)
         val searchBack = searchView.findViewById<ImageView>(androidx.appcompat.R.id.search_go_btn)
         val voiceBack = searchView.findViewById<ImageView>(androidx.appcompat.R.id.search_voice_btn)
-        val color = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.white))
+        val color = ColorStateList.valueOf(
+            MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface, 0xFFFFFFFF.toInt())
+        )
         ImageViewCompat.setImageTintList(searchClose, color)
         ImageViewCompat.setImageTintList(searchBack, color)
         ImageViewCompat.setImageTintList(voiceBack, color)

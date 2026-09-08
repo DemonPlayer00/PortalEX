@@ -10,7 +10,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_margin="12dp"
-        app:cardBackgroundColor="@color/portal_appbar_color"
+        app:cardBackgroundColor="?attr/colorSurfaceVariant"
         app:cardCornerRadius="24dp"
         app:contentPadding="8dp">
 
@@ -19,7 +19,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:src="@drawable/baseline_route_24"
-            app:tint="#FFFFFF"
+            app:tint="?attr/colorOnSurfaceVariant"
             app:tintMode="src_in" />
 
     </com.google.android.material.card.MaterialCardView>
@@ -39,7 +39,7 @@
             android:gravity="center"
             android:text="name"
             android:textAppearance="@style/TextAppearance.AppCompat.Subhead"
-            android:textColor="@color/black"
+            android:textColor="?attr/colorOnSurface"
             android:textStyle="bold"
             app:emojiCompatEnabled="true" />
 
@@ -48,8 +48,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="description"
-            android:textAppearance="@style/TextAppearance.AppCompat.Body1"
-            android:textColor="@color/black"/>
+            android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+            android:textColor="?attr/colorOnSurface"/>
     </LinearLayout>
 
 </LinearLayout>
