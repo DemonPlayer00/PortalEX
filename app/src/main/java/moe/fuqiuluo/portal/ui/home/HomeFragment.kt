@@ -185,7 +185,9 @@ class HomeFragment : Fragment() {
             }
         })
         baiduMapViewModel.mLocationClient = mLocationClient
-        mLocationClient.enableLocInForeground(1, baiduMapViewModel.mNotification)
+        baiduMapViewModel.mNotification?.let {
+            mLocationClient.enableLocInForeground(1, it)
+        }
         mLocationClient.start()
 
 

@@ -105,7 +105,10 @@ class RouteMockFragment : Fragment() {
             }
             rocker.setRockerListener(object : RockerView.Companion.OnMoveListener {
                 override fun onAngle(angle: Double) {
-                    MockServiceHelper.setBearing(locationManager!!, angle)
+                    val lm = locationManager
+                    if (lm != null) {
+                        MockServiceHelper.setBearing(lm, angle)
+                    }
                     FakeLoc.bearing = angle
                     FakeLoc.hasBearings = true
                 }
@@ -243,11 +246,12 @@ class RouteMockFragment : Fragment() {
                 mockServiceViewModel.selectedRoute = route
                 requireContext().selectRoute = route
 
-                if (MockServiceHelper.isMockStart(mockServiceViewModel.locationManager!!)) {
+                val lm = mockServiceViewModel.locationManager
+                if (lm != null && MockServiceHelper.isMockStart(lm)) {
                     // 获取第一个点
                     val first = route.route[0]
                     if (MockServiceHelper.setLocation(
-                            mockServiceViewModel.locationManager!!,
+                            lm,
                             first.first,
                             first.second
                         )

@@ -231,12 +231,17 @@ class SettingsFragment : Fragment() {
         binding.disableWlanScanSwitch.setOnCheckedChangeListener { _, isChecked ->
             requireContext().disableWifiScan = isChecked
             with(mockServiceViewModel) {
+                val lm = locationManager
+                if (lm == null) {
+                    showToast("定位服务加载异常，无法切换WLAN扫描")
+                    return@setOnCheckedChangeListener
+                }
                 if (isChecked) {
-                    if(!MockServiceHelper.startWifiMock(locationManager!!)) {
+                    if(!MockServiceHelper.startWifiMock(lm)) {
                         showToast("禁用WLAN扫描失败: 无法连接到系统服务")
                     }
                 } else {
-                    if(!MockServiceHelper.stopWifiMock(locationManager!!)) {
+                    if(!MockServiceHelper.stopWifiMock(lm)) {
                         showToast("启用WLAN扫描失败: 无法连接到系统服务")
                     }
                 }
@@ -260,7 +265,12 @@ class SettingsFragment : Fragment() {
     private fun updateRemoteConfig() {
         val context = requireContext()
         with(mockServiceViewModel) {
-            if(!MockServiceHelper.putConfig(locationManager!!, context)) {
+            val lm = locationManager
+            if (lm == null) {
+                showToast("定位服务加载异常，配置未同步")
+                return
+            }
+            if(!MockServiceHelper.putConfig(lm, context)) {
                 showToast("更新远程配置失败")
             } else {
                 showToast("同步配置成功")

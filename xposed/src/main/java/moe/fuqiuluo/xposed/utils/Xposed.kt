@@ -6,6 +6,7 @@ import de.robv.android.xposed.XposedHelpers
 import java.lang.reflect.Method
 import java.util.Collections
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 private val hookedMethods = Collections.synchronizedSet(mutableSetOf<String>())
 private val hookOnceLock = ReentrantLock()
@@ -36,11 +37,20 @@ private fun <T> ifNotHook(
  */
 fun Method.onceHook(callback: XC_MethodHook): XC_MethodHook.Unhook? {
     return ifNotHook(declaringClass.name, name, parameterTypes) {
-        hookOnceLock.lock()
-        hookedMethods.add(it)
-        val unhook = XposedBridge.hookMethod(this, callback)
-        hookOnceLock.unlock()
-        return@ifNotHook unhook
+        hookOnceLock.withLock {
+            // 锁内二次检查：避免两个线程同时通过外层 contains 检查后重复 hook 同一方法
+            if (hookedMethods.contains(it)) {
+                return@ifNotHook null
+            }
+            hookedMethods.add(it)
+            try {
+                XposedBridge.hookMethod(this, callback)
+            } catch (t: Throwable) {
+                // hook 失败时回滚标记，避免后续无法重试
+                hookedMethods.remove(it)
+                throw t
+            }
+        }
     }
 }
 
@@ -86,16 +96,26 @@ fun Method.onceHookAfter(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC
  */
 fun <T> Class<T>.onceHookAllMethod(methodName: String, callback: XC_MethodHook): Set<XC_MethodHook.Unhook> {
     val unhooks = mutableSetOf<XC_MethodHook.Unhook>()
-    hookOnceLock.lock()
-    declaredMethods.forEach { method ->
-        if (method.name == methodName) {
-            ifNotHook(name, methodName, method.parameterTypes) { key ->
-                method.hook(callback)?.let { unhooks.add(it) }
-                hookedMethods.add(key)
+    hookOnceLock.withLock {
+        declaredMethods.forEach { method ->
+            if (method.name == methodName) {
+                ifNotHook(name, methodName, method.parameterTypes) { key ->
+                    // 锁内二次检查：避免并发重复 hook
+                    if (hookedMethods.contains(key)) {
+                        return@ifNotHook
+                    }
+                    val unhook = runCatching { method.hook(callback) }.getOrElse {
+                        XposedBridge.log(it)
+                        null
+                    }
+                    if (unhook != null) {
+                        unhooks.add(unhook)
+                        hookedMethods.add(key)
+                    }
+                }
             }
         }
     }
-    hookOnceLock.unlock()
     return unhooks
 }
 
@@ -399,10 +419,19 @@ fun Method.diyHook(
     }
     if (soleHook) {
         ifNotHook(declaringClass.name, name, parameterTypes) { key ->
-            hookOnceLock.lock()
-            baseHooker()
-            hookedMethods.add(key)
-            hookOnceLock.unlock()
+            hookOnceLock.withLock {
+                // 锁内二次检查：避免并发重复 hook
+                if (hookedMethods.contains(key)) {
+                    return@withLock
+                }
+                hookedMethods.add(key)
+                try {
+                    baseHooker()
+                } catch (t: Throwable) {
+                    hookedMethods.remove(key)
+                    throw t
+                }
+            }
         }
     } else baseHooker()
     return unhook

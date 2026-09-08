@@ -34,7 +34,10 @@ object BinderUtils {
         return null
     }
 
-    fun getUidPackageNames(context: Context = getSystemContext()!!, uid: Int = getCallerUid()): Array<String>? {
+    fun getUidPackageNames(context: Context? = getSystemContext(), uid: Int = getCallerUid()): Array<String>? {
+        if (context == null) {
+            return null
+        }
         val packageManager = context.packageManager
         return packageManager.getPackagesForUid(uid)
     }

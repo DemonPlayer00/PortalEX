@@ -114,7 +114,10 @@ class MockFragment : Fragment() {
 
             rocker.setRockerListener(object: RockerView.Companion.OnMoveListener {
                 override fun onAngle(angle: Double) {
-                    MockServiceHelper.setBearing(locationManager!!, angle)
+                    val lm = locationManager
+                    if (lm != null) {
+                        MockServiceHelper.setBearing(lm, angle)
+                    }
                     FakeLoc.bearing = angle
                     FakeLoc.hasBearings = true
                 }

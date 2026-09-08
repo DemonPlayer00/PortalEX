@@ -306,6 +306,10 @@ class RockerView(context: Context, attributeSet: AttributeSet): View(context, at
         val lenX = (touchPoint.x - centerPoint.x).toFloat()
         val lenY = (touchPoint.y - centerPoint.y).toFloat()
         val lenXY = sqrt((lenX * lenX + lenY * lenY).toDouble()).toFloat()
+        // 触摸点恰好在圆心时 lenXY == 0，acos(0/0)=NaN 会污染航向角，直接保持圆心位置且不触发 onAngle
+        if (lenXY == 0f) {
+            return centerPoint to (false to 0.0)
+        }
         val radian = acos((lenX / lenXY).toDouble()) * (if (touchPoint.y < centerPoint.y) -1 else 1)
         val tmp = Math.round(radian / Math.PI * 180).toDouble()
         val angle = ((if (tmp >= 0) tmp else 360 + tmp) + 90) % 360

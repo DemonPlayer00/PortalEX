@@ -65,9 +65,18 @@ object LocationManagerHook: BaseLocationHook() {
             }.map {
                 XposedBridge.hookMethod(it, object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
-                        if (param == null || param.args.size > 1 || param.args[1] == null) return
+                        // requestFlush 的重载：
+                        //  requestFlush(LocationListener)  —— 单参，listener 在 args[0]
+                        //  requestFlush(String, Executor, LocationListener)（API 31+）—— listener 在 args[2]
+                        // 统一取最后一个参数作为 listener，避免固定索引越界或取到 Executor。
+                        if (param == null || param.args.isEmpty()) return
 
-                        val listener = param.args[1]
+                        val listener = param.args[param.args.size - 1]
+                            ?: return
+                        if (listener !is android.location.LocationListener) {
+                            // 最后一个参数不是 listener（可能是版本差异），无法 hook
+                            return
+                        }
                         listener.javaClass.onceHookAllMethod("onLocationChanged", hookOnLocation)
                     }
                 })

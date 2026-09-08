@@ -125,6 +125,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Inflate the main content view synchronously in onCreate, so that
+     * [onCreateOptionsMenu] (which is invoked by the framework right after
+     * onCreate) can safely access [binding] even while the permission prompt
+     * is still pending in the lifecycle coroutine.
+     */
+    private fun initBinding() {
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+    }
+
     private fun showPermissionDeniedToast(permission: String) {
         val message = when (permission) {
             ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION -> "Portal需要完整位置权限"
@@ -166,6 +177,12 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "无Root可能导致传感器Hook失效", Toast.LENGTH_LONG).show()
         }
 
+        // Inflate the content view synchronously: onCreateOptionsMenu is invoked
+        // by the framework right after onCreate returns, and it reads `binding`,
+        // so the binding must exist before the lifecycle coroutine may suspend
+        // on the permission prompt.
+        initBinding()
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
                 if(checkPermission()) {
@@ -173,9 +190,6 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 initNotification()
-
-                binding = ActivityMainBinding.inflate(layoutInflater)
-                setContentView(binding.root)
 
                 setSupportActionBar(binding.appBarMain.toolbar)
 
