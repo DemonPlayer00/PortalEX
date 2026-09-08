@@ -10,6 +10,8 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:boxBackgroundMode="outline"
+            app:boxStrokeColor="@color/text_input_box_stroke"
+            app:boxStrokeWidth="1dp"
         app:boxBackgroundColor="@android:color/transparent"
         android:hint="@string/input_lat">
 
@@ -32,6 +34,8 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
         app:boxBackgroundMode="outline"
+            app:boxStrokeColor="@color/text_input_box_stroke"
+            app:boxStrokeWidth="1dp"
         app:boxBackgroundColor="@android:color/transparent"
         android:hint="@string/input_lon">
 
