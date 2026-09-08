@@ -1,11 +1,9 @@
 package moe.fuqiuluo.portal.ui.mock
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Point
 import android.os.Bundle
 import android.util.Log
@@ -13,7 +11,10 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
+import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.Interpolator
 import android.widget.Toast
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
@@ -67,6 +68,9 @@ class RouteEditFragment : Fragment() {
     private var mPoints: ArrayList<Pair<Double, Double>> = arrayListOf()
     private var isDrawing = false
     private var lastPoint: Pair<Double, Double>? = null
+
+    // 胶囊裁剪宽度（outline 圆角矩形右端，收起=圆/展开=胶囊）
+    private var fabBarClipWidth = 0
 
 
     override fun onCreateView(
@@ -149,78 +153,49 @@ class RouteEditFragment : Fragment() {
         }
 
         binding.fab.setOnClickListener { view ->
-            val subFabList = arrayOf(
+            val expandBar = binding.fabExpandBar
+            val subFabList = listOf(
                 binding.fabStart,
                 binding.fabRollback,
                 binding.fabComplete,
                 binding.fabMyLocation
             )
 
-            routeEditViewModel.mFabOpened = true
-
             if (!routeEditViewModel.mFabOpened) {
                 routeEditViewModel.mFabOpened = true
-
-                val rotateMainFab = ObjectAnimator.ofFloat(view, "rotation", 0f, 90f)
-                rotateMainFab.duration = 200
-
-                val animators = arrayListOf<ObjectAnimator>()
-                animators.add(rotateMainFab)
-                subFabList.forEachIndexed { index, fab ->
-                    fab.visibility = View.VISIBLE
-                    fab.alpha = 1f
-                    fab.scaleX = 1f
-                    fab.scaleY = 1f
-                    val translationX =
-                        ObjectAnimator.ofFloat(fab, "translationX", 0f, 20f + index * 8f)
-                    translationX.duration = 200
-                    animators.add(translationX)
-                }
-
-                val animatorSet = AnimatorSet()
-                animatorSet.playTogether(animators.toList())
-                animatorSet.interpolator = DecelerateInterpolator()
-                animatorSet.addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        view.isClickable = true
-                    }
-                })
                 view.isClickable = false
-                animatorSet.start()
+
+                view.animate()
+                    .rotation(90f)
+                    .setDuration(200)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+
+                // outline 裁剪窗口向右展开：圆形 → 胶囊（右端始终圆角）
+                subFabList.forEach {
+                    it.visibility = View.VISIBLE
+                    it.isEnabled = true
+                }
+                animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
+                expandBar.postDelayed({ view.isClickable = true }, 240)
             } else {
                 routeEditViewModel.mFabOpened = false
-
-                val rotateMainFab = ObjectAnimator.ofFloat(view, "rotation", 90f, 0f)
-                rotateMainFab.duration = 200
-
-                val animators = arrayListOf<ObjectAnimator>()
-                animators.add(rotateMainFab)
-                subFabList.forEachIndexed { index, fab ->
-                    val transX = ObjectAnimator.ofFloat(fab, "translationX", 0f, -20f - index * 8f)
-                    transX.duration = 150
-                    val scaleX = ObjectAnimator.ofFloat(fab, "scaleX", 1f, 0f)
-                    scaleX.duration = 200
-                    val scaleY = ObjectAnimator.ofFloat(fab, "scaleY", 1f, 0f)
-                    scaleY.duration = 200
-                    val alpha = ObjectAnimator.ofFloat(fab, "alpha", 1f, 0f)
-                    alpha.duration = 200
-                    animators.add(transX)
-                    animators.add(scaleX)
-                    animators.add(scaleY)
-                    animators.add(alpha)
-                }
-
-                val animatorSet = AnimatorSet()
-                animatorSet.playTogether(animators.toList())
-                animatorSet.interpolator = DecelerateInterpolator()
-                animatorSet.addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        subFabList.forEach { it.visibility = View.GONE }
-                        view.isClickable = true
-                    }
-                })
                 view.isClickable = false
-                animatorSet.start()
+
+                view.animate()
+                    .rotation(0f)
+                    .setDuration(200)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+
+                // outline 裁剪窗口向左收回：胶囊 → 圆形。功能按钮 INVISIBLE
+                // （占位不跳变、不接收触摸 → 点击透视到地图）
+                subFabList.forEach {
+                    it.visibility = View.INVISIBLE
+                    it.isEnabled = false
+                }
+                animateFabBarClip(collapsedFabBarWidth(), 200, AccelerateInterpolator())
+                expandBar.postDelayed({ view.isClickable = true }, 220)
             }
         }
 
@@ -334,6 +309,65 @@ class RouteEditFragment : Fragment() {
         }
 
         return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        // 胶囊默认收缩：outline 圆角矩形裁剪（右端始终圆角）
+        val expandBar = binding.fabExpandBar
+        expandBar.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(v: View, outline: Outline) {
+                outline.setRoundRect(
+                    0, 0,
+                    fabBarClipWidth.coerceIn(0, v.width),
+                    v.height,
+                    fabBarCornerRadius()
+                )
+            }
+        }
+        expandBar.clipToOutline = true
+        fabBarClipWidth = collapsedFabBarWidth()
+        expandBar.invalidateOutline()
+
+        // 功能按钮初始 INVISIBLE（占位不跳变、不拦截点击、不误触）
+        listOf(binding.fabStart, binding.fabRollback, binding.fabComplete, binding.fabMyLocation)
+            .forEach {
+                it.visibility = View.INVISIBLE
+                it.isEnabled = false
+            }
+
+        // 复位展开按钮姿态：旋转动画写入的 rotation 会被 View saved state
+        // 记录（有 id 的 View），Fragment 重建后恢复成 90°——与胶囊 clip
+        // 重新初始化为圆形矛盾，必须显式复位
+        binding.fab.rotation = 0f
+        binding.fab.isClickable = true
+    }
+
+    /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
+    private fun collapsedFabBarWidth(): Int =
+        (60 * resources.displayMetrics.density).toInt()
+
+    /** 胶囊背景半径：高度一半（60dp → 30dp），收起态即正圆 */
+    private fun fabBarCornerRadius(): Float =
+        30f * resources.displayMetrics.density
+
+    /** 驱动 outline 裁剪宽度动画（内容零拉伸，右端始终圆角） */
+    private fun animateFabBarClip(
+        toWidth: Int,
+        duration: Long,
+        interpolator: Interpolator
+    ) {
+        val expandBar = binding.fabExpandBar
+        val fromWidth = fabBarClipWidth
+        val animator = ValueAnimator.ofInt(fromWidth, toWidth)
+        animator.duration = duration
+        animator.interpolator = interpolator
+        animator.addUpdateListener { a ->
+            fabBarClipWidth = a.animatedValue as Int
+            expandBar.invalidateOutline()
+        }
+        animator.start()
     }
 
     private fun refresh() {
