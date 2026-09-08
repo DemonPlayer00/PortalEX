@@ -16,6 +16,7 @@
     <string name="menu_route_mock_edit">Route Mock Edit</string>
     <string name="menu_setting">Setting</string>
     <string name="request_permission">能否给我一个权限呢？</string>
+    <string name="fab_expand">展开操作</string>
     <string name="follow_location">镜头跟随</string>
     <string name="add_route">创建路线</string>
     <string name="normal_view">普通图</string>
