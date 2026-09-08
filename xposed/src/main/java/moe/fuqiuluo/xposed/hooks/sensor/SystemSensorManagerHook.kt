@@ -30,13 +30,16 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 传感器模拟 hook（客户端方案 v3，融合 UseVector 主动注入能力）。
+ * 传感器模拟 hook（客户端主动注入方案，融合 UseVector 主动注入能力）。
+ *
+ * 开关：FakeLoc.sensorMockEnabled（默认开）——关闭时本模块不安装任何 hook（禁用模拟）。
+ * 注：服务端（SensorService 源级改写）方案已弃用，只保留本客户端方案。
  *
  * 关键事实：`android.hardware.SystemSensorManager`/`SensorManager` 是 SDK 客户端类，
  * 运行在**每一个 app 进程**内，而不是 system_server。因此本模块必须在所有进程安装
  * （见 FakeLocation.handleLoadPackage）。
  *
- * 三种机制配合，覆盖有/无真实传感器的设备，注入对象 = 步数 + 朝向（同一 A/B 结构与开关）：
+ * 三种机制配合，覆盖有/无真实传感器的设备，注入对象 = 步数 + 朝向：
  * 1. **主动注入（主路径，参考 UseVector）**：拦截 registerListener（result=true 阻止
  *    真实注册），单线程调度器按需周期性构造 SensorEvent 直接回调 listener：
  *    步数按步频、朝向按固定 20Hz（旋转数据来自模拟 bearing）——没有步数传感器也能工作。
@@ -53,7 +56,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   cadence(步/min) = 60 + 30 * speed(m/s)，限幅 60..220 —— 走路/跑步速度对应：
  *   慢走 1.2m/s → 96，快走 1.5 → 105，慢跑 3.0 → 150，快跑 4.5+ → 195+（封顶 220）
  *
- * 速度来源：模拟速度权威值在 system_server（FakeLoc.speed）。本进程通过 hook 定位
+ * 速度/朝向来源：权威值在 system_server（FakeLoc.speed/FakeLoc.bearing）。本进程通过 hook 定位
  * 回调，从注入位置的 extras（portal_speed，见 BaseLocationHook）同步速度缓存。
  */
 object SystemSensorManagerHook {
@@ -165,26 +168,17 @@ object SystemSensorManagerHook {
     private val lastStepCount = AtomicLong(0)
     @Volatile private var lastEventTimeNanos = 0L
 
-    operator fun invoke(classLoader: ClassLoader, isSystemServerProcess: Boolean = false) {
-        when {
-            // B 方案：服务端源级改写（只在 system_server 进程装，其他进程不注入，避免双数据流）
-            FakeLoc.sensorMockMode == 1 && isSystemServerProcess -> {
-                hookServerMode(classLoader)
+    operator fun invoke(classLoader: ClassLoader) {
+        // 传感器模拟开关（默认开）：关闭则完全不安装传感器 hook（禁用模拟）
+        if (!FakeLoc.sensorMockEnabled) {
+            if (FakeLoc.enableDebugLog) {
+                Logger.debug("sensor mock disabled by switch")
             }
-            // B 方案：非系统进程 —— 数据由 system_server 改写后自然送达，客户端不再注入
-            FakeLoc.sensorMockMode == 1 -> {
-                if (FakeLoc.enableDebugLog) {
-                    Logger.debug("sensor mock mode B: skip client injection in app process")
-                }
-                return
-            }
-            // A 方案（默认）：客户端主动注入，兼容无传感器设备
-            else -> hookClientMode(classLoader)
+            return
         }
-    }
-
-    /** A 方案（默认）：客户端主动注入 */
-    private fun hookClientMode(classLoader: ClassLoader) {
+        // 客户端主动注入（A 方案）：SystemSensorManager 是 SDK 客户端类，
+        // 运行在每个 app 进程内，因此每个进程都要安装。
+        // 注：服务端（SensorService 源级改写）方案已弃用。
         unlockGeoSensor(classLoader)
 
         createFakeStepSensor()
@@ -193,105 +187,6 @@ object SystemSensorManagerHook {
         hookUnregisterListener(classLoader)
         hookSystemSensorManagerQueue(classLoader)
         hookSpeedSync(classLoader)
-    }
-
-    /** B 方案：服务端 SensorService 源级改写 */
-    private fun hookServerMode(classLoader: ClassLoader) {
-        val cSensorService = XposedHelpers.findClassIfExists("com.android.server.SensorService", classLoader)
-            ?: return
-
-        if (FakeLoc.enableDebugLog) {
-            Logger.debug("sensor mock mode B: SensorService found")
-        }
-
-        // 1. 记录 sensor handle -> type：注册时参数里带 Sensor 对象
-        cSensorService.declaredMethods
-            .filter { m -> m.name.contains("register") && m.parameterTypes.any { Sensor::class.java.isAssignableFrom(it) } }
-            .forEach { m ->
-                runCatching {
-                    m.onceHook(beforeHook {
-                        args.filterIsInstance<Sensor>().forEach { sensor ->
-                            val handle = runCatching {
-                                XposedHelpers.callMethod(sensor, "getHandle") as? Int
-                            }.getOrNull() ?: return@beforeHook
-                            sensorHandleTypeMap[handle] = sensor.type
-                            if (FakeLoc.enableDebugLog) {
-                                Logger.debug("mode B: sensor handle=$handle type=${sensor.type} registered")
-                            }
-                        }
-                    })
-                }.onFailure { /* 匿名内部类方法不在此处，忽略 */ }
-            }
-
-        // 2. 源级改写：SensorEventConnection.onSensorChanged
-        // Android 9+ 签名：onSensorChanged(int handle, float[] values, int inAccuracy, long timestamp, int flags)
-        // Android 7/8 签名：onSensorChanged(int handle, float[] values, int inAccuracy, long timestamp)
-        val connectionClass = XposedHelpers.findClassIfExists(
-            "com.android.server.SensorService\$SensorEventConnection",
-            classLoader
-        ) ?: run {
-            if (FakeLoc.enableDebugLog) Logger.debug("mode B: SensorEventConnection not found")
-            return
-        }
-
-        connectionClass.declaredMethods
-            .filter { it.name == "onSensorChanged" }
-            .forEach { m ->
-                runCatching {
-                    m.onceHook(beforeHook {
-                        injectServerStep(args)
-                    })
-                }.onFailure {
-                    if (FakeLoc.enableDebugLog) Logger.debug("mode B: hook onSensorChanged failed: ${it.message}")
-                }
-            }
-    }
-
-    /**
-     * B 方案源级改写：服务端事件到达时——
-     * 步数按 FakeLoc.speed 对应步频推进；朝向类直接覆盖为模拟 bearing 的旋转数据
-     * （FakeLoc.bearing 服务端即权威值，无需 extras 同步）。
-     */
-    private fun injectServerStep(args: Array<Any?>) {
-        if (args.size < 4) return
-        val handle = args[0] as? Int ?: return
-        val values = args[1] as? FloatArray ?: return
-        if (values.isEmpty()) return
-        val timestamp = args[3] as? Long ?: return
-
-        val type = sensorHandleTypeMap[handle] ?: return
-
-        // 朝向类：覆盖为模拟朝向（+步频同步摆动，不随真实设备转动）
-        if (type in ROTATION_SENSOR_TYPES) {
-            advanceSwing()
-            val mock = rotationValuesFor(type)
-            for (i in mock.indices) {
-                if (i < values.size) values[i] = mock[i]
-            }
-            return
-        }
-
-        if (type != TYPE_STEP_COUNTER) return
-
-        val now = timestamp
-        var wholeSteps = 0L
-        if (lastEventTimeNanos == 0L || now <= lastEventTimeNanos) {
-            // 首次事件：对齐真实累计值，避免跳变
-            lastStepCount.set(values[0].toLong())
-        } else {
-            val dtSec = (now - lastEventTimeNanos) / 1_000_000_000.0
-            if (dtSec in 0.0..10.0) {
-                val added = cadenceForSpeed(FakeLoc.speed) / 60.0 * dtSec
-                wholeSteps = added.toLong()
-                lastStepCount.addAndGet(wholeSteps)
-            }
-        }
-        lastEventTimeNanos = now
-        values[0] = lastStepCount.get().toFloat()
-        // 步频推进：存储步频间隔（供摆动半周期持续时长，蜜罐规避）
-        if (wholeSteps >= 1) {
-            onStepAdvance()
-        }
     }
 
     /** 步频-移动速度线性模型（步/min）：cadence = 60 + 30*speed，限幅 60..220 */

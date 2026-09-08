@@ -31,7 +31,7 @@ import moe.fuqiuluo.portal.ext.minSatelliteCount
 import moe.fuqiuluo.portal.ext.needDowngradeToCdma
 import moe.fuqiuluo.portal.ext.needOpenSELinux
 import moe.fuqiuluo.portal.ext.reportDuration
-import moe.fuqiuluo.portal.ext.sensorMockMode
+import moe.fuqiuluo.portal.ext.sensorMockEnabled
 import moe.fuqiuluo.portal.ext.speed
 import moe.fuqiuluo.portal.service.MockServiceHelper
 import moe.fuqiuluo.portal.ui.viewmodel.MockServiceViewModel
@@ -191,18 +191,10 @@ class SettingsFragment : Fragment() {
             }
         })
 
-        // 传感器模拟方案 A/B 滑块切换（0=A 客户端注入[默认]，1=B 服务端源级改写）
-        binding.sensorMockModeToggle.check(
-            if (context.sensorMockMode == 1) binding.sensorMockModeB.id else binding.sensorMockModeA.id
-        )
-        binding.sensorMockModeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (!isChecked) return@addOnButtonCheckedListener
-            val mode = when (checkedId) {
-                binding.sensorMockModeB.id -> 1
-                else -> 0
-            }
-            if (mode == context.sensorMockMode) return@addOnButtonCheckedListener
-            context.sensorMockMode = mode
+        // 传感器模拟开关（默认开=客户端注入；关闭=禁用传感器模拟）
+        binding.sensorMockEnabledSwitch.isChecked = context.sensorMockEnabled
+        binding.sensorMockEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
+            context.sensorMockEnabled = isChecked
         }
 
         binding.reportDurationLayout.setOnClickListener {

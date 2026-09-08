@@ -33,15 +33,14 @@ object FakeLoc {
     var enableMockGnss = false
 
     /**
-     * 传感器模拟方案（进程启动时生效，修改后需重启目标进程）：
-     * 0 = A 方案（默认）：客户端主动注入（伪造 Sensor + 调度器生成事件），
-     *     兼容无真实步计数传感器的设备，覆盖面广。
-     * 1 = B 方案：服务端源级改写（hook SensorService 的 SensorEventConnection.onSensorChanged），
-     *     数据从系统服务源头就是假的，检测难度更高；但需要设备存在真实步计数传感器
-     *     （事件流由 HAL 驱动），且只有 system_server 进程生效。
+     * 传感器模拟开关（默认开启；进程启动时生效，修改后需重启目标进程）：
+     * 开启 = 客户端主动注入（A 方案）：每个 app 进程内注入步数/朝向传感器数据
+     * （伪造 Sensor + 调度器生成事件），兼容无步计数传感器的设备。
+     * 关闭 = 禁用传感器模拟（不安装任何传感器 hook）。
+     * 注：服务端（SensorService 源级改写）方案已弃用，只保留客户端注入。
      */
     @Volatile
-    var sensorMockMode = 0
+    var sensorMockEnabled = true
 
     /**
      * 模拟WLAN数据
