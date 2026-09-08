@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicLong
  *   缓存真实事件，调度器转发给被拦截的 App 监听（方向跟随真实设备转动、步数为真实累计）
  * - 移动（摇杆/自动播放）：模拟值接管——按模拟 bearing（+步频同步摆动）注入朝向、
  *   按速度步频推进步数
+ * - 无法获取真实传感器（设备缺失/注册失败）：保持模拟状态——静止也按模拟注入
+ *   （朝向=模拟 bearing+摆动、步数按 cadence 推进），保证无传感器设备始终有数据
  *
  * 三种机制配合，覆盖有/无真实传感器的设备，注入对象 = 步数 + 朝向：
  * 1. **主动注入（主路径，参考 UseVector）**：拦截 registerListener（result=true 阻止
@@ -159,8 +161,9 @@ object SystemSensorManagerHook {
      * 半周期重新计时。曲线：offset = side * amp * cos(π * phase)，phase∈[0,1]（峰→谷）。
      */
     private fun advanceSwing() {
-        // 静止（未操作摇杆/未自动播放）：摆动指数衰减归零——朝向稳定，指针不乱转
-        if (!movingCache) {
+        // 静止且有真实朝向传感器：摆动指数衰减归零（真实值透传，模拟不参与）
+        // 无真实朝向传感器时保持模拟状态——摆动继续与步频同步
+        if (!movingCache && ROTATION_SENSOR_TYPES.any { realSensorCache.containsKey(it) }) {
             swingOffset *= 0.5
             if (kotlin.math.abs(swingOffset) < 0.05) {
                 swingOffset = 0.0
@@ -324,9 +327,22 @@ object SystemSensorManagerHook {
                     }
                 }
             } else if (hasStepListener()) {
-                // 静止：透传真实步数（旁路监听缓存的真实累计值；设备无真实步数传感器时不发射）
-                realSensorCache[TYPE_STEP_COUNTER]?.let {
-                    emitEvent(TYPE_STEP_COUNTER, it.values)
+                // 静止：有真实步数传感器 → 透传真实累计值；
+                // 没有（无法获取真实值）→ 保持模拟状态（按步频推进，与移动一致）
+                val real = realSensorCache[TYPE_STEP_COUNTER]
+                if (real != null) {
+                    emitEvent(TYPE_STEP_COUNTER, real.values)
+                } else {
+                    stepFraction += cadenceForSpeed(speedCache) / 60.0 * dtSec
+                    val wholeSteps = stepFraction.toInt()
+                    if (wholeSteps >= 1) {
+                        stepFraction -= wholeSteps
+                        globalSteps.addAndGet(wholeSteps)
+                        emitEvent(TYPE_STEP_COUNTER, FloatArray(1) { globalSteps.get().toFloat() })
+                        if (hasRotationListener()) {
+                            onStepAdvance()
+                        }
+                    }
                 }
             }
 
@@ -363,11 +379,11 @@ object SystemSensorManagerHook {
     private fun emitRotationEvents() {
         for (reg in registeredListeners) {
             if (reg.sensorType !in ROTATION_SENSOR_TYPES) continue
-            val values = if (movingCache) {
-                rotationValuesFor(reg.sensorType) // 移动：模拟 bearing(+摆动)
-            } else {
-                realSensorCache[reg.sensorType]?.values // 静止：真实值透传（无缓存跳过）
-            } ?: continue
+            val real = realSensorCache[reg.sensorType]
+            val values = when {
+                movingCache || real == null -> rotationValuesFor(reg.sensorType) // 移动或无真实传感器：模拟
+                else -> real.values // 静止且有真实值：透传
+            }
             val event = createSensorEvent(values, reg.sensor) ?: continue
             deliverEvent(reg, event)
         }
