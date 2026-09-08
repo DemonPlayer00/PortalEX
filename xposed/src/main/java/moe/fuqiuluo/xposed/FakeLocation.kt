@@ -49,9 +49,21 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam?) {
         if (lpparam == null) return
 
+        // 读取模块自身 prefs 中的传感器模拟方案（LSPosed 的 XSharedPreferences，
+        // 需要 manifest 声明 xposedsharedprefs）。读取失败时保持默认 0（A 方案）。
+        kotlin.runCatching {
+            val prefs = de.robv.android.xposed.XSharedPreferences("moe.fuqiuluo.portal", "portal")
+            prefs.reload()
+            FakeLoc.sensorMockMode = prefs.getInt("sensorMockMode", 0)
+        }.onFailure {
+            // 非 LSPosed 或 prefs 不可读：保持默认 A 方案
+        }
+
         // SystemSensorManager 是 SDK 客户端类，运行在**每一个 app 进程**内（而非 system_server）。
-        // 传感器模拟（步频注入）必须在所有进程安装 hook 才能生效。
-        SystemSensorManagerHook(lpparam.classLoader)
+        // A 方案（客户端主动注入）需要在所有进程安装 hook；
+        // B 方案（服务端源级改写）只在 system_server 安装，其他进程跳过注入避免双数据流。
+        val isSystemServerProcess = lpparam.packageName == "android" || lpparam.packageName == "com.android.phone"
+        SystemSensorManagerHook(lpparam.classLoader, isSystemServerProcess)
 
         if (lpparam.packageName != "android" && lpparam.packageName != "com.android.phone") {
             return

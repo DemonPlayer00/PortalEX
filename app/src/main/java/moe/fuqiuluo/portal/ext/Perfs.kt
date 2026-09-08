@@ -235,4 +235,13 @@ var Context.loopBroadcastlocation: Boolean
         FakeLoc.loopBroadcastLocation = value
     }
 
+/**
+ * 传感器模拟方案：0 = A（客户端主动注入，默认），1 = B（服务端源级改写）
+ */
+var Context.sensorMockMode: Int
+    get() = sharedPrefs.getInt("sensorMockMode", 0)
+    set(value) = sharedPrefs.edit {
+        putInt("sensorMockMode", value)
+    }
+
 

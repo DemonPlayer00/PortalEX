@@ -85,11 +85,20 @@ object SystemSensorManagerHook {
     private val lastStepCount = AtomicLong(0)
     @Volatile private var lastEventTimeNanos = 0L
 
-    operator fun invoke(classLoader: ClassLoader) {
-        when (FakeLoc.sensorMockMode) {
-            // B 方案：服务端源级改写（仅 system_server 进程存在 SensorService 时才生效）
-            1 -> hookServerMode(classLoader)
-            // A 方案（默认）：客户端主动注入，兼容无真实传感器设备
+    operator fun invoke(classLoader: ClassLoader, isSystemServerProcess: Boolean = false) {
+        when {
+            // B 方案：服务端源级改写（只在 system_server 进程装，其他进程不注入，避免双数据流）
+            FakeLoc.sensorMockMode == 1 && isSystemServerProcess -> {
+                hookServerMode(classLoader)
+            }
+            // B 方案：非系统进程 —— 数据由 system_server 改写后自然送达，客户端不再注入
+            FakeLoc.sensorMockMode == 1 -> {
+                if (FakeLoc.enableDebugLog) {
+                    Logger.debug("sensor mock mode B: skip client injection in app process")
+                }
+                return
+            }
+            // A 方案（默认）：客户端主动注入，兼容无传感器设备
             else -> hookClientMode(classLoader)
         }
     }
