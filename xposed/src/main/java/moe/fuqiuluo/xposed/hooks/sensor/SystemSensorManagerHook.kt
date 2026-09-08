@@ -114,7 +114,9 @@ object SystemSensorManagerHook {
     // 朝向摆动（蜜罐规避）：平滑曲线（余弦波）往复。
     // - 中轴恒定 = 模拟朝向（bearingCache），注入值 = 中轴 + swingOffset
     // - 波峰→波谷（或反过来）为一个更新点：半周期完成时峰谷交替，
-    //   目标幅度随机抽取 5~6°（朝中间值的另一边）
+    //   朝中间值的另一边随机抽取目标幅度——
+    //   幅度与速度联动：中心 = 5.0 + 0.35*speed（慢走~5.4°，快跑~6.6°），
+    //   范围 = 中心 ± 0.5°（真实跑步躯干晃动随速度增大）
     // - 半周期持续时间 = 最新的两次步频之间的时间间隔（每步频+1 时存储）
     // - 曲线平滑：swingOffset = side * amp * cos(π * phase)，半周期内从峰到谷
     @Volatile private var swingOffset = 0.0
@@ -127,16 +129,18 @@ object SystemSensorManagerHook {
     @Volatile private var lastStepTimestampNanos = 0L
 
     /**
-     * 平滑曲线推进：半周期完成 = 更新点 → 峰谷交替、随机 5~6° 新幅度、半周期重新计时。
-     * 曲线：offset = side * amp * cos(π * phase)，phase∈[0,1]（峰→谷）。
+     * 平滑曲线推进：半周期完成 = 更新点 → 峰谷交替、与速度联动的随机目标幅度、
+     * 半周期重新计时。曲线：offset = side * amp * cos(π * phase)，phase∈[0,1]（峰→谷）。
      */
     private fun advanceSwing() {
         val now = System.nanoTime()
         var elapsed = now - swingPhaseStartNanos
         if (elapsed >= swingHalfPeriodNanos) {
-            // 更新点：朝中间值的另一边随机抽取 5~6° 作为新目标峰值
+            // 更新点：峰谷交替，朝中间值的另一边随机抽取目标幅度
+            // 幅度与速度联动（越快摆动越大）：中心 = 5.0 + 0.35*speed，范围 = 中心 ± 0.5°
             swingSide = -swingSide
-            swingAmp = kotlin.random.Random.nextDouble(5.0, 6.0)
+            val swingCenter = 5.0 + 0.35 * speedCache
+            swingAmp = kotlin.random.Random.nextDouble(swingCenter - 0.5, swingCenter + 0.5)
             swingPhaseStartNanos = now
             elapsed = 0
         }
