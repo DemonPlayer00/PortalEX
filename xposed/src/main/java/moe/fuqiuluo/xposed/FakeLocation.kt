@@ -47,7 +47,13 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
      * @throws Throwable Everything the callback throws is caught and logged.
      */
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam?) {
-        if (lpparam?.packageName != "android" && lpparam?.packageName != "com.android.phone") {
+        if (lpparam == null) return
+
+        // SystemSensorManager 是 SDK 客户端类，运行在**每一个 app 进程**内（而非 system_server）。
+        // 传感器模拟（步频注入）必须在所有进程安装 hook 才能生效。
+        SystemSensorManagerHook(lpparam.classLoader)
+
+        if (lpparam.packageName != "android" && lpparam.packageName != "com.android.phone") {
             return
         }
 
@@ -86,7 +92,6 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 TelephonyHook.hookSubOnTransact(lpparam.classLoader)
                 WlanHook(systemClassLoader)
                 AndroidFusedLocationProviderHook(lpparam.classLoader)
-                SystemSensorManagerHook(lpparam.classLoader)
 
                 ThirdPartyLocationHook(lpparam.classLoader)
             }
