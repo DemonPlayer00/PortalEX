@@ -8,14 +8,17 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.graphics.Point
+import android.graphics.Outline
 import android.graphics.Rect
 import android.os.Bundle
+import android.view.ViewOutlineProvider
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.Interpolator
 import android.widget.Toast
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
@@ -62,6 +65,9 @@ class HomeFragment : Fragment() {
     // This property is only valid between onCreateView and
     // onDestroyView.
     private val binding get() = _binding!!
+
+    // 胶囊裁剪宽度（outline 圆角矩形右端，收起=圆/展开=胶囊）
+    private var fabBarClipWidth = 0
 
     private val homeViewModel by viewModels<HomeViewModel>()
     private lateinit var mLocationClient: LocationClient
@@ -213,22 +219,7 @@ class HomeFragment : Fragment() {
 
         binding.fab.setOnClickListener { view ->
             val expandBar = binding.fabExpandBar
-            val density = resources.displayMetrics.density
-            // 收起=圆形：仅展开按钮（48dp + 容器 padding 12dp）；展开=胶囊全宽
-            val collapsedWidth = (60 * density).toInt()
-            val expandedWidth = expandBar.width.coerceAtLeast(collapsedWidth)
-            val barHeight = expandBar.height.coerceAtLeast((60 * density).toInt())
-
-            fun animateClip(fromW: Int, toW: Int, duration: Long, interpolator: android.view.animation.Interpolator) {
-                expandBar.clipBounds = Rect(0, 0, fromW, barHeight)
-                val animator = ValueAnimator.ofInt(fromW, toW)
-                animator.duration = duration
-                animator.interpolator = interpolator
-                animator.addUpdateListener { a ->
-                    expandBar.clipBounds = Rect(0, 0, a.animatedValue as Int, barHeight)
-                }
-                animator.start()
-            }
+            val subFabList = listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd)
 
             if (!homeViewModel.mFabOpened) {
                 homeViewModel.mFabOpened = true
@@ -240,8 +231,9 @@ class HomeFragment : Fragment() {
                     .setInterpolator(DecelerateInterpolator())
                     .start()
 
-                // 裁剪窗口向右展开：圆形 → 胶囊（内容零拉伸，按钮原位）
-                animateClip(collapsedWidth, expandedWidth, 220, DecelerateInterpolator())
+                // outline 裁剪窗口向右展开：圆形 → 胶囊（右端始终圆角）
+                subFabList.forEach { it.isEnabled = true }
+                animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
                 expandBar.postDelayed({ view.isClickable = true }, 240)
             } else {
                 homeViewModel.mFabOpened = false
@@ -253,8 +245,9 @@ class HomeFragment : Fragment() {
                     .setInterpolator(DecelerateInterpolator())
                     .start()
 
-                // 裁剪窗口向左收回：胶囊 → 圆形
-                animateClip(expandedWidth, collapsedWidth, 200, AccelerateInterpolator())
+                // outline 裁剪窗口向左收回：胶囊 → 圆形（功能按钮禁用防误触）
+                subFabList.forEach { it.isEnabled = false }
+                animateFabBarClip(collapsedFabBarWidth(), 200, AccelerateInterpolator())
                 expandBar.postDelayed({ view.isClickable = true }, 220)
             }
         }
@@ -324,6 +317,48 @@ class HomeFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.bmapView.onCreate(requireContext(), savedInstanceState)
+
+        // 胶囊默认收缩：outline 圆角矩形裁剪（右端始终圆角）
+        val expandBar = binding.fabExpandBar
+        expandBar.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(v: View, outline: Outline) {
+                outline.setRoundRect(
+                    0, 0,
+                    fabBarClipWidth.coerceIn(0, v.width),
+                    v.height,
+                    fabBarCornerRadius()
+                )
+            }
+        }
+        expandBar.clipToOutline = true
+        fabBarClipWidth = collapsedFabBarWidth()
+        expandBar.invalidateOutline()
+    }
+
+    /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
+    private fun collapsedFabBarWidth(): Int =
+        (60 * resources.displayMetrics.density).toInt()
+
+    /** 胶囊背景半径：高度一半（60dp → 30dp），收起态即正圆 */
+    private fun fabBarCornerRadius(): Float =
+        30f * resources.displayMetrics.density
+
+    /** 驱动 outline 裁剪宽度动画（内容零拉伸，右端始终圆角） */
+    private fun animateFabBarClip(
+        toWidth: Int,
+        duration: Long,
+        interpolator: Interpolator
+    ) {
+        val expandBar = binding.fabExpandBar
+        val fromWidth = fabBarClipWidth
+        val animator = ValueAnimator.ofInt(fromWidth, toWidth)
+        animator.duration = duration
+        animator.interpolator = interpolator
+        animator.addUpdateListener { a ->
+            fabBarClipWidth = a.animatedValue as Int
+            expandBar.invalidateOutline()
+        }
+        animator.start()
     }
 
     @SuppressLint("SetTextI18n", "MissingInflatedId", "MutatingSharedPrefs")
