@@ -20,8 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            app:boxBackgroundMode="filled"
-            app:boxBackgroundColor="@android:color/transparent"
+            app:boxBackgroundMode="outline"
             android:hint="输入值">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -32,7 +31,8 @@
                 android:inputType="text"
                 android:singleLine="true"
                 android:textColor="?attr/colorOnSurface"
-                android:textAppearance="@style/TextAppearance.Material3.BodyMedium">
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:background="@android:color/transparent">
 
             </com.google.android.material.textfield.TextInputEditText>
         </com.google.android.material.textfield.TextInputLayout>
