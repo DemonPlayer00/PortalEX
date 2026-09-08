@@ -4,9 +4,11 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.graphics.Point
+import android.graphics.Rect
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -210,12 +212,23 @@ class HomeFragment : Fragment() {
         }
 
         binding.fab.setOnClickListener { view ->
-            val subFabList = listOf(
-                binding.fabMyLocation,
-                binding.fabGoto,
-                binding.fabAdd
-            )
             val expandBar = binding.fabExpandBar
+            val density = resources.displayMetrics.density
+            // 收起=圆形：仅展开按钮（48dp + 容器 padding 12dp）；展开=胶囊全宽
+            val collapsedWidth = (60 * density).toInt()
+            val expandedWidth = expandBar.width.coerceAtLeast(collapsedWidth)
+            val barHeight = expandBar.height.coerceAtLeast((60 * density).toInt())
+
+            fun animateClip(fromW: Int, toW: Int, duration: Long, interpolator: android.view.animation.Interpolator) {
+                expandBar.clipBounds = Rect(0, 0, fromW, barHeight)
+                val animator = ValueAnimator.ofInt(fromW, toW)
+                animator.duration = duration
+                animator.interpolator = interpolator
+                animator.addUpdateListener { a ->
+                    expandBar.clipBounds = Rect(0, 0, a.animatedValue as Int, barHeight)
+                }
+                animator.start()
+            }
 
             if (!homeViewModel.mFabOpened) {
                 homeViewModel.mFabOpened = true
@@ -227,23 +240,9 @@ class HomeFragment : Fragment() {
                     .setInterpolator(DecelerateInterpolator())
                     .start()
 
-                // 展开条从主按钮处横向展开（pivotX=0，向右生长）
-                subFabList.forEach {
-                    it.visibility = View.VISIBLE
-                    it.alpha = 1f
-                    it.scaleX = 1f
-                    it.scaleY = 1f
-                }
-                expandBar.alpha = 0f
-                expandBar.scaleX = 0.3f
-                expandBar.visibility = View.VISIBLE
-                expandBar.animate()
-                    .alpha(1f)
-                    .scaleX(1f)
-                    .setDuration(220)
-                    .setInterpolator(DecelerateInterpolator())
-                    .withEndAction { view.isClickable = true }
-                    .start()
+                // 裁剪窗口向右展开：圆形 → 胶囊（内容零拉伸，按钮原位）
+                animateClip(collapsedWidth, expandedWidth, 220, DecelerateInterpolator())
+                expandBar.postDelayed({ view.isClickable = true }, 240)
             } else {
                 homeViewModel.mFabOpened = false
                 view.isClickable = false
@@ -254,20 +253,9 @@ class HomeFragment : Fragment() {
                     .setInterpolator(DecelerateInterpolator())
                     .start()
 
-                expandBar.animate()
-                    .alpha(0f)
-                    .scaleX(0.3f)
-                    .setDuration(200)
-                    .setInterpolator(AccelerateInterpolator())
-                    .withEndAction {
-                        // 胶囊常驻（含展开按钮），只隐藏功能按钮并复位形态
-                        expandBar.visibility = View.VISIBLE
-                        expandBar.alpha = 1f
-                        expandBar.scaleX = 1f
-                        subFabList.forEach { it.visibility = View.GONE }
-                        view.isClickable = true
-                    }
-                    .start()
+                // 裁剪窗口向左收回：胶囊 → 圆形
+                animateClip(expandedWidth, collapsedWidth, 200, AccelerateInterpolator())
+                expandBar.postDelayed({ view.isClickable = true }, 220)
             }
         }
 
