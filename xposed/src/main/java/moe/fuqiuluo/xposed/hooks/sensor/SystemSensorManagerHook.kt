@@ -36,8 +36,10 @@ import java.util.concurrent.atomic.AtomicLong
  * 注：服务端（SensorService 源级改写）方案已弃用，只保留本客户端方案。
  *
  * 关键事实：`android.hardware.SystemSensorManager`/`SensorManager` 是 SDK 客户端类，
- * 运行在**每一个 app 进程**内，而不是 system_server。因此本模块必须在所有进程安装
- * （见 FakeLocation.handleLoadPackage）。
+ * 运行在**每一个 app 进程**内，而不是 system_server。
+ * 安装范围（见 FakeLocation.handleLoadPackage）：仅对被选中的用户应用（LSPosed 作用域内）
+ * 进程安装；system_server/phone 等系统框架进程不装——避免拦截系统服务自身的传感器注册
+ * （自动旋转、计步统计等）导致系统行为被污染。
  *
  * 注入对象 = 步数 + 朝向，被选中的用户应用**永远**收到虚拟传感器数据：
  * - 朝向：模拟 bearing（应用启动时随机分配中心角度；移动时摇杆/自动播放更新为
