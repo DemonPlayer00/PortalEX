@@ -218,7 +218,7 @@ class MainActivity : AppCompatActivity() {
 
                 navController.addOnDestinationChangedListener(object: OnDestinationChangedListener {
                     val menuIdMapping = mapOf(
-                        R.id.nav_home to R.id.action_search,
+                        R.id.nav_home to listOf(R.id.action_search, R.id.action_map_controls),
                         //R.id.nav_settings to R.id.action_info
                     )
 
@@ -227,9 +227,11 @@ class MainActivity : AppCompatActivity() {
                         destination: NavDestination,
                         arguments: Bundle?
                     ) {
-                        menuIdMapping.forEach { (key, value) ->
+                        menuIdMapping.forEach { (key, ids) ->
                             val menu = binding.appBarMain.toolbar.menu
-                            menu.findItem(value)?.isVisible = key == destination.id
+                            ids.forEach { id ->
+                                menu.findItem(id)?.isVisible = key == destination.id
+                            }
                         }
                     }
                 })
