@@ -53,6 +53,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="map_control_bg_color">#80FFFFFF</color>
     <color name="colorPrimary">#F44336</color>
     <color name="colorPrimaryDark">#8E24AA</color>
 </resources>

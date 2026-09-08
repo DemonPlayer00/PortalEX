@@ -1,0 +1,4 @@
+<resources>
+    <!-- 覆盖：深色模式下地图控件背景 = 50% 黑 -->
+    <color name="map_control_bg_color">#80000000</color>
+</resources>
