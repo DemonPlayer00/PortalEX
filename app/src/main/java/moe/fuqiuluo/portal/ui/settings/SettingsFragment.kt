@@ -203,13 +203,6 @@ class SettingsFragment : Fragment() {
             }
             if (mode == context.sensorMockMode) return@addOnButtonCheckedListener
             context.sensorMockMode = mode
-            if (mode == 1) {
-                showToast("B 方案：服务端源级改写，数据从源头就是假的，更隐蔽；" +
-                        "缺点：需要设备有真实步数传感器，仅系统服务进程生效。重启目标应用生效")
-            } else {
-                showToast("A 方案：客户端主动注入，兼容无传感器设备，覆盖面广；" +
-                        "缺点：数据在 App 进程内生成，检测面较大。重启目标应用生效")
-            }
         }
 
         binding.reportDurationLayout.setOnClickListener {
