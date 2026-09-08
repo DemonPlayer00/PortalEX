@@ -11,8 +11,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/add_location"
-            android:textSize="18sp"
-            android:textStyle="bold"/>
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="?attr/colorOnSurface"/>
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
