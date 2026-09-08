@@ -1,29 +1,17 @@
 package moe.fuqiuluo.portal.ui.home
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.graphics.Point
-import android.graphics.Outline
-import android.graphics.Rect
 import android.os.Bundle
-import android.view.ViewOutlineProvider
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.AccelerateInterpolator
-import android.view.animation.DecelerateInterpolator
-import android.view.animation.Interpolator
 import android.widget.Toast
 import androidx.core.widget.addTextChangedListener
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.baidu.location.BDAbstractLocationListener
 import com.baidu.location.BDLocation
@@ -44,6 +32,7 @@ import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portal.MainActivity
 import moe.fuqiuluo.portal.Portal
+import moe.fuqiuluo.portal.android.widget.FabBarView
 import moe.fuqiuluo.portal.R
 import moe.fuqiuluo.portal.bdmap.locateMe
 import moe.fuqiuluo.portal.bdmap.setMapConfig
@@ -54,7 +43,6 @@ import moe.fuqiuluo.portal.ext.rawHistoricalLocations
 import moe.fuqiuluo.portal.ext.selectRoute
 import moe.fuqiuluo.portal.ext.wgs84
 import moe.fuqiuluo.portal.ui.viewmodel.BaiduMapViewModel
-import moe.fuqiuluo.portal.ui.viewmodel.HomeViewModel
 import java.math.BigDecimal
 import java.util.List
 import kotlin.random.Random
@@ -66,10 +54,6 @@ class HomeFragment : Fragment() {
     // onDestroyView.
     private val binding get() = _binding!!
 
-    // 胶囊裁剪宽度（outline 圆角矩形右端，收起=圆/展开=胶囊）
-    private var fabBarClipWidth = 0
-
-    private val homeViewModel by viewModels<HomeViewModel>()
     private lateinit var mLocationClient: LocationClient
     private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
 
@@ -81,10 +65,6 @@ class HomeFragment : Fragment() {
     ): View {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         val root: View = binding.root
-
-        // 注意：这里不再强制复位 mFabOpened——离开主页时的展开状态应保留，
-        // 返回时由 onResume 按逻辑状态「执行打开」呈现（视觉统一见
-        // onViewStateRestored/applyFabBarState）
 
         with(baiduMapViewModel) {
             isExists = true
@@ -218,62 +198,6 @@ class HomeFragment : Fragment() {
             context?.mapType = binding.bmapView.map.mapType
         }
 
-        binding.fab.setOnClickListener { view ->
-            val expandBar = binding.fabExpandBar
-            val subFabList = listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd)
-
-            if (!homeViewModel.mFabOpened) {
-                homeViewModel.mFabOpened = true
-                view.isClickable = false
-
-                view.animate()
-                    .rotation(90f)
-                    .setDuration(200)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
-
-                // outline 裁剪窗口向右展开：圆形 → 胶囊（右端始终圆角）
-                subFabList.forEach {
-                    it.visibility = View.VISIBLE
-                    it.isEnabled = true
-                }
-                animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
-                expandBar.postDelayed({ view.isClickable = true }, 240)
-            } else {
-                homeViewModel.mFabOpened = false
-                view.isClickable = false
-
-                view.animate()
-                    .rotation(0f)
-                    .setDuration(200)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
-
-                // outline 裁剪窗口向左收回：胶囊 → 圆形。功能按钮 INVISIBLE
-                // （占位保持布局宽度不跳变；不接收触摸 → 点击透视到地图）
-                subFabList.forEach {
-                    it.visibility = View.INVISIBLE
-                    it.isEnabled = false
-                }
-                animateFabBarClip(collapsedFabBarWidth(), 200, AccelerateInterpolator())
-                expandBar.postDelayed({ view.isClickable = true }, 220)
-            }
-        }
-
-        binding.fabMyLocation.setOnClickListener {
-            baiduMapViewModel.baiduMap.locateMe()
-        }
-
-        binding.fabGoto.setOnClickListener {
-            showInputCoordinatesDialog()
-        }
-
-        binding.fabAdd.setOnClickListener {
-            if (!showAddLocationDialog()) {
-                Toast.makeText(requireContext(), "选择位置异常", Toast.LENGTH_SHORT).show()
-            }
-        }
-
         binding.showRoute.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 requireContext().selectRoute?.route?.let {
@@ -325,72 +249,6 @@ class HomeFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.bmapView.onCreate(requireContext(), savedInstanceState)
-
-        // 胶囊默认收缩：outline 圆角矩形裁剪（右端始终圆角）
-        val expandBar = binding.fabExpandBar
-        expandBar.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(v: View, outline: Outline) {
-                outline.setRoundRect(
-                    0, 0,
-                    fabBarClipWidth.coerceIn(0, v.width),
-                    v.height,
-                    fabBarCornerRadius()
-                )
-            }
-        }
-        expandBar.clipToOutline = true
-
-        // 视觉起点统一为干净收起态（onResume 再按逻辑状态执行打开）
-        applyFabBarState()
-    }
-
-    override fun onViewStateRestored(savedInstanceState: Bundle?) {
-        super.onViewStateRestored(savedInstanceState)
-
-        // saved view hierarchy state 在 onViewCreated 之后才恢复（会把
-        // rotation/visibility 覆盖回上次离开时的保存值，如 90°/VISIBLE），
-        // 而此时胶囊裁剪宽度是代码字段仍为收起圆——此处在恢复完毕后重新
-        // 统一视觉起点，消除「圆形窗+右指按钮」的半开假象
-        applyFabBarState()
-    }
-
-    /** 收起态视觉：正圆 + 按钮复位 + 功能按钮 INVISIBLE（占位不跳变、点击透视） */
-    private fun applyFabBarState() {
-        binding.fab.clearAnimation()
-        binding.fab.rotation = 0f
-        binding.fab.isClickable = true
-        fabBarClipWidth = collapsedFabBarWidth()
-        binding.fabExpandBar.invalidateOutline()
-        listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd).forEach {
-            it.visibility = View.INVISIBLE
-            it.isEnabled = false
-        }
-    }
-
-    /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
-    private fun collapsedFabBarWidth(): Int =
-        (60 * resources.displayMetrics.density).toInt()
-
-    /** 胶囊背景半径：高度一半（60dp → 30dp），收起态即正圆 */
-    private fun fabBarCornerRadius(): Float =
-        30f * resources.displayMetrics.density
-
-    /** 驱动 outline 裁剪宽度动画（内容零拉伸，右端始终圆角） */
-    private fun animateFabBarClip(
-        toWidth: Int,
-        duration: Long,
-        interpolator: Interpolator
-    ) {
-        val expandBar = binding.fabExpandBar
-        val fromWidth = fabBarClipWidth
-        val animator = ValueAnimator.ofInt(fromWidth, toWidth)
-        animator.duration = duration
-        animator.interpolator = interpolator
-        animator.addUpdateListener { a ->
-            fabBarClipWidth = a.animatedValue as Int
-            expandBar.invalidateOutline()
-        }
-        animator.start()
     }
 
     @SuppressLint("SetTextI18n", "MissingInflatedId", "MutatingSharedPrefs")
@@ -600,24 +458,28 @@ class HomeFragment : Fragment() {
         if (_binding != null)
             binding.bmapView.onResume()
 
-        // 出现时执行打开：逻辑状态为打开 → 播放展开动画
-        // （重建场景：onViewStateRestored 已把视觉置为收起，由此动画展开；
-        //  前台恢复场景：视觉本就打开，动画 from==to 无视觉变化）
-        if (homeViewModel.mFabOpened) {
-            val expandBar = binding.fabExpandBar
-            binding.fab.animate()
-                .rotation(90f)
-                .setDuration(200)
-                .setInterpolator(DecelerateInterpolator())
-                .start()
-            binding.fab.isClickable = false
-            listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd).forEach {
-                it.visibility = View.VISIBLE
-                it.isEnabled = true
-            }
-            animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
-            expandBar.postDelayed({ binding.fab.isClickable = true }, 240)
-        }
+        // 注册悬浮胶囊功能集：主界面 = 我的位置 / 跳转 / 添加
+        // （胶囊为 Activity 级单实例，切换功能集自动重置收起态）
+        (activity as? MainActivity)?.fabBar?.setActions(
+            listOf(
+                FabBarView.Action(
+                    R.drawable.baseline_my_location_24,
+                    getString(R.string.follow_location)
+                ) { baiduMapViewModel.baiduMap.locateMe() },
+                FabBarView.Action(
+                    R.drawable.baseline_edit_location_alt_24,
+                    getString(R.string.goto_location)
+                ) { showInputCoordinatesDialog() },
+                FabBarView.Action(
+                    R.drawable.baseline_add_location_alt_24,
+                    getString(R.string.save_location)
+                ) {
+                    if (!showAddLocationDialog()) {
+                        Toast.makeText(requireContext(), "选择位置异常", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        )
     }
 
     override fun onDestroy() {
