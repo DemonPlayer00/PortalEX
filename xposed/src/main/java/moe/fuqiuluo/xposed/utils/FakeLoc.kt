@@ -168,7 +168,9 @@ object FakeLoc {
 
     fun moveLocation(lat: Double = latitude, lon: Double = longitude, n: Double, angle: Double = bearing): Pair<Double, Double> {
         val earthRadius = 6371000.0
-        val radiusInDegrees = Random.nextDouble(n, n + 1.2) / earthRadius * (180 / PI)
+        // 对称小抖动（±5%，均值 = 请求距离）：旧实现 uniform(n, n+1.2) 每步系统性多走 0~1.2m，
+        // 叠加 tick 频率后实际速度远高于设定值（默认 100ms 上报 ≈ 3 倍速），这里修正。
+        val radiusInDegrees = Random.nextDouble(n * 0.95, n * 1.05) / earthRadius * (180 / PI)
         val newLat = lat + radiusInDegrees * cos(Math.toRadians(angle))
         val newLon = lon + radiusInDegrees * sin(Math.toRadians(angle)) / cos(Math.toRadians(lat))
         return Pair(newLat, newLon)
