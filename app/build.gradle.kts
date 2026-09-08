@@ -1,15 +1,15 @@
 import com.android.build.api.dsl.ApplicationExtension
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.ByteArrayOutputStream
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
 }
 
 android {
     namespace = "moe.fuqiuluo.portal"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "moe.fuqiuluo.portal"
@@ -90,16 +90,19 @@ android {
         }
     }
 
-    android.applicationVariants.all {
-        outputs.map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
-            .forEach {
-                val abiName = when (val abi = it.outputFileName.split("-")[1].split(".apk")[0]) {
-                    "app" -> "all"
-                    "x64" -> "x86_64"
-                    else -> abi
-                }
-                it.outputFileName = "Portal-v${versionName}-${abiName}.apk"
+    // AGP 9：通过 androidComponents 注册输出命名（applicationVariants/BaseVariantOutputImpl 内部 API 已移除）
+    val buildVersionName = defaultConfig.versionName ?: "unknown"
+    androidComponents {
+        onVariants(selector().all()) { variant ->
+            val abiName = when (variant.flavorName) {
+                "app" -> "all"
+                "x64" -> "x86_64"
+                else -> variant.flavorName
             }
+            variant.outputs.forEach { output ->
+                output.outputFileName.set("Portal-v${buildVersionName}-${abiName}.apk")
+            }
+        }
     }
 
     flavorDimensions.add("mode")
@@ -133,12 +136,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         viewBinding = true
     }
+
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -178,6 +179,12 @@ android {
     }
 
     configureAppSigningConfigsForRelease(project)
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }
 
 fun configureAppSigningConfigsForRelease(project: Project) {
@@ -238,21 +245,17 @@ dependencies {
 }
 
 fun getGitCommitCount(): Int {
-    val out = ByteArrayOutputStream()
-    exec {
-        commandLine("git", "rev-list", "--count", "HEAD")
-        standardOutput = out
-    }
-    return out.toString().trim().toInt()
+    return runCatching {
+        val p = Runtime.getRuntime().exec(arrayOf("git", "rev-list", "--count", "HEAD"))
+        p.inputStream.bufferedReader().readText().trim().toInt()
+    }.getOrDefault(1)
 }
 
 fun getGitCommitHash(): String {
-    val out = ByteArrayOutputStream()
-    exec {
-        commandLine("git", "rev-parse", "--short", "HEAD")
-        standardOutput = out
-    }
-    return out.toString().trim()
+    return runCatching {
+        val p = Runtime.getRuntime().exec(arrayOf("git", "rev-parse", "--short", "HEAD"))
+        p.inputStream.bufferedReader().readText().trim()
+    }.getOrDefault("unknown")
 }
 
 fun getVersionCode(): Int {

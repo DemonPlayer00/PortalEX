@@ -1,12 +1,19 @@
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
+}
+
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }
 
 android {
     namespace = "moe.fuqiuluo.xposed"
-    compileSdk = 35
-    ndkVersion = "26.1.10909125"
+    compileSdk = 36
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         minSdk = 24
@@ -38,9 +45,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     externalNativeBuild {
         cmake {

@@ -59,7 +59,7 @@ class SettingsFragment : Fragment() {
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
         binding.selinuxSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.needOpenSELinux = isChecked
@@ -121,7 +121,7 @@ class SettingsFragment : Fragment() {
         binding.debugSwitch.isChecked = context.debug
         binding.debugSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.debug = isChecked
@@ -133,7 +133,7 @@ class SettingsFragment : Fragment() {
         binding.dgcSwitch.isChecked = !context.disableGetCurrentLocation
         binding.dgcSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.disableGetCurrentLocation = !isChecked
@@ -145,7 +145,7 @@ class SettingsFragment : Fragment() {
         binding.rllSwitch.isChecked = !context.disableRegisterLocationListener
         binding.rllSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.disableRegisterLocationListener = !isChecked
@@ -157,7 +157,7 @@ class SettingsFragment : Fragment() {
         binding.dfusedSwitch.isChecked = context.disableFusedProvider
         binding.dfusedSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.disableFusedProvider = isChecked
@@ -169,7 +169,7 @@ class SettingsFragment : Fragment() {
         binding.cdmaSwitch.isChecked = context.needDowngradeToCdma
         binding.cdmaSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.needDowngradeToCdma = isChecked
@@ -181,7 +181,7 @@ class SettingsFragment : Fragment() {
         binding.sensorHookSwitch.isChecked = context.hookSensor
         binding.sensorHookSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
-                buttonView: CompoundButton?,
+                buttonView: CompoundButton,
                 isChecked: Boolean
             ) {
                 context.hookSensor = isChecked
