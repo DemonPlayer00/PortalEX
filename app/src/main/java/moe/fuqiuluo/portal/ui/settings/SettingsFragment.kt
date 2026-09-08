@@ -31,6 +31,7 @@ import moe.fuqiuluo.portal.ext.minSatelliteCount
 import moe.fuqiuluo.portal.ext.needDowngradeToCdma
 import moe.fuqiuluo.portal.ext.needOpenSELinux
 import moe.fuqiuluo.portal.ext.reportDuration
+import moe.fuqiuluo.portal.ext.sensorMockMode
 import moe.fuqiuluo.portal.ext.speed
 import moe.fuqiuluo.portal.service.MockServiceHelper
 import moe.fuqiuluo.portal.ui.viewmodel.MockServiceViewModel
@@ -189,6 +190,20 @@ class SettingsFragment : Fragment() {
                 updateRemoteConfig()
             }
         })
+
+        // 传感器模拟方案 A/B 切换（0=A 客户端注入[默认]，1=B 服务端源级改写）
+        binding.sensorMockModeSwitch.isChecked = context.sensorMockMode == 1
+        binding.sensorMockModeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val mode = if (isChecked) 1 else 0
+            context.sensorMockMode = mode
+            if (isChecked) {
+                showToast("B 方案：服务端源级改写，数据从源头就是假的，更隐蔽；" +
+                        "缺点：需要设备有真实步数传感器，仅系统服务进程生效。重启目标应用生效")
+            } else {
+                showToast("A 方案：客户端主动注入，兼容无传感器设备，覆盖面广；" +
+                        "缺点：数据在 App 进程内生成，检测面较大。重启目标应用生效")
+            }
+        }
 
         binding.reportDurationLayout.setOnClickListener {
             showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
