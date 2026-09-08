@@ -16,6 +16,9 @@
         <item name="colorOnSurfaceVariant">#5F5F5F</item>
         <item name="colorOutline">#747474</item>
 
+        <!-- 悬浮胶囊图标色（FabBarView 取色） -->
+        <item name="portalFabIconTint">#1E1E1E</item>
+
         <!-- 窗口：透明状态栏 + 内容延伸 -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>

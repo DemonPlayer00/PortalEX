@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 悬浮胶囊图标色（FabBarView 代码取色用）：浅=colorOnPrimaryContainer、深=夜间对应值 -->
+    <attr name="portalFabIconTint" format="color" />
+
     <declare-styleable name="RockerView">
         <attr name="areaBackground" format="color" />
         <attr name="rockerBackground" format="color" />

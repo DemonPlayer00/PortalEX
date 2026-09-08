@@ -4,11 +4,11 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.util.TypedValue
 import android.graphics.Outline
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.animation.AccelerateInterpolator
@@ -17,6 +17,7 @@ import android.view.animation.Interpolator
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import androidx.core.content.ContextCompat
+import com.google.android.material.color.MaterialColors
 import moe.fuqiuluo.portal.R
 
 /**
@@ -198,10 +199,12 @@ class FabBarView @JvmOverloads constructor(
             ?: ColorDrawable(Color.TRANSPARENT)
     }
 
-    /** 图标颜色（?colorOnPrimaryContainer，适配深浅色） */
+    /** 图标颜色（?portalFabIconTint：浅/深主题各设 colorOnPrimaryContainer 对应值） */
     private fun iconTintList(): ColorStateList {
-        val tv = TypedValue()
-        context.theme.resolveAttribute(com.google.android.material.R.attr.colorOnPrimaryContainer, tv, true)
-        return ColorStateList.valueOf(ContextCompat.getColor(context, tv.resourceId))
+        // MaterialColors.getColor 同处理「直接色值（TYPE_INT_COLOR）」与
+        // 「颜色资源引用（TYPE_REFERENCE）」——主题里配的是直接色值，
+        // resourceId 为 0，直接 getColor(0) 会崩，不能那样取
+        val color = MaterialColors.getColor(context, R.attr.portalFabIconTint, Color.LTGRAY)
+        return ColorStateList.valueOf(color)
     }
 }
