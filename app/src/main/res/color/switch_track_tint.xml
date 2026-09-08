@@ -2,5 +2,5 @@
 <!-- 开关轨道颜色：关闭 = 50% 透明度半灰，打开 = 100% 不透明主色 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:color="#80B0B0B0" android:state_checked="false" />
-    <item android:color="#FFF44336" android:state_checked="true" />
+    <item android:color="#FF81C784" android:state_checked="true" />
 </selector>
