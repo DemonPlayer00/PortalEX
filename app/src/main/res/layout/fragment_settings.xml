@@ -391,13 +391,26 @@
                         android:textSize="11sp"
                         android:text="A(默认): 客户端注入, 兼容无传感器设备, 检测面较大 | B: 服务端源级改写, 更隐蔽, 需真实步数传感器" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/sensor_mock_mode_switch"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/sensor_mock_mode_toggle"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/sensor_mock_mode_a"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="A" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/sensor_mock_mode_b"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="B" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout

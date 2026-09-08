@@ -191,12 +191,19 @@ class SettingsFragment : Fragment() {
             }
         })
 
-        // 传感器模拟方案 A/B 切换（0=A 客户端注入[默认]，1=B 服务端源级改写）
-        binding.sensorMockModeSwitch.isChecked = context.sensorMockMode == 1
-        binding.sensorMockModeSwitch.setOnCheckedChangeListener { _, isChecked ->
-            val mode = if (isChecked) 1 else 0
+        // 传感器模拟方案 A/B 滑块切换（0=A 客户端注入[默认]，1=B 服务端源级改写）
+        binding.sensorMockModeToggle.check(
+            if (context.sensorMockMode == 1) binding.sensorMockModeB.id else binding.sensorMockModeA.id
+        )
+        binding.sensorMockModeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val mode = when (checkedId) {
+                binding.sensorMockModeB.id -> 1
+                else -> 0
+            }
+            if (mode == context.sensorMockMode) return@addOnButtonCheckedListener
             context.sensorMockMode = mode
-            if (isChecked) {
+            if (mode == 1) {
                 showToast("B 方案：服务端源级改写，数据从源头就是假的，更隐蔽；" +
                         "缺点：需要设备有真实步数传感器，仅系统服务进程生效。重启目标应用生效")
             } else {
