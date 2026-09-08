@@ -16,8 +16,8 @@
         <item name="colorOnSurfaceVariant">#5F5F5F</item>
         <item name="colorOutline">#747474</item>
 
-        <!-- 悬浮胶囊图标色（FabBarView 取色） -->
-        <item name="portalFabIconTint">#1E1E1E</item>
+        <!-- 悬浮胶囊图标色（FabBarView 取色）：浅色 90% 灰 -->
+        <item name="portalFabIconTint">#E6E6E6</item>
 
         <!-- 窗口：透明状态栏 + 内容延伸 -->
         <item name="android:statusBarColor">@android:color/transparent</item>

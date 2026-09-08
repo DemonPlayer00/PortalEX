@@ -2,6 +2,6 @@
 <!-- 悬浮展开条背景：全圆角矩形（pill） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="?attr/colorPrimaryContainer" />
+    <solid android:color="@color/fab_bar_bg" />
     <corners android:radius="30dp" />
 </shape>

@@ -1,4 +1,6 @@
 <resources>
     <!-- 覆盖：深色模式下地图控件背景 = 50% 黑 -->
     <color name="map_control_bg_color">#80000000</color>
+    <!-- 悬浮胶囊背景：深色保持 colorPrimaryContainer 对应值 -->
+    <color name="fab_bar_bg">#4A4A4A</color>
 </resources>
