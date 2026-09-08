@@ -3,6 +3,7 @@ package moe.fuqiuluo.portal.android.widget
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.drawable.ColorDrawable
@@ -169,6 +170,17 @@ class FabBarView @JvmOverloads constructor(
         for (i in 0 until actionsContainer.childCount) {
             block(actionsContainer.getChildAt(i))
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+
+        // 深浅模式切换：主题相关资源重新解析（即使宿主 Activity 未 recreate）
+        // 1) 背景 shape 内含 ?attr/colorPrimaryContainer，inflate 时已固化
+        // 2) 图标 tint 取自 ?portalFabIconTint（浅/深各配对应值）
+        background = ContextCompat.getDrawable(context, R.drawable.fab_expand_bar_bg)
+        expandButton.imageTintList = iconTintList()
+        forEachAction { (it as? ImageButton)?.imageTintList = iconTintList() }
     }
 
     private fun animateClip(toWidth: Int, duration: Long, interpolator: Interpolator) {
