@@ -12,6 +12,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.Toast
 import androidx.core.widget.addTextChangedListener
@@ -209,75 +210,61 @@ class HomeFragment : Fragment() {
         }
 
         binding.fab.setOnClickListener { view ->
-            val subFabList = arrayOf(
+            val subFabList = listOf(
                 binding.fabMyLocation,
                 binding.fabGoto,
                 binding.fabAdd
             )
+            val expandBar = binding.fabExpandBar
 
             if (!homeViewModel.mFabOpened) {
                 homeViewModel.mFabOpened = true
-
-                val rotateMainFab = ObjectAnimator.ofFloat(view, "rotation", 0f, 90f)
-                rotateMainFab.duration = 200
-
-                val animators = arrayListOf<ObjectAnimator>()
-                animators.add(rotateMainFab)
-                subFabList.forEachIndexed { index, fab ->
-                    fab.visibility = View.VISIBLE
-                    fab.alpha = 1f
-                    fab.scaleX = 1f
-                    fab.scaleY = 1f
-                    val translationX =
-                        ObjectAnimator.ofFloat(fab, "translationX", 0f, 20f + index * 8f)
-                    translationX.duration = 200
-                    animators.add(translationX)
-                }
-
-                val animatorSet = AnimatorSet()
-                animatorSet.playTogether(animators.toList())
-                animatorSet.interpolator = DecelerateInterpolator()
-                animatorSet.addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        view.isClickable = true
-                    }
-                })
                 view.isClickable = false
-                animatorSet.start()
+
+                view.animate()
+                    .rotation(90f)
+                    .setDuration(200)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+
+                // 展开条从主按钮处横向展开（pivotX=0，向右生长）
+                subFabList.forEach {
+                    it.visibility = View.VISIBLE
+                    it.alpha = 1f
+                    it.scaleX = 1f
+                    it.scaleY = 1f
+                }
+                expandBar.alpha = 0f
+                expandBar.scaleX = 0.3f
+                expandBar.visibility = View.VISIBLE
+                expandBar.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .setDuration(220)
+                    .setInterpolator(DecelerateInterpolator())
+                    .withEndAction { view.isClickable = true }
+                    .start()
             } else {
                 homeViewModel.mFabOpened = false
+                view.isClickable = false
 
-                val rotateMainFab = ObjectAnimator.ofFloat(view, "rotation", 90f, 0f)
-                rotateMainFab.duration = 200
+                view.animate()
+                    .rotation(0f)
+                    .setDuration(200)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
 
-                val animators = arrayListOf<ObjectAnimator>()
-                animators.add(rotateMainFab)
-                subFabList.forEachIndexed { index, fab ->
-                    val transX = ObjectAnimator.ofFloat(fab, "translationX", 0f, -20f - index * 8f)
-                    transX.duration = 150
-                    val scaleX = ObjectAnimator.ofFloat(fab, "scaleX", 1f, 0f)
-                    scaleX.duration = 200
-                    val scaleY = ObjectAnimator.ofFloat(fab, "scaleY", 1f, 0f)
-                    scaleY.duration = 200
-                    val alpha = ObjectAnimator.ofFloat(fab, "alpha", 1f, 0f)
-                    alpha.duration = 200
-                    animators.add(transX)
-                    animators.add(scaleX)
-                    animators.add(scaleY)
-                    animators.add(alpha)
-                }
-
-                val animatorSet = AnimatorSet()
-                animatorSet.playTogether(animators.toList())
-                animatorSet.interpolator = DecelerateInterpolator()
-                animatorSet.addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
+                expandBar.animate()
+                    .alpha(0f)
+                    .scaleX(0.3f)
+                    .setDuration(200)
+                    .setInterpolator(AccelerateInterpolator())
+                    .withEndAction {
+                        expandBar.visibility = View.GONE
                         subFabList.forEach { it.visibility = View.GONE }
                         view.isClickable = true
                     }
-                })
-                view.isClickable = false
-                animatorSet.start()
+                    .start()
             }
         }
 
