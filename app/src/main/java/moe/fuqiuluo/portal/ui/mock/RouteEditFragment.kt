@@ -81,9 +81,9 @@ class RouteEditFragment : Fragment() {
         _binding = FragmentRouteEditBinding.inflate(inflater, container, false)
 
         // 退回返回栈时 Fragment 实例与 ViewModel 保留、View 销毁重建：
-        // 视觉被 onViewCreated 复位（rotation=0/clip=60dp），但逻辑状态残留
-        // （mFabOpened=true）会形成「假打开」——点击第一次走收起分支无变化。
-        // 与 HomeFragment 同款：重建即复位展开状态
+        // 视觉被 collapseFabBar() 复位，但逻辑状态残留（mFabOpened=true）
+        // 会形成「假打开」。onResume 会覆盖两种场景（View 保留/重建），
+        // 此处提前复位防止 inflate 后竞态
         routeEditViewModel.mFabOpened = false
 
         with(baiduMapViewModel) {
@@ -333,21 +333,34 @@ class RouteEditFragment : Fragment() {
             }
         }
         expandBar.clipToOutline = true
-        fabBarClipWidth = collapsedFabBarWidth()
-        expandBar.invalidateOutline()
 
-        // 功能按钮初始 INVISIBLE（占位不跳变、不拦截点击、不误触）
+        // 走一次完整关闭流程（视觉+逻辑全复位）
+        collapseFabBar()
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // 每次进入路线模拟页面强制走一次关闭流程：
+        // Navigation 返回栈中 Fragment 实例/ViewModel 保留而 View 可能
+        // 保留或重建，onResume 是唯一必然触发的时机——保证胶囊永远是
+        // 干净的关闭态（rotation=0、裁剪 60dp 正圆、功能按钮 INVISIBLE）
+        collapseFabBar()
+    }
+
+    /** 完整关闭流程：逻辑状态 + 视觉形态全部复位 */
+    private fun collapseFabBar() {
+        routeEditViewModel.mFabOpened = false
+        binding.fab.clearAnimation()
+        binding.fab.rotation = 0f
+        binding.fab.isClickable = true
+        fabBarClipWidth = collapsedFabBarWidth()
+        binding.fabExpandBar.invalidateOutline()
         listOf(binding.fabStart, binding.fabRollback, binding.fabComplete, binding.fabMyLocation)
             .forEach {
                 it.visibility = View.INVISIBLE
                 it.isEnabled = false
             }
-
-        // 复位展开按钮姿态：旋转动画写入的 rotation 会被 View saved state
-        // 记录（有 id 的 View），Fragment 重建后恢复成 90°——与胶囊 clip
-        // 重新初始化为圆形矛盾，必须显式复位
-        binding.fab.rotation = 0f
-        binding.fab.isClickable = true
     }
 
     /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
