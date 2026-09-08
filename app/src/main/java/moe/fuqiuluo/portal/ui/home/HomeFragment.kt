@@ -232,7 +232,10 @@ class HomeFragment : Fragment() {
                     .start()
 
                 // outline 裁剪窗口向右展开：圆形 → 胶囊（右端始终圆角）
-                subFabList.forEach { it.isEnabled = true }
+                subFabList.forEach {
+                    it.visibility = View.VISIBLE
+                    it.isEnabled = true
+                }
                 animateFabBarClip(expandBar.width, 220, DecelerateInterpolator())
                 expandBar.postDelayed({ view.isClickable = true }, 240)
             } else {
@@ -245,8 +248,12 @@ class HomeFragment : Fragment() {
                     .setInterpolator(DecelerateInterpolator())
                     .start()
 
-                // outline 裁剪窗口向左收回：胶囊 → 圆形（功能按钮禁用防误触）
-                subFabList.forEach { it.isEnabled = false }
+                // outline 裁剪窗口向左收回：胶囊 → 圆形。功能按钮 INVISIBLE
+                // （占位保持布局宽度不跳变；不接收触摸 → 点击透视到地图）
+                subFabList.forEach {
+                    it.visibility = View.INVISIBLE
+                    it.isEnabled = false
+                }
                 animateFabBarClip(collapsedFabBarWidth(), 200, AccelerateInterpolator())
                 expandBar.postDelayed({ view.isClickable = true }, 220)
             }
@@ -333,6 +340,12 @@ class HomeFragment : Fragment() {
         expandBar.clipToOutline = true
         fabBarClipWidth = collapsedFabBarWidth()
         expandBar.invalidateOutline()
+
+        // 功能按钮初始 INVISIBLE（占位不跳变、不拦截点击、不误触）
+        listOf(binding.fabMyLocation, binding.fabGoto, binding.fabAdd).forEach {
+            it.visibility = View.INVISIBLE
+            it.isEnabled = false
+        }
     }
 
     /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
