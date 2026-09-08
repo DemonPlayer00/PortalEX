@@ -39,13 +39,11 @@ import java.util.concurrent.atomic.AtomicLong
  * 运行在**每一个 app 进程**内，而不是 system_server。因此本模块必须在所有进程安装
  * （见 FakeLocation.handleLoadPackage）。
  *
- * 静止/移动分流规则（角度与步频都适用）：
- * - 静止（未操作摇杆、未自动播放）：透传真实传感器值——旁路真实监听（probe）
- *   缓存真实事件，调度器转发给被拦截的 App 监听（方向跟随真实设备转动、步数为真实累计）
- * - 移动（摇杆/自动播放）：模拟值接管——按模拟 bearing（+步频同步摆动）注入朝向、
- *   按速度步频推进步数
- * - 无法获取真实传感器（设备缺失/注册失败）：保持模拟状态——静止也按模拟注入
- *   （朝向=模拟 bearing+摆动、步数按 cadence 推进），保证无传感器设备始终有数据
+ * 注入对象 = 步数 + 朝向，被选中的用户应用**永远**收到虚拟传感器数据：
+ * - 朝向：模拟 bearing（应用启动时随机分配中心角度；移动时摇杆/自动播放更新为
+ *   移动方向）+ 步频同步摆动；静止时保持稳定（不随真实设备转动、不自动旋转）
+ * - 步数：移动中按速度 cadence 推进；静止时停留（不增长）
+ * - 无真实传感器设备同样工作（虚拟注入不依赖真实传感器存在）
  *
  * 三种机制配合，覆盖有/无真实传感器的设备，注入对象 = 步数 + 朝向：
  * 1. **主动注入（主路径，参考 UseVector）**：拦截 registerListener（result=true 阻止
@@ -120,21 +118,6 @@ object SystemSensorManagerHook {
     @Volatile private var bearingCache = 0.0
     @Volatile private var movingCache = false
 
-    // 真实传感器值缓存（旁路监听收集，静止时透传转发）
-    private class RealValues(val values: FloatArray, @Suppress("unused") val timestampNanos: Long)
-    private val realSensorCache = ConcurrentHashMap<Int, RealValues>()
-
-    // 旁路真实监听：绕过拦截注册的真实监听，缓存真实事件值（静止时转发给 App）
-    private val realProbeListener = object : SensorEventListener {
-        override fun onSensorChanged(event: SensorEvent) {
-            val type = event.sensor?.type ?: return
-            realSensorCache[type] = RealValues(event.values.clone(), event.timestamp)
-        }
-
-        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
-    }
-    @Volatile private var realProbeStarted = false
-
     // 统一调度 tick 状态：步数按 cadence 浮动累计（每整步触发事件）
     @Volatile private var lastTickNanos = System.nanoTime()
     private var stepFraction = 0.0
@@ -161,9 +144,8 @@ object SystemSensorManagerHook {
      * 半周期重新计时。曲线：offset = side * amp * cos(π * phase)，phase∈[0,1]（峰→谷）。
      */
     private fun advanceSwing() {
-        // 静止且有真实朝向传感器：摆动指数衰减归零（真实值透传，模拟不参与）
-        // 无真实朝向传感器时保持模拟状态——摆动继续与步频同步
-        if (!movingCache && ROTATION_SENSOR_TYPES.any { realSensorCache.containsKey(it) }) {
+        // 静止（未操作摇杆/未自动播放）：摆动指数衰减归零——朝向稳定，指针不乱转
+        if (!movingCache) {
             swingOffset *= 0.5
             if (kotlin.math.abs(swingOffset) < 0.05) {
                 swingOffset = 0.0
@@ -230,36 +212,6 @@ object SystemSensorManagerHook {
 
     private fun hasStepListener(): Boolean = registeredListeners.any { it.sensorType == TYPE_STEP_COUNTER }
 
-    /**
-     * 注册旁路真实监听：收集真实传感器值（静止时透传转发）。
-     * - 仅注册设备真实存在的传感器（伪造的步数传感器跳过：`sensor === fakeStepSensor`）
-     * - registerListener 会被本模块拦截，但 probe 放行（见 hookRegisterListener）
-     */
-    private fun ensureRealProbe() {
-        if (realProbeStarted) return
-        synchronized(this) {
-            if (realProbeStarted) return
-            realProbeStarted = true
-        }
-        try {
-            val activityThreadClass = Class.forName("android.app.ActivityThread")
-            val app = XposedHelpers.callStaticMethod(activityThreadClass, "currentApplication") as? android.app.Application ?: return
-            val sm = app.getSystemService(android.content.Context.SENSOR_SERVICE) as? SensorManager ?: return
-            for (type in INJECTABLE_SENSOR_TYPES) {
-                runCatching {
-                    val sensor = sm.getDefaultSensor(type) ?: return@runCatching
-                    if (sensor === fakeStepSensor) return@runCatching // 伪造传感器不可真实注册
-                    sm.registerListener(realProbeListener, sensor, SensorManager.SENSOR_DELAY_GAME)
-                }
-            }
-            if (FakeLoc.enableDebugLog) {
-                Logger.debug("real sensor probe registered")
-            }
-        } catch (t: Throwable) {
-            XposedBridge.log("[Portal] real sensor probe failed: ${t.message}")
-        }
-    }
-
     private fun hasRotationListener(): Boolean = registeredListeners.any { it.sensorType in ROTATION_SENSOR_TYPES }
 
     /**
@@ -307,8 +259,8 @@ object SystemSensorManagerHook {
             val dtSec = ((now - lastTickNanos) / 1_000_000_000.0).coerceIn(0.0, 1.0)
             lastTickNanos = now
 
-            // 步进：按当前速度步频浮动累计（仅移动中——移动时步数模拟推进、摆动活跃；
-            // 有步数监听或朝向监听时都推进，朝向摆动与步频同步）
+            // 步进：移动中按当前速度步频浮动累计（有步数监听或朝向监听时都推进，
+            // 朝向摆动与步频同步）；静止时步数停留不增长
             if ((hasStepListener() || hasRotationListener()) && movingCache) {
                 stepFraction += cadenceForSpeed(speedCache) / 60.0 * dtSec
                 val wholeSteps = stepFraction.toInt()
@@ -326,28 +278,10 @@ object SystemSensorManagerHook {
                         onStepAdvance()
                     }
                 }
-            } else if (hasStepListener()) {
-                // 静止：有真实步数传感器 → 透传真实累计值；
-                // 没有（无法获取真实值）→ 保持模拟状态（按步频推进，与移动一致）
-                val real = realSensorCache[TYPE_STEP_COUNTER]
-                if (real != null) {
-                    emitEvent(TYPE_STEP_COUNTER, real.values)
-                } else {
-                    stepFraction += cadenceForSpeed(speedCache) / 60.0 * dtSec
-                    val wholeSteps = stepFraction.toInt()
-                    if (wholeSteps >= 1) {
-                        stepFraction -= wholeSteps
-                        globalSteps.addAndGet(wholeSteps)
-                        emitEvent(TYPE_STEP_COUNTER, FloatArray(1) { globalSteps.get().toFloat() })
-                        if (hasRotationListener()) {
-                            onStepAdvance()
-                        }
-                    }
-                }
             }
 
-            // 朝向：移动时每 tick 注入模拟 bearing（+步频同步摆动）的旋转数据；
-            // 静止时透传真实旋转值（方向跟随真实设备转动）
+            // 朝向：每 tick 注入模拟 bearing（+步频同步摆动）的旋转数据
+            // （静止时摆动归零 → 注入值 = 稳定中轴，指针不动；永不透传真实值）
             if (hasRotationListener()) {
                 advanceSwing()
                 emitRotationEvents()
@@ -379,12 +313,7 @@ object SystemSensorManagerHook {
     private fun emitRotationEvents() {
         for (reg in registeredListeners) {
             if (reg.sensorType !in ROTATION_SENSOR_TYPES) continue
-            val real = realSensorCache[reg.sensorType]
-            val values = when {
-                movingCache || real == null -> rotationValuesFor(reg.sensorType) // 移动或无真实传感器：模拟
-                else -> real.values // 静止且有真实值：透传
-            }
-            val event = createSensorEvent(values, reg.sensor) ?: continue
+            val event = createSensorEvent(rotationValuesFor(reg.sensorType), reg.sensor) ?: continue
             deliverEvent(reg, event)
         }
     }
@@ -601,8 +530,7 @@ object SystemSensorManagerHook {
                                 arg is Handler -> handler = arg
                             }
                         }
-                        // 旁路真实监听：放行，不拦截（用于静止时收集真实传感器值）
-                        if (listener === realProbeListener) return@beforeHook
+                        // 旁路真实监听已移除：所有 App 注册一律拦截（永远虚拟注入）
                         if (sensor != null && sensor.type in INJECTABLE_SENSOR_TYPES) {
                             val l = listener
                             if (l != null) {
@@ -615,7 +543,6 @@ object SystemSensorManagerHook {
                                         val handle = XposedHelpers.callMethod(sensor, "getHandle") as? Int
                                         if (handle != null) sensorHandleTypeMap[handle] = sensor.type
                                     }
-                                    ensureRealProbe()
                                     startInjectorIfNeeded()
                                 }
                             }
@@ -673,10 +600,8 @@ object SystemSensorManagerHook {
     /**
      * 客户端兜底改写：按 handle→type 分流——步数按步频推进；
      * 朝向类直接覆盖为模拟 bearing 对应的旋转数据（不随真实转动变化）。
-     * 静止时透传不改写（真实值原样到达，旁路监听据此缓存真实值）。
      */
     private fun injectClientEvent(args: Array<Any?>) {
-        if (!movingCache) return
         if (args.size < 4) return
         val handle = args[0] as? Int ?: return
         val values = args[1] as? FloatArray ?: return
