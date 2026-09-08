@@ -19,10 +19,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            app:boxBackgroundMode="outline"
-            app:boxStrokeColor="@color/text_input_box_stroke"
-            app:boxStrokeWidth="1dp"
-            android:hint="@string/name">
+            app:boxBackgroundMode="none"
+            app:hintEnabled="false"
+            >
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etRouteName"
@@ -33,7 +32,8 @@
                 android:singleLine="true"
                 android:textColor="?attr/colorOnSurface"
                 android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                android:background="@android:color/transparent">
+                android:hint="@string/name"
+                android:background="@drawable/edit_text_box">
 
                 <!--<requestFocus />-->
             </com.google.android.material.textfield.TextInputEditText>
@@ -43,10 +43,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            app:boxBackgroundMode="outline"
-            app:boxStrokeColor="@color/text_input_box_stroke"
-            app:boxStrokeWidth="1dp"
-            android:hint="@string/route_set">
+            app:boxBackgroundMode="none"
+            app:hintEnabled="false"
+            >
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etRouteSet"
@@ -57,7 +56,8 @@
                 android:singleLine="true"
                 android:textColor="?attr/colorOnSurface"
                 android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                android:background="@android:color/transparent">
+                android:hint="@string/route_set"
+                android:background="@drawable/edit_text_box">
             </com.google.android.material.textfield.TextInputEditText>
         </com.google.android.material.textfield.TextInputLayout>
 

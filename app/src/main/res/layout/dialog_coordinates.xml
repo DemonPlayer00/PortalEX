@@ -9,11 +9,11 @@
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:boxBackgroundMode="outline"
-            app:boxStrokeColor="@color/text_input_box_stroke"
+        app:boxBackgroundMode="none"
+            app:hintEnabled="false"
             app:boxStrokeWidth="1dp"
         app:boxBackgroundColor="@android:color/transparent"
-        android:hint="@string/input_lat">
+        >
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/editTextLatitude"
@@ -24,7 +24,8 @@
             android:singleLine="true"
             android:textColor="?attr/colorOnSurface"
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                android:background="@android:color/transparent">
+                android:hint="@string/input_lat"
+                android:background="@drawable/edit_text_box">
 
         </com.google.android.material.textfield.TextInputEditText>
     </com.google.android.material.textfield.TextInputLayout>
@@ -33,11 +34,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        app:boxBackgroundMode="outline"
-            app:boxStrokeColor="@color/text_input_box_stroke"
+        app:boxBackgroundMode="none"
+            app:hintEnabled="false"
             app:boxStrokeWidth="1dp"
         app:boxBackgroundColor="@android:color/transparent"
-        android:hint="@string/input_lon">
+        >
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/editTextLongitude"
@@ -48,7 +49,8 @@
             android:singleLine="true"
             android:textColor="?attr/colorOnSurface"
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                android:background="@android:color/transparent">
+                android:hint="@string/input_lon"
+                android:background="@drawable/edit_text_box">
 
         </com.google.android.material.textfield.TextInputEditText>
     </com.google.android.material.textfield.TextInputLayout>
