@@ -27,6 +27,17 @@
         <!-- 组件样式 -->
         <item name="searchViewStyle">@style/Portal.SearchViewStyle</item>
         <item name="sliderStyle">@style/Portal.SliderTheme</item>
+        <item name="android:popupMenuStyle">@style/PortalPopupMenuStyle</item>
+    </style>
+
+    <!-- PopupMenu 展开动画：从右上角缩放展开/缩回（右上锚点 pivot 100%/0%） -->
+    <style name="PortalPopupAnimation">
+        <item name="android:windowEnterAnimation">@anim/popup_in_top_end</item>
+        <item name="android:windowExitAnimation">@anim/popup_out_top_end</item>
+    </style>
+
+    <style name="PortalPopupMenuStyle" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupAnimationStyle">@style/PortalPopupAnimation</item>
     </style>
 
     <style name="Portal.SliderTheme" parent="Widget.Material3.Slider" />
