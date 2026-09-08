@@ -13,7 +13,7 @@
             android:text="@string/add_route"
             android:textAppearance="?attr/textAppearanceTitleLarge"
             android:textColor="?attr/colorOnSurface"
-            android:padding="15px"/>
+            android:padding="15dp"/>
 
         <com.google.android.material.textfield.TextInputLayout
             android:layout_width="match_parent"
