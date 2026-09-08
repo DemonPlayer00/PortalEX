@@ -12,7 +12,7 @@
 
     <item
         android:id="@+id/action_map_controls"
-        android:orderInCategory="110"
+        android:orderInCategory="999"
         android:icon="@drawable/baseline_more_vert_24"
         android:title="地图控件"
         android:visible="true"

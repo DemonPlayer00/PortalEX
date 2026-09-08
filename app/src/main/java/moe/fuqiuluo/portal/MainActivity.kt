@@ -24,6 +24,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -359,6 +360,7 @@ class MainActivity : AppCompatActivity() {
             .firstOrNull { it is HomeFragment } as? HomeFragment ?: return
 
         val popup = PopupMenu(this, binding.appBarMain.toolbar)
+        popup.gravity = Gravity.END
         popup.menuInflater.inflate(R.menu.map_controls_popup, popup.menu)
 
         // 显示前同步当前状态
