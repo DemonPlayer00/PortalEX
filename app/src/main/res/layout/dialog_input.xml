@@ -21,6 +21,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             app:boxBackgroundMode="outline"
+            app:boxStrokeColor="@color/text_input_box_stroke"
+            app:boxStrokeWidth="1dp"
             android:hint="输入值">
 
             <com.google.android.material.textfield.TextInputEditText
