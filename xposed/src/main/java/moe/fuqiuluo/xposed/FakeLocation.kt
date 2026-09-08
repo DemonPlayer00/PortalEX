@@ -59,11 +59,11 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
             // 非 LSPosed 或 prefs 不可读：保持默认开启
         }
 
-        // SystemSensorManager 是 SDK 客户端类，运行在**每一个 app 进程**内（而非 system_server）。
-        // 客户端主动注入（A 方案）需要在所有进程安装 hook；开关关闭时 hook 内部直接跳过。
-        SystemSensorManagerHook(lpparam.classLoader)
-
+        // 传感器模拟：仅对被选中的用户应用进程安装（SystemSensorManager 是 SDK 客户端类，
+        // 跑在 app 进程内）。system_server/phone 等系统进程**不装**——避免拦截系统服务自身
+        // 的传感器注册（自动旋转、计步统计等）导致系统行为被污染；开关关闭时 hook 内部跳过。
         if (lpparam.packageName != "android" && lpparam.packageName != "com.android.phone") {
+            SystemSensorManagerHook(lpparam.classLoader)
             return
         }
 
