@@ -26,6 +26,7 @@
 
         <item name="searchViewStyle">@style/Portal.SearchViewStyle</item>
         <item name="sliderStyle">@style/Portal.SliderTheme</item>
+        <item name="android:popupMenuStyle">@style/PortalPopupMenuStyle</item>
     </style>
 
     <style name="AppTheme.Dark" parent="AppTheme" />
