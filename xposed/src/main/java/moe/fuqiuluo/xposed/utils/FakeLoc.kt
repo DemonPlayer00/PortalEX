@@ -122,11 +122,11 @@ object FakeLoc {
 
     /**
      * 当前朝向（度，0=北，顺时针）：
-     * - 应用启动时随机生成一个中心朝向（不再从 0° 固定起步）
-     * - 移动中由 move/摇杆更新为移动方向
-     * - 静止（未操作摇杆、未自动播放）时保持稳定，不再自动旋转
+     * - 仅移动时使用（摇杆/自动播放的 move 更新为移动方向）
+     * - 静止（未操作摇杆/自动播放）时传感器模拟透传真实传感器值（见 SystemSensorManagerHook），
+     *   本字段不参与注入
      */
-    @Volatile var bearing = Random.nextDouble(0.0, 360.0)
+    @Volatile var bearing = 0.0
 
     /** 最近一次移动（move 命令）的时间，用于静止检测 */
     @Volatile var lastMoveTimeNanos = 0L

@@ -75,11 +75,6 @@ object RemoteCommandHandler {
                 FakeLoc.altitude = altitude
                 FakeLoc.accuracy = accuracy
 
-                // 模拟会话启动时：若无明确朝向（从未摇杆/移动），随机生成一个中心朝向
-                if (!FakeLoc.hasBearings) {
-                    FakeLoc.bearing = kotlin.random.Random.nextDouble(0.0, 360.0)
-                }
-
                 return true
             }
             "stop" -> {
