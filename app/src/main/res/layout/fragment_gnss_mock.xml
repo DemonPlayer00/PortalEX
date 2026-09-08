@@ -418,7 +418,8 @@
                             android:layout_height="wrap_content"
                             android:text="允许地理围栏请求"
                             android:checked="true"
-                            android:padding="8dp"/>
+                            android:padding="8dp"
+                    app:trackTint="@color/switch_track_tint"/>
 
                         <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/switch_get_from_location"
@@ -426,7 +427,8 @@
                             android:layout_height="wrap_content"
                             android:checked="true"
                             android:padding="8dp"
-                            android:text="允许位置获取" />
+                            android:text="允许位置获取" 
+                    app:trackTint="@color/switch_track_tint"/>
 
                         <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/switch_enable_agps"
@@ -434,7 +436,8 @@
                             android:layout_height="wrap_content"
                             android:text="启用AGPS模块"
                             android:checked="false"
-                            android:padding="8dp"/>
+                            android:padding="8dp"
+                    app:trackTint="@color/switch_track_tint"/>
 
                         <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/switch_enable_nmea"
@@ -442,7 +445,8 @@
                             android:layout_height="wrap_content"
                             android:text="启用NMEA模块"
                             android:checked="false"
-                            android:padding="8dp"/>
+                            android:padding="8dp"
+                    app:trackTint="@color/switch_track_tint"/>
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>

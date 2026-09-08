@@ -49,7 +49,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -196,7 +197,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -229,7 +231,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -262,7 +265,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -295,7 +299,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -328,7 +333,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -362,7 +368,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -397,7 +404,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -506,7 +514,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
             <LinearLayout
@@ -539,7 +548,8 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"/>
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
         </LinearLayout>
 
