@@ -111,6 +111,27 @@ object SystemSensorManagerHook {
     @Volatile private var lastTickNanos = System.nanoTime()
     private var stepFraction = 0.0
 
+    // 朝向摆动（蜜罐规避）：真实跑步时手机会随步伐轻微往复晃动，
+    // 运动校园可能检测"朝向静止/朝向与步频不同步"。这里让朝向在模拟方位上
+    // 做 ±6° 小幅摆动，每步（步频+1）调转方向，指数平滑逼近（无跳变）。
+    private const val SWING_AMPLITUDE_DEG = 6.0
+    private const val SWING_SMOOTHING = 0.4
+    @Volatile private var swingOffset = 0.0
+    @Volatile private var swingTarget = SWING_AMPLITUDE_DEG
+
+    /** 平滑逼近摆动目标（每 tick 收敛，无跳变） */
+    private fun advanceSwing() {
+        swingOffset += (swingTarget - swingOffset) * SWING_SMOOTHING
+        if (kotlin.math.abs(swingTarget - swingOffset) < 0.05) {
+            swingOffset = swingTarget
+        }
+    }
+
+    /** 步频 +1：调转摆动方向 */
+    private fun flipSwing() {
+        swingTarget = -swingTarget
+    }
+
     // dispatchSensorEvent 兜底状态（每进程独立）
     private val lastStepCount = AtomicLong(0)
     @Volatile private var lastEventTimeNanos = 0L
@@ -211,8 +232,9 @@ object SystemSensorManagerHook {
 
         val type = sensorHandleTypeMap[handle] ?: return
 
-        // 朝向类：覆盖为模拟朝向（不随真实设备转动）
+        // 朝向类：覆盖为模拟朝向（+步频同步摆动，不随真实设备转动）
         if (type in ROTATION_SENSOR_TYPES) {
+            advanceSwing()
             val mock = rotationValuesFor(type)
             for (i in mock.indices) {
                 if (i < values.size) values[i] = mock[i]
@@ -223,6 +245,7 @@ object SystemSensorManagerHook {
         if (type != TYPE_STEP_COUNTER) return
 
         val now = timestamp
+        var wholeSteps = 0L
         if (lastEventTimeNanos == 0L || now <= lastEventTimeNanos) {
             // 首次事件：对齐真实累计值，避免跳变
             lastStepCount.set(values[0].toLong())
@@ -230,11 +253,16 @@ object SystemSensorManagerHook {
             val dtSec = (now - lastEventTimeNanos) / 1_000_000_000.0
             if (dtSec in 0.0..10.0) {
                 val added = cadenceForSpeed(FakeLoc.speed) / 60.0 * dtSec
-                lastStepCount.addAndGet(added.toLong())
+                wholeSteps = added.toLong()
+                lastStepCount.addAndGet(wholeSteps)
             }
         }
         lastEventTimeNanos = now
         values[0] = lastStepCount.get().toFloat()
+        // 步频推进：摆动调转方向（蜜罐规避，与步伐同步）
+        if (wholeSteps >= 1) {
+            flipSwing()
+        }
     }
 
     /** 步频-移动速度线性模型（步/min）：cadence = 60 + 30*speed，限幅 60..220 */
@@ -291,22 +319,30 @@ object SystemSensorManagerHook {
             val dtSec = ((now - lastTickNanos) / 1_000_000_000.0).coerceIn(0.0, 1.0)
             lastTickNanos = now
 
-            // 步数：按当前速度步频浮动累计，每整步触发一次事件
-            if (hasStepListener()) {
+            // 步进：按当前速度步频浮动累计（有步数监听或朝向监听时都推进——
+            // 朝向摆动与步频同步，即使 App 只注册了朝向也要有步频节奏）
+            if (hasStepListener() || hasRotationListener()) {
                 stepFraction += cadenceForSpeed(speedCache) / 60.0 * dtSec
                 val wholeSteps = stepFraction.toInt()
                 if (wholeSteps >= 1) {
                     stepFraction -= wholeSteps
                     globalSteps.addAndGet(wholeSteps)
-                    emitEvent(TYPE_STEP_COUNTER, FloatArray(1) { globalSteps.get().toFloat() })
-                    if (FakeLoc.enableDebugLog && globalSteps.get() % 200 == 0) {
-                        Logger.debug("step injector: total=${globalSteps.get()} cadence=${cadenceForSpeed(speedCache)}/min speed=${speedCache}")
+                    if (hasStepListener()) {
+                        emitEvent(TYPE_STEP_COUNTER, FloatArray(1) { globalSteps.get().toFloat() })
+                        if (FakeLoc.enableDebugLog && globalSteps.get() % 200 == 0) {
+                            Logger.debug("step injector: total=${globalSteps.get()} cadence=${cadenceForSpeed(speedCache)}/min speed=${speedCache}")
+                        }
+                    }
+                    // 步频 +1：朝向摆动调转方向（蜜罐规避，与步伐同步）
+                    if (hasRotationListener()) {
+                        flipSwing()
                     }
                 }
             }
 
-            // 朝向：每 tick 注入模拟 bearing 对应的旋转数据
+            // 朝向：每 tick 注入模拟 bearing（+步频同步摆动）对应的旋转数据
             if (hasRotationListener()) {
+                advanceSwing()
                 emitRotationEvents()
             }
         } catch (t: Throwable) {
@@ -361,7 +397,8 @@ object SystemSensorManagerHook {
      *   [0, 0, sin(θ/2), cos(θ/2)]（API 18+ 含 w；更老版本 3 元素无 w）
      */
     private fun rotationValuesFor(type: Int): FloatArray {
-        val azimuth = bearingCache
+        // 模拟朝向 + 步频同步摆动（蜜罐规避）
+        val azimuth = bearingCache + swingOffset
         return when (type) {
             TYPE_ORIENTATION -> floatArrayOf(azimuth.toFloat(), 0f, 0f)
             TYPE_GAME_ROTATION_VECTOR -> {
@@ -626,6 +663,7 @@ object SystemSensorManagerHook {
 
         val type = sensorHandleTypeMap[handle] ?: return
         if (type in ROTATION_SENSOR_TYPES) {
+            advanceSwing()
             val mock = rotationValuesFor(type)
             for (i in mock.indices) {
                 if (i < values.size) values[i] = mock[i]
@@ -635,17 +673,23 @@ object SystemSensorManagerHook {
         if (type != TYPE_STEP_COUNTER) return
 
         val now = timestamp
+        var wholeSteps = 0L
         if (lastEventTimeNanos == 0L || now <= lastEventTimeNanos) {
             lastStepCount.set(values[0].toLong())
         } else {
             val dtSec = (now - lastEventTimeNanos) / 1_000_000_000.0
             if (dtSec in 0.0..10.0) {
                 val added = cadenceForSpeed(speedCache) / 60.0 * dtSec
-                lastStepCount.addAndGet(added.toLong())
+                wholeSteps = added.toLong()
+                lastStepCount.addAndGet(wholeSteps)
             }
         }
         lastEventTimeNanos = now
         values[0] = lastStepCount.get().toFloat()
+        // 步频推进 → 摆动调转方向（蜜罐规避，与步伐同步）
+        if (wholeSteps >= 1) {
+            flipSwing()
+        }
     }
 
     // ------------------------------------------------------------------
