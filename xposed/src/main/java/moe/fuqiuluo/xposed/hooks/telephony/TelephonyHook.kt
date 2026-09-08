@@ -148,7 +148,8 @@ object TelephonyHook: BaseTelephonyHook() {
                     Logger.debug("${method.name}: injected!")
                 }
 
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || result.javaClass.name == "android.os.Bundle") {
+                // result 可能为 null（无 SIM/无小区信息时），需先判空再访问 javaClass
+                if (result == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R || result.javaClass.name == "android.os.Bundle") {
                     result = Bundle().apply {
                         putInt("cid", Int.MAX_VALUE)
                         putInt("lac", Int.MAX_VALUE)

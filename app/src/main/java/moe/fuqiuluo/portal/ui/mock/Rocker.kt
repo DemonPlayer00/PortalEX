@@ -74,11 +74,7 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
         autoCard.visibility = if (autoCardVisible) View.VISIBLE else View.GONE
         root.findViewById<View>(R.id.auto).setOnClickListener {
             autoCardVisible = !autoCardVisible
-            if (autoCardVisible) {
-                autoCard.visibility = View.GONE
-            } else {
-                autoCard.visibility = View.VISIBLE
-            }
+            autoCard.visibility = if (autoCardVisible) View.VISIBLE else View.GONE
         }
         val rockerView = root.findViewById<RockerView>(R.id.rocker)
         val autoView = root.findViewById<AppCompatImageView>(R.id.auto)

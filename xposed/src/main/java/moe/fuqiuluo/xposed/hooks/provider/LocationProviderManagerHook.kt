@@ -5,7 +5,6 @@ import android.location.LocationManager
 import android.os.Build
 import android.telephony.CellIdentity
 import android.telephony.CellInfo
-import android.util.ArrayMap
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
@@ -237,81 +236,66 @@ object LocationProviderManagerHook {
             }
         }
 
+        // 注意：此 hook 通过 findMethodExactIfExists("onReportLocation") 无参查找，
+        // AOSP 的 onReportLocation(LocationResult) 是有参私有方法，因此该回调实际不会触发。
+        // 历史版本曾在这里把 mRegistrations 替换为空 ArrayMap（清空所有注册），
+        // 一旦某 ROM 存在无参重载就会直接破坏位置上报——现已移除该危险替换，
+        // 保留只读的日志与注入逻辑作为兜底（若某 ROM 真的触发，也只会注入而不会清空）。
         cLocationProviderManager.onceHookMethodBefore("onReportLocation") {
-            val fieldMRegistrations = XposedHelpers.findFieldIfExists(cLocationProviderManager, "mRegistrations")
-            if (fieldMRegistrations == null) {
-                Logger.error("Failed to find mRegistrations in LocationProviderManager")
-                return@onceHookMethodBefore
-            }
-            if (!fieldMRegistrations.isAccessible)
-                fieldMRegistrations.isAccessible = true
-
             if (!FakeLoc.enable) {
                 return@onceHookMethodBefore
             }
 
-            val registrations = fieldMRegistrations.get(thisObject) as ArrayMap<*, *>
-            val newRegistrations = ArrayMap<Any, Any>()
-            registrations.forEach { registration ->
-                val value = registration.value ?: return@forEach
-                val locationResult = args[0]
+            val locationResult = args[0] ?: return@onceHookMethodBefore
 
-                val mLocationsField = XposedHelpers.findFieldIfExists(locationResult.javaClass, "mLocations")
-                if (mLocationsField == null) {
-                    Logger.error("Failed to find mLocations in LocationResult")
-                    return@onceHookMethodBefore
-                }
-                mLocationsField.isAccessible = true
-                val mLocations = mLocationsField.get(locationResult) as ArrayList<*>
+            val mLocationsField = XposedHelpers.findFieldIfExists(locationResult.javaClass, "mLocations")
+                ?: return@onceHookMethodBefore
+            mLocationsField.isAccessible = true
+            val mLocations = mLocationsField.get(locationResult) as? ArrayList<*>
+                ?: return@onceHookMethodBefore
 
-                val originLocation = mLocations.firstOrNull() as? Location
-                    ?: Location(LocationManager.GPS_PROVIDER)
-                val location = Location(originLocation.provider)
+            val originLocation = mLocations.firstOrNull() as? Location
+                ?: Location(LocationManager.GPS_PROVIDER)
+            val location = Location(originLocation.provider)
 
-                val jitterLat = FakeLoc.jitterLocation()
-                location.latitude = jitterLat.first
-                location.longitude = jitterLat.second
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    location.isMock = false
-                }
-                location.altitude = FakeLoc.offset_altitude
-                location.speed = originLocation.speed
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    location.speedAccuracyMetersPerSecond = 0F
-                }
-
-                location.time = originLocation.time
-                location.accuracy = originLocation.accuracy
-                var modBearing = FakeLoc.bearing % 360.0 + 0.0
-                if (modBearing < 0) {
-                    modBearing += 360.0
-                }
-                location.bearing = modBearing.toFloat()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasBearingAccuracy()) {
-                    location.bearingAccuracyDegrees = modBearing.toFloat()
-                }
-                location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
-                }
-                originLocation.extras?.let {
-                    location.extras = it
-                }
-
-                mLocationsField.set(locationResult, arrayListOf(location))
-
-                val operation = XposedHelpers.callMethod(value, "acceptLocationChange", locationResult)
-                XposedHelpers.callMethod(value, "executeOperation", operation)
+            val jitterLat = FakeLoc.jitterLocation()
+            location.latitude = jitterLat.first
+            location.longitude = jitterLat.second
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                location.isMock = false
             }
+            location.altitude = FakeLoc.offset_altitude
+            location.speed = originLocation.speed
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                location.speedAccuracyMetersPerSecond = 0F
+            }
+
+            location.time = originLocation.time
+            location.accuracy = originLocation.accuracy
+            var modBearing = FakeLoc.bearing % 360.0 + 0.0
+            if (modBearing < 0) {
+                modBearing += 360.0
+            }
+            location.bearing = modBearing.toFloat()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasBearingAccuracy()) {
+                location.bearingAccuracyDegrees = modBearing.toFloat()
+            }
+            location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
+            }
+            originLocation.extras?.let {
+                location.extras = it
+            }
+
+            mLocationsField.set(locationResult, arrayListOf(location))
 
             if (FakeLoc.enableDebugLog) {
                 Logger.debug("onReportLocation: injected!")
             }
-
-            fieldMRegistrations.set(thisObject, newRegistrations)
         }
     }
 

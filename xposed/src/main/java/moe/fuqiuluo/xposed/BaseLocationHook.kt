@@ -165,17 +165,21 @@ abstract class BaseLocationHook: BaseDivineService() {
     }
 
     // 辅助函数：更新GGA/GNS/RMC中的经纬度及半球
+    // NMEA 坐标字段是度分格式（ddmm.mmmm）：十进制度 31.2304° → 度=31，分=0.2304*60=13.824 → 3113.824
+    // （NmeaValue/解析侧将原始度分串直接 toDouble，故此处也必须输出度分数值，与 toNmeaString 的 %011.6f 配套）
     private fun updateLatLon(value: Any, lat: Double, lon: Double) {
         val latHemisphere = if (lat >= 0) "N" else "S"
         val lonHemisphere = if (lon >= 0) "E" else "W"
 
-        val latDeg = lat.toInt()
-        val latMin = (lat - latDeg) * 60
-        val newLat = latDeg + latMin / 100.0
+        val absLat = kotlin.math.abs(lat)
+        val latDeg = absLat.toInt()
+        val latMin = (absLat - latDeg) * 60
+        val newLat = latDeg * 100.0 + latMin
 
-        val lonDeg = lon.toInt()
-        val lonMin = (lon - lonDeg) * 60
-        val newLon = lonDeg + lonMin / 100.0
+        val absLon = kotlin.math.abs(lon)
+        val lonDeg = absLon.toInt()
+        val lonMin = (absLon - lonDeg) * 60
+        val newLon = lonDeg * 100.0 + lonMin
 
         when (value) {
             is NmeaValue.GGA -> {

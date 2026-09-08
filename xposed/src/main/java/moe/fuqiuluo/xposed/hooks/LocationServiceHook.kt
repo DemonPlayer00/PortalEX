@@ -392,8 +392,19 @@ internal object LocationServiceHook: BaseLocationHook() {
                         Logger.debug("onLocationBatch: injected!")
                     }
 
-                    val location = (args[0] ?: return@onLocationBatch) as Location
-                    args[0] = injectLocation(location)
+                    // onLocationBatch(List<Location> locations, @nullable IRemoteCallback cb)
+                    // 也可能是单 Location 的旧版回调。两种形态都要支持，避免 List 强转 Location 崩溃。
+                    when (val data = args[0] ?: return@onLocationBatch) {
+                        is Location -> {
+                            args[0] = injectLocation(data)
+                        }
+                        is List<*> -> {
+                            args[0] = data.mapNotNull { it as? Location }.map { injectLocation(it) }
+                        }
+                        else -> {
+                            Logger.error("onLocationBatch: unknown arg type ${data.javaClass.name}")
+                        }
+                    }
                 })
             })
         }
@@ -707,7 +718,13 @@ internal object LocationServiceHook: BaseLocationHook() {
 //        })
 
         cILocationManager.hookAllMethods("getCurrentLocation", beforeHook {
-            val callback = args[2] ?: return@beforeHook
+            // 不同 Android 版本参数位置不同：
+            //  老版本: getCurrentLocation(LocationRequest, ILocationCallback, String packageName)
+            //  新版本: getCurrentLocation(String provider, LocationRequest, ILocationCallback, String packageName, ...)
+            // 所以不能用固定索引 args[2]，改为按“存在 onLocation 回调方法”的特征查找。
+            val callback = args.firstOrNull { arg ->
+                arg != null && arg.javaClass.methods.any { it.name == "onLocation" }
+            } ?: return@beforeHook
 
             if (FakeLoc.enableDebugLog) {
                 Logger.debug("getCurrentLocation: injected!")

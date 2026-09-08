@@ -225,26 +225,29 @@ object MockServiceHelper {
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
-    fun getSpeed(locationManager: LocationManager): Float? {
+    fun getSpeed(locationManager: LocationManager): Double? {
         if (!::randomKey.isInitialized) {
             return null
         }
         val rely = Bundle()
         rely.putString("command_id", "get_speed")
         if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getFloat("speed")
+            // 服务端写入的是 Double（putDouble），必须用 getDouble 读取，
+            // 否则 Bundle 类型不匹配会静默返回默认值 0.0
+            return rely.getDouble("speed")
         }
         return null
     }
 
-    fun getBearing(locationManager: LocationManager): Float? {
+    fun getBearing(locationManager: LocationManager): Double? {
         if (!::randomKey.isInitialized) {
             return null
         }
         val rely = Bundle()
         rely.putString("command_id", "get_bearing")
         if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getFloat("bearing")
+            // 服务端写入的是 Double，必须用 getDouble 读取
+            return rely.getDouble("bearing")
         }
         return null
     }
@@ -443,9 +446,12 @@ object MockServiceHelper {
             if (soFile.exists()) {
                 val originalHash = ShellUtils.executeCommandToBytes("head -c 4096 ${soFile.absolutePath}")
                 val newHash = ShellUtils.executeCommandToBytes("head -c 4096 ${tmpSoFile.absolutePath}")
-                if (originalHash.contentEquals(newHash)) {
+                // 内容不同才替换（更新新版本）；相同则直接删除临时文件即可
+                if (!originalHash.contentEquals(newHash)) {
                     ShellUtils.executeCommand("rm ${soFile.absolutePath}")
                     ShellUtils.executeCommand("mv ${tmpSoFile.absolutePath} ${soFile.absolutePath}")
+                } else {
+                    ShellUtils.executeCommand("rm ${tmpSoFile.absolutePath}")
                 }
             } else if (tmpSoFile.exists()) {
                 ShellUtils.executeCommand("mv ${tmpSoFile.absolutePath} ${soFile.absolutePath}")

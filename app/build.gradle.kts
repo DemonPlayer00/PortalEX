@@ -38,18 +38,18 @@ android {
                 Runtime.getRuntime().exec(arrayOf(
                     "powershell.exe",
                     "-command",
-                    "(Invoke-WebRequest -Uri 'https://api.ipify.org' -UseBasicParsing).Content," +
-                            "(Invoke-WebRequest -Uri 'https://ifconfig.me' -UseBasicParsing).Content," +
-                            "(Invoke-WebRequest -Uri 'https://icanhazip.com' -UseBasicParsing).Content," +
-                            "(Invoke-WebRequest -Uri 'https://checkip.amazonaws.com' -UseBasicParsing).Content" +
+                    "(Invoke-WebRequest -Uri 'https://api.ipify.org' -UseBasicParsing -TimeoutSec 5).Content," +
+                            "(Invoke-WebRequest -Uri 'https://ifconfig.me' -UseBasicParsing -TimeoutSec 5).Content," +
+                            "(Invoke-WebRequest -Uri 'https://icanhazip.com' -UseBasicParsing -TimeoutSec 5).Content," +
+                            "(Invoke-WebRequest -Uri 'https://checkip.amazonaws.com' -UseBasicParsing -TimeoutSec 5).Content" +
                             " | Select-Object -First 1"
                 ))
             } else {
                 Runtime.getRuntime().exec(arrayOf("sh", "-c",
-                    "curl -s https://api.ipify.org || " +
-                            "curl -s https://ifconfig.me || " +
-                            "curl -s https://icanhazip.com || " +
-                            "curl -s https://checkip.amazonaws.com"
+                    "curl -s --max-time 5 https://api.ipify.org || " +
+                            "curl -s --max-time 5 https://ifconfig.me || " +
+                            "curl -s --max-time 5 https://icanhazip.com || " +
+                            "curl -s --max-time 5 https://checkip.amazonaws.com"
                 ))
             }
             val reader = process.inputStream.bufferedReader()

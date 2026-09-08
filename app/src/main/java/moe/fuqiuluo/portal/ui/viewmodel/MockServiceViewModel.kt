@@ -4,8 +4,8 @@ import android.app.Activity
 import android.location.LocationManager
 import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.tencent.bugly.crashreport.CrashReport
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -78,13 +78,19 @@ class MockServiceViewModel : ViewModel() {
             rockerCoroutineController.pause()
             val delayTime = activity.reportDuration.toLong()
             val applicationContext = activity.applicationContext
-            rockerJob = GlobalScope.launch {
+            rockerJob = viewModelScope.launch {
                 do {
                     rockerCoroutineController.controlledCoroutine()
                     delay(delayTime)
 
                     CrashReport.setUserSceneTag(applicationContext, 261773)
-                    if(!MockServiceHelper.move(locationManager!!, FakeLoc.speed / (1000 / delayTime) / 0.85, FakeLoc.bearing)) {
+                    val lm = locationManager
+                    if (lm == null) {
+                        // 定位服务尚未就绪（权限未授予等），暂停循环等待下次恢复
+                        rockerCoroutineController.pause()
+                        continue
+                    }
+                    if(!MockServiceHelper.move(lm, FakeLoc.speed / (1000 / delayTime) / 0.85, FakeLoc.bearing)) {
                         Log.e("MockServiceViewModel", "Failed to move")
                     }
                 } while (isActive)
@@ -101,26 +107,37 @@ class MockServiceViewModel : ViewModel() {
             // 每次启动路线模拟时重置累计距离（保证衰减从头开始）
             resetDistanceAccumulator()
 
-            routeMockJob = GlobalScope.launch {
+            routeMockJob = viewModelScope.launch {
                 do {
                     routeMockCoroutine.routeMockCoroutine()
                     delay(delayTime)
+                    val lm = locationManager
+                    if (lm == null) {
+                        routeMockCoroutine.pause()
+                        continue
+                    }
+                    val selected = selectedRoute
+                    if (selected == null || selected.route.isEmpty()) {
+                        // 未选择路线：暂停模拟，避免空指针崩溃
+                        routeMockCoroutine.pause()
+                        continue
+                    }
+                    val route = selected.route
                     // 如果是第0阶段，定位到第一个点
                     if (routeStage == 0) {
                         MockServiceHelper.setLocation(
-                            locationManager!!,
-                            selectedRoute!!.route[0].first,
-                            selectedRoute!!.route[0].second
+                            lm,
+                            route[0].first,
+                            route[0].second
                         )
                         routeStage++
                     }
-                    val route = selectedRoute!!.route
 
                     // 处理所有已到达的阶段
                     while (routeStage < route.size) {
                         val target = route[routeStage]
-                        val location = MockServiceHelper.getLocation(locationManager!!)
-                        val currentLat = location!!.first
+                        val location = MockServiceHelper.getLocation(lm) ?: break
+                        val currentLat = location.first
                         val currentLon = location.second
 
                         val inverse = Geodesic.WGS84.Inverse(
@@ -141,7 +158,7 @@ class MockServiceViewModel : ViewModel() {
                         } else if (inverse.s12 < FakeLoc.speed * getCurrentSpeedFactor() / (1000 / delayTime) / 0.85) {
                             // 如果距离小于当前衰减后的单步移动距离，直接移动到目标点
                             MockServiceHelper.setLocation(
-                                locationManager!!,
+                                lm,
                                 target.first,
                                 target.second
                             )
@@ -164,8 +181,8 @@ class MockServiceViewModel : ViewModel() {
 
                     // 处理当前目标点的移动
                     val target = route[routeStage]
-                    val location = MockServiceHelper.getLocation(locationManager!!)
-                    val currentLat = location!!.first
+                    val location = MockServiceHelper.getLocation(lm) ?: continue
+                    val currentLat = location.first
                     val currentLon = location.second
 
                     val inverse = Geodesic.WGS84.Inverse(
@@ -197,7 +214,7 @@ class MockServiceViewModel : ViewModel() {
                     // 使用衰减后的速度进行移动
                     val decayedSpeed = FakeLoc.speed * getCurrentSpeedFactor()
                     if (!MockServiceHelper.move(
-                            locationManager!!,
+                            lm,
                             decayedSpeed / (1000 / delayTime) / 0.85,
                             azimuth
                         )
