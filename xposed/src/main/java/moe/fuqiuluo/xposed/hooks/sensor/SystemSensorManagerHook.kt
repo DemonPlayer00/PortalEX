@@ -36,14 +36,18 @@ import java.util.concurrent.atomic.AtomicLong
  * 运行在**每一个 app 进程**内，而不是 system_server。因此本模块必须在所有进程安装
  * （见 FakeLocation.handleLoadPackage）。
  *
- * 三种机制配合，覆盖有/无真实传感器的设备：
- * 1. **主动注入（主路径，参考 UseVector）**：伪造 TYPE_STEP_COUNTER 的 Sensor，
- *    拦截 registerListener（result=true 阻止真实注册），单线程调度器按当前步频
- *    周期性构造 SensorEvent 并直接回调 listener —— 设备没有步计数传感器也能工作。
+ * 三种机制配合，覆盖有/无真实传感器的设备，注入对象 = 步数 + 朝向（同一 A/B 结构与开关）：
+ * 1. **主动注入（主路径，参考 UseVector）**：拦截 registerListener（result=true 阻止
+ *    真实注册），单线程调度器按需周期性构造 SensorEvent 直接回调 listener：
+ *    步数按步频、朝向按固定 20Hz（旋转数据来自模拟 bearing）——没有步数传感器也能工作。
  * 2. **伪造传感器暴露**：getDefaultSensor/getSensorList/getFullSensorsList 在系统
- *    缺失步计数器时注入伪造对象，让 App 认为设备支持步计数。
+ *    缺失步计数器时注入伪造对象（朝向传感器一般真实存在，无需伪造）。
  * 3. **dispatchSensorEvent 改写（兜底）**：若拦截未生效（特殊 ROM 走了其他路径），
- *    真实事件流到达时改写 values，保持步频一致。
+ *    真实事件流到达时改写 values，保持步频/朝向一致。
+ *
+ * 朝向注入的意义：运动世界等跑步 App 的方向由旋转传感器（ORIENTATION/
+ * ROTATION_VECTOR/GAME_ROTATION_VECTOR）驱动，而非 Location.bearing——
+ * 注入后 App 方向跟随模拟朝向（经注入位置的 extras 同步），不随真实设备转动变化。
  *
  * 步频模型 = 移动速度直接换算（线性）：
  *   cadence(步/min) = 60 + 30 * speed(m/s)，限幅 60..220 —— 走路/跑步速度对应：
@@ -54,10 +58,33 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object SystemSensorManagerHook {
     private const val TYPE_STEP_COUNTER = 19
+    private const val TYPE_ORIENTATION = 3
+    private const val TYPE_ROTATION_VECTOR = 11
+    private const val TYPE_GAME_ROTATION_VECTOR = 15
     private const val EXTRA_PORTAL_SPEED = "portal_speed"
+    private const val EXTRA_PORTAL_BEARING = "portal_bearing"
 
-    // listener -> 其注册线程的 Handler（有则 post，无则直接回调）
-    private data class RegisteredListener(val listener: SensorEventListener, val handler: Handler?)
+    // 需要注入的传感器类型（步数 + 朝向）：
+    // 朝向类（ORIENTATION/ROTATION_VECTOR/GAME_ROTATION_VECTOR）驱动 App 方向——
+    // 运动世界等 App 用旋转传感器而非 Location.bearing 决定朝向，
+    // 注入后方向跟随模拟 bearing，不随真实设备转动变化。
+    private val INJECTABLE_SENSOR_TYPES = setOf(
+        TYPE_STEP_COUNTER, TYPE_ORIENTATION, TYPE_ROTATION_VECTOR, TYPE_GAME_ROTATION_VECTOR
+    )
+    private val ROTATION_SENSOR_TYPES = setOf(
+        TYPE_ORIENTATION, TYPE_ROTATION_VECTOR, TYPE_GAME_ROTATION_VECTOR
+    )
+
+    // 朝向注入固定频率（20Hz，地图旋转流畅；步数在同一 tick 下按 cadence 浮动推进）
+    private const val ROTATION_INJECT_MS = 50L
+
+    // listener -> 其注册线程的 Handler / 实际 Sensor 对象 / 传感器类型
+    private data class RegisteredListener(
+        val listener: SensorEventListener,
+        val handler: Handler?,
+        val sensor: Sensor,
+        val sensorType: Int
+    )
 
     private val registeredListeners = CopyOnWriteArraySet<RegisteredListener>()
 
@@ -73,13 +100,16 @@ object SystemSensorManagerHook {
     }
     private var currentScheduledFuture: ScheduledFuture<*>? = null
 
-    // 伪造的步计数传感器（无真实传感器时暴露给 App）
+    // 伪造的步计数传感器（无真实传感器时暴露给 App；事件 sensor 字段用注册时的真实 Sensor）
     private var fakeStepSensor: Sensor? = null
-    // 真实步计数传感器（存在时事件挂它名下，降低检测面）
-    private var realStepSensor: Sensor? = null
 
-    // 速度缓存（m/s），默认慢走
+    // 速度/朝向缓存（m/s | 度），默认慢走/朝北——来自注入位置 extras（跨进程同步）
     @Volatile private var speedCache = 1.5
+    @Volatile private var bearingCache = 0.0
+
+    // 统一调度 tick 状态：步数按 cadence 浮动累计（每整步触发事件）
+    @Volatile private var lastTickNanos = System.nanoTime()
+    private var stepFraction = 0.0
 
     // dispatchSensorEvent 兜底状态（每进程独立）
     private val lastStepCount = AtomicLong(0)
@@ -168,8 +198,9 @@ object SystemSensorManagerHook {
     }
 
     /**
-     * B 方案步数改写：服务端事件到达时按当前模拟速度推进累计步数。
-     * 服务端（system_server）持有 FakeLoc.speed 权威值，无需 extras 同步。
+     * B 方案源级改写：服务端事件到达时——
+     * 步数按 FakeLoc.speed 对应步频推进；朝向类直接覆盖为模拟 bearing 的旋转数据
+     * （FakeLoc.bearing 服务端即权威值，无需 extras 同步）。
      */
     private fun injectServerStep(args: Array<Any?>) {
         if (args.size < 4) return
@@ -179,6 +210,16 @@ object SystemSensorManagerHook {
         val timestamp = args[3] as? Long ?: return
 
         val type = sensorHandleTypeMap[handle] ?: return
+
+        // 朝向类：覆盖为模拟朝向（不随真实设备转动）
+        if (type in ROTATION_SENSOR_TYPES) {
+            val mock = rotationValuesFor(type)
+            for (i in mock.indices) {
+                if (i < values.size) values[i] = mock[i]
+            }
+            return
+        }
+
         if (type != TYPE_STEP_COUNTER) return
 
         val now = timestamp
@@ -201,8 +242,19 @@ object SystemSensorManagerHook {
         return (60.0 + 30.0 * speed).toInt().coerceIn(60, 220)
     }
 
-    /** 下一次事件间隔（ms）：由当前速度对应的步频换算 + ±10% 抖动（参考 UseVector） */
+    private fun hasStepListener(): Boolean = registeredListeners.any { it.sensorType == TYPE_STEP_COUNTER }
+
+    private fun hasRotationListener(): Boolean = registeredListeners.any { it.sensorType in ROTATION_SENSOR_TYPES }
+
+    /**
+     * 下一次事件间隔（ms）：
+     * 有朝向监听者 → 固定 50ms（20Hz，朝向流畅；步数在同一 tick 下按 cadence 浮动推进）；
+     * 只有步数 → 步频间隔 + ±10% 抖动（参考 UseVector）。
+     */
     private fun nextDelayMs(): Long {
+        if (hasRotationListener()) {
+            return ROTATION_INJECT_MS
+        }
         val cadence = cadenceForSpeed(speedCache)
         val intervalMs = 60000L / cadence
         val jitter = (intervalMs * (kotlin.random.Random.nextDouble() - 0.5) * 0.2).toLong()
@@ -232,33 +284,96 @@ object SystemSensorManagerHook {
 
     private fun injectOnce() {
         try {
-            if (registeredListeners.isNotEmpty()) {
-                val step = globalSteps.incrementAndGet()
-                val event = createSensorEvent(step) ?: return
-                for (registered in registeredListeners) {
-                    try {
-                        val handler = registered.handler
-                        if (handler != null) {
-                            handler.post { runCatching { registered.listener.onSensorChanged(event) } }
-                        } else {
-                            registered.listener.onSensorChanged(event)
-                        }
-                    } catch (t: Throwable) {
-                        XposedBridge.log("[Portal] step listener callback failed: ${t.message}")
+            if (registeredListeners.isEmpty()) return
+
+            // 统一 tick：步数与朝向在同一次调度中按各自需求注入（保持一种结构）
+            val now = System.nanoTime()
+            val dtSec = ((now - lastTickNanos) / 1_000_000_000.0).coerceIn(0.0, 1.0)
+            lastTickNanos = now
+
+            // 步数：按当前速度步频浮动累计，每整步触发一次事件
+            if (hasStepListener()) {
+                stepFraction += cadenceForSpeed(speedCache) / 60.0 * dtSec
+                val wholeSteps = stepFraction.toInt()
+                if (wholeSteps >= 1) {
+                    stepFraction -= wholeSteps
+                    globalSteps.addAndGet(wholeSteps)
+                    emitEvent(TYPE_STEP_COUNTER, FloatArray(1) { globalSteps.get().toFloat() })
+                    if (FakeLoc.enableDebugLog && globalSteps.get() % 200 == 0) {
+                        Logger.debug("step injector: total=${globalSteps.get()} cadence=${cadenceForSpeed(speedCache)}/min speed=${speedCache}")
                     }
                 }
-                if (FakeLoc.enableDebugLog && step % 200 == 0) {
-                    Logger.debug("step injector: total=$step cadence=${cadenceForSpeed(speedCache)}/min speed=${speedCache}")
-                }
+            }
+
+            // 朝向：每 tick 注入模拟 bearing 对应的旋转数据
+            if (hasRotationListener()) {
+                emitRotationEvents()
             }
         } catch (t: Throwable) {
-            XposedBridge.log("[Portal] step injector failed: ${t.message}")
+            XposedBridge.log("[Portal] sensor injector failed: ${t.message}")
         } finally {
             synchronized(this) {
                 if (registeredListeners.isNotEmpty()) {
                     currentScheduledFuture = scheduler.schedule(::injectOnce, nextDelayMs(), TimeUnit.MILLISECONDS)
                 } else {
                     currentScheduledFuture = null
+                }
+            }
+        }
+    }
+
+    /** 向指定类型的监听者发射事件 */
+    private fun emitEvent(type: Int, values: FloatArray) {
+        val sensor = registeredListeners.firstOrNull { it.sensorType == type }?.sensor
+        val event = createSensorEvent(values, sensor) ?: return
+        for (reg in registeredListeners) {
+            if (reg.sensorType != type) continue
+            deliverEvent(reg, event)
+        }
+    }
+
+    /** 向朝向类监听者分别发射事件（每个用自己注册的 Sensor 对象） */
+    private fun emitRotationEvents() {
+        for (reg in registeredListeners) {
+            if (reg.sensorType !in ROTATION_SENSOR_TYPES) continue
+            val event = createSensorEvent(rotationValuesFor(reg.sensorType), reg.sensor) ?: continue
+            deliverEvent(reg, event)
+        }
+    }
+
+    private fun deliverEvent(reg: RegisteredListener, event: SensorEvent) {
+        try {
+            val handler = reg.handler
+            if (handler != null) {
+                handler.post { runCatching { reg.listener.onSensorChanged(event) } }
+            } else {
+                reg.listener.onSensorChanged(event)
+            }
+        } catch (t: Throwable) {
+            XposedBridge.log("[Portal] sensor listener callback failed: ${t.message}")
+        }
+    }
+
+    /**
+     * 模拟 bearing → 旋转传感器数据：
+     * - TYPE_ORIENTATION：values[0] = 方位角（度，0=北，顺时针）
+     * - TYPE_ROTATION_VECTOR / GAME_ROTATION_VECTOR：绕世界 Z 轴旋转的四元数虚部
+     *   [0, 0, sin(θ/2), cos(θ/2)]（API 18+ 含 w；更老版本 3 元素无 w）
+     */
+    private fun rotationValuesFor(type: Int): FloatArray {
+        val azimuth = bearingCache
+        return when (type) {
+            TYPE_ORIENTATION -> floatArrayOf(azimuth.toFloat(), 0f, 0f)
+            TYPE_GAME_ROTATION_VECTOR -> {
+                val theta = Math.toRadians(azimuth)
+                floatArrayOf(0f, 0f, (-Math.sin(theta / 2.0)).toFloat(), Math.cos(theta / 2.0).toFloat())
+            }
+            else -> { // TYPE_ROTATION_VECTOR
+                val theta = Math.toRadians(azimuth)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                    floatArrayOf(0f, 0f, (-Math.sin(theta / 2.0)).toFloat(), Math.cos(theta / 2.0).toFloat())
+                } else {
+                    floatArrayOf(0f, 0f, (-Math.sin(theta / 2.0)).toFloat())
                 }
             }
         }
@@ -317,27 +432,26 @@ object SystemSensorManagerHook {
         }
     }
 
-    private fun createSensorEvent(stepCount: Int): SensorEvent? {
+    /** 泛化 SensorEvent 构造：按值数组长度分配，sensor 字段挂注册时的真实 Sensor */
+    private fun createSensorEvent(values: FloatArray, sensor: Sensor?): SensorEvent? {
         return try {
             val event: SensorEvent = if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.N_MR1) {
                 SensorEvent::class.java.getConstructor(Int::class.javaPrimitiveType)
-                    .newInstance(TYPE_STEP_COUNTER)
+                    .newInstance(values.size)
             } else {
                 SensorEvent::class.java.getDeclaredConstructor(Int::class.javaPrimitiveType).apply {
                     isAccessible = true
-                }.newInstance(TYPE_STEP_COUNTER)
+                }.newInstance(values.size)
             }
             SensorEvent::class.java.getDeclaredField("values").apply {
                 isAccessible = true
-                if (get(event) == null) set(event, FloatArray(3))
+                set(event, values)
             }
-            event.values[0] = stepCount.toFloat()
             event.timestamp = System.nanoTime()
             event.accuracy = SensorManager.SENSOR_STATUS_ACCURACY_HIGH
 
             SensorEvent::class.java.getDeclaredField("sensor").apply {
                 isAccessible = true
-                val sensor = realStepSensor ?: fakeStepSensor
                 if (sensor != null) set(event, sensor)
             }
             event
@@ -438,15 +552,17 @@ object SystemSensorManagerHook {
                                 arg is Handler -> handler = arg
                             }
                         }
-                        if (sensor?.type == TYPE_STEP_COUNTER) {
+                        if (sensor != null && sensor.type in INJECTABLE_SENSOR_TYPES) {
                             val l = listener
                             if (l != null) {
-                                if (registeredListeners.add(RegisteredListener(l, handler))) {
-                                    if (FakeLoc.enableDebugLog) Logger.debug("registerListener intercepted, listeners=${registeredListeners.size}")
+                                if (registeredListeners.add(RegisteredListener(l, handler, sensor, sensor.type))) {
+                                    if (FakeLoc.enableDebugLog) {
+                                        Logger.debug("registerListener intercepted: type=${sensor.type}, listeners=${registeredListeners.size}")
+                                    }
                                     startInjectorIfNeeded()
                                 }
                             }
-                            // 阻止真实注册：步数完全由我们注入，避免双数据流
+                            // 阻止真实注册：步数/朝向完全由我们注入，避免双数据流
                             result = true
                         }
                     })
@@ -482,7 +598,7 @@ object SystemSensorManagerHook {
     }
 
     // ------------------------------------------------------------------
-    // dispatchSensorEvent 兜底：真实事件流到达时改写步数（拦截未生效的 ROM）
+    // dispatchSensorEvent 兜底：真实事件流到达时改写数据（拦截未生效的 ROM）
     // ------------------------------------------------------------------
 
     private fun hookSystemSensorManagerQueue(classLoader: ClassLoader) {
@@ -492,12 +608,16 @@ object SystemSensorManagerHook {
 
         queueClass.declaredMethods.filter { it.name == "dispatchSensorEvent" }.forEach { m ->
             m.onceHook(beforeHook {
-                injectStepCounter(args)
+                injectClientEvent(args)
             })
         }
     }
 
-    private fun injectStepCounter(args: Array<Any?>) {
+    /**
+     * 客户端兜底改写：按 handle→type 分流——步数按步频推进；
+     * 朝向类直接覆盖为模拟 bearing 对应的旋转数据（不随真实转动变化）。
+     */
+    private fun injectClientEvent(args: Array<Any?>) {
         if (args.size < 4) return
         val handle = args[0] as? Int ?: return
         val values = args[1] as? FloatArray ?: return
@@ -505,6 +625,13 @@ object SystemSensorManagerHook {
         val timestamp = args[3] as? Long ?: return
 
         val type = sensorHandleTypeMap[handle] ?: return
+        if (type in ROTATION_SENSOR_TYPES) {
+            val mock = rotationValuesFor(type)
+            for (i in mock.indices) {
+                if (i < values.size) values[i] = mock[i]
+            }
+            return
+        }
         if (type != TYPE_STEP_COUNTER) return
 
         val now = timestamp
@@ -529,12 +656,21 @@ object SystemSensorManagerHook {
         val cLocationManager = XposedHelpers.findClassIfExists("android.location.LocationManager", classLoader)
             ?: return
 
-        val hookSpeed = beforeHook {
-            val loc = args[0] as? Location ?: return@beforeHook
+        // 从注入位置的 extras 同步速度与朝向（服务端权威值 → 客户端缓存）
+        fun syncFromLocation(loc: Location) {
             val speed = loc.extras?.getDouble(EXTRA_PORTAL_SPEED)
             if (speed != null && speed > 0.0) {
                 speedCache = speed
             }
+            val bearing = loc.extras?.getDouble(EXTRA_PORTAL_BEARING)
+            if (bearing != null) {
+                bearingCache = bearing
+            }
+        }
+
+        val hookSpeed = beforeHook {
+            val loc = args[0] as? Location ?: return@beforeHook
+            syncFromLocation(loc)
         }
 
         val hookRequestLocationUpdates = beforeHook {
@@ -556,10 +692,7 @@ object SystemSensorManagerHook {
                 } ?: return@beforeHook
                 callback.javaClass.onceHookAllMethod("onLocation", beforeHook {
                     val loc = args[0] as? Location ?: return@beforeHook
-                    val speed = loc.extras?.getDouble(EXTRA_PORTAL_SPEED)
-                    if (speed != null && speed > 0.0) {
-                        speedCache = speed
-                    }
+                    syncFromLocation(loc)
                 })
             })
         }
