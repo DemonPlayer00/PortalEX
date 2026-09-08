@@ -238,9 +238,12 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        // 悬浮胶囊单实例：仅主界面/路线模拟页注册功能集（各自
-                        // Fragment onResume 中 setActions），其余目的地统一隐藏
-                        if (destination.id != R.id.nav_home && destination.id != R.id.nav_route_edit) {
+                        // 悬浮胶囊单实例：仅主界面/路线回放页/路线模拟页注册功能集
+                        // （各自 Fragment onResume 中 setActions），其余目的地统一隐藏
+                        if (destination.id != R.id.nav_home &&
+                            destination.id != R.id.nav_route_gallery &&
+                            destination.id != R.id.nav_route_edit
+                        ) {
                             fabBar.setActions(emptyList())
                         }
                     }
