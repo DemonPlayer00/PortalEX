@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主界面右上角三点展开栏：地图控件（普通图/卫星图/显示路线） -->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group
+        android:id="@+id/map_type"
+        android:checkableBehavior="single">
+        <item
+            android:id="@+id/map_type_normal"
+            android:checked="true"
+            android:checkable="true"
+            android:title="@string/normal_view" />
+        <item
+            android:id="@+id/map_type_satellite"
+            android:checkable="true"
+            android:title="@string/satellite_view" />
+    </group>
+    <item
+        android:id="@+id/show_route"
+        android:checkable="true"
+        android:title="@string/show_route" />
+</menu>

@@ -30,6 +30,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.AdapterView.OnItemClickListener
 import android.widget.ImageView
+import android.widget.PopupMenu
 import android.widget.SimpleAdapter
 import android.widget.TextView
 import android.widget.Toast
@@ -51,6 +52,7 @@ import androidx.navigation.NavDestination
 import androidx.navigation.findNavController
 import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.navigateUp
+import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupActionBarWithNavController
 import androidx.navigation.ui.setupWithNavController
 import com.baidu.mapapi.map.BitmapDescriptorFactory
@@ -78,6 +80,7 @@ import moe.fuqiuluo.portal.bdmap.toPoi
 import moe.fuqiuluo.portal.databinding.ActivityMainBinding
 import moe.fuqiuluo.portal.ext.gcj02
 import moe.fuqiuluo.portal.ext.wgs84
+import moe.fuqiuluo.portal.ui.home.HomeFragment
 import moe.fuqiuluo.portal.ui.notification.NotificationUtils
 import moe.fuqiuluo.portal.ui.viewmodel.BaiduMapViewModel
 import moe.fuqiuluo.portal.ui.viewmodel.MockServiceViewModel
@@ -334,6 +337,53 @@ class MainActivity : AppCompatActivity() {
 
             setContentView(R.layout.activity_no_permission)
         }
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_map_controls -> {
+                showMapControlsMenu()
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    /** 三点展开栏：普通图/卫星图/显示路线（状态与 HomeFragment 控件同步） */
+    private fun showMapControlsMenu() {
+        val navHostFragment =
+            supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
+                ?: return
+        val home = navHostFragment.childFragmentManager.fragments
+            .firstOrNull { it is HomeFragment } as? HomeFragment ?: return
+
+        val popup = PopupMenu(this, binding.appBarMain.toolbar)
+        popup.menuInflater.inflate(R.menu.map_controls_popup, popup.menu)
+
+        // 显示前同步当前状态
+        popup.menu.findItem(R.id.map_type_normal).isChecked =
+            home.currentMapTypeId() == R.id.map_type_normal
+        popup.menu.findItem(R.id.map_type_satellite).isChecked =
+            home.currentMapTypeId() == R.id.map_type_satellite
+        popup.menu.findItem(R.id.show_route).isChecked = home.isShowRouteChecked()
+
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.map_type_normal, R.id.map_type_satellite -> {
+                    home.selectMapType(item.itemId)
+                    true
+                }
+
+                R.id.show_route -> {
+                    home.toggleShowRoute()
+                    true
+                }
+
+                else -> false
+            }
+        }
+        popup.show()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

@@ -312,6 +312,22 @@ class HomeFragment : Fragment() {
         return root
     }
 
+    /** 三点展开栏入口：地图类型（触发原 RadioGroup 监听） */
+    fun selectMapType(checkId: Int) {
+        binding.mapTypeGroup.check(checkId)
+    }
+
+    /** 三点展开栏入口：当前地图类型 */
+    fun currentMapTypeId(): Int = binding.mapTypeGroup.checkedRadioButtonId
+
+    /** 三点展开栏入口：切换显示路线（触发原复选框监听） */
+    fun toggleShowRoute() {
+        binding.showRoute.isChecked = !binding.showRoute.isChecked
+    }
+
+    /** 三点展开栏入口：当前显示路线状态 */
+    fun isShowRouteChecked(): Boolean = binding.showRoute.isChecked
+
     private fun previewRoute(points: kotlin.collections.List<Pair<Double, Double>>) {
         baiduMapViewModel.baiduMap.clear() // 清除之前的所有覆盖物
 
