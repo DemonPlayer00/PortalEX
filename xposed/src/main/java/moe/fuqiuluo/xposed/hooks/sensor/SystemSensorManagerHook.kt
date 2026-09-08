@@ -86,6 +86,16 @@ object SystemSensorManagerHook {
     @Volatile private var lastEventTimeNanos = 0L
 
     operator fun invoke(classLoader: ClassLoader) {
+        when (FakeLoc.sensorMockMode) {
+            // B 方案：服务端源级改写（仅 system_server 进程存在 SensorService 时才生效）
+            1 -> hookServerMode(classLoader)
+            // A 方案（默认）：客户端主动注入，兼容无真实传感器设备
+            else -> hookClientMode(classLoader)
+        }
+    }
+
+    /** A 方案（默认）：客户端主动注入 */
+    private fun hookClientMode(classLoader: ClassLoader) {
         unlockGeoSensor(classLoader)
 
         createFakeStepSensor()
@@ -94,6 +104,87 @@ object SystemSensorManagerHook {
         hookUnregisterListener(classLoader)
         hookSystemSensorManagerQueue(classLoader)
         hookSpeedSync(classLoader)
+    }
+
+    /** B 方案：服务端 SensorService 源级改写 */
+    private fun hookServerMode(classLoader: ClassLoader) {
+        val cSensorService = XposedHelpers.findClassIfExists("com.android.server.SensorService", classLoader)
+            ?: return
+
+        if (FakeLoc.enableDebugLog) {
+            Logger.debug("sensor mock mode B: SensorService found")
+        }
+
+        // 1. 记录 sensor handle -> type：注册时参数里带 Sensor 对象
+        cSensorService.declaredMethods
+            .filter { m -> m.name.contains("register") && m.parameterTypes.any { Sensor::class.java.isAssignableFrom(it) } }
+            .forEach { m ->
+                runCatching {
+                    m.onceHook(beforeHook {
+                        args.filterIsInstance<Sensor>().forEach { sensor ->
+                            val handle = runCatching {
+                                XposedHelpers.callMethod(sensor, "getHandle") as? Int
+                            }.getOrNull() ?: return@beforeHook
+                            sensorHandleTypeMap[handle] = sensor.type
+                            if (FakeLoc.enableDebugLog) {
+                                Logger.debug("mode B: sensor handle=$handle type=${sensor.type} registered")
+                            }
+                        }
+                    })
+                }.onFailure { /* 匿名内部类方法不在此处，忽略 */ }
+            }
+
+        // 2. 源级改写：SensorEventConnection.onSensorChanged
+        // Android 9+ 签名：onSensorChanged(int handle, float[] values, int inAccuracy, long timestamp, int flags)
+        // Android 7/8 签名：onSensorChanged(int handle, float[] values, int inAccuracy, long timestamp)
+        val connectionClass = XposedHelpers.findClassIfExists(
+            "com.android.server.SensorService\$SensorEventConnection",
+            classLoader
+        ) ?: run {
+            if (FakeLoc.enableDebugLog) Logger.debug("mode B: SensorEventConnection not found")
+            return
+        }
+
+        connectionClass.declaredMethods
+            .filter { it.name == "onSensorChanged" }
+            .forEach { m ->
+                runCatching {
+                    m.onceHook(beforeHook {
+                        injectServerStep(args)
+                    })
+                }.onFailure {
+                    if (FakeLoc.enableDebugLog) Logger.debug("mode B: hook onSensorChanged failed: ${it.message}")
+                }
+            }
+    }
+
+    /**
+     * B 方案步数改写：服务端事件到达时按当前模拟速度推进累计步数。
+     * 服务端（system_server）持有 FakeLoc.speed 权威值，无需 extras 同步。
+     */
+    private fun injectServerStep(args: Array<Any?>) {
+        if (args.size < 4) return
+        val handle = args[0] as? Int ?: return
+        val values = args[1] as? FloatArray ?: return
+        if (values.isEmpty()) return
+        val timestamp = args[3] as? Long ?: return
+
+        val type = sensorHandleTypeMap[handle] ?: return
+        if (type != TYPE_STEP_COUNTER) return
+
+        val now = timestamp
+        if (lastEventTimeNanos == 0L || now <= lastEventTimeNanos) {
+            // 首次事件：对齐真实累计值，避免跳变
+            lastStepCount.set(values[0].toLong())
+        } else {
+            val dtSec = (now - lastEventTimeNanos) / 1_000_000_000.0
+            if (dtSec in 0.0..10.0) {
+                val added = cadenceForSpeed(FakeLoc.speed) / 60.0 * dtSec
+                lastStepCount.addAndGet(added.toLong())
+            }
+        }
+        lastEventTimeNanos = now
+        values[0] = lastStepCount.get().toFloat()
     }
 
     /** 步频-移动速度线性模型（步/min）：cadence = 60 + 30*speed，限幅 60..220 */
