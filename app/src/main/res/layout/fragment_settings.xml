@@ -389,7 +389,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textSize="11sp"
-                        android:text="开启=注入步频与朝向传感器数据(客户端), 默认开; 关闭=完全禁用传感器模拟" />
+                        android:text="注入步频与朝向传感器数据" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/sensor_mock_enabled_switch"
