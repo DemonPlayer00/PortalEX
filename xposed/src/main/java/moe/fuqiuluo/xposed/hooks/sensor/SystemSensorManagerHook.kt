@@ -28,8 +28,6 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.pow
-import kotlin.math.roundToInt
 
 /**
  * 传感器模拟 hook（客户端方案 v3，融合 UseVector 主动注入能力）。
@@ -47,11 +45,9 @@ import kotlin.math.roundToInt
  * 3. **dispatchSensorEvent 改写（兜底）**：若拦截未生效（特殊 ROM 走了其他路径），
  *    真实事件流到达时改写 values，保持步频一致。
  *
- * 步频模型 = 速度模型 × 疲劳衰减（融合 UseVector 的衰减曲线）：
- *   baseCadence(步/min) = 60 + 30 * speed(m/s)，上限 220 —— 走路/跑步速度对应
- *   progress = 已走步数 / 5287（UseVector 衰减阈值）
- *   factor = 1.0 - 0.32 * progress^1.5（从 1.0 衰减到 0.68，模拟长跑疲劳）
- *   cadence = baseCadence * factor，下限 60
+ * 步频模型 = 移动速度直接换算（线性）：
+ *   cadence(步/min) = 60 + 30 * speed(m/s)，限幅 60..220 —— 走路/跑步速度对应：
+ *   慢走 1.2m/s → 96，快走 1.5 → 105，慢跑 3.0 → 150，快跑 4.5+ → 195+（封顶 220）
  *
  * 速度来源：模拟速度权威值在 system_server（FakeLoc.speed）。本进程通过 hook 定位
  * 回调，从注入位置的 extras（portal_speed，见 BaseLocationHook）同步速度缓存。
@@ -59,11 +55,6 @@ import kotlin.math.roundToInt
 object SystemSensorManagerHook {
     private const val TYPE_STEP_COUNTER = 19
     private const val EXTRA_PORTAL_SPEED = "portal_speed"
-
-    // UseVector 兼容：步频衰减阈值（模拟 5287 步后疲劳到最低步频）
-    private const val DECAY_STEPS = 5287
-    // 衰减幅度：最高步频的 32% 会被疲劳吃掉（对应 190 → 130 步/min 的曲线）
-    private const val DECAY_FACTOR = 0.32
 
     // listener -> 其注册线程的 Handler（有则 post，无则直接回调）
     private data class RegisteredListener(val listener: SensorEventListener, val handler: Handler?)
@@ -75,8 +66,6 @@ object SystemSensorManagerHook {
 
     // 全局累计步数（随机起点，模拟"已经走了不少"）
     private val globalSteps = AtomicInteger(kotlin.random.Random.nextInt(3000, 12000))
-    // 本次会话开始后走的步数（疲劳进度用）
-    private val actualStepsSinceStart = AtomicInteger(0)
 
     // 调度器（单线程，与 UseVector 一致）
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
@@ -107,22 +96,14 @@ object SystemSensorManagerHook {
         hookSpeedSync(classLoader)
     }
 
-    /** 步频-速度模型（步/min），未乘疲劳系数 */
-    private fun baseCadenceForSpeed(speed: Double): Int {
+    /** 步频-移动速度线性模型（步/min）：cadence = 60 + 30*speed，限幅 60..220 */
+    private fun cadenceForSpeed(speed: Double): Int {
         return (60.0 + 30.0 * speed).toInt().coerceIn(60, 220)
     }
 
-    /** 当前即时步频 = 速度步频 × 疲劳衰减 */
-    private fun currentCadence(): Int {
-        val base = baseCadenceForSpeed(speedCache)
-        val progress = (actualStepsSinceStart.get().toDouble() / DECAY_STEPS).coerceIn(0.0, 1.0)
-        val factor = 1.0 - DECAY_FACTOR * progress.pow(1.5)
-        return (base * factor).roundToInt().coerceAtLeast(60)
-    }
-
-    /** 下一次事件间隔（ms）：步频换算 + ±10% 抖动（参考 UseVector） */
+    /** 下一次事件间隔（ms）：由当前速度对应的步频换算 + ±10% 抖动（参考 UseVector） */
     private fun nextDelayMs(): Long {
-        val cadence = currentCadence()
+        val cadence = cadenceForSpeed(speedCache)
         val intervalMs = 60000L / cadence
         val jitter = (intervalMs * (kotlin.random.Random.nextDouble() - 0.5) * 0.2).toLong()
         return (intervalMs + jitter).coerceAtLeast(10)
@@ -153,7 +134,6 @@ object SystemSensorManagerHook {
         try {
             if (registeredListeners.isNotEmpty()) {
                 val step = globalSteps.incrementAndGet()
-                actualStepsSinceStart.incrementAndGet()
                 val event = createSensorEvent(step) ?: return
                 for (registered in registeredListeners) {
                     try {
@@ -167,8 +147,8 @@ object SystemSensorManagerHook {
                         XposedBridge.log("[Portal] step listener callback failed: ${t.message}")
                     }
                 }
-                if (FakeLoc.enableDebugLog && actualStepsSinceStart.get() % 200 == 0) {
-                    Logger.debug("step injector: total=$step cadence=${currentCadence()}/min speed=${speedCache}")
+                if (FakeLoc.enableDebugLog && step % 200 == 0) {
+                    Logger.debug("step injector: total=$step cadence=${cadenceForSpeed(speedCache)}/min speed=${speedCache}")
                 }
             }
         } catch (t: Throwable) {
@@ -433,7 +413,7 @@ object SystemSensorManagerHook {
         } else {
             val dtSec = (now - lastEventTimeNanos) / 1_000_000_000.0
             if (dtSec in 0.0..10.0) {
-                val added = currentCadence() / 60.0 * dtSec
+                val added = cadenceForSpeed(speedCache) / 60.0 * dtSec
                 lastStepCount.addAndGet(added.toLong())
             }
         }
