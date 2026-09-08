@@ -10,7 +10,7 @@
     <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:elevation="20dp"
+        android:background="?attr/colorSurface"
         android:fitsSystemWindows="true">
 
         <androidx.appcompat.widget.Toolbar
@@ -20,8 +20,8 @@
             app:title="@string/app_name"
             app:theme="@style/AppTheme.Portal.ToolBarOverlay"
             app:popupTheme="@style/AppTheme.Portal.PopupTheme"
-            app:titleTextColor="@color/theme_appbar_text_color"
-            app:subtitleTextColor="@color/theme_appbar_text_color"
+            app:titleTextColor="?attr/colorOnSurface"
+            app:subtitleTextColor="?attr/colorOnSurface"
             app:collapseIcon="@drawable/baseline_arrow_back_24" />
 
     </com.google.android.material.appbar.AppBarLayout>
@@ -32,7 +32,7 @@
         android:id="@+id/search_linear"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#ddffffff"
+        android:background="?attr/colorSurface"
         android:visibility="gone"
         android:layout_marginTop="?attr/actionBarSize">
         <ListView

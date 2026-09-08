@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     app:cardCornerRadius="10dp"
-    app:cardBackgroundColor="@color/white">
+    app:cardBackgroundColor="?attr/colorSurface">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -25,7 +25,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             app:boxBackgroundMode="filled"
-            app:boxBackgroundColor="@color/white"
+            app:boxBackgroundColor="?attr/colorSurfaceVariant"
             android:hint="@string/name">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -35,8 +35,8 @@
                 android:imeOptions="actionNext"
                 android:inputType="text"
                 android:singleLine="true"
-                android:textColor="@color/portal_text_color"
-                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2">
+                android:textColor="?attr/colorOnSurface"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium">
 
                 <!--<requestFocus />-->
             </com.google.android.material.textfield.TextInputEditText>
@@ -47,7 +47,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             app:boxBackgroundMode="filled"
-            app:boxBackgroundColor="@color/white"
+            app:boxBackgroundColor="?attr/colorSurfaceVariant"
             android:hint="@string/address">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -57,8 +57,8 @@
                 android:imeOptions="actionNext"
                 android:inputType="text"
                 android:singleLine="true"
-                android:textColor="@color/portal_text_color"
-                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2">
+                android:textColor="?attr/colorOnSurface"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium">
             </com.google.android.material.textfield.TextInputEditText>
         </com.google.android.material.textfield.TextInputLayout>
 
@@ -67,7 +67,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             app:boxBackgroundMode="filled"
-            app:boxBackgroundColor="@color/white"
+            app:boxBackgroundColor="?attr/colorSurfaceVariant"
             android:hint="@string/latlon">
 
             <com.google.android.material.textfield.TextInputEditText
@@ -77,8 +77,8 @@
                 android:imeOptions="actionNext"
                 android:inputType="text"
                 android:singleLine="true"
-                android:textColor="@color/portal_text_color"
-                android:textAppearance="@style/TextAppearance.MaterialComponents.Body2">
+                android:textColor="?attr/colorOnSurface"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium">
             </com.google.android.material.textfield.TextInputEditText>
         </com.google.android.material.textfield.TextInputLayout>
 
