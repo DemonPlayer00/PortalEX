@@ -75,13 +75,15 @@ class FabBarView @JvmOverloads constructor(
         }
         addView(actionsContainer)
 
-        // outline 圆角矩形裁剪：右端始终圆角，收起态即正圆
+        // outline 圆角矩形裁剪：右端始终圆角，收起态即正圆；
+        // elevation 阴影跟随 outline 形状（圆形/胶囊）突出悬浮存在感
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(v: View, outline: Outline) {
                 outline.setRoundRect(0, 0, clipWidth.coerceIn(0, v.width), v.height, dpF(30f))
             }
         }
         clipToOutline = true
+        elevation = dpF(6f)
         resetClosed()
     }
 
