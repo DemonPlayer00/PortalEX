@@ -346,6 +346,12 @@ class HomeFragment : Fragment() {
             it.visibility = View.INVISIBLE
             it.isEnabled = false
         }
+
+        // 复位展开按钮姿态：旋转动画写入的 rotation 会被 View saved state
+        // 记录（有 id 的 View），Fragment 重建后恢复成 90°——但胶囊 clip 是
+        // 代码字段重新初始化为圆形，导致「胶囊已收回、按钮仍旋转」的矛盾态
+        binding.fab.rotation = 0f
+        binding.fab.isClickable = true
     }
 
     /** 胶囊收起态宽度：展开按钮 48dp + 容器 padding 12dp */
