@@ -24,7 +24,8 @@
         android:paddingEnd="10dp"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
-        android:background="@drawable/map_control_bg">
+        android:background="@drawable/map_control_bg"
+        android:visibility="gone">
 
         <RadioButton
             android:id="@+id/map_type_normal"
@@ -51,6 +52,7 @@
         android:paddingEnd="10dp"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
+        android:visibility="gone"
         android:text="@string/show_route"
         />
 
