@@ -75,6 +75,11 @@ object RemoteCommandHandler {
                 FakeLoc.altitude = altitude
                 FakeLoc.accuracy = accuracy
 
+                // 模拟会话启动时：若无明确朝向（从未摇杆/移动），随机生成一个中心朝向
+                if (!FakeLoc.hasBearings) {
+                    FakeLoc.bearing = kotlin.random.Random.nextDouble(0.0, 360.0)
+                }
+
                 return true
             }
             "stop" -> {
@@ -168,6 +173,8 @@ object RemoteCommandHandler {
                 }
                 FakeLoc.bearing = bearing
                 FakeLoc.hasBearings = true
+                // 记录移动时间（静止检测：最近 2s 内有 move 视为移动中）
+                FakeLoc.lastMoveTimeNanos = System.nanoTime()
                 return updateCoordinate(newLoc.first, newLoc.second).also {
                     if (FakeLoc.isSystemServerProcess) LocationServiceHook.callOnLocationChanged()
                 }
