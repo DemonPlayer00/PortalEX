@@ -35,69 +35,68 @@
             android:layout_height="wrap_content" />
     </RadioGroup>
 
+    <!-- 胶囊展开条（与主界面同款）：收起=圆/展开=胶囊，outline 裁剪实现 -->
     <LinearLayout
-        android:layout_width="match_parent"
+        android:id="@+id/fab_expand_bar"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end">
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="@dimen/fab_margin"
+        android:layout_marginBottom="@dimen/fab_margin"
+        android:orientation="horizontal"
+        android:background="@drawable/fab_expand_bar_bg"
+        android:padding="6dp"
+        android:transformPivotX="0dp">
+
+        <!-- 展开主按钮：纯图标（无圆形底），旋转表示展开/收起 -->
+        <ImageButton
             android:id="@+id/fab"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/fab_margin"
-            android:layout_marginBottom="@dimen/fab_margin"
-            android:importantForAccessibility="no"
-            app:srcCompat="@drawable/baseline_keyboard_arrow_up_24"
-            app:fabSize="normal"
-        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:orientation="horizontal">
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/fab_expand"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            app:tint="?attr/colorOnPrimaryContainer"
+            app:srcCompat="@drawable/baseline_keyboard_arrow_up_24"/>
 
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/fab_start"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="@dimen/fab_margin"
-                android:contentDescription="@string/goto_location"
-                android:visibility="visible"
-                app:srcCompat="@drawable/baseline_add_location_24"
-                app:fabSize="mini"
-        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
+        <!-- 功能按钮：纯图标（无背景圆形/阴影） -->
+        <ImageButton
+            android:id="@+id/fab_start"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/fab_start_route"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            app:tint="?attr/colorOnPrimaryContainer"
+            app:srcCompat="@drawable/baseline_add_location_24"/>
 
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/fab_rollback"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="@dimen/fab_margin"
-                android:contentDescription="@string/follow_location"
-                android:visibility="visible"
-                app:srcCompat="@drawable/baseline_rollback_24"
-                app:fabSize="mini"
-        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
+        <ImageButton
+            android:id="@+id/fab_rollback"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/rollback"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            app:tint="?attr/colorOnPrimaryContainer"
+            app:srcCompat="@drawable/baseline_rollback_24"/>
 
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/fab_complete"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="@dimen/fab_margin"
-                android:contentDescription="@string/goto_location"
-                android:visibility="visible"
-                app:srcCompat="@drawable/baseline_complete_24"
-                app:fabSize="mini"
-        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
+        <ImageButton
+            android:id="@+id/fab_complete"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/fab_complete_route"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            app:tint="?attr/colorOnPrimaryContainer"
+            app:srcCompat="@drawable/baseline_complete_24"/>
 
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/fab_my_location"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="@dimen/fab_margin"
-                android:contentDescription="@string/follow_location"
-                android:visibility="visible"
-                app:srcCompat="@drawable/baseline_my_location_24"
-                app:fabSize="mini"
-        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
-        </LinearLayout>
+        <ImageButton
+            android:id="@+id/fab_my_location"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="4dp"
+            android:contentDescription="@string/follow_location"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            app:tint="?attr/colorOnPrimaryContainer"
+            app:srcCompat="@drawable/baseline_my_location_24"/>
     </LinearLayout>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
