@@ -20,7 +20,10 @@
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
         android:layout_margin="8dp"
-        android:padding="6dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
         android:background="@drawable/map_control_bg">
 
         <RadioButton
@@ -44,7 +47,10 @@
         android:layout_gravity="top|start"
         android:layout_margin="8dp"
         android:background="@drawable/map_control_bg"
-        android:padding="6dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
         android:text="@string/show_route"
         />
 
