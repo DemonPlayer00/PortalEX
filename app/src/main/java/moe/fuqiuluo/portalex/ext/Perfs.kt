@@ -237,10 +237,6 @@ var Context.loopBroadcastlocation: Boolean
 /**
  * 传感器模拟开关（默认开 = 客户端主动注入步数/朝向；关闭 = 禁用传感器模拟）
  */
-var Context.sensorMockEnabled: Boolean
-    get() = sharedPrefs.getBoolean("sensorMockEnabled", true)
-    set(value) = sharedPrefs.edit {
-        putBoolean("sensorMockEnabled", value)
-    }
+
 
 

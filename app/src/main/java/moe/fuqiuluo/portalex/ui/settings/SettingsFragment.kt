@@ -31,7 +31,7 @@ import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.reportDuration
-import moe.fuqiuluo.portalex.ext.sensorMockEnabled
+
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -190,12 +190,6 @@ class SettingsFragment : Fragment() {
                 updateRemoteConfig()
             }
         })
-
-        // 传感器模拟开关（默认开=客户端注入；关闭=禁用传感器模拟）
-        binding.sensorMockEnabledSwitch.isChecked = context.sensorMockEnabled
-        binding.sensorMockEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
-            context.sensorMockEnabled = isChecked
-        }
 
         binding.reportDurationLayout.setOnClickListener {
             showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
