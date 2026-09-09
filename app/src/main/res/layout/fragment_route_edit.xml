@@ -14,12 +14,15 @@
         android:clickable="true"
         android:focusable="true" />
 
+    <!-- 地图类型切换已统一到右上角三点展开栏（单个「卫星图」复选框）：
+         此处仅保留不可见的 RadioGroup 作为内部状态源，代码路径与主界面一致。 -->
     <RadioGroup
         android:id="@+id/map_type_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
-        android:layout_margin="8dp">
+        android:layout_margin="8dp"
+        android:visibility="gone">
 
         <RadioButton
             android:id="@+id/map_type_normal"
