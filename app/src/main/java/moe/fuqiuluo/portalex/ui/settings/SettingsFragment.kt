@@ -32,6 +32,7 @@ import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.sensorMockEnabled
+import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -297,7 +298,7 @@ class SettingsFragment : Fragment() {
 
         val builder = MaterialAlertDialogBuilder(requireContext())
         builder.setTitle(null)
-        builder
+        val dialog = builder
             .setCancelable(false)
             .setView(dialogView)
             .setPositiveButton("保存") { _, _ ->
@@ -305,6 +306,7 @@ class SettingsFragment : Fragment() {
             }
             .setNegativeButton("取消", null)
             .show()
+        dialog.shiftAboveIme(requireActivity().window.decorView)
     }
 
     override fun onDestroyView() {
