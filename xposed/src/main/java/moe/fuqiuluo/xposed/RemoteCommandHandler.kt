@@ -173,8 +173,6 @@ object RemoteCommandHandler {
                 }
                 FakeLoc.bearing = bearing
                 FakeLoc.hasBearings = true
-                // 记录移动时间（静止检测：最近 2s 内有 move 视为移动中）
-                FakeLoc.lastMoveTimeNanos = System.nanoTime()
                 return updateCoordinate(newLoc.first, newLoc.second).also {
                     if (FakeLoc.isSystemServerProcess) LocationServiceHook.callOnLocationChanged()
                 }
@@ -328,9 +326,10 @@ object RemoteCommandHandler {
         if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
             FakeLoc.latitude = newLat
             FakeLoc.longitude = newLon
-            // 位置改变即视为移动：注入的 Location.speed 据此在 0 与模拟速度间切换。
-            // 路线播放走的是 update_location（不是 move），若不标记则位置在动而速度恒为 0。
-            FakeLoc.lastMoveTimeNanos = System.nanoTime()
+            // 记录基础坐标变化：既用于静止检测（注入 speed 在 0 与实测速度间切换），
+            // 也用于按实际位移推算速度（FakeLoc.measuredSpeed）。
+            // 路线播放走的是 update_location（不是 move），此处统一记录。
+            FakeLoc.recordCoordinateChange(newLat, newLon)
             return true
         } else {
             Logger.error("Invalid latitude or longitude: $newLat, $newLon")

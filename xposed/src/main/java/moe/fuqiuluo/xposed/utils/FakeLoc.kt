@@ -136,6 +136,81 @@ object FakeLoc {
     val isMoving: Boolean
         get() = System.nanoTime() - lastMoveTimeNanos < 2_000_000_000L
 
+    /**
+     * 速度推算窗口（纳秒）：取窗口内基础坐标的位移 / 时间差得到速度。
+     * 与 [isMoving] 的 2s 静止判定保持一致。
+     */
+    private const val SPEED_WINDOW_NANOS = 2_000_000_000L
+
+    /** 单次坐标跳变超过该距离（米）视为瞬移（手动设点/路线跳点），不计入速度推算 */
+    private const val TELEPORT_THRESHOLD_METERS = 50.0
+
+    /** 注入速度上限（m/s，288km/h）：防止异常位移产生荒谬速度 */
+    private const val MAX_MEASURED_SPEED = 80.0
+
+    private data class MoveSample(val timeNanos: Long, val lat: Double, val lon: Double)
+
+    /** 基础坐标（未抖动）变化采样，用于按实际位移推算速度 */
+    private val moveSamples = ArrayDeque<MoveSample>()
+
+    /**
+     * 由实际模拟位移推算的速度（m/s）。
+     *
+     * 取最近窗口内基础坐标的位移 / 时间差。用**基础坐标**而非注入时抖动后的坐标，
+     * 与真实 GPS 用多普勒测速同理：静止时位置抖动不应体现为速度。
+     * - 窗口内采样不足 2 个（静止/单次瞬移）→ 0
+     * - 停止移动后：超过 2 倍采样间隔开始线性衰减，窗口末尾归零
+     * - 位置跳变（> [TELEPORT_THRESHOLD_METERS]）→ 重置窗口，不产生虚高速度
+     */
+    val measuredSpeed: Double
+        get() = synchronized(moveSamples) {
+            if (moveSamples.size < 2) return 0.0
+            val now = System.nanoTime()
+            val newest = moveSamples.last()
+            val oldest = moveSamples.first()
+            val age = now - newest.timeNanos
+            if (age > SPEED_WINDOW_NANOS) return 0.0
+            val spanNanos = newest.timeNanos - oldest.timeNanos
+            if (spanNanos <= 0L) return 0.0
+
+            val raw = haversine(oldest.lat, oldest.lon, newest.lat, newest.lon) /
+                (spanNanos / 1_000_000_000.0)
+
+            // 停止移动后按采样间隔自适应衰减：超过 2 倍采样间隔开始线性下降
+            val avgInterval = spanNanos.toDouble() / (moveSamples.size - 1)
+            val fullSpeedUntil = avgInterval * 2
+            val decay = if (age <= fullSpeedUntil) {
+                1.0
+            } else {
+                ((SPEED_WINDOW_NANOS - age).toDouble() /
+                    (SPEED_WINDOW_NANOS - fullSpeedUntil)).coerceIn(0.0, 1.0)
+            }
+            (raw * decay).coerceIn(0.0, MAX_MEASURED_SPEED)
+        }
+
+    /**
+     * 记录一次基础坐标变化（move / update_location），用于按实际位移推算速度，
+     * 同时更新移动时间戳（静止检测）。
+     */
+    fun recordCoordinateChange(lat: Double, lon: Double) {
+        val now = System.nanoTime()
+        synchronized(moveSamples) {
+            val last = moveSamples.lastOrNull()
+            if (last != null &&
+                haversine(last.lat, last.lon, lat, lon) > TELEPORT_THRESHOLD_METERS
+            ) {
+                // 瞬移（手动设点/路线跳点）：重置窗口，避免算出虚高速度
+                moveSamples.clear()
+            }
+            moveSamples.addLast(MoveSample(now, lat, lon))
+            val cutoff = now - SPEED_WINDOW_NANOS
+            while (moveSamples.isNotEmpty() && moveSamples.first().timeNanos < cutoff) {
+                moveSamples.removeFirst()
+            }
+        }
+        lastMoveTimeNanos = now
+    }
+
     var accuracy = 25.0f
         set(value) {
             field = if (value < 0) {
