@@ -355,7 +355,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 三点展开栏：普通图/卫星图/显示路线（状态与 HomeFragment 控件同步） */
+    /** 三点展开栏：卫星图/显示路线（状态与 HomeFragment 控件同步） */
     private fun showMapControlsMenu() {
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
@@ -368,16 +368,13 @@ class MainActivity : AppCompatActivity() {
         popup.menuInflater.inflate(R.menu.map_controls_popup, popup.menu)
 
         // 显示前同步当前状态
-        popup.menu.findItem(R.id.map_type_normal).isChecked =
-            home.currentMapTypeId() == R.id.map_type_normal
-        popup.menu.findItem(R.id.map_type_satellite).isChecked =
-            home.currentMapTypeId() == R.id.map_type_satellite
+        popup.menu.findItem(R.id.map_type_satellite).isChecked = home.isSatellite()
         popup.menu.findItem(R.id.show_route).isChecked = home.isShowRouteChecked()
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
-                R.id.map_type_normal, R.id.map_type_satellite -> {
-                    home.selectMapType(item.itemId)
+                R.id.map_type_satellite -> {
+                    home.toggleSatellite()
                     true
                 }
 
