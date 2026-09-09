@@ -396,7 +396,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textSize="11sp"
-                        android:text="注入步频与朝向传感器数据" />
+                        android:text="注入步频与朝向传感器数据\n需选择目标应用作用域" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/sensor_mock_enabled_switch"
