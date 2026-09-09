@@ -16,6 +16,7 @@
         app:rockerBackground="#FFFFFF" />
 
     <com.google.android.material.card.MaterialCardView
+        android:id="@+id/rocker_card"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginLeft="8dp"
@@ -23,7 +24,7 @@
         android:layout_marginBottom="8dp"
         app:contentPadding="4dp"
         app:cardCornerRadius="12dp"
-        app:cardBackgroundColor="?attr/colorSurface"
+        app:cardBackgroundColor="@color/rocker_card_bg"
         app:cardElevation="4dp">
         <LinearLayout
             android:layout_width="match_parent"
@@ -42,6 +43,7 @@
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
                     android:src="@drawable/baseline_adjust_24"
+                    app:tint="@color/rocker_icon_tint"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
@@ -64,7 +66,7 @@
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
                     android:src="@drawable/baseline_robot_24"
-                    app:tint="#373737"
+                    app:tint="@color/rocker_icon_tint"
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
@@ -78,7 +80,7 @@
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
                     android:src="@drawable/baseline_control_camera_24"
-                    app:tint="#373737"
+                    app:tint="@color/rocker_icon_tint"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
@@ -95,7 +97,7 @@
         android:layout_marginBottom="8dp"
         app:contentPadding="4dp"
         app:cardCornerRadius="12dp"
-        app:cardBackgroundColor="?attr/colorSurface"
+        app:cardBackgroundColor="@color/rocker_card_bg"
         android:layout_gravity="center"
         app:cardElevation="4dp">
         <LinearLayout
@@ -115,6 +117,7 @@
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
                     android:src="@drawable/baseline_play_24"
+                    app:tint="@color/rocker_icon_tint"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
@@ -137,7 +140,7 @@
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
                     android:src="@drawable/baseline_settings_24"
-                    app:tint="#373737"
+                    app:tint="@color/rocker_icon_tint"
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
@@ -162,6 +165,7 @@
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
                     android:background="@drawable/baseline_lock_24"
+                    android:backgroundTint="@color/rocker_icon_tint"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
@@ -177,7 +181,7 @@
         android:layout_marginBottom="8dp"
         app:contentPadding="4dp"
         app:cardCornerRadius="12dp"
-        app:cardBackgroundColor="?attr/colorSurface"
+        app:cardBackgroundColor="@color/rocker_card_bg"
         android:visibility="gone"
         app:cardElevation="2dp">
 

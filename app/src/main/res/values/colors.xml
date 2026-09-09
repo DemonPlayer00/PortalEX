@@ -54,6 +54,9 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="map_control_bg_color">#80FFFFFF</color>
+    <!-- 悬浮窗（移动摇杆）锁定浅色风格：不随系统深浅切换 -->
+    <color name="rocker_icon_tint">#373737</color>
+    <color name="rocker_card_bg">#FFFFFFFF</color>
     <!-- 悬浮胶囊背景：浅色 = 白（与顶栏 colorSurface 一致） -->
     <color name="fab_bar_bg">#FFFFFF</color>
     <color name="colorPrimary">#F44336</color>
