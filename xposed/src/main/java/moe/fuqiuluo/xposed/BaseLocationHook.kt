@@ -45,9 +45,12 @@ abstract class BaseLocationHook: BaseDivineService() {
         location.longitude = jitterLat.second
         location.altitude = FakeLoc.offset_altitude
         val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
-        location.speed = (originLocation.speed + speedAmp).toFloat()
+        // 速度不得为负：原实现直接相加，抖动可压出负值（真机日志实测 vel=-1.449），物理不合理。
+        location.speed = (originLocation.speed + speedAmp).coerceAtLeast(0.0).toFloat()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasSpeedAccuracy()) {
-            location.speedAccuracyMetersPerSecond = (FakeLoc.speed + speedAmp).toFloat()
+            // 速度精度：真实设备量级 0.1~0.5 m/s。原实现借用该字段承载模拟速度
+            // （值恒等于速度，异常且可被检测），改为独立随机小值。
+            location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
         }
 
         if (location.altitude == 0.0) {
@@ -64,12 +67,8 @@ abstract class BaseLocationHook: BaseDivineService() {
         }
         location.bearing = modBearing.toFloat()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            location.bearingAccuracyDegrees = modBearing.toFloat()
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (location.hasBearingAccuracy() && location.bearingAccuracyDegrees == 0.0f) {
-                location.bearingAccuracyDegrees = 1.0f
-            }
+            // 朝向精度：真实设备量级 1~5 度。原实现直接写入角度值（bAcc == bearing），异常。
+            location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
         }
 
         if (location.speed == 0.0f) {

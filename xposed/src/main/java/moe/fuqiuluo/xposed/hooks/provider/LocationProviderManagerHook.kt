@@ -19,6 +19,7 @@ import moe.fuqiuluo.xposed.utils.onceHook
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
 import java.util.Collections
+import kotlin.random.Random
 
 object LocationProviderManagerHook {
     private val hookOnFetchLocationResult = beforeHook {
@@ -62,7 +63,8 @@ object LocationProviderManagerHook {
         }
         location.bearing = modBearing.toFloat()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasBearingAccuracy()) {
-            location.bearingAccuracyDegrees = modBearing.toFloat()
+            // 朝向精度：真实设备量级 1~5 度（原实现写入角度值，异常）
+            location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
         }
         location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -278,7 +280,8 @@ object LocationProviderManagerHook {
             }
             location.bearing = modBearing.toFloat()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasBearingAccuracy()) {
-                location.bearingAccuracyDegrees = modBearing.toFloat()
+                // 朝向精度：真实设备量级 1~5 度（原实现写入角度值，异常）
+                location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
             }
             location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
