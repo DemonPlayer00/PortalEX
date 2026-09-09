@@ -68,9 +68,9 @@ class RouteMockFragment : Fragment() {
         }
 
         with(mockServiceViewModel) {
-            if (rocker.isStart) {
-                binding.rocker.toggle()
-            }
+            // 打勾框只反映悬浮摇杆真实状态（rocker.isStart 为唯一事实源）——
+            // 位置模拟/路线模拟共用同一悬浮摇杆，避免盲 toggle 造成跨页状态分叉。
+            binding.rocker.isChecked = rocker.isStart
             binding.rocker.setOnClickListener {
                 if (locationManager == null) {
                     Toast.makeText(requireContext(), "定位服务加载异常", Toast.LENGTH_SHORT).show()
@@ -80,14 +80,13 @@ class RouteMockFragment : Fragment() {
                     Toast.makeText(requireContext(), "请先启动模拟", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                val checkedTextView = it as CheckedTextView
-                checkedTextView.toggle()
-
                 if (!requireContext().drawOverOtherAppsEnabled()) {
                     Toast.makeText(requireContext(), "请授权悬浮窗权限", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
 
+                val checkedTextView = it as CheckedTextView
+                checkedTextView.toggle()
                 lifecycleScope.launch(Dispatchers.Main) {
                     if (checkedTextView.isChecked) {
                         rocker.show()
@@ -324,9 +323,9 @@ class RouteMockFragment : Fragment() {
                 }
                 if (isClosed && mockServiceViewModel.rocker.isStart) {
                     binding.rocker.isClickable = false
-                    binding.rocker.toggle()
                     mockServiceViewModel.rocker.hide()
                     mockServiceViewModel.rockerCoroutineController.pause()
+                    binding.rocker.isChecked = mockServiceViewModel.rocker.isStart
                     binding.rocker.isClickable = true
                 }
             } finally {
@@ -335,6 +334,13 @@ class RouteMockFragment : Fragment() {
         }
     }
 
+
+    override fun onStart() {
+        super.onStart()
+        // 每次页面可见都对齐悬浮摇杆真实状态：覆盖跨页切换后 Android
+        // 视图状态恢复（onCreateView 同步早于 onViewStateRestored）导致的过期勾选。
+        binding.rocker.isChecked = mockServiceViewModel.rocker.isStart
+    }
 
     override fun onResume() {
         super.onResume()
