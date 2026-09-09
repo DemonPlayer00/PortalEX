@@ -24,6 +24,6 @@
         android:icon="@drawable/baseline_info_outline_24"
         android:title="@string/action_info"
         android:visible="false"
-        app:actionViewClass="moe.fuqiuluo.portal.android.widget.DeveloperView"
+        app:actionViewClass="moe.fuqiuluo.portalex.android.widget.DeveloperView"
         app:showAsAction="ifRoom|collapseActionView"/>
 </menu>

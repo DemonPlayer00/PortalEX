@@ -44,7 +44,7 @@
                         android:layout_height="wrap_content"
                         android:padding="4dp">
 
-                        <moe.fuqiuluo.portal.android.widget.SatelliteRadarView
+                        <moe.fuqiuluo.portalex.android.widget.SatelliteRadarView
                             android:id="@+id/satellite_rada_view"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"

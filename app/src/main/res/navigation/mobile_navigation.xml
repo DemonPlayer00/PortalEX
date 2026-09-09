@@ -7,37 +7,37 @@
 
     <fragment
         android:id="@+id/nav_home"
-        android:name="moe.fuqiuluo.portal.ui.home.HomeFragment"
+        android:name="moe.fuqiuluo.portalex.ui.home.HomeFragment"
         android:label="@string/menu_home"
         tools:layout="@layout/fragment_home" />
 
     <fragment
         android:id="@+id/nav_mock"
-        android:name="moe.fuqiuluo.portal.ui.mock.MockFragment"
+        android:name="moe.fuqiuluo.portalex.ui.mock.MockFragment"
         android:label="@string/menu_mock"
         tools:layout="@layout/fragment_mock" />
 
     <fragment
         android:id="@+id/nav_gnss_mock"
-        android:name="moe.fuqiuluo.portal.ui.gnss.GnssMockFragment"
+        android:name="moe.fuqiuluo.portalex.ui.gnss.GnssMockFragment"
         android:label="@string/menu_gnss_mock"
         tools:layout="@layout/fragment_gnss_mock" />
 
     <fragment
         android:id="@+id/nav_route_gallery"
-        android:name="moe.fuqiuluo.portal.ui.mock.RouteMockFragment"
+        android:name="moe.fuqiuluo.portalex.ui.mock.RouteMockFragment"
         android:label="@string/menu_route_mock"
         tools:layout="@layout/fragment_route_mock" />
 
     <fragment
         android:id="@+id/nav_route_edit"
-        android:name="moe.fuqiuluo.portal.ui.mock.RouteEditFragment"
+        android:name="moe.fuqiuluo.portalex.ui.mock.RouteEditFragment"
         android:label="@string/menu_route_mock_edit"
         tools:layout="@layout/fragment_route_edit" />
 
     <fragment
         android:id="@+id/nav_settings"
-        android:name="moe.fuqiuluo.portal.ui.settings.SettingsFragment"
+        android:name="moe.fuqiuluo.portalex.ui.settings.SettingsFragment"
         android:label="@string/menu_setting"
         tools:layout="@layout/fragment_settings" />
 </navigation>

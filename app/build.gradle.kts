@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "moe.fuqiuluo.portal"
+    namespace = "moe.fuqiuluo.portalex"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "moe.fuqiuluo.portal"
+        applicationId = "moe.fuqiuluo.portalex"
         minSdk = 26
         targetSdk = 35
         versionCode = getVersionCode()

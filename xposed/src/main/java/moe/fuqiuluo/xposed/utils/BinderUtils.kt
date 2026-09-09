@@ -56,7 +56,7 @@ object BinderUtils {
     fun isLocationProviderEnabled(uid: Int): Boolean {
         val packageNames = getUidPackageNames(uid = uid)
         if (uid > 10000 && packageNames?.any {
-                !it.contains("moe.fuqiuluo.portal")
+                !it.contains("moe.fuqiuluo.portalex")
             } == false) {
             return true
         }
