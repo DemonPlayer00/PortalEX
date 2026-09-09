@@ -328,6 +328,9 @@ object RemoteCommandHandler {
         if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
             FakeLoc.latitude = newLat
             FakeLoc.longitude = newLon
+            // 位置改变即视为移动：注入的 Location.speed 据此在 0 与模拟速度间切换。
+            // 路线播放走的是 update_location（不是 move），若不标记则位置在动而速度恒为 0。
+            FakeLoc.lastMoveTimeNanos = System.nanoTime()
             return true
         } else {
             Logger.error("Invalid latitude or longitude: $newLat, $newLon")
