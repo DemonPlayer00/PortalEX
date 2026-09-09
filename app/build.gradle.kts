@@ -226,6 +226,10 @@ dependencies {
 
     implementation(libs.fastjson)
 
+    // BaiduLBS_Android.jar（百度定位 SDK）运行时依赖 okhttp：
+    // 删除会导致 :remote 进程 NoClassDefFoundError: okhttp3/OkHttpClient$Builder
+    implementation(libs.okhttp)
+
     implementation(libs.bugly)
 
     implementation(libs.geotools)
