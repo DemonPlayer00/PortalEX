@@ -21,6 +21,7 @@ import android.view.MotionEvent
 import android.view.View
 import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
+import com.google.android.material.color.MaterialColors
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -67,7 +68,12 @@ class SatelliteRadarView(context: Context, attributeSet: AttributeSet): View(con
         initSensors(context)
 
         radarPoint.style = Paint.Style.STROKE
-        radarPoint.color = Color.BLACK
+        // 网格线随主题：浅色=深灰、深色=浅灰（colorOnSurface）
+        radarPoint.color = MaterialColors.getColor(
+            context,
+            com.google.android.material.R.attr.colorOnSurface,
+            Color.LTGRAY
+        )
 
         satellitePaint.style = Paint.Style.FILL
         satellitePaint.color = 0xFF2196F3.toInt() // 蓝色
