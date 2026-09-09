@@ -215,13 +215,16 @@ class HomeFragment : Fragment() {
         return root
     }
 
-    /** 三点展开栏入口：地图类型（触发原 RadioGroup 监听） */
-    fun selectMapType(checkId: Int) {
-        binding.mapTypeGroup.check(checkId)
-    }
+    /** 三点展开栏入口：当前是否卫星图（未选中=普通图） */
+    fun isSatellite(): Boolean =
+        binding.mapTypeGroup.checkedRadioButtonId == R.id.map_type_satellite
 
-    /** 三点展开栏入口：当前地图类型 */
-    fun currentMapTypeId(): Int = binding.mapTypeGroup.checkedRadioButtonId
+    /** 三点展开栏入口：切换卫星图/普通图（触发原 RadioGroup 监听） */
+    fun toggleSatellite() {
+        binding.mapTypeGroup.check(
+            if (isSatellite()) R.id.map_type_normal else R.id.map_type_satellite
+        )
+    }
 
     /** 三点展开栏入口：切换显示路线（触发原复选框监听） */
     fun toggleShowRoute() {
