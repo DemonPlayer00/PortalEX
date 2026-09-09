@@ -46,9 +46,6 @@ object LocationProviderManagerHook {
         val jitterLat = FakeLoc.jitterLocation()
         location.latitude = jitterLat.first
         location.longitude = jitterLat.second
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            location.isMock = false
-        }
         location.altitude = FakeLoc.offset_altitude
         // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
         location.speed = if (FakeLoc.isMoving) {
@@ -269,9 +266,6 @@ object LocationProviderManagerHook {
             val jitterLat = FakeLoc.jitterLocation()
             location.latitude = jitterLat.first
             location.longitude = jitterLat.second
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                location.isMock = false
-            }
             location.altitude = FakeLoc.offset_altitude
             // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
             location.speed = if (FakeLoc.isMoving) {
