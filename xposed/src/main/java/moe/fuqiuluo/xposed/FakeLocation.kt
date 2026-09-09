@@ -54,21 +54,12 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam?) {
         if (lpparam == null) return
 
-        // 读取模块自身 prefs 中的传感器模拟开关（LSPosed 的 XSharedPreferences，
-        // 需要 manifest 声明 xposedsharedprefs）。读取失败时保持默认开启。
-        kotlin.runCatching {
-            val prefs = de.robv.android.xposed.XSharedPreferences("moe.fuqiuluo.portalex", "portal")
-            prefs.reload()
-            FakeLoc.sensorMockEnabled = prefs.getBoolean("sensorMockEnabled", true)
-        }.onFailure {
-            // 非 LSPosed 或 prefs 不可读：保持默认开启
-        }
-
         // 传感器模拟：仅对**用户应用**（非系统应用）进程安装（SystemSensorManager 是 SDK
         // 客户端类，跑在 app 进程内）。系统框架（system_server/phone）与所有系统应用
         // （systemui/settings/fused 供应商等）一律**不装**——避免拦截系统自身的传感器注册
         // （自动旋转、计步统计等）导致行为污染；用户应用装完即 return，不触碰系统侧 hook；
-        // 系统应用继续走下方 when 分支安装各自系统侧 hook。开关关闭时 hook 内部跳过。
+        // 系统应用继续走下方 when 分支安装各自系统侧 hook。
+        // 注入与否完全由 LSPosed 作用域决定（勾选 = 注入；不勾 = 本模块代码都不加载）。
         // 系统侧进程判定：appInfo 在部分 ROM/LSPosed 组合下对 system_server（包名 "android"）
         // 为 null（实测 ColorOS），不能据此当成用户应用——否则框架侧 hook（LocationServiceHook
         // 等）全部不装，app 端 exchange_key 无人应答 → 「系统服务注入失败」。

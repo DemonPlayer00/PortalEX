@@ -62,6 +62,10 @@ abstract class BaseDivineService {
             return false
         }
 
+        // 与系统侧共用同一把钥匙：系统转发来的指令（start/stop/put_config/...）
+        // 才能通过 RemoteCommandHandler.handleInstruction 的 key 校验（旧实现必失败）
+        RemoteCommandHandler.randomKey = randomKey
+
         syncConfig(locationManager, randomKey)
 
         rely.putBinder("proxy", object: Binder() {

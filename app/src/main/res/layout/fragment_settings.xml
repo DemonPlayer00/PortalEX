@@ -372,42 +372,6 @@
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
-            <LinearLayout
-                android:id="@+id/sensor_mock_mode_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:padding="5dp">
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="center_vertical"
-                    android:orientation="vertical">
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="传感器模拟"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="11sp"
-                        android:text="注入步频与朝向传感器数据\n需选择目标应用作用域" />
-                </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/sensor_mock_enabled_switch"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
-            </LinearLayout>
-
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/report_duration_layout"
                 android:layout_width="match_parent"
@@ -548,6 +512,45 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sensor_mock_mode_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="5dp">
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="外周传感器模拟"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="11sp"
+                        android:text="使用模块作用域配置" />
+                </LinearLayout>
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/sensor_mock_enabled_switch"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:checked="true"
+                    android:enabled="false"
+                    android:alpha="0.5"
                     app:useMaterialThemeColors="true"
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>

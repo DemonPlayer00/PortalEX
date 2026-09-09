@@ -27,6 +27,7 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
 import moe.fuqiuluo.xposed.utils.beforeHook
 import moe.fuqiuluo.xposed.utils.hookAllMethods
+import moe.fuqiuluo.xposed.utils.onceHook
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
@@ -287,12 +288,12 @@ internal object LocationServiceHook: BaseLocationHook() {
 
             addLocationListenerInner(provider, listener)
 
-            if (FakeLoc.disableRegisterLocationListener || FakeLoc.enable) {
+            if (FakeLoc.enable) {
                 result = null
                 return@beforeHook
             }
 
-            if (FakeLoc.disableFusedLocation && provider == "fused") {
+            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
                 result = null
                 return@beforeHook
             }
@@ -326,11 +327,9 @@ internal object LocationServiceHook: BaseLocationHook() {
                 args[0] as? String
             } ?: "gps"
 
-            //val isNotMainStreamRom = !DeviceOs.isColorOs() && !DeviceOs.isMiui() &&
-            //        !DeviceOs.isHyperOs() && !DeviceOs.isOriginOs() && !DeviceOs.isRealmeUi() &&
-            //        !DeviceOs.isEmui() && !DeviceOs.isMagicOs()
-            //if (provider == "network" && isNotMainStreamRom) {
-            if(provider == "network") {
+            // 网络注册拦截仅在模拟会话期间（enable=true）生效；未开模拟时完全透传，
+            // 否则所有依赖网络定位的应用拿不到真实位置、状态栏也不会有定位图标。
+            if (FakeLoc.enable && provider == "network") {
                 if (FakeLoc.enableDebugLog) Logger.debug("Blocked network provider registration")
                 result = null
                 return@beforeHook
@@ -348,12 +347,13 @@ internal object LocationServiceHook: BaseLocationHook() {
 
             addLocationListenerInner(provider, listener)
 
-            if (FakeLoc.disableRegisterLocationListener) {
+            // 注册拦截开关同样只在模拟会话期间生效：未开模拟时放行真实定位注册
+            if (FakeLoc.enable && FakeLoc.disableRegisterLocationListener) {
                 result = null
                 return@beforeHook
             }
 
-            if (FakeLoc.disableFusedLocation && provider == "fused") {
+            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
                 result = null
                 return@beforeHook
             }
@@ -409,7 +409,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
 
         cILocationManager.hookAllMethods("requestGeofence", beforeHook {
-            if (FakeLoc.disableRequestGeofence && !FakeLoc.enableAGPS) {
+            if (FakeLoc.enable && FakeLoc.disableRequestGeofence && !FakeLoc.enableAGPS) {
                 if(FakeLoc.enableDebugLog) {
                     Logger.debug("requestGeofence: injected!")
                 }
@@ -420,7 +420,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 //        })
 
         cILocationManager.hookAllMethods("getFromLocation", beforeHook {
-            if (FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
+            if (FakeLoc.enable && FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
                 if(FakeLoc.enableDebugLog) {
                     Logger.debug("getFromLocation: injected!")
                 }
@@ -429,7 +429,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         })
 
         cILocationManager.hookAllMethods("getFromLocationName", beforeHook {
-            if (FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
+            if (FakeLoc.enable && FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
                 if(FakeLoc.enableDebugLog) {
                     Logger.debug("getFromLocationName: injected!")
                 }
@@ -473,7 +473,16 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         })
 
-        if(XposedBridge.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: XC_MethodHook() {
+        // ============ GNSS 状态注入（适配 SDK 36/ColorOS） ============
+        // registerGnssStatusCallback：
+        // 1) 回调对象入队（死亡自动移除），供主动推送使用；
+        // 2) 安装 onSvStatusChanged 注入 hook——方法查找用 methods（public，含继承/接口），
+        //    不再用 declaredMethods：实测 SDK 36 上 Proxy 类声明差异导致 onceHookAllMethod
+        //    找不到（find onSvStatusChanged failed!），卫星注入 hook 装不上、雷达恒 0G。
+        // 3) 模拟开启时立即主动推送一次。
+        // 主动推送由 GnssStatusPusher 守护线程驱动：即使室内 GNSS 引擎闲置、系统从不回调，
+        // 雷达也能持续收到模拟卫星数据（与 callOnLocationChanged 同机制）。
+        XposedBridge.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam?) {
                     if(param == null || param.args.isEmpty() || param.args[0] == null) return
 
@@ -481,142 +490,37 @@ internal object LocationServiceHook: BaseLocationHook() {
                     val cIGnssStatusListener = callback.javaClass
 
                     if(FakeLoc.enableDebugLog) {
-                        Logger.debug("registerGnssStatusCallback: injected!")
-                    }
-                    if (!FakeLoc.enableMockGnss) {
-                        return
+                        Logger.debug("registerGnssStatusCallback: injected! ${cIGnssStatusListener.name}")
                     }
 
-                    if (cIGnssStatusListener.onceHookAllMethod("onSvStatusChanged", beforeHook {
-                        // android 7.0.0
-                        // void onSvStatusChanged(int svCount, in int[] svidWithFlags, in float[] cn0s,
-                        //            in float[] elevations, in float[] azimuths);
-                        // android 8.0.0
-                        // void onSvStatusChanged(int svCount, in int[] svidWithFlags, in float[] cn0s,
-                        //            in float[] elevations, in float[] azimuths,
-                        //            in float[] carrierFreqs);
-                        // android 11
-                        //  void onSvStatusChanged(int svCount, in int[] svidWithFlags, in float[] cn0s,
-                        //            in float[] elevations, in float[] azimuths,
-                        //            in float[] carrierFreqs, in float[] basebandCn0s);
-                        // android 12 ~ 15
-                        // void onSvStatusChanged(in GnssStatus gnssStatus);
-
-                        // https://www.csno-tarc.cn/system/constellation
-
-                        if (!FakeLoc.enableMockGnss) return@beforeHook
-
-                        val svCount = Random.nextInt(FakeLoc.minSatellites, MAX_SATELLITES + 1)
-                        val mockGps = MockGnssData(
-                            svCount = svCount,
-                            svidWithFlags = IntArray(svCount),
-                            cn0s = FloatArray(svCount),
-                            elevations = FloatArray(svCount),
-                            azimuths = FloatArray(svCount),
-                            carrierFreqs = FloatArray(svCount)
-                        ).apply {
-                            val selectedSatellites = satelliteList.shuffled().take(svCount)
-
-                            selectedSatellites.forEachIndexed { index, sat ->
-                                svidWithFlags[index] = 0
-
-                                val hasEphemeris = Random.nextFloat() > 0.1f    // 90%概率有星历
-                                val hasAlmanac = Random.nextFloat() > 0.05f     // 95%概率有年历
-                                val usedInFix = Random.nextFloat() > 0.3f       // 70%概率用于定位
-                                val hasCarrierFreq = true                       // 总是有载波频率
-                                val hasBasebandCn0 = true                       // 总是有基带载噪比
-
-                                var flags = GnssFlags.SVID_FLAGS_NONE
-
-                                // 设置基本标志位
-                                if (hasEphemeris) flags = flags or GnssFlags.SVID_FLAGS_HAS_EPHEMERIS_DATA
-                                if (hasAlmanac) flags = flags or GnssFlags.SVID_FLAGS_HAS_ALMANAC_DATA
-                                if (usedInFix) flags = flags or GnssFlags.SVID_FLAGS_USED_IN_FIX
-                                if (hasCarrierFreq) flags = flags or GnssFlags.SVID_FLAGS_HAS_CARRIER_FREQUENCY
-                                if (hasBasebandCn0) flags = flags or GnssFlags.SVID_FLAGS_HAS_BASEBAND_CN0
-
-                                // 组合SVID、星座类型和标志位
-                                svidWithFlags[index] = (sat.prn shl GnssFlags.SVID_SHIFT_WIDTH) or
-                                        ((GnssFlags.CONSTELLATION_BEIDOU and GnssFlags.CONSTELLATION_TYPE_MASK) shl GnssFlags.CONSTELLATION_TYPE_SHIFT_WIDTH) or
-                                        flags
-
-                                cn0s[index] = when (sat.type) {
-                                    is OrbitType.GEO -> Random.nextFloat(GEO_MIN_CN0, GEO_MAX_CN0)
-                                    is OrbitType.IGSO -> Random.nextFloat(IGSO_MIN_CN0, IGSO_MAX_CN0)
-                                    is OrbitType.MEO -> Random.nextFloat(MEO_MIN_CN0, MEO_MAX_CN0)
-                                }
-                                elevations[index] = Random.nextFloat(sat.type.elevationRange.start, sat.type.elevationRange.endInclusive)
-                                azimuths[index] = Random.nextFloat(0f, 360f)
-                                carrierFreqs[index] = when (Random.nextInt(3)) {
-                                    0 -> BDS_B1I_FREQ
-                                    1 -> BDS_B2I_FREQ
-                                    else -> BDS_B3I_FREQ
-                                }
+                    val listener = callback as? IInterface ?: return
+                    if (!gnssStatusListeners.contains(listener)) {
+                        val mDeathRecipient = object: IBinder.DeathRecipient {
+                            override fun binderDied() {}
+                            override fun binderDied(who: IBinder) {
+                                who.unlinkToDeath(this, 0)
+                                gnssStatusListeners.remove(listener)
                             }
                         }
-
-                        if (args[0] is Int) {
-                            args[0] = svCount
-                            args[1] = mockGps.svidWithFlags
-                            args[2] = mockGps.cn0s
-                            args[3] = mockGps.elevations
-                            args[4] = mockGps.azimuths
-                            if (args.size > 5) {
-                                args[5] = mockGps.carrierFreqs
-                            }
-
-                            if (args.size > 6) {
-                                args[6] = FloatArray(svCount) {
-                                    mockGps.cn0s[it] - Random.nextFloat(2f, 5f)
-                                }
-                            }
-                            return@beforeHook
-                        }
-
-                        if (args[0] != null && args[0].javaClass.name == "android.location.GnssStatus") {
-                            runCatching {
-                                val mConstructor = args[0].javaClass.declaredConstructors.firstOrNull {
-                                    it.parameterTypes.size == 7
-                                }.also {
-                                    it?.isAccessible = true
-                                }
-
-                                if (mConstructor != null) {
-                                    args[0] = mConstructor.newInstance(
-                                        svCount,
-                                        mockGps.svidWithFlags,
-                                        mockGps.cn0s,
-                                        mockGps.elevations,
-                                        mockGps.azimuths,
-                                        mockGps.carrierFreqs,
-                                        FloatArray(svCount) {
-                                            mockGps.cn0s[it] - Random.nextFloat(2f, 5f)
-                                        }
-                                    )
-                                } else {
-                                    Logger.error("onSvStatusChanged: unsupported version: ${method}, constructor not found")
-                                }
-                            }.onFailure {
-                                XposedBridge.log(it)
-                            }
-                            return@beforeHook
-                        }
-
-                        Logger.error("onSvStatusChanged: unsupported version: $method")
-                    }).isEmpty()) {
-                        Logger.error("find onSvStatusChanged failed!")
+                        kotlin.runCatching { listener.asBinder().linkToDeath(mDeathRecipient, 0) }
+                        gnssStatusListeners.add(listener)
                     }
 
-                    cIGnssStatusListener.onceHookAllMethod("onNmeaReceived", beforeHook {
-                        if (FakeLoc.enableDebugLog) {
-                            Logger.debug("onNmeaReceived")
-                        }
-                        if (FakeLoc.enableMockGnss) result = null
-                    })
+                    hookGnssStatusListener(cIGnssStatusListener)
+
+                    if (FakeLoc.enableMockGnss) {
+                        pushGnssStatus()
+                    }
                 }
-            }).isEmpty()) {
-            XposedBridge.log("[Portal] hook registerGnssStatusCallback failed")
-        }
+            })
+
+        cILocationManager.hookAllMethods("unregisterGnssStatusCallback", afterHook {
+            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: return@afterHook
+            if (FakeLoc.enableDebugLog) {
+                Logger.debug("unregisterGnssStatusCallback: ${listener.javaClass.name}")
+            }
+            gnssStatusListeners.remove(listener)
+        })
         // android 11+
         // @EnforcePermission("LOCATION_HARDWARE")
         // void startGnssBatch(long periodNanos, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
@@ -660,7 +564,8 @@ internal object LocationServiceHook: BaseLocationHook() {
 
                 addLocationListenerInner("gps", listener)
 
-                if (FakeLoc.disableRegisterLocationListener || FakeLoc.enable) {
+                // 模拟会话期间注册一律拦截（与 registerLocationListener 语义一致）
+                if (FakeLoc.enable) {
                     result = null
                 }
 
@@ -729,7 +634,8 @@ internal object LocationServiceHook: BaseLocationHook() {
                 Logger.debug("getCurrentLocation: injected!")
             }
 
-            if (FakeLoc.disableGetCurrentLocation) {
+            // 仅模拟会话期间拦截 getCurrentLocation；未开模拟时透传真实位置
+            if (FakeLoc.enable && FakeLoc.disableGetCurrentLocation) {
                 result = null
                 return@beforeHook
             }
@@ -753,7 +659,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             val command = args[1] as String
             val outResult = args[2] as? Bundle
 
-            if (FakeLoc.disableFusedLocation && provider == "fused") {
+            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
                 result = false
                 return@beforeHook
             }
@@ -797,9 +703,9 @@ internal object LocationServiceHook: BaseLocationHook() {
                                 userId = BinderUtils.getCallerUid()
                             }
                             param.result = BinderUtils.isLocationProviderEnabled(userId)
-                        } else if(provider == "network") {
+                        } else if (FakeLoc.enable && provider == "network") {
                             param.result = !FakeLoc.enable
-                        } else if (FakeLoc.disableFusedLocation && provider == "fused") {
+                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
                             param.result = false
                             return
                         } else {
@@ -821,9 +727,9 @@ internal object LocationServiceHook: BaseLocationHook() {
                         val userId = BinderUtils.getCallerUid()
                         if (provider == "portal" && BinderUtils.isLocationProviderEnabled(userId)) {
                             param.result = true
-                        } else if(provider == "network") {
+                        } else if (FakeLoc.enable && provider == "network") {
                             param.result = !FakeLoc.enable
-                        } else if (FakeLoc.disableFusedLocation && provider == "fused") {
+                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
                             param.result = false
                             return
                         }
@@ -848,6 +754,8 @@ internal object LocationServiceHook: BaseLocationHook() {
                 }
             }
         })
+
+        startGnssStatusPusher()
 
     }
 
@@ -986,6 +894,197 @@ internal object LocationServiceHook: BaseLocationHook() {
         if (FakeLoc.enableDebugLog) {
             Logger.debug("==> callOnLocationChanged: end")
         }
+    }
+
+    // ============ GNSS 模拟主动推送（SDK 36 适配） ============
+    /** 已注册的 GNSS 状态回调（system_server 侧代理对象） */
+    private val gnssStatusListeners = LinkedBlockingQueue<IInterface>()
+    private val gnssPusherStarted = AtomicBoolean(false)
+
+    private fun buildMockGnssData(): MockGnssData {
+        val svCount = Random.nextInt(FakeLoc.minSatellites, MAX_SATELLITES + 1)
+        return MockGnssData(
+            svCount = svCount,
+            svidWithFlags = IntArray(svCount),
+            cn0s = FloatArray(svCount),
+            elevations = FloatArray(svCount),
+            azimuths = FloatArray(svCount),
+            carrierFreqs = FloatArray(svCount)
+        ).apply {
+            val selectedSatellites = satelliteList.shuffled().take(svCount)
+            selectedSatellites.forEachIndexed { index, sat ->
+                svidWithFlags[index] = 0
+
+                val hasEphemeris = Random.nextFloat() > 0.1f    // 90%概率有星历
+                val hasAlmanac = Random.nextFloat() > 0.05f     // 95%概率有年历
+                val usedInFix = Random.nextFloat() > 0.3f       // 70%概率用于定位
+                val hasCarrierFreq = true                       // 总是有载波频率
+                val hasBasebandCn0 = true                       // 总是有基带载噪比
+
+                var flags = GnssFlags.SVID_FLAGS_NONE
+                if (hasEphemeris) flags = flags or GnssFlags.SVID_FLAGS_HAS_EPHEMERIS_DATA
+                if (hasAlmanac) flags = flags or GnssFlags.SVID_FLAGS_HAS_ALMANAC_DATA
+                if (usedInFix) flags = flags or GnssFlags.SVID_FLAGS_USED_IN_FIX
+                if (hasCarrierFreq) flags = flags or GnssFlags.SVID_FLAGS_HAS_CARRIER_FREQUENCY
+                if (hasBasebandCn0) flags = flags or GnssFlags.SVID_FLAGS_HAS_BASEBAND_CN0
+
+                svidWithFlags[index] = (sat.prn shl GnssFlags.SVID_SHIFT_WIDTH) or
+                        ((GnssFlags.CONSTELLATION_BEIDOU and GnssFlags.CONSTELLATION_TYPE_MASK) shl GnssFlags.CONSTELLATION_TYPE_SHIFT_WIDTH) or
+                        flags
+
+                cn0s[index] = when (sat.type) {
+                    is OrbitType.GEO -> Random.nextFloat(GEO_MIN_CN0, GEO_MAX_CN0)
+                    is OrbitType.IGSO -> Random.nextFloat(IGSO_MIN_CN0, IGSO_MAX_CN0)
+                    is OrbitType.MEO -> Random.nextFloat(MEO_MIN_CN0, MEO_MAX_CN0)
+                }
+                elevations[index] = Random.nextFloat(sat.type.elevationRange.start, sat.type.elevationRange.endInclusive)
+                azimuths[index] = Random.nextFloat(0f, 360f)
+                carrierFreqs[index] = when (Random.nextInt(3)) {
+                    0 -> BDS_B1I_FREQ
+                    1 -> BDS_B2I_FREQ
+                    else -> BDS_B3I_FREQ
+                }
+            }
+        }
+    }
+
+    /** 构造模拟 GnssStatus（7 参私有构造，反射）。失败返回 null。 */
+    private fun buildMockGnssStatus(): Any? {
+        val mockGps = buildMockGnssData()
+        return runCatching {
+            val cGnssStatus = XposedHelpers.findClass("android.location.GnssStatus", LocationServiceHook::class.java.classLoader!!)
+            val mConstructor = cGnssStatus.declaredConstructors.firstOrNull {
+                it.parameterTypes.size == 7
+            }?.also { it.isAccessible = true }
+                ?: return null
+            mConstructor.newInstance(
+                mockGps.svCount,
+                mockGps.svidWithFlags,
+                mockGps.cn0s,
+                mockGps.elevations,
+                mockGps.azimuths,
+                mockGps.carrierFreqs,
+                FloatArray(mockGps.svCount) {
+                    mockGps.cn0s[it] - Random.nextFloat(2f, 5f)
+                }
+            )
+        }.onFailure { e ->
+            Logger.error("buildMockGnssStatus failed", e)
+        }.getOrNull()
+    }
+
+    /** 主动向已注册的 GNSS 状态回调推送模拟卫星数据（守护线程每 1s 调用）。 */
+    fun pushGnssStatus() {
+        if (!FakeLoc.enableMockGnss) return
+        if (gnssStatusListeners.isEmpty()) return
+
+        val status = buildMockGnssStatus() ?: return
+        gnssStatusListeners.forEach { listener ->
+            runCatching {
+                val method = listener.javaClass.methods.firstOrNull { m ->
+                    m.name == "onSvStatusChanged" &&
+                        m.parameterTypes.size == 1 &&
+                        m.parameterTypes[0].name == "android.location.GnssStatus"
+                } ?: listener.javaClass.methods.firstOrNull { it.name == "onSvStatusChanged" }
+                    ?: return@runCatching
+                XposedBridge.invokeOriginalMethod(method, listener, arrayOf(status))
+            }.onFailure { e ->
+                if (e is InvocationTargetException && e.targetException is DeadObjectException) return@forEach
+                Logger.error("pushGnssStatus failed for ${listener.javaClass.name}", e)
+            }
+        }
+        if (FakeLoc.enableDebugLog) {
+            Logger.debug("==> pushGnssStatus: pushed to ${gnssStatusListeners.size}")
+        }
+    }
+
+    private fun startGnssStatusPusher() {
+        if (!gnssPusherStarted.compareAndSet(false, true)) return
+        kotlin.concurrent.thread(name = "GnssStatusPusher", isDaemon = true, start = true) {
+            while (true) {
+                try {
+                    if (FakeLoc.enableMockGnss && gnssStatusListeners.isNotEmpty()) {
+                        pushGnssStatus()
+                        Thread.sleep(1000)
+                    } else {
+                        Thread.sleep(500)
+                    }
+                } catch (e: InterruptedException) {
+                    break
+                } catch (t: Throwable) {
+                    Logger.error("GnssStatusPusher", t)
+                    Thread.sleep(1000)
+                }
+            }
+        }
+    }
+
+    /** 安装 GNSS 状态回调注入 hook（方法查找放宽到 public 方法，兼容 SDK 36 声明差异） */
+    private fun hookGnssStatusListener(cIGnssStatusListener: Class<*>) {
+        val mSvStatusChanged = cIGnssStatusListener.methods.firstOrNull { it.name == "onSvStatusChanged" }
+        if (mSvStatusChanged == null) {
+            Logger.error("find onSvStatusChanged failed! class=${cIGnssStatusListener.name}")
+        } else {
+            mSvStatusChanged.onceHook(beforeHook {
+                if (!FakeLoc.enableMockGnss) return@beforeHook
+
+                val mockGps = buildMockGnssData()
+
+                if (args[0] is Int) {
+                    args[0] = mockGps.svCount
+                    args[1] = mockGps.svidWithFlags
+                    args[2] = mockGps.cn0s
+                    args[3] = mockGps.elevations
+                    args[4] = mockGps.azimuths
+                    if (args.size > 5) {
+                        args[5] = mockGps.carrierFreqs
+                    }
+                    if (args.size > 6) {
+                        args[6] = FloatArray(mockGps.svCount) {
+                            mockGps.cn0s[it] - Random.nextFloat(2f, 5f)
+                        }
+                    }
+                    return@beforeHook
+                }
+
+                if (args[0] != null && args[0].javaClass.name == "android.location.GnssStatus") {
+                    runCatching {
+                        val mConstructor = args[0].javaClass.declaredConstructors.firstOrNull {
+                            it.parameterTypes.size == 7
+                        }.also {
+                            it?.isAccessible = true
+                        }
+                        if (mConstructor != null) {
+                            args[0] = mConstructor.newInstance(
+                                mockGps.svCount,
+                                mockGps.svidWithFlags,
+                                mockGps.cn0s,
+                                mockGps.elevations,
+                                mockGps.azimuths,
+                                mockGps.carrierFreqs,
+                                FloatArray(mockGps.svCount) {
+                                    mockGps.cn0s[it] - Random.nextFloat(2f, 5f)
+                                }
+                            )
+                        } else {
+                            Logger.error("onSvStatusChanged: unsupported version: ${method}, constructor not found")
+                        }
+                    }.onFailure {
+                        XposedBridge.log(it)
+                    }
+                    return@beforeHook
+                }
+
+                Logger.error("onSvStatusChanged: unsupported version: $method")
+            })
+        }
+
+        cIGnssStatusListener.onceHookAllMethod("onNmeaReceived", beforeHook {
+            if (FakeLoc.enableDebugLog) {
+                Logger.debug("onNmeaReceived")
+            }
+            if (FakeLoc.enableMockGnss) result = null
+        })
     }
 
     private fun hookLocationManagerServiceV2(classLoader: ClassLoader) {

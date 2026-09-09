@@ -15,7 +15,9 @@ import kotlin.random.Random
 object RemoteCommandHandler {
     private val proxyBinders by lazy { Collections.synchronizedList(arrayListOf<IBinder>()) }
     private val needProxyCmd = arrayOf("start", "stop", "set_speed_amp", "set_altitude", "set_speed", "update_location", "set_bearing", "move", "put_config")
-    internal val randomKey by lazy { "portal_" + Random.nextDouble() }
+    // 由 BaseDivineService 的 exchange_key 在 client 进程同步为系统侧 key（两进程同一把钥匙）；
+    // 旧实现各进程 lazy 生成各自的随机值，系统转发来的指令永远通不过校验（配置不传播的根因）
+    internal var randomKey: String = "portal_" + Random.nextDouble()
     private var isLoadedLibrary = false
 
     @SuppressLint("UnsafeDynamicallyLoadedCode")
@@ -96,6 +98,8 @@ object RemoteCommandHandler {
             }
             "start_gnss_mock" -> {
                 FakeLoc.enableMockGnss = true
+                // 立即主动推送一次模拟卫星数据：雷达无需等待系统 GNSS 引擎上报
+                LocationServiceHook.pushGnssStatus()
                 return true
             }
             "stop_gnss_mock" -> {
@@ -185,17 +189,17 @@ object RemoteCommandHandler {
                     "+" -> {
                         newLat += FakeLoc.latitude
                         newLon += FakeLoc.longitude
-                        return updateCoordinate(newLat, newLon)
+                        return updateCoordinate(newLat, newLon, updateBearing = true)
                     }
                     "-" -> {
                         newLat = FakeLoc.latitude - newLat
                         newLon = FakeLoc.longitude - newLon
-                        return updateCoordinate(newLat, newLon)
+                        return updateCoordinate(newLat, newLon, updateBearing = true)
                     }
                     "*" -> {
                         newLat *= FakeLoc.latitude
                         newLon *= FakeLoc.longitude
-                        return updateCoordinate(newLat, newLon)
+                        return updateCoordinate(newLat, newLon, updateBearing = true)
                     }
                     "/" -> {
                         if (newLat == 0.0 || newLon == 0.0) {
@@ -203,13 +207,13 @@ object RemoteCommandHandler {
                         }
                         newLat /= FakeLoc.latitude
                         newLon /= FakeLoc.longitude
-                        return updateCoordinate(newLat, newLon)
+                        return updateCoordinate(newLat, newLon, updateBearing = true)
                     }
                     "=" -> {
-                        return updateCoordinate(newLat, newLon)
+                        return updateCoordinate(newLat, newLon, updateBearing = true)
                     }
                     "random" -> {
-                        return updateCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0))
+                        return updateCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0), updateBearing = true)
                     }
                 }
                 return true
@@ -322,8 +326,44 @@ object RemoteCommandHandler {
 //        return LocationServiceProxyHook.injectLocation(location, realLocation)
 //    }
 
-    private fun updateCoordinate(newLat: Double, newLon: Double): Boolean {
+    /** 方向参考点（滚动）：累计位移达到 [BEARING_REF_MIN_DIST_M] 才重算方向，过滤逐点轨迹噪声 */
+    @Volatile private var bearingRefLat = Double.NaN
+    @Volatile private var bearingRefLon = Double.NaN
+    private const val BEARING_REF_MIN_DIST_M = 3.0
+
+    private fun updateCoordinate(newLat: Double, newLon: Double, updateBearing: Boolean = false): Boolean {
         if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
+            if (updateBearing) {
+                // 自动播放（update_location 路线推进）：按实际位移方向更新朝向。
+                // 路线播放是逐点跳点推进，直接用相邻两点方向会被密集点位 + 轨迹噪声
+                // 带得乱跳（表现为角度忽然随机转动），因此：
+                // ① 用滚动参考点（累计位移 ≥ 3m 才重算方向，方向基线更长更稳定）
+                // ② 再经转向速率限制（setBearingSlew），噪声不会瞬间改朝向
+                val dLat = newLat - FakeLoc.latitude
+                val dLon = newLon - FakeLoc.longitude
+                // 近似距离（米）：1° 纬度 ≈ 111.32km，经度按 cos(纬度) 折算
+                val distM = Math.hypot(dLat, dLon * Math.cos(Math.toRadians(newLat))) * 111320.0
+                // 位移过小（<1m 静止微抖）不更新方向：避免静止微扰把朝向带偏
+                if (distM >= 1.0) {
+                    if (bearingRefLat.isNaN()) {
+                        bearingRefLat = FakeLoc.latitude
+                        bearingRefLon = FakeLoc.longitude
+                    }
+                    val refDistM = Math.hypot(
+                        newLat - bearingRefLat,
+                        (newLon - bearingRefLon) * Math.cos(Math.toRadians(newLat))
+                    ) * 111320.0
+                    if (refDistM >= BEARING_REF_MIN_DIST_M) {
+                        FakeLoc.setBearingSlew(
+                            FakeLoc.calculateBearing(bearingRefLat, bearingRefLon, newLat, newLon)
+                        )
+                        // 已有明确朝向：避免下次 start 重新随机分配（角度忽然换向）
+                        FakeLoc.hasBearings = true
+                        bearingRefLat = newLat
+                        bearingRefLon = newLon
+                    }
+                }
+            }
             FakeLoc.latitude = newLat
             FakeLoc.longitude = newLon
             // 记录基础坐标变化：既用于静止检测（注入 speed 在 0 与实测速度间切换），

@@ -216,7 +216,8 @@ object LocationProviderManagerHook {
                         Logger.debug("getCurrentLocation injected: $callback")
                     }
 
-                    if(FakeLoc.disableGetCurrentLocation) {
+                    // 仅模拟会话期间拦截：未开模拟时透传真实位置
+                    if (FakeLoc.enable && FakeLoc.disableGetCurrentLocation) {
                         param.result = null
                         return
                     }

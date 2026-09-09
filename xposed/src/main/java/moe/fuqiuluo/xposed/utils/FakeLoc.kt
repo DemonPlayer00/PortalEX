@@ -4,6 +4,7 @@ import android.location.Location
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -31,16 +32,6 @@ object FakeLoc {
      */
     @Volatile
     var enableMockGnss = false
-
-    /**
-     * 传感器模拟开关（默认开启；进程启动时生效，修改后需重启目标进程）：
-     * 开启 = 客户端主动注入（A 方案）：每个 app 进程内注入步数/朝向传感器数据
-     * （伪造 Sensor + 调度器生成事件），兼容无步计数传感器的设备。
-     * 关闭 = 禁用传感器模拟（不安装任何传感器 hook）。
-     * 注：服务端（SensorService 源级改写）方案已弃用，只保留客户端注入。
-     */
-    @Volatile
-    var sensorMockEnabled = true
 
     /**
      * 模拟WLAN数据
@@ -122,23 +113,103 @@ object FakeLoc {
     @Volatile var hasBearings = false
 
     /**
-     * 当前朝向（度，0=北，顺时针）：
+     * 权威朝向目标（度，0=北，顺时针）：
      * - 应用启动时随机分配中心角度
-     * - 移动中由 move/摇杆更新为移动方向
+     * - 移动中由 move/摇杆/自动播放路线更新为移动方向（允许骤变）
      * - 静止（未操作摇杆、未自动播放）时保持稳定（永远虚拟注入，不随真实设备转动）
+     * 注入时经 [processedBearing] 加工（平滑趋近 + 微小扰动），本字段本身不做平滑。
      */
     @Volatile var bearing = Random.nextDouble(0.0, 360.0)
 
     /** 最近一次移动（move 命令）的时间，用于静止检测 */
     @Volatile var lastMoveTimeNanos = 0L
 
-    /** 是否正在移动（摇杆操作中/自动播放中）：最近 2s 内有 move 命令 */
-    val isMoving: Boolean
-        get() = System.nanoTime() - lastMoveTimeNanos < 2_000_000_000L
+    // ---- 注入角度加工（模块层，数据源侧）----
+    // 权威目标 bearing 是路线段方向（允许骤变、直线段恒定）；直接写入会让
+    // 位置/指南针锁死在前进方向。这里加工成「平滑趋近 + 微小扰动」的注入值：
+    // 用时间常数（指数平滑），与调用频率无关（位置回调 1Hz 或 20Hz 手感一致）。
+    private const val BEARING_OUTPUT_TAU = 0.8          // 平滑时间常数（s）
+    private const val BEARING_OUTPUT_RETARGET_TAU = 0.4 // 扰动目标重选时间常数（s）
+    private const val BEARING_OUTPUT_APPROACH_TAU = 0.15// 扰动趋近时间常数（s）
+    private const val BEARING_OUTPUT_JITTER_AMP = 3.0   // 扰动幅度（±度）
+
+    @Volatile private var bearingOutputSmooth = bearing
+    @Volatile private var bearingOutputJitter = 0.0
+    @Volatile private var bearingOutputJitterTarget = 0.0
+    @Volatile private var lastBearingOutputNanos = 0L
 
     /**
-     * 速度推算窗口（纳秒）：取窗口内基础坐标的位移 / 时间差得到速度。
-     * 与 [isMoving] 的 2s 静止判定保持一致。
+     * 加工后的注入角度（度，0~360）：平滑趋近 [bearing] + 微小扰动。
+     * 供位置注入（Location.bearing / NMEA trackAngle）使用；传感器注入侧
+     * 以此为数据源后仍做自己的高频加工，两边都不会锁死。
+     */
+    fun processedBearing(): Double {
+        val now = System.nanoTime()
+        val dt = if (lastBearingOutputNanos == 0L) 0.0 else (now - lastBearingOutputNanos) / 1e9
+        lastBearingOutputNanos = now
+        if (dt > 0.0) {
+            val dtc = dt.coerceAtMost(1.0)
+            // 平滑趋近目标（最短角差，避免 359°→1° 绕远）
+            bearingOutputSmooth += shortestAngleDelta(bearing, bearingOutputSmooth) *
+                (1.0 - exp(-dtc / BEARING_OUTPUT_TAU))
+            // 扰动：目标按时间概率重选，再平滑趋近
+            if (Random.nextDouble() < 1.0 - exp(-dtc / BEARING_OUTPUT_RETARGET_TAU)) {
+                bearingOutputJitterTarget =
+                    Random.nextDouble(-BEARING_OUTPUT_JITTER_AMP, BEARING_OUTPUT_JITTER_AMP)
+            }
+            bearingOutputJitter += (bearingOutputJitterTarget - bearingOutputJitter) *
+                (1.0 - exp(-dtc / BEARING_OUTPUT_APPROACH_TAU))
+        }
+        return (bearingOutputSmooth + bearingOutputJitter + 360.0) % 360.0
+    }
+
+    /** 最短角差（-180, 180] */
+    private fun shortestAngleDelta(target: Double, current: Double): Double {
+        var d = (target - current) % 360.0
+        if (d > 180.0) d -= 360.0
+        if (d <= -180.0) d += 360.0
+        return d
+    }
+
+    // ---- 权威朝向的转向速率限制 ----
+    // 路线播放是逐点跳点推进，若直接用相邻两点方向重算 bearing，密集点位 +
+    // 轨迹噪声会让朝向忽然随机转动（表现为指南针乱转）。这里限制每秒最大转角。
+    @Volatile private var lastBearingSlewNanos = 0L
+
+    /**
+     * 更新权威朝向（带转向速率限制）：朝 [target] 转，但每秒最多
+     * [maxTurnDegPerSec] 度——噪声方向不会让角度瞬间乱跳，真实急转弯仍能在
+     * 1 秒左右转过去（120°/s 时）。
+     */
+    fun setBearingSlew(target: Double, maxTurnDegPerSec: Double = 120.0) {
+        val now = System.nanoTime()
+        val dt = if (lastBearingSlewNanos == 0L) 1.0
+        else ((now - lastBearingSlewNanos) / 1e9).coerceIn(0.05, 2.0)
+        lastBearingSlewNanos = now
+        val maxTurn = maxTurnDegPerSec * dt
+        val delta = shortestAngleDelta(target, bearing).coerceIn(-maxTurn, maxTurn)
+        bearing = (bearing + delta + 360.0) % 360.0
+    }
+
+    /** 是否正在移动（摇杆操作中/自动播放中）：最近 0.4s 内有 move 命令 */
+    val isMoving: Boolean
+        get() = System.nanoTime() - lastMoveTimeNanos < MOVING_WINDOW_NANOS
+
+    /**
+     * 移动判定窗口（纳秒）：停止移动后 0.4s 内转为静止。
+     * 步频过渡区目标 < 0.5s——旧实现 2s 导致停止后步频仍在爬升/衰减。
+     */
+    private const val MOVING_WINDOW_NANOS = 400_000_000L
+
+    /**
+     * 速度衰减归零时间（纳秒）：停止移动后 [SPEED_DECAY_NANOS] 内速度线性降到 0，
+     * 与 [MOVING_WINDOW_NANOS] 同步——步频（= 60 + 30*speed）随速度同步过渡。
+     */
+    private const val SPEED_DECAY_NANOS = 400_000_000L
+
+    /**
+     * 速度推算采样窗口（纳秒）：取窗口内基础坐标的位移 / 时间差得到速度。
+     * 窗口只用于保留历史采样（下次移动时算速度），不决定衰减速度。
      */
     private const val SPEED_WINDOW_NANOS = 2_000_000_000L
 
@@ -176,14 +247,15 @@ object FakeLoc {
             val raw = haversine(oldest.lat, oldest.lon, newest.lat, newest.lon) /
                 (spanNanos / 1_000_000_000.0)
 
-            // 停止移动后按采样间隔自适应衰减：超过 2 倍采样间隔开始线性下降
+            // 停止移动后线性衰减：最多 1 个采样间隔内保持全速（避免采样稀疏时立即掉速），
+            // 然后到 SPEED_DECAY_NANOS 归零——步频过渡区硬上限 < 0.5s，与采样间隔无关
             val avgInterval = spanNanos.toDouble() / (moveSamples.size - 1)
-            val fullSpeedUntil = avgInterval * 2
+            val fullSpeedUntil = minOf(avgInterval, SPEED_DECAY_NANOS * 0.5)
             val decay = if (age <= fullSpeedUntil) {
                 1.0
             } else {
-                ((SPEED_WINDOW_NANOS - age).toDouble() /
-                    (SPEED_WINDOW_NANOS - fullSpeedUntil)).coerceIn(0.0, 1.0)
+                ((SPEED_DECAY_NANOS - age) / (SPEED_DECAY_NANOS - fullSpeedUntil))
+                    .coerceIn(0.0, 1.0)
             }
             (raw * decay).coerceIn(0.0, MAX_MEASURED_SPEED)
         }

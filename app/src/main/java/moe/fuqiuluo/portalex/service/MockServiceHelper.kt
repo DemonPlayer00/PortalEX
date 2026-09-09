@@ -127,6 +127,8 @@ object MockServiceHelper {
         rely.putDouble("speed", speed)
         rely.putDouble("altitude", altitude)
         rely.putFloat("accuracy", accuracy)
+        // App 侧状态同步：putConfig 不再携带 enable，避免打开设置页/GNSS 页时把模拟误关
+        FakeLoc.enable = true
         startLoopBroadcastLocation(locationManager)
         return if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
             isMockStart(locationManager)
@@ -142,6 +144,7 @@ object MockServiceHelper {
         val rely = Bundle()
         rely.putString("command_id", "stop")
         stopLoopBroadcastLocation()
+        FakeLoc.enable = false
         if (locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
             return !isMockStart(locationManager)
         }
@@ -312,7 +315,8 @@ object MockServiceHelper {
 
         val rely = Bundle()
         rely.putString("command_id", "put_config")
-        rely.putBoolean("enable", FakeLoc.enable)
+        // 不再携带 enable：模拟启停只由 start/stop 命令控制（旧实现 App 侧 enable 恒 false，
+        // 打开设置页/GNSS 页触发的 put_config 会把系统侧模拟静默关闭）
         rely.putDouble("altitude", FakeLoc.altitude)
         rely.putDouble("speed", FakeLoc.speed)
         rely.putBoolean("enable_debug_log", FakeLoc.enableDebugLog)

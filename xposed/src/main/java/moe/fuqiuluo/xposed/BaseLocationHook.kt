@@ -67,7 +67,9 @@ abstract class BaseLocationHook: BaseDivineService() {
 
         // final addition of zero is to remove -0 results. while these are technically within the
         // range [0, 360) according to IEEE semantics, this eliminates possible user confusion.
-        var modBearing = FakeLoc.bearing % 360.0 + 0.0
+        // 角度加工（模块层）：平滑趋近权威目标 + 微小扰动——
+        // 自动播放直线段时 bearing 恒定，直接写入会让位置/指南针锁死在前进方向。
+        var modBearing = FakeLoc.processedBearing() % 360.0 + 0.0
         if (modBearing < 0) {
             modBearing += 360.0
         }
@@ -97,13 +99,11 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.extras = Bundle()
         }
         // 传感器模拟所需的模拟速度/朝向/移动状态（客户端进程 SystemSensorManagerHook 读取）。
-        // 键名刻意中性化、不含模块特征，且仅在传感器模拟开启时写入，
-        // 避免目标应用凭 extras 键名识别本模块。
-        if (FakeLoc.sensorMockEnabled) {
-            location.extras?.putDouble("spd", measuredSpeed)
-            location.extras?.putDouble("brg", FakeLoc.bearing)
-            location.extras?.putBoolean("mov", FakeLoc.isMoving)
-        }
+        // 键名刻意中性化、不含模块特征。写入与否与开关无关：
+        // 传感器模拟由 LSPosed 作用域决定（勾选即注入），extras 恒写供注入进程同步虚拟朝向。
+        location.extras?.putDouble("spd", measuredSpeed)
+        location.extras?.putDouble("brg", FakeLoc.bearing)
+        location.extras?.putBoolean("mov", FakeLoc.isMoving)
         location.extras?.putInt("satellites", Random.nextInt(8, 26))
         location.extras?.putInt("maxCn0", Random.nextInt(30, 50))
         location.extras?.putInt("meanCn0", Random.nextInt(20, 30))
@@ -166,7 +166,7 @@ abstract class BaseLocationHook: BaseDivineService() {
                     updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
                     // 同步速度和航向（m/s → 节，1 m/s = 1.94384 knots）
                     value.speedKnots = FakeLoc.measuredSpeed * 1.94384
-                    value.trackAngle = FakeLoc.bearing
+                    value.trackAngle = FakeLoc.processedBearing()
                     value.toNmeaString()
                 }
                 // 其他语句类型（DTM、GSA、GSV、VTG）不做修改，原样返回
