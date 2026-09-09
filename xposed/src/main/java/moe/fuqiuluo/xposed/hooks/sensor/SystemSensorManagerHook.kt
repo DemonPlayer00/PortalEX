@@ -63,8 +63,9 @@ import java.util.concurrent.atomic.AtomicLong
  *   cadence(步/min) = 60 + 30 * speed(m/s)，限幅 60..220 —— 走路/跑步速度对应：
  *   慢走 1.2m/s → 96，快走 1.5 → 105，慢跑 3.0 → 150，快跑 4.5+ → 195+（封顶 220）
  *
- * 速度/朝向来源：权威值在 system_server（FakeLoc.speed/FakeLoc.bearing）。本进程通过 hook 定位
- * 回调，从注入位置的 extras（中性键 spd/brg/mov，见 BaseLocationHook）同步缓存。
+ * 速度/朝向来源：权威值在 system_server（速度 = 实际模拟位移推算值 FakeLoc.measuredSpeed，
+ * 朝向 = FakeLoc.bearing）。本进程通过 hook 定位回调，从注入位置的 extras
+ * （中性键 spd/brg/mov，见 BaseLocationHook）同步缓存。
  */
 object SystemSensorManagerHook {
     private const val TYPE_STEP_COUNTER = 19
