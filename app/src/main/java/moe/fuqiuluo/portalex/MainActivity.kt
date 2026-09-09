@@ -41,6 +41,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.widget.ImageViewCompat
 import androidx.drawerlayout.widget.DrawerLayout
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -78,6 +79,7 @@ import moe.fuqiuluo.portalex.bdmap.toPoi
 import moe.fuqiuluo.portalex.databinding.ActivityMainBinding
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
+import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -287,7 +289,8 @@ class MainActivity : AppCompatActivity() {
     private fun applyMenuVisibility(destinationId: Int) {
         val menu = binding.appBarMain.toolbar.menu
         menu.findItem(R.id.action_search)?.isVisible = destinationId == R.id.nav_home
-        menu.findItem(R.id.action_map_controls)?.isVisible = destinationId == R.id.nav_home
+        menu.findItem(R.id.action_map_controls)?.isVisible =
+            destinationId == R.id.nav_home || destinationId == R.id.nav_route_edit
     }
 
     private fun requireFloatWindows(): Boolean {
@@ -355,31 +358,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 三点展开栏：卫星图/显示路线（状态与 HomeFragment 控件同步） */
+    /** 三点展开栏：卫星图/显示路线（状态与当前页面控件同步） */
     private fun showMapControlsMenu() {
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
                 ?: return
-        val home = navHostFragment.childFragmentManager.fragments
-            .firstOrNull { it is HomeFragment } as? HomeFragment ?: return
+        val hosts = navHostFragment.childFragmentManager.fragments
+            .filterIsInstance<MapControlsHost>()
+        val host = hosts.firstOrNull { (it as? Fragment)?.isVisible == true }
+            ?: hosts.firstOrNull()
+            ?: return
+        // 「显示路线」仅主界面支持
+        val home = host as? HomeFragment
 
         val popup = PopupMenu(this, binding.appBarMain.toolbar)
         popup.gravity = Gravity.END
         popup.menuInflater.inflate(R.menu.map_controls_popup, popup.menu)
 
         // 显示前同步当前状态
-        popup.menu.findItem(R.id.map_type_satellite).isChecked = home.isSatellite()
-        popup.menu.findItem(R.id.show_route).isChecked = home.isShowRouteChecked()
+        popup.menu.findItem(R.id.map_type_satellite).isChecked = host.isSatellite()
+        popup.menu.findItem(R.id.show_route)?.let {
+            it.isVisible = home != null
+            if (home != null) it.isChecked = home.isShowRouteChecked()
+        }
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.map_type_satellite -> {
-                    home.toggleSatellite()
+                    host.toggleSatellite()
                     true
                 }
 
                 R.id.show_route -> {
-                    home.toggleShowRoute()
+                    home?.toggleShowRoute()
                     true
                 }
 

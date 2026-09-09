@@ -42,12 +42,13 @@ import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.wgs84
+import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import java.math.BigDecimal
 import java.util.List
 import kotlin.random.Random
 
-class HomeFragment : Fragment() {
+class HomeFragment : Fragment(), MapControlsHost {
     private var _binding: FragmentHomeBinding? = null
 
     // This property is only valid between onCreateView and
@@ -216,11 +217,11 @@ class HomeFragment : Fragment() {
     }
 
     /** 三点展开栏入口：当前是否卫星图（未选中=普通图） */
-    fun isSatellite(): Boolean =
+    override fun isSatellite(): Boolean =
         binding.mapTypeGroup.checkedRadioButtonId == R.id.map_type_satellite
 
     /** 三点展开栏入口：切换卫星图/普通图（触发原 RadioGroup 监听） */
-    fun toggleSatellite() {
+    override fun toggleSatellite() {
         binding.mapTypeGroup.check(
             if (isSatellite()) R.id.map_type_normal else R.id.map_type_satellite
         )
