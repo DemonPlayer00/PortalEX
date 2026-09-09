@@ -12,7 +12,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.android.coro.CoroutineController
 import moe.fuqiuluo.portalex.android.coro.CoroutineRouteMock
-import moe.fuqiuluo.portalex.ext.Loc4j
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.reportDuration

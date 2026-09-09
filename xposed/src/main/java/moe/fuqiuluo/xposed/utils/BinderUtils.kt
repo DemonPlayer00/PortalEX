@@ -4,7 +4,6 @@ package moe.fuqiuluo.xposed.utils
 import android.content.Context
 import android.os.Binder
 import android.os.Build
-import de.robv.android.xposed.XposedBridge
 
 
 object BinderUtils {

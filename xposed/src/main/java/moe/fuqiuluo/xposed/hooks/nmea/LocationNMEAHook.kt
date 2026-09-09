@@ -2,11 +2,9 @@ package moe.fuqiuluo.xposed.hooks.nmea
 
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
-import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import moe.fuqiuluo.xposed.utils.onceHookBefore
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
 import java.util.Collections

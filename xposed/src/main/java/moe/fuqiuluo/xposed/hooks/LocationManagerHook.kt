@@ -8,7 +8,6 @@ import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
-import moe.fuqiuluo.xposed.utils.onceHookMethod
 
 object LocationManagerHook: BaseLocationHook() {
     operator fun invoke(

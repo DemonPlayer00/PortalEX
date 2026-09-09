@@ -1,10 +1,7 @@
 package moe.fuqiuluo.portalex.android.widget
 
-import android.Manifest
-import android.Manifest.permission.ACCESS_FINE_LOCATION
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -12,15 +9,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.location.GnssStatus
-import android.location.LocationManager
-import android.os.Build
 import android.util.AttributeSet
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
-import androidx.annotation.RequiresPermission
-import androidx.core.app.ActivityCompat
 import com.google.android.material.color.MaterialColors
 import kotlin.math.abs
 import kotlin.math.cos

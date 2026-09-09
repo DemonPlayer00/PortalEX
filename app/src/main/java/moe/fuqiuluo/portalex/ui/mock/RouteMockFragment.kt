@@ -10,7 +10,6 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
-import androidx.navigation.Navigation
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -28,9 +27,7 @@ import moe.fuqiuluo.portalex.android.window.OverlayUtils
 import moe.fuqiuluo.portalex.databinding.FragmentRouteMockBinding
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.drawOverOtherAppsEnabled
-import moe.fuqiuluo.portalex.ext.hookSensor
 import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
-import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
