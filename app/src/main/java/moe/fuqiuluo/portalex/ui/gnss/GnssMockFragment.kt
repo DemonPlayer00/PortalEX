@@ -25,7 +25,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
-import moe.fuqiuluo.portalex.android.root.ShellUtils
 import moe.fuqiuluo.portalex.android.widget.SatelliteData
 import moe.fuqiuluo.portalex.android.window.OverlayUtils
 import moe.fuqiuluo.portalex.ext.altitude
