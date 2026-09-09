@@ -152,12 +152,6 @@ var Context.hookSensor: Boolean
 //        putBoolean("hideMock", value)
 //    }
 
-var Context.debug: Boolean
-    get() = sharedPrefs.getBoolean("debug", FakeLoc.enableDebugLog)
-    set(value) = sharedPrefs.edit {
-        putBoolean("debug", value)
-    }
-
 var Context.disableGetCurrentLocation: Boolean
     get() = sharedPrefs.getBoolean("disableGetCurrentLocation", FakeLoc.disableGetCurrentLocation)
     set(value) = sharedPrefs.edit {

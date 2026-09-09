@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.util.Log
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.altitude
-import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
 import moe.fuqiuluo.portalex.ext.disableGetCurrentLocation
 import moe.fuqiuluo.portalex.ext.disableRegisterLocationListener
@@ -299,7 +298,6 @@ object MockServiceHelper {
 
         FakeLoc.altitude = context.altitude
         FakeLoc.speed = context.speed
-        FakeLoc.enableDebugLog = context.debug
         FakeLoc.disableGetCurrentLocation = context.disableGetCurrentLocation
         FakeLoc.disableRegisterLocationListener = context.disableRegisterLocationListener
         FakeLoc.disableFusedLocation = context.disableFusedProvider
