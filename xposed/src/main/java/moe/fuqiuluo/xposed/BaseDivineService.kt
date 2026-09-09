@@ -66,7 +66,7 @@ abstract class BaseDivineService {
 
         rely.putBinder("proxy", object: Binder() {
             override fun getInterfaceDescriptor(): String {
-                return "moe.fuqiuluo.portal.service.${from}Helper"
+                return "moe.fuqiuluo.portalex.service.${from}Helper"
             }
 
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {

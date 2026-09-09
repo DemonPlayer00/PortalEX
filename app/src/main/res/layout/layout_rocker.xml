@@ -8,7 +8,7 @@
     android:padding="4dp"
     android:orientation="vertical">
 
-    <moe.fuqiuluo.portal.android.widget.RockerView
+    <moe.fuqiuluo.portalex.android.widget.RockerView
         android:id="@+id/rocker"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

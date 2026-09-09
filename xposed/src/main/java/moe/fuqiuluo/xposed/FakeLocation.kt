@@ -52,7 +52,7 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
         // 读取模块自身 prefs 中的传感器模拟开关（LSPosed 的 XSharedPreferences，
         // 需要 manifest 声明 xposedsharedprefs）。读取失败时保持默认开启。
         kotlin.runCatching {
-            val prefs = de.robv.android.xposed.XSharedPreferences("moe.fuqiuluo.portal", "portal")
+            val prefs = de.robv.android.xposed.XSharedPreferences("moe.fuqiuluo.portalex", "portal")
             prefs.reload()
             FakeLoc.sensorMockEnabled = prefs.getBoolean("sensorMockEnabled", true)
         }.onFailure {

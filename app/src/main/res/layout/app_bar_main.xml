@@ -44,7 +44,7 @@
     </LinearLayout>
 
     <!-- 悬浮胶囊条：全应用单实例，跨界面统一切换功能集（见 FabBarView） -->
-    <moe.fuqiuluo.portal.android.widget.FabBarView
+    <moe.fuqiuluo.portalex.android.widget.FabBarView
         android:id="@+id/fab_bar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
