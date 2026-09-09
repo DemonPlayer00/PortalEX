@@ -74,7 +74,6 @@ import com.google.android.material.navigation.NavigationView
 import com.tencent.bugly.crashreport.CrashReport
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.android.permission.RequestPermissions
-import moe.fuqiuluo.portalex.android.root.ShellUtils
 import moe.fuqiuluo.portalex.android.widget.FabBarView
 import moe.fuqiuluo.portalex.android.window.OverlayUtils
 import moe.fuqiuluo.portalex.bdmap.Poi
@@ -183,10 +182,6 @@ class MainActivity : AppCompatActivity() {
         CrashReport.setUserSceneTag(this, 261771)
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.N) {
             window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-        }
-
-        if (!ShellUtils.hasRoot()) {
-            Toast.makeText(this, "无Root可能导致传感器Hook失效", Toast.LENGTH_LONG).show()
         }
 
         // Inflate the content view synchronously: onCreateOptionsMenu is invoked
