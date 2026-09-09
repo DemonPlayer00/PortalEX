@@ -221,22 +221,12 @@ class MainActivity : AppCompatActivity() {
                 navView.setupWithNavController(navController)
 
                 navController.addOnDestinationChangedListener(object: OnDestinationChangedListener {
-                    val menuIdMapping = mapOf(
-                        R.id.nav_home to listOf(R.id.action_search, R.id.action_map_controls),
-                        //R.id.nav_settings to R.id.action_info
-                    )
-
                     override fun onDestinationChanged(
                         controller: NavController,
                         destination: NavDestination,
                         arguments: Bundle?
                     ) {
-                        menuIdMapping.forEach { (key, ids) ->
-                            val menu = binding.appBarMain.toolbar.menu
-                            ids.forEach { id ->
-                                menu.findItem(id)?.isVisible = key == destination.id
-                            }
-                        }
+                        applyMenuVisibility(destination.id)
 
                         // 悬浮胶囊单实例：仅主界面/路线回放页/路线模拟页注册功能集
                         // （各自 Fragment onResume 中 setActions），其余目的地统一隐藏
@@ -299,6 +289,13 @@ class MainActivity : AppCompatActivity() {
                 it.defaults = Notification.DEFAULT_SOUND
             }
         }
+    }
+
+    /** 主界面才显示工具栏搜索/地图控件按钮（导航切换 + recreate 后均需应用） */
+    private fun applyMenuVisibility(destinationId: Int) {
+        val menu = binding.appBarMain.toolbar.menu
+        menu.findItem(R.id.action_search)?.isVisible = destinationId == R.id.nav_home
+        menu.findItem(R.id.action_map_controls)?.isVisible = destinationId == R.id.nav_home
     }
 
     private fun requireFloatWindows(): Boolean {
@@ -405,6 +402,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
+        // recreate（深/浅切换）后此方法每次重 inflate menu——visibility 必须按
+        // 当前目的地重新应用：destination listener 注册可能早于首次 inflate
+        // （当时 toolbar.menu 为 null，findItem 静默失效），inflate 后 menu 全 visible
+        val navHost = supportFragmentManager
+            .findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
+        applyMenuVisibility(navHost?.navController?.currentDestination?.id ?: R.id.nav_home)
         val searchItem: MenuItem = menu.findItem(R.id.action_search)
         val searchView = searchItem.actionView as SearchView
         searchView.onActionViewExpanded()

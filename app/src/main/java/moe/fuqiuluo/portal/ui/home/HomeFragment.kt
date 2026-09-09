@@ -486,7 +486,9 @@ class HomeFragment : Fragment() {
         super.onDestroy()
 
         baiduMapViewModel.isExists = false
-        if (mLocationClient.isStarted)
+        // recreate（深/浅切换）时本 fragment 可能在 backstack：view 未重建则
+        // onCreateView 未执行、mLocationClient 未初始化——访问会崩
+        if (::mLocationClient.isInitialized && mLocationClient.isStarted)
             mLocationClient.stop()
         if (_binding != null) {
             binding.bmapView.map.isMyLocationEnabled = false
