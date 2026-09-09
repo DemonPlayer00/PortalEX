@@ -64,16 +64,16 @@ import java.util.concurrent.atomic.AtomicLong
  *   慢走 1.2m/s → 96，快走 1.5 → 105，慢跑 3.0 → 150，快跑 4.5+ → 195+（封顶 220）
  *
  * 速度/朝向来源：权威值在 system_server（FakeLoc.speed/FakeLoc.bearing）。本进程通过 hook 定位
- * 回调，从注入位置的 extras（portal_speed，见 BaseLocationHook）同步速度缓存。
+ * 回调，从注入位置的 extras（中性键 spd/brg/mov，见 BaseLocationHook）同步缓存。
  */
 object SystemSensorManagerHook {
     private const val TYPE_STEP_COUNTER = 19
     private const val TYPE_ORIENTATION = 3
     private const val TYPE_ROTATION_VECTOR = 11
     private const val TYPE_GAME_ROTATION_VECTOR = 15
-    private const val EXTRA_PORTAL_SPEED = "portal_speed"
-    private const val EXTRA_PORTAL_BEARING = "portal_bearing"
-    private const val EXTRA_PORTAL_MOVING = "portal_moving"
+    private const val EXTRA_PORTAL_SPEED = "spd"
+    private const val EXTRA_PORTAL_BEARING = "brg"
+    private const val EXTRA_PORTAL_MOVING = "mov"
 
     // 需要注入的传感器类型（步数 + 朝向）：
     // 朝向类（ORIENTATION/ROTATION_VECTOR/GAME_ROTATION_VECTOR）驱动 App 方向——
@@ -641,7 +641,7 @@ object SystemSensorManagerHook {
     }
 
     // ------------------------------------------------------------------
-    // 速度同步：从注入位置的 extras 读取 portal_speed
+    // 速度同步：从注入位置的 extras 读取模拟速度/朝向/移动状态（中性键，见 BaseLocationHook）
     // ------------------------------------------------------------------
 
     private fun hookSpeedSync(classLoader: ClassLoader) {

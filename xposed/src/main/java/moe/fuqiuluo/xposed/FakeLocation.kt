@@ -19,6 +19,14 @@ import moe.fuqiuluo.xposed.utils.Logger
 
 class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
     private lateinit var cServiceManager: Class<*> // android.os.ServiceManager
+
+    companion object {
+        /** 已注入 hook 的系统进程（防止 handleLoadPackage 重复调用导致重复注入）。
+         *  不用 System.setProperty：系统属性可被枚举/读取，属于模块痕迹。 */
+        private val injectedPackages: MutableSet<String> =
+            java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    }
+
     private val mServiceManagerCache by lazy {
         kotlin.runCatching { cServiceManager.getDeclaredField("sCache") }.onSuccess {
             it.isAccessible = true
@@ -33,9 +41,6 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
      */
     override fun initZygote(startupParam: IXposedHookZygoteInit.StartupParam?) {
         if(startupParam == null) return
-
-//        // 宇宙安全声明：以下代码仅供学习交流使用，切勿用于非法用途?
-//        System.setProperty("portal.enable", "true")
     }
 
     /**
@@ -100,10 +105,8 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
             return
         }
 
-        if(System.getProperty("portal.injected_${lpparam.packageName}") == "true") {
+        if (!injectedPackages.add(lpparam.packageName)) {
             return
-        } else {
-            System.setProperty("portal.injected_${lpparam.packageName}", "true")
         }
 
         when (lpparam.packageName) {

@@ -89,11 +89,14 @@ abstract class BaseLocationHook: BaseDivineService() {
         if (location.extras == null) {
             location.extras = Bundle()
         }
-        location.extras?.putDouble("latlon", location.latitude + location.longitude)
-        // 把当前模拟速度/朝向/移动状态带给客户端进程（传感器步频/旋转注入读取，见 SystemSensorManagerHook）
-        location.extras?.putDouble("portal_speed", FakeLoc.speed)
-        location.extras?.putDouble("portal_bearing", FakeLoc.bearing)
-        location.extras?.putBoolean("portal_moving", FakeLoc.isMoving)
+        // 传感器模拟所需的模拟速度/朝向/移动状态（客户端进程 SystemSensorManagerHook 读取）。
+        // 键名刻意中性化、不含模块特征，且仅在传感器模拟开启时写入，
+        // 避免目标应用凭 extras 键名识别本模块。
+        if (FakeLoc.sensorMockEnabled) {
+            location.extras?.putDouble("spd", FakeLoc.speed)
+            location.extras?.putDouble("brg", FakeLoc.bearing)
+            location.extras?.putBoolean("mov", FakeLoc.isMoving)
+        }
         location.extras?.putInt("satellites", Random.nextInt(8, 45))
         location.extras?.putInt("maxCn0", Random.nextInt(30, 50))
         location.extras?.putInt("meanCn0", Random.nextInt(20, 30))
@@ -114,8 +117,6 @@ abstract class BaseLocationHook: BaseDivineService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 location.isMock = true
             }
-            location.extras?.putBoolean("portal.enable", true)
-            location.extras?.putBoolean("is_mock", true)
         }
 
         kotlin.runCatching {
