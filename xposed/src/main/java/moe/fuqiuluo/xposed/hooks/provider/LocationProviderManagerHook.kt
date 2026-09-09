@@ -50,14 +50,14 @@ object LocationProviderManagerHook {
             location.isMock = false
         }
         location.altitude = FakeLoc.offset_altitude
-        // 与主注入路径一致：移动中 = 模拟速度±抖动，静止 = 0
+        // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
         location.speed = if (FakeLoc.isMoving) {
-            (FakeLoc.speed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).toFloat()
+            (FakeLoc.measuredSpeed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).coerceAtLeast(0.0).toFloat()
         } else {
             0.0f
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            location.speedAccuracyMetersPerSecond = 0F
+            location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
         }
 
         location.time = originLocation.time
@@ -272,14 +272,14 @@ object LocationProviderManagerHook {
                 location.isMock = false
             }
             location.altitude = FakeLoc.offset_altitude
-            // 与主注入路径一致：移动中 = 模拟速度±抖动，静止 = 0
+            // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
             location.speed = if (FakeLoc.isMoving) {
-                (FakeLoc.speed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).toFloat()
+                (FakeLoc.measuredSpeed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).coerceAtLeast(0.0).toFloat()
             } else {
                 0.0f
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                location.speedAccuracyMetersPerSecond = 0F
+                location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
             }
 
             location.time = originLocation.time

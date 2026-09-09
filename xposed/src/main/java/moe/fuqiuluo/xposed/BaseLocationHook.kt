@@ -44,12 +44,12 @@ abstract class BaseLocationHook: BaseDivineService() {
         location.latitude = jitterLat.first
         location.longitude = jitterLat.second
         location.altitude = FakeLoc.offset_altitude
-        // 速度与模拟移动状态一致：移动中 = 模拟速度 ± 抖动，静止 = 0。
-        // 原实现用「真实设备速度 + 抖动」，与模拟位置变化无关（真机静止时仍报 1.2 m/s），
-        // 跨帧对比位置差与 speed 即可发现矛盾。
+        // 速度由实际模拟位移推算（FakeLoc.measuredSpeed）：移动中 = 实测速度 ± 抖动，静止 = 0。
+        // 早期实现直接写入配置速度，与注入的位置变化无关（跨帧对比位移与 speed 即可发现矛盾）。
         val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
+        val measuredSpeed = FakeLoc.measuredSpeed
         location.speed = if (FakeLoc.isMoving) {
-            (FakeLoc.speed + speedAmp).coerceAtLeast(0.0).toFloat()
+            (measuredSpeed + speedAmp).coerceAtLeast(0.0).toFloat()
         } else {
             0.0f
         }
@@ -100,7 +100,7 @@ abstract class BaseLocationHook: BaseDivineService() {
         // 键名刻意中性化、不含模块特征，且仅在传感器模拟开启时写入，
         // 避免目标应用凭 extras 键名识别本模块。
         if (FakeLoc.sensorMockEnabled) {
-            location.extras?.putDouble("spd", FakeLoc.speed)
+            location.extras?.putDouble("spd", measuredSpeed)
             location.extras?.putDouble("brg", FakeLoc.bearing)
             location.extras?.putBoolean("mov", FakeLoc.isMoving)
         }
@@ -165,7 +165,7 @@ abstract class BaseLocationHook: BaseDivineService() {
                     if (value.status == "V") return nmeaStr
                     updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
                     // 同步速度和航向（m/s → 节，1 m/s = 1.94384 knots）
-                    value.speedKnots = FakeLoc.speed * 1.94384
+                    value.speedKnots = FakeLoc.measuredSpeed * 1.94384
                     value.trackAngle = FakeLoc.bearing
                     value.toNmeaString()
                 }
