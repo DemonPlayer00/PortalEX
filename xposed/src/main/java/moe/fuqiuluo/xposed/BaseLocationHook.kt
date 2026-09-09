@@ -44,9 +44,15 @@ abstract class BaseLocationHook: BaseDivineService() {
         location.latitude = jitterLat.first
         location.longitude = jitterLat.second
         location.altitude = FakeLoc.offset_altitude
+        // 速度与模拟移动状态一致：移动中 = 模拟速度 ± 抖动，静止 = 0。
+        // 原实现用「真实设备速度 + 抖动」，与模拟位置变化无关（真机静止时仍报 1.2 m/s），
+        // 跨帧对比位置差与 speed 即可发现矛盾。
         val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
-        // 速度不得为负：原实现直接相加，抖动可压出负值（真机日志实测 vel=-1.449），物理不合理。
-        location.speed = (originLocation.speed + speedAmp).coerceAtLeast(0.0).toFloat()
+        location.speed = if (FakeLoc.isMoving) {
+            (FakeLoc.speed + speedAmp).coerceAtLeast(0.0).toFloat()
+        } else {
+            0.0f
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasSpeedAccuracy()) {
             // 速度精度：真实设备量级 0.1~0.5 m/s。原实现借用该字段承载模拟速度
             // （值恒等于速度，异常且可被检测），改为独立随机小值。
@@ -71,16 +77,18 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
         }
 
-        if (location.speed == 0.0f) {
-            location.speed = 1.2f
-        }
-
         location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
+            // 垂直精度：原始位置未提供时（0）补合理随机值，避免恒为 0 的异常值
+            location.verticalAccuracyMeters =
+                if (originLocation.hasVerticalAccuracy() && originLocation.verticalAccuracyMeters > 0f) {
+                    originLocation.verticalAccuracyMeters
+                } else {
+                    Random.nextDouble(5.0, 15.0).toFloat()
+                }
         }
         originLocation.extras?.let {
             location.extras = it
@@ -96,7 +104,7 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.extras?.putDouble("brg", FakeLoc.bearing)
             location.extras?.putBoolean("mov", FakeLoc.isMoving)
         }
-        location.extras?.putInt("satellites", Random.nextInt(8, 45))
+        location.extras?.putInt("satellites", Random.nextInt(8, 26))
         location.extras?.putInt("maxCn0", Random.nextInt(30, 50))
         location.extras?.putInt("meanCn0", Random.nextInt(20, 30))
 
@@ -104,8 +112,9 @@ abstract class BaseLocationHook: BaseDivineService() {
             if (originLocation.hasMslAltitude()) {
                 location.mslAltitudeMeters = FakeLoc.offset_altitude
             }
-            if (originLocation.hasVerticalAccuracy()) {
-                location.mslAltitudeAccuracyMeters = FakeLoc.offset_altitude.toFloat()
+            if (originLocation.hasMslAltitudeAccuracy()) {
+                // 高度精度：真实设备量级 1~5 米。原实现写入高度值本身（80.0），异常。
+                location.mslAltitudeAccuracyMeters = Random.nextDouble(1.0, 5.0).toFloat()
             }
         }
         if (FakeLoc.hideMock) {

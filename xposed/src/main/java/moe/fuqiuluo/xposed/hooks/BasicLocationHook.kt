@@ -67,7 +67,12 @@ object BasicLocationHook: BaseLocationHook() {
                     location.isMock = false
                 }
                 location.altitude = FakeLoc.offset_altitude
-                location.speed = originLocation.speed
+                // 与主注入路径一致：移动中 = 模拟速度±抖动，静止 = 0
+                location.speed = if (FakeLoc.isMoving) {
+                    (FakeLoc.speed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).toFloat()
+                } else {
+                    0.0f
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     location.speedAccuracyMetersPerSecond = 0F
                 }
