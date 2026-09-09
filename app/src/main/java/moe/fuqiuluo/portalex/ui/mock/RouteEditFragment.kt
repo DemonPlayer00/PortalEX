@@ -15,7 +15,6 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import com.alibaba.fastjson2.JSON
-import com.alibaba.fastjson2.JSONArray
 import com.alibaba.fastjson2.JSONObject
 import com.baidu.location.BDAbstractLocationListener
 import com.baidu.location.BDLocation
@@ -413,19 +412,10 @@ class RouteEditFragment : Fragment() {
                     return true
                 }
 
-                val route = JSON.toJSONString(points)
                 with(requireContext()) {
-                    val routes = jsonHistoricalRoutes
-                    val jsonArray: JSONArray = if (routes.isNotEmpty()) {
-                        JSON.parseArray(routes)
-                    } else {
-                        JSONArray()
-                    }
-                    val historicalRoute = HistoricalRoute(name, mPoints)
-                    jsonArray.add(historicalRoute)
-                    jsonArray.toJSONString().also {
-                        jsonHistoricalRoutes = it
-                    }
+                    val routes = HistoricalRoute.parseList(jsonHistoricalRoutes)
+                    routes.add(HistoricalRoute(name, mPoints))
+                    jsonHistoricalRoutes = HistoricalRoute.listToJson(routes)
                 }
 
                 Toast.makeText(requireContext(), "路线已保存", Toast.LENGTH_SHORT).show()

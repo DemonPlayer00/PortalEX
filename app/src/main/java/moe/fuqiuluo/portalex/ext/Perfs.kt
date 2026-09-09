@@ -2,7 +2,6 @@ package moe.fuqiuluo.portalex.ext
 
 import android.content.Context
 import androidx.core.content.edit
-import com.alibaba.fastjson2.JSON
 import com.baidu.mapapi.map.BaiduMap
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
@@ -34,7 +33,7 @@ var Context.selectRoute: HistoricalRoute?
     get() {
         return sharedPrefs.getString("selectedRoute", null)?.let {
             try {
-                JSON.parseObject(it, HistoricalRoute::class.java)
+                HistoricalRoute.parse(it)
             } catch (e: Exception) {
                 sharedPrefs.edit {
                     putString("selectedRoute", "")
@@ -44,7 +43,7 @@ var Context.selectRoute: HistoricalRoute?
         }
     }
     set(value) = sharedPrefs.edit {
-        putString("selectedRoute", JSON.toJSONString(value))
+        putString("selectedRoute", value?.let { HistoricalRoute.toJson(it) })
     }
 
 val Context.historicalLocations: List<HistoricalLocation>

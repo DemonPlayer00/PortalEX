@@ -13,7 +13,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.alibaba.fastjson2.JSON
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
@@ -146,10 +145,10 @@ class RouteMockFragment : Fragment() {
                 mutableListOf(Pair(39.908822, 116.397465), Pair(39.907951, 116.397500))
             )
             val defaultRoutes = mutableListOf(defaultRoute)
-            requireContext().jsonHistoricalRoutes = JSON.toJSONString(defaultRoutes)
+            requireContext().jsonHistoricalRoutes = HistoricalRoute.listToJson(defaultRoutes)
             locations = requireContext().jsonHistoricalRoutes
         }
-        val routes = JSON.parseArray(locations, HistoricalRoute::class.java)
+        val routes = HistoricalRoute.parseList(locations)
 
         val historicalRouteAdapter = HistoricalRouteAdapter(routes.sortedBy { it.name }
             .toMutableList()) { route, isLongClick ->
@@ -202,12 +201,11 @@ class RouteMockFragment : Fragment() {
                         .setMessage("确定要删除路线(${location.name})吗？")
                         .setPositiveButton("删除") { _, _ ->
                             historicalRouteAdapter.removeItem(position)
-                            JSON.parseArray(jsonHistoricalRoutes, HistoricalRoute::class.java)
-                                .toMutableList().apply {
-                                    removeIf { it.name == location.name }
-                                }.let {
-                                    jsonHistoricalRoutes = JSON.toJSONString(it)
-                                }
+                            HistoricalRoute.parseList(jsonHistoricalRoutes).apply {
+                                removeIf { it.name == location.name }
+                            }.let {
+                                jsonHistoricalRoutes = HistoricalRoute.listToJson(it)
+                            }
                             showToast("已删除路线")
                         }
                         .setNegativeButton("取消", { _, _ ->

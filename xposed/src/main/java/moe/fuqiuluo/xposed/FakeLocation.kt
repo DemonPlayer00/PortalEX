@@ -64,11 +64,22 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
         // （systemui/settings/fused 供应商等）一律**不装**——避免拦截系统自身的传感器注册
         // （自动旋转、计步统计等）导致行为污染；用户应用装完即 return，不触碰系统侧 hook；
         // 系统应用继续走下方 when 分支安装各自系统侧 hook。开关关闭时 hook 内部跳过。
+        // 系统侧进程判定：appInfo 在部分 ROM/LSPosed 组合下对 system_server（包名 "android"）
+        // 为 null（实测 ColorOS），不能据此当成用户应用——否则框架侧 hook（LocationServiceHook
+        // 等）全部不装，app 端 exchange_key 无人应答 → 「系统服务注入失败」。
+        // 因此除 appInfo 系统标志外，显式识别已知系统包/进程。
         val isSystemApp = lpparam.appInfo?.let {
             (it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0 ||
                     (it.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
         } ?: false
-        if (!isSystemApp) {
+        val isSystemProcess = isSystemApp ||
+                lpparam.packageName == "android" ||
+                lpparam.processName == "system" ||
+                lpparam.packageName == "com.android.phone" ||
+                lpparam.packageName == "com.android.location.fused" ||
+                lpparam.packageName == "com.xiaomi.location.fused" ||
+                lpparam.packageName == "com.oplus.location"
+        if (!isSystemProcess) {
             SystemSensorManagerHook(lpparam.classLoader)
             return
         }
