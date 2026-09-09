@@ -22,7 +22,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.R
-import moe.fuqiuluo.portalex.android.root.ShellUtils
 import moe.fuqiuluo.portalex.android.widget.FabBarView
 import moe.fuqiuluo.portalex.android.widget.RockerView
 import moe.fuqiuluo.portalex.android.window.OverlayUtils
