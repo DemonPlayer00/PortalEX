@@ -5,8 +5,6 @@ import android.net.wifi.WifiInfo
 import android.os.Build
 import android.util.ArrayMap
 import dalvik.system.PathClassLoader
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -14,7 +12,6 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
 import moe.fuqiuluo.xposed.utils.beforeHook
 import moe.fuqiuluo.xposed.utils.hookAllMethods
-import moe.fuqiuluo.xposed.utils.hookMethodAfter
 import moe.fuqiuluo.xposed.utils.toClass
 
 object WlanHook {

@@ -1,6 +1,5 @@
 package moe.fuqiuluo.portalex.service
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.location.LocationManager
 import android.os.Bundle

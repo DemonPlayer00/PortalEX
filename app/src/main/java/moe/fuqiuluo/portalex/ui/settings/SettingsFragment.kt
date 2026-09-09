@@ -36,7 +36,6 @@ import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 import moe.fuqiuluo.portalex.ui.viewmodel.SettingsViewModel
-import kotlin.getValue
 
 class SettingsFragment : Fragment() {
     private var _binding: FragmentSettingsBinding? = null

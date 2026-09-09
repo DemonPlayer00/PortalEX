@@ -1,7 +1,6 @@
 package moe.fuqiuluo.xposed.hooks.blindhook
 
 import android.location.Location
-import de.robv.android.xposed.XposedBridge
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger

@@ -10,7 +10,6 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.os.Build
 import android.os.Handler
-import android.os.Looper
 import android.util.ArrayMap
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers

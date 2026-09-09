@@ -1,7 +1,6 @@
 package  moe.microbios.nmea
 
 import java.math.BigDecimal
-import kotlin.math.absoluteValue
 
 val data = setOf(
     "\$GPGSA,A,1,,,,,,,,,,,,,,,,*32",

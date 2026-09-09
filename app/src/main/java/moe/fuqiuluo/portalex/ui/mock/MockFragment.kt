@@ -28,8 +28,6 @@ import moe.fuqiuluo.portalex.databinding.FragmentMockBinding
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.drawOverOtherAppsEnabled
 import moe.fuqiuluo.portalex.ext.historicalLocations
-import moe.fuqiuluo.portalex.ext.hookSensor
-import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
 import moe.fuqiuluo.portalex.ext.selectLocation
 import moe.fuqiuluo.portalex.ext.speed

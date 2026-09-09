@@ -20,23 +20,17 @@ import android.os.Build
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.tencent.bugly.crashreport.CrashReport
-import com.tencent.bugly.proguard.bi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.android.widget.SatelliteData
 import moe.fuqiuluo.portalex.android.window.OverlayUtils
-import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
-import moe.fuqiuluo.portalex.ext.hookSensor
-import moe.fuqiuluo.portalex.ext.needOpenSELinux
-import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
-import moe.fuqiuluo.xposed.utils.FakeLoc
 
 class GnssMockFragment : Fragment() {
     private var _binding: FragmentGnssMockBinding? = null
