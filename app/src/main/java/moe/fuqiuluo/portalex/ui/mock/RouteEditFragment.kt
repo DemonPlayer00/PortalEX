@@ -42,6 +42,7 @@ import moe.fuqiuluo.portalex.databinding.FragmentRouteEditBinding
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
 import moe.fuqiuluo.portalex.ext.mapType
+import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -377,7 +378,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
 
         val builder = MaterialAlertDialogBuilder(requireContext())
         builder.setTitle(null)
-        builder
+        val dialog = builder
             .setCancelable(false)
             .setView(dialogView)
             .setPositiveButton("保存") { _, _ ->
@@ -434,6 +435,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
             }
             .setNegativeButton("取消", null)
             .show()
+        dialog.shiftAboveIme(requireActivity().window.decorView)
 
         return true
     }

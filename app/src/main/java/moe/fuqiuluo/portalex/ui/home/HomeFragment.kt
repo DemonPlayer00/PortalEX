@@ -41,6 +41,7 @@ import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
 import moe.fuqiuluo.portalex.ext.selectRoute
+import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -313,7 +314,7 @@ class HomeFragment : Fragment(), MapControlsHost {
 
             val builder = MaterialAlertDialogBuilder(requireContext())
             builder.setTitle(null)
-            builder
+            val dialog = builder
                 .setCancelable(false)
                 .setView(dialogView)
                 .setPositiveButton("保存") { _, _ ->
@@ -366,6 +367,7 @@ class HomeFragment : Fragment(), MapControlsHost {
                 }
                 .setNegativeButton("取消", null)
                 .show()
+            dialog.shiftAboveIme(requireActivity().window.decorView)
         }
 
         return true
@@ -407,7 +409,7 @@ class HomeFragment : Fragment(), MapControlsHost {
         }
 
         val builder = MaterialAlertDialogBuilder(requireContext())
-        builder.setTitle("输入经纬度(WGS84)")
+        val dialog = builder.setTitle("输入经纬度(WGS84)")
             .setView(dialogView)
             .setPositiveButton("确定") { _, _ ->
                 kotlin.runCatching {
@@ -441,6 +443,7 @@ class HomeFragment : Fragment(), MapControlsHost {
             }
             .setNegativeButton("取消", null)
             .show()
+        dialog.shiftAboveIme(requireActivity().window.decorView)
     }
 
     private fun markMap(moveEyes: Boolean = false) = with(baiduMapViewModel) {
