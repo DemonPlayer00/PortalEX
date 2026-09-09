@@ -53,7 +53,7 @@ Portal 曾经是一位作者（[ella8192](https://github.com/ella8192)）的优�
 # Features
 
 - [x] 运行高亮通知：模拟运行时创建常驻通知，便于检测状态
-- [x] Location 注入标记：模拟定位携带 `portal.enable` / `is_mock` extras，可被检测
+- [x] 无指纹注入：不写入 `portal.enable` / `is_mock` 等特征标记，`isMock` 恒为 `false`，检测只能依赖数据合理性
 - [x] 任意位置模拟：百度地图选点、历史位置管理、搜索定位
 - [x] 移动摇杆：悬浮摇杆手动控制移动方向与转向，实时生效
 - [x] 路线模拟：沿历史路线自动行驶，平滑转向、速度对齐，完成提示（音 + 振动）
@@ -68,15 +68,11 @@ Portal 曾经是一位作者（[ella8192](https://github.com/ella8192)）的优�
 ## 如何检测 PortalEX / How to detect?
 
 - PortalEX 运行时创建常驻通知，查看通知即可确认是否在运行。
-- PortalEX 会向 `Location` 注入额外标记：
-
-```kotlin
-if (location.extras == null) {
-    location.extras = Bundle()
-}
-location.extras?.putBoolean("portal.enable", true)
-location.extras?.putBoolean("is_mock", true)
-```
+- PortalEX 不向 `Location` 注入任何模块自有标记：`extras` 只透传原始数据，
+  `isMock` 恒为 `false`。**不存在可枚举的特征字段**，无法通过「检查注入标记」检测。
+- 只能从数据合理性入手，例如：
+  - 传感器模拟（角度 / 步频）移动时被接管，数值比真实 IMU 数据更平滑规律；
+  - 路线播放的轨迹与速度高度贴合预设，抖动幅度受配置控制，与真实路况噪声存在差异。
 
 # Build & Releases —— 为什么不发布 APK？
 

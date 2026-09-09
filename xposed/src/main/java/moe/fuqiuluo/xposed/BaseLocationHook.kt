@@ -3,7 +3,6 @@ package moe.fuqiuluo.xposed
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
-import android.os.Bundle
 import de.robv.android.xposed.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
@@ -92,21 +91,12 @@ abstract class BaseLocationHook: BaseDivineService() {
                     Random.nextDouble(5.0, 15.0).toFloat()
                 }
         }
+        // extras 只透传原始数据，不写任何模块自有键：extras 随 Parcel 到达每个拿到该
+        // Location 的应用，键名再中性也是指纹（真实 Location 的 extras 不会长这样）。
+        // 传感器侧改从标准字段（location.speed / location.bearing）取数，无需私有通路。
         originLocation.extras?.let {
             location.extras = it
         }
-        if (location.extras == null) {
-            location.extras = Bundle()
-        }
-        // 传感器模拟所需的模拟速度/朝向/移动状态（客户端进程 SystemSensorManagerHook 读取）。
-        // 键名刻意中性化、不含模块特征。写入与否与开关无关：
-        // 传感器模拟由 LSPosed 作用域决定（勾选即注入），extras 恒写供注入进程同步虚拟朝向。
-        location.extras?.putDouble("spd", measuredSpeed)
-        location.extras?.putDouble("brg", FakeLoc.bearing)
-        location.extras?.putBoolean("mov", FakeLoc.isMoving)
-        location.extras?.putInt("satellites", Random.nextInt(8, 26))
-        location.extras?.putInt("maxCn0", Random.nextInt(30, 50))
-        location.extras?.putInt("meanCn0", Random.nextInt(20, 30))
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             if (originLocation.hasMslAltitude()) {
@@ -117,16 +107,6 @@ abstract class BaseLocationHook: BaseDivineService() {
                 location.mslAltitudeAccuracyMeters = Random.nextDouble(1.0, 5.0).toFloat()
             }
         }
-        if (FakeLoc.hideMock) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                location.isMock = false
-            }
-        } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                location.isMock = true
-            }
-        }
-
         kotlin.runCatching {
             XposedHelpers.callMethod(location, "makeComplete")
         }.onFailure {
