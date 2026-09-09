@@ -116,7 +116,8 @@ object FakeLoc {
 
     @Volatile var speed = 3.05
 
-    var speedAmplitude = 1.0
+    /** 速度抖动幅度（m/s，绝对值）：注入 Location.speed 时在模拟速度上叠加 ±该值 */
+    var speedAmplitude = 0.3
 
     @Volatile var hasBearings = false
 
