@@ -51,6 +51,8 @@
   <string name="rocker_speed_desc">シュミレーションされた移動速度</string>
   <string name="accuracy">位置決めの精度</string>
   <string name="accuracy_desc">シュミレートされた位置決めジッターの範囲</string>
+  <string name="debug">デバッグモード</string>
+  <string name="debug_desc">デバッグログを印刷します</string>
   <string name="dgc">現在地の取得を許可する (新機能)</string>
   <string name="dgc_desc">GetCurrentLocation の呼び出しを許可します</string>
   <string name="rll">ロケーションリスナーの登録を許可</string>

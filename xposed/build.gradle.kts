@@ -41,8 +41,6 @@ android {
     }
     buildFeatures {
         prefab = true
-        // 供 FakeLoc 按构建类型钳制调试日志（release 恒关）
-        buildConfig = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

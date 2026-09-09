@@ -1,28 +1,33 @@
-name: Build Release APKs（仅手动触发）
+name: Build Apks
 
-# 设计约束：
-# - 只接受手动触发（workflow_dispatch），push/PR/定时都不会自动执行；
-# - 只构建 + 上传构建产物（artifact），绝不创建/发布 GitHub Release。
 on:
   workflow_dispatch:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+      - '.github/**'
+      - '.idea/**'
+      - '!.github/workflows/**'
 
 jobs:
   build:
-    name: Build Portal Release APKs
+    name: Build Portal
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          # 完整历史：版本号里的 commit 计数/哈希依赖 git 历史
-          fetch-depth: 0
-
+          
       - name: Setup Java 21
-        uses: gmitch215/setup-java@6d2c5e1f82f180ae79f799f0ed6e3e5efb4e664d
+        uses:  gmitch215/setup-java@6d2c5e1f82f180ae79f799f0ed6e3e5efb4e664d
         with:
           distribution: jetbrains
           java-version: 21
-
+          
       - name: Cache Gradle Dependencies
         uses: actions/cache@v4
         with:
@@ -42,57 +47,59 @@ jobs:
           key: gradle-builds-core-${{ github.sha }}
           restore-keys: gradle-builds
 
-      # 签名可选：配置了签名 secrets 才签名；否则产出未签名 release 包（可本地再签）。
-      - name: Prepare signing keystore (optional)
-        if: ${{ secrets.SIGN_KEYSTORE_BASE64 != '' }}
+      - name: Setup google-services.json
         run: |
-          echo "${{ secrets.SIGN_KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
-          echo "KEYSTORE_PATH=$(pwd)/keystore.jks" >> $GITHUB_ENV
-          echo "KEYSTORE_PASSWORD=${{ secrets.SIGN_KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-          echo "KEY_ALIAS=${{ secrets.SIGN_ALIAS }}" >> $GITHUB_ENV
-          echo "KEY_PASSWORD=${{ secrets.SIGN_KEY_PASSWORD }}" >> $GITHUB_ENV
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > app/google-services.json
 
-      - name: Build release APKs (no debug symbols / no debug logs)
+      - name: Build with Gradle
         run: |
+          echo ${{ secrets.SIGN_KEYSTORE_BASE64 }} | base64 -d > keystore.jks
           chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --build-cache --parallel
+          ./gradlew :app:assembleRelease --build-cache --parallel --warning-mode all --stacktrace
+          echo "APK_FILE_ALL=$(find app/build/outputs/apk/app/release -name '*.apk')" >> $GITHUB_ENV
+          echo "APK_FILE_ARM64=$(find app/build/outputs/apk/arm64/release -name '*.apk')" >> $GITHUB_ENV
+          echo "APK_FILE_X86_64=$(find app/build/outputs/apk/x64/release -name '*.apk')" >> $GITHUB_ENV
+        env:
+          KEYSTORE_PATH: "../keystore.jks"
+          KEYSTORE_PASSWORD: ${{ secrets.SIGN_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGN_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGN_KEY_PASSWORD }}
 
-      - name: Set APK paths
+      - name: Set Portal Version
         run: |
-          echo "APK_ALL=$(find app/build/outputs/apk/app/release -name '*.apk' | head -1)" >> $GITHUB_ENV
-          echo "APK_ARM64=$(find app/build/outputs/apk/arm64/release -name '*.apk' | head -1)" >> $GITHUB_ENV
-          echo "APK_X64=$(find app/build/outputs/apk/x64/release -name '*.apk' | head -1)" >> $GITHUB_ENV
+          version_name_all=$(basename -s .apk "${{ env.APK_FILE_ALL }}")
+          version_name_arm64=$(basename -s .apk "${{ env.APK_FILE_ARM64 }}")
+          version_name_x86_64=$(basename -s .apk "${{ env.APK_FILE_X86_64 }}")
+          echo "PORTAL_VERSION_ALL=$version_name_all" >> $GITHUB_ENV
+          echo "PORTAL_VERSION_ARM64=$version_name_arm64" >> $GITHUB_ENV
+          echo "PORTAL_VERSION_x86_64=$version_name_x86_64" >> $GITHUB_ENV
 
       - name: Show Artifacts SHA256
         run: |
           echo "### Build Success :rocket:" >> $GITHUB_STEP_SUMMARY
           echo "|ABI|SHA256|" >> $GITHUB_STEP_SUMMARY
           echo "|:--------:|:----------|" >> $GITHUB_STEP_SUMMARY
-          for v in ALL ARM64 X64; do
-            fname="APK_$v"
-            f="${!fname}"
-            if [ -n "$f" ]; then
-              echo "|$v|$(sha256sum "$f" | cut -d' ' -f1)|" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+          all=($(sha256sum "${{ env.APK_FILE_ALL }}"))
+          echo "|all|$all" >> $GITHUB_STEP_SUMMARY
+          arm64=($(sha256sum "${{ env.APK_FILE_ARM64 }}"))
+          echo "|arm64|$arm64" >> $GITHUB_STEP_SUMMARY
+          x86_64=($(sha256sum "${{ env.APK_FILE_X86_64 }}"))
+          echo "|x86_64|$x86_64" >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload ALL APK
+      - name: Upload ALL APK RELEASE
         uses: actions/upload-artifact@v4
-        if: ${{ env.APK_ALL != '' }}
         with:
-          name: portal-all
-          path: ${{ env.APK_ALL }}
+          name: "${{ env.PORTAL_VERSION_ALL }}"
+          path: "${{ env.APK_FILE_ALL }}"
 
-      - name: Upload ARM64 APK
+      - name: Upload ARM64 APK RELEASE
         uses: actions/upload-artifact@v4
-        if: ${{ env.APK_ARM64 != '' }}
         with:
-          name: portal-arm64
-          path: ${{ env.APK_ARM64 }}
+          name: "${{ env.PORTAL_VERSION_ARM64 }}"
+          path: "${{ env.APK_FILE_ARM64 }}"
 
-      - name: Upload X64 APK
+      - name: Upload X86_64 APK RELEASE
         uses: actions/upload-artifact@v4
-        if: ${{ env.APK_X64 != '' }}
         with:
-          name: portal-x64
-          path: ${{ env.APK_X64 }}
+          name: "${{ env.PORTAL_VERSION_x86_64 }}"
+          path: "${{ env.APK_FILE_X86_64 }}"

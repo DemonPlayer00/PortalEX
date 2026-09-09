@@ -20,15 +20,11 @@ object Logger {
     }
 
     fun debug(msg: String) {
-        if (FakeLoc.enableDebugLog) {
-            XposedBridge.log("[Portal][DEBUG] $msg")
-        }
+        XposedBridge.log("[Portal][DEBUG] $msg")
     }
 
     fun debug(msg: String, throwable: Throwable) {
-        if (FakeLoc.enableDebugLog) {
-            XposedBridge.log("[Portal][DEBUG] $msg: ${throwable.stackTraceToString()}")
-        }
+        XposedBridge.log("[Portal][DEBUG] $msg: ${throwable.stackTraceToString()}")
     }
 
     fun error(msg: String) {

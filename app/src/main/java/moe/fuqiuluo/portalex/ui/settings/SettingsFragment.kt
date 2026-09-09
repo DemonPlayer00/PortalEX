@@ -20,6 +20,7 @@ import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
 import moe.fuqiuluo.portalex.ext.disableGetCurrentLocation
 import moe.fuqiuluo.portalex.ext.disableRegisterLocationListener
@@ -117,6 +118,18 @@ class SettingsFragment : Fragment() {
                 binding.accuracyValue.text = "%.2f米".format(value)
             }
         }
+
+        binding.debugSwitch.isChecked = context.debug
+        binding.debugSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
+            override fun onCheckedChanged(
+                buttonView: CompoundButton,
+                isChecked: Boolean
+            ) {
+                context.debug = isChecked
+                showToast(if (isChecked) "已开启调试模式" else "已关闭调试模式")
+                updateRemoteConfig()
+            }
+        })
 
         binding.dgcSwitch.isChecked = !context.disableGetCurrentLocation
         binding.dgcSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {

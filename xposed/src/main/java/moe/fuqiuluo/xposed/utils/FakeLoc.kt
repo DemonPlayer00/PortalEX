@@ -1,7 +1,6 @@
 package moe.fuqiuluo.xposed.utils
 
 import android.location.Location
-import moe.fuqiuluo.xposed.BuildConfig
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -16,18 +15,10 @@ object FakeLoc {
      */
     var enableLog = true
 
-    private var debugLogEnabledByConfig = true
-
     /**
-     * 是否允许打印调试日志。
-     * release 构建恒为 false（BuildConfig.DEBUG 钳制，远程指令也翻不开）；
-     * debug 构建默认开启，可经配置/远程指令关闭。
+     * 是否允许打印调试日志
      */
-    var enableDebugLog: Boolean
-        get() = debugLogEnabledByConfig && BuildConfig.DEBUG
-        set(value) {
-            debugLogEnabledByConfig = value
-        }
+    var enableDebugLog = true
 
     /**
      * 模拟定位服务开关
