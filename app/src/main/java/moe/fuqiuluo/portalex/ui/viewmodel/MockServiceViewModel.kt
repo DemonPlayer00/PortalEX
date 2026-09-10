@@ -5,7 +5,6 @@ import android.location.LocationManager
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.tencent.bugly.crashreport.CrashReport
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -259,7 +258,6 @@ class MockServiceViewModel : ViewModel() {
                     // 自动播放中：位置/朝向由路线播放器独占推进，手动摇杆不插手
                     if (isAutoPlaying) continue
 
-                    CrashReport.setUserSceneTag(applicationContext, 261773)
                     val lm = locationManager
                     if (lm == null) {
                         // 定位服务尚未就绪（权限未授予等），暂停循环等待下次恢复

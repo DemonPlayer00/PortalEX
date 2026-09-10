@@ -84,27 +84,6 @@
             android:name="xposedsharedprefs"
             android:value="true" />
 
-        <!-- 配置Bugly -->
-        <!-- 配置APP ID -->
-        <meta-data
-            android:name="BUGLY_APPID"
-            android:value="${BUGLY_APPID}" />
-        <!-- 配置APP版本号 -->
-        <meta-data
-            android:name="BUGLY_APP_VERSION"
-            android:value="${APP_VERSION}" />
-        <!-- 配置APP渠道号 -->
-        <meta-data
-            android:name="BUGLY_APP_CHANNEL"
-            android:value="${APP_CHANNEL}" />
-        <!-- 配置Bugly调试模式（true或者false）-->
-        <meta-data
-            android:name="BUGLY_ENABLE_DEBUG"
-            android:value="${BUGLY_ENABLE_DEBUG}" />
-        <meta-data
-            android:name="BUGLY_BUILD_ENV"
-            android:value="${BUGLY_BUILD_ENV}" />
-
         <!--适配华为（huawei）刘海屏-->
         <meta-data
             android:name="android.notch_support"
