@@ -12,4 +12,8 @@
          本机 560dpi 下 16dp = 56px。见 FabBarView.recalibrate。 -->
     <dimen name="fab_corner_margin">16dp</dimen>
     <dimen name="fab_sub_margin">8dp</dimen>
+    <!-- 页面内容给悬浮胶囊让位时，与胶囊之间留的空隙 -->
+    <dimen name="fab_avoid_gap">16dp</dimen>
+    <!-- 历史列表标题（「历史路线」）的内缩：竖屏保持原样，横屏让位时与列表卡片对齐 -->
+    <dimen name="history_label_margin">20dp</dimen>
 </resources>

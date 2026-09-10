@@ -1,5 +1,6 @@
 package moe.fuqiuluo.portalex.ui.mock
 
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -30,11 +31,12 @@ import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import androidx.navigation.findNavController
 
-class RouteMockFragment : Fragment() {
+class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
     private var _binding: FragmentRouteMockBinding? = null
     private val binding get() = _binding!!
 
@@ -367,6 +369,9 @@ class RouteMockFragment : Fragment() {
     override fun onResume() {
         super.onResume()
 
+        // 历史列表给悬浮胶囊让位：页面每次可见都按当前方向重算
+        avoidFabBar()
+
         // 注册悬浮胶囊功能集：路线回放 = 添加/编辑路线
         // （胶囊为 Activity 级单实例，切换功能集自动重置收起态）
         (activity as? MainActivity)?.fabBar?.setActions(
@@ -380,6 +385,49 @@ class RouteMockFragment : Fragment() {
                 }
             )
         )
+    }
+
+    /**
+     * 历史路线列表及其标题避让悬浮胶囊。
+     *
+     * 胶囊钉在左下角，不同方向会从不同侧遮住列表：
+     * - 竖屏：屏幕高，胶囊在下面 → 列表底部让出「胶囊高度 + 16dp」；
+     * - 横屏：屏幕矮、横向有余量 → 改成列表左侧让出「胶囊宽度 + 16dp」，
+     *   不再吃竖向空间；同时把「历史路线」标题的左侧缩进拉到与列表卡片一致，
+     *   两者才在同一条竖线上。
+     *
+     * 本页也是 configChanges 下不重新 inflate 的页面，所以由
+     * [FabBarAvoidanceHost] 在旋转时被 Activity 叫一次。
+     */
+    override fun avoidFabBar() {
+        val fabBar = (activity as? MainActivity)?.fabBar ?: return
+        val card = _binding?.historicalRouteCard ?: return
+        val lp = card.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+
+        val corner = resources.getDimensionPixelSize(R.dimen.fab_corner_margin)
+        val gap = resources.getDimensionPixelSize(R.dimen.fab_avoid_gap)
+        val base = resources.getDimensionPixelSize(R.dimen.fab_sub_margin)
+        // 胶囊距屏幕边的距离 + 按钮自身尺寸 + 让位间隙
+        val avoid = corner + fabBar.collapsedSize + gap
+        val landscape =
+            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val wantStart = if (landscape) avoid else base
+        val wantBottom = if (landscape) base else avoid
+        if (lp.marginStart != wantStart || lp.bottomMargin != wantBottom) {
+            lp.marginStart = wantStart
+            lp.bottomMargin = wantBottom
+            card.layoutParams = lp
+        }
+
+        // 标题跟随列表：横屏对齐到让位后的卡片左边，竖屏回原缩进
+        val label = _binding?.historicalRouteLabel ?: return
+        val labelLp = label.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+        val wantLabelStart = if (landscape) avoid
+        else resources.getDimensionPixelSize(R.dimen.history_label_margin)
+        if (labelLp.marginStart != wantLabelStart) {
+            labelLp.marginStart = wantLabelStart
+            label.layoutParams = labelLp
+        }
     }
 
     private fun showToast(message: String) = lifecycleScope.launch(Dispatchers.Main) {
