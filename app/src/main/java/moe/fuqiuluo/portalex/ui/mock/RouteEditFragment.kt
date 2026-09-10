@@ -23,6 +23,7 @@ import com.baidu.location.LocationClientOption
 import com.baidu.mapapi.map.BaiduMap
 import com.baidu.mapapi.map.LogoPosition
 import com.baidu.mapapi.map.MapPoi
+import com.baidu.mapapi.map.MapStatus
 import com.baidu.mapapi.map.MapStatusUpdateFactory
 import com.baidu.mapapi.map.MarkerOptions
 import com.baidu.mapapi.map.MyLocationData
@@ -66,7 +67,6 @@ class RouteEditFragment : Fragment(), MapControlsHost {
      */
     private var mSmoothSegments: ArrayList<Boolean> = arrayListOf()
     private var isDrawing = false
-    private var lastPoint: Pair<Double, Double>? = null
 
     /** 已落地线段的覆盖物（与 mPoints 的相邻点对一一对应），refresh() 时整体重建 */
     private val mSegmentOverlays = arrayListOf<Polyline>()
@@ -229,50 +229,34 @@ class RouteEditFragment : Fragment(), MapControlsHost {
             context?.mapType = binding.bmapView.map.mapType
         }
 
+        // 地图状态变化（手指拖动、松手惯性、缩放、定位跳转都算）时同步预览段：
+        // 保证屏幕上的线永远从「最新端点」连到「准星」（地图中心）。
+        baiduMapViewModel.baiduMap.setOnMapStatusChangeListener(
+            object : BaiduMap.OnMapStatusChangeListener {
+                override fun onMapStatusChangeStart(status: MapStatus?) = syncPreviewSegment()
+                override fun onMapStatusChangeStart(status: MapStatus?, reason: Int) =
+                    syncPreviewSegment()
+
+                override fun onMapStatusChange(status: MapStatus?) = syncPreviewSegment()
+                override fun onMapStatusChangeFinish(status: MapStatus?) = syncPreviewSegment()
+            }
+        )
+
         baiduMapViewModel.baiduMap.setOnMapTouchListener {
-            if (isDrawing) {
-                val currentPoint = baiduMapViewModel.baiduMap.mapStatus.target.wgs84
-
-                when (it.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        if (mPoints.size <= 0) {
-                            appendPoint(currentPoint)
-                        }
-                        lastPoint = currentPoint
-                    }
-
-                    MotionEvent.ACTION_MOVE -> {
-                        if (lastPoint == null) {
-                            lastPoint = currentPoint
-                        }
-                        lastPoint?.let { lp -> drawLine(lp, currentPoint) }
-                    }
-
-                    MotionEvent.ACTION_UP -> {
-                        val from = lastPoint
-                        appendPoint(currentPoint)
-                        // 预览段就地转正（只改颜色，不 clear/重建）
-                        val preview = mPreviewOverlay
-                        if (preview != null) {
-                            preview.setColor(segmentColor(mPoints.size - 2))
-                            mSegmentOverlays.add(preview)
-                        } else if (from != null) {
-                            // 只有点击、没有拖动：直接补上这一段，避免抬手的点丢失
-                            addRecordedSegment(mPoints.size - 2)
-                        }
-                        mPreviewOverlay = null
-                        lastPoint = null
-                    }
-
-                    MotionEvent.ACTION_CANCEL -> {
-                        // 手势被打断：把半成品预览段收走，避免留下游离的线头
-                        mPreviewOverlay?.let {
-                            baiduMapViewModel.baiduMap.removeOverLays(listOf(it))
-                        }
-                        mPreviewOverlay = null
-                        lastPoint = null
-                    }
+            if (!isDrawing) return@setOnMapTouchListener
+            when (it.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    // 第一个端点：画线前需要一个锚，就用准星当前的位置
+                    if (mPoints.isEmpty()) appendPoint(currentCenter())
+                    syncPreviewSegment()
                 }
+
+                MotionEvent.ACTION_MOVE -> syncPreviewSegment()
+
+                MotionEvent.ACTION_UP -> commitPreviewAsSegment()
+
+                // 手势被打断：预览段锚在最新端点上，留着继续跟随准星即可
+                MotionEvent.ACTION_CANCEL -> syncPreviewSegment()
             }
         }
 
@@ -295,7 +279,6 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         // 释放覆盖物与绘制态：它们都指向已随视图销毁的地图对象
         mSegmentOverlays.clear()
         mPreviewOverlay = null
-        lastPoint = null
         isDrawing = false
         _binding = null
     }
@@ -313,11 +296,8 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         ) {
             smoothDrawing = !smoothDrawing
             smoothActionRef?.active = smoothDrawing
-            // 正在拖动的那一段也同步改色，保持所见即所得
-            mPreviewOverlay?.setColor(
-                if (smoothDrawing) HistoricalRoute.COLOR_SMOOTH else HistoricalRoute.COLOR_NORMAL
-            )
-            // 仅刷新着色，不重建功能集——避免切换时胶囊意外收起
+            // 悬挂的预览段固定紫色（终点未确定），不受平滑开关影响；
+            // 落地时才会按此时的开关换成蓝/绿，所以仅刷新工具箱着色
             (activity as? MainActivity)?.fabBar?.refreshActionTints(fabActions)
         }
         smoothActionRef = smoothAction
@@ -330,7 +310,6 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                 isDrawing = true
                 mPoints = arrayListOf()
                 mSmoothSegments = arrayListOf()
-                lastPoint = null
                 mPreviewOverlay = null
                 // 清掉上一次留在图上的路线，且把覆盖物列表重置到干净状态
                 refresh()
@@ -348,6 +327,9 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                 R.drawable.baseline_complete_24,
                 getString(R.string.fab_complete_route)
             ) {
+                // 悬挂的预览段也是屏幕上看得见的一段路，先落地再保存，
+                // 否则保存出来的路线会比屏幕上少一截
+                if (isDrawing) commitPreviewAsSegment()
                 isDrawing = false
                 setCrosshairVisible(false)
                 if (!showAddRouteDialog()) {
@@ -403,6 +385,67 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         mSegmentOverlays.clear()
         mPreviewOverlay = null
         drawRecordedSegments()
+        // 点集变了，连到准星的预览段要重新锚到新的末位端点
+        syncPreviewSegment()
+    }
+
+    /** 当前地图中心（= 准星所在位置），wgs84 */
+    private fun currentCenter(): Pair<Double, Double> =
+        baiduMapViewModel.baiduMap.mapStatus.target.wgs84
+
+    /** 两点是否同一位置（纬度/经度差都在 1e-9 度内） */
+    private fun samePoint(a: Pair<Double, Double>, b: Pair<Double, Double>): Boolean =
+        kotlin.math.abs(a.first - b.first) < 1e-9 &&
+            kotlin.math.abs(a.second - b.second) < 1e-9
+
+    /**
+     * 把「最新端点 → 准星」的预览段对齐到当前地图状态。
+     *
+     * 这是预览段的唯一更新入口：不论地图是被手指拖动、松手后的惯性滑动、
+     * 缩放还是定位跳转改变中心，线头都重新贴在准星上；起点永远取 [mPoints]
+     * 的最后一个端点，不使用手势中途缓存的旧坐标——否则线的一端会落在
+     * 数据里根本不存在的坐标上（拖动、惯性、缩放之后尤其明显）。
+     */
+    private fun syncPreviewSegment() {
+        if (!isDrawing) return
+        val anchor = mPoints.lastOrNull() ?: return  // 还没有端点：等第一次按下
+        val center = currentCenter()
+        if (samePoint(anchor, center)) {
+            // 端点正好在准星上：没有待画的线段，把预览收走
+            mPreviewOverlay?.let { baiduMapViewModel.baiduMap.removeOverLays(listOf(it)) }
+            mPreviewOverlay = null
+            return
+        }
+        drawLine(anchor, center)
+    }
+
+    /**
+     * 抬手落地：预览段转正为已落地线段，另一端就是抬手瞬间的准星位置。
+     * 准星没动（单击）时不产生零长的退化线段。
+     */
+    private fun commitPreviewAsSegment() {
+        val center = currentCenter()
+        val anchor = mPoints.lastOrNull()
+        if (anchor == null) {
+            appendPoint(center)
+            return
+        }
+        if (samePoint(anchor, center)) {
+            syncPreviewSegment()
+            return
+        }
+        appendPoint(center)
+        val preview = mPreviewOverlay
+        if (preview != null) {
+            // 预览段最后一次同步可能早于这次抬手：端点按数据校正一次
+            preview.setPoints(listOf<LatLng>(anchor.gcj02, center.gcj02))
+            preview.setColor(segmentColor(mPoints.size - 2))
+            mSegmentOverlays.add(preview)
+        } else {
+            // 没有预览对象（例如中心变化没触发过回调）：按数据补一段
+            addRecordedSegment(mPoints.size - 2)
+        }
+        mPreviewOverlay = null
     }
 
     /** 重画全部已落地线段，按逐段平滑标志着色（平滑 = 绿色，普通 = 蓝色） */
@@ -427,20 +470,19 @@ class RouteEditFragment : Fragment(), MapControlsHost {
     }
 
     /**
-     * 拖动预览：首次为新建覆盖物，之后就地 setPoints 更新。
+     * 预览段：首次为新建覆盖物，之后就地 setPoints 更新。
+     *
      * 关键是不能 clear()——每帧重建整个覆盖物层就是闪烁的来源。
+     * 端点由 [syncPreviewSegment] 指定：起点 = 最新端点，终点 = 准星（地图中心）；
+     * 终点尚未确定，所以统一用紫色，落地时才换成对应的段色。
      */
     private fun drawLine(start: Pair<Double, Double>, end: Pair<Double, Double>) {
         val points = listOf<LatLng>(start.gcj02, end.gcj02)
         val existing = mPreviewOverlay
         if (existing == null) {
-            // 预览段与当前平滑开关同色，所见即所得
             mPreviewOverlay = baiduMapViewModel.baiduMap.addOverlay(
                 PolylineOptions()
-                    .color(
-                        if (smoothDrawing) HistoricalRoute.COLOR_SMOOTH
-                        else HistoricalRoute.COLOR_NORMAL
-                    )
+                    .color(HistoricalRoute.COLOR_PREVIEW)
                     .width(10)
                     .points(points)
             ) as? Polyline
