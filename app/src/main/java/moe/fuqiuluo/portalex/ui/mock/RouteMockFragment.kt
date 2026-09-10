@@ -84,7 +84,11 @@ class RouteMockFragment : Fragment() {
                 checkedTextView.toggle()
                 lifecycleScope.launch(Dispatchers.Main) {
                     if (checkedTextView.isChecked) {
-                        rocker.show()
+                        // show() 失败（权限被回收/宿主重建）时回退勾选态，避免状态说谎
+                        if (!rocker.show()) {
+                            checkedTextView.isChecked = false
+                            Toast.makeText(requireContext(), "悬浮摇杆显示失败", Toast.LENGTH_SHORT).show()
+                        }
                     } else {
                         rocker.hide()
                         rockerCoroutineController.pause()
@@ -114,8 +118,14 @@ class RouteMockFragment : Fragment() {
         }
 
         requireContext().selectRoute?.let {
-            binding.mockRouteName.text = it.name
-            mockServiceViewModel.selectRouteForPlayback(it)
+            if (it.route.size < 2) {
+                // 存储中的选中路线已损坏（端点不足）：清除选中项，不带着幽灵路线进播放器
+                requireContext().selectRoute = null
+                mockServiceViewModel.clearSelectedRoute()
+            } else {
+                binding.mockRouteName.text = it.name
+                mockServiceViewModel.selectRouteForPlayback(it)
+            }
         }
 
 
@@ -145,9 +155,11 @@ class RouteMockFragment : Fragment() {
 
                 val lm = mockServiceViewModel.locationManager
                 if (lm != null && MockServiceHelper.isMockStart(lm)) {
-                    // 获取第一个点
-                    val first = route.route[0]
-                    if (MockServiceHelper.setLocation(
+                    // 取第一个点（脏数据可能没有端点：提示而不是崩溃）
+                    val first = route.route.firstOrNull()
+                    if (first == null) {
+                        Toast.makeText(requireContext(), "路线端点不足，无法定位", Toast.LENGTH_SHORT).show()
+                    } else if (MockServiceHelper.setLocation(
                             lm,
                             first.first,
                             first.second
@@ -178,6 +190,10 @@ class RouteMockFragment : Fragment() {
 
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val position = viewHolder.adapterPosition
+                // 滑动过程中条目可能已失效（NO_POSITION = -1）→ 直接忽略，避免越界
+                if (position == RecyclerView.NO_POSITION) {
+                    return
+                }
                 val location = historicalRouteAdapter[position]
                 with(requireContext()) {
                     MaterialAlertDialogBuilder(this)
@@ -185,10 +201,21 @@ class RouteMockFragment : Fragment() {
                         .setMessage("确定要删除路线(${location.name})吗？")
                         .setPositiveButton("删除") { _, _ ->
                             historicalRouteAdapter.removeItem(position)
-                            HistoricalRoute.parseList(jsonHistoricalRoutes).apply {
-                                removeIf { it.name == location.name }
-                            }.let {
-                                jsonHistoricalRoutes = HistoricalRoute.listToJson(it)
+                            // 只删「名称 + 端点」都一致的那一条：同名但内容不同的路线不受影响
+                            HistoricalRoute.parseList(jsonHistoricalRoutes)
+                                .apply {
+                                    removeAll {
+                                        it.name == location.name && it.route == location.route
+                                    }
+                                }
+                                .let {
+                                    jsonHistoricalRoutes = HistoricalRoute.listToJson(it)
+                                }
+                            // 删的正是当前选中路线 → 一并清掉选中项与播放器状态（幽灵路线）
+                            if (selectRoute == location) {
+                                selectRoute = null
+                                mockServiceViewModel.clearSelectedRoute()
+                                binding.mockRouteName.text = ""
                             }
                             showToast("已删除路线")
                         }
@@ -215,7 +242,13 @@ class RouteMockFragment : Fragment() {
             return
         }
 
-        if (mockServiceViewModel.locationManager == null) {
+        // 端点不足的脏数据路线无法播放：提前拦截，避免播放器里空转/越界
+        if (selectedRoute.route.isEmpty()) {
+            showToast("路线端点不足，无法播放")
+            return
+        }
+
+        val lm = mockServiceViewModel.locationManager ?: run {
             showToast("定位服务加载异常")
             return
         }
@@ -235,7 +268,7 @@ class RouteMockFragment : Fragment() {
             try {
                 withContext(Dispatchers.IO) {
                     if (MockServiceHelper.tryOpenMock(
-                            mockServiceViewModel.locationManager!!,
+                            lm,
                             speed,
                             altitude,
                             accuracy
@@ -251,9 +284,11 @@ class RouteMockFragment : Fragment() {
                         return@withContext
                     }
 
-                    val first = selectedRoute.route[0]
-                    if (MockServiceHelper.setLocation(
-                            mockServiceViewModel.locationManager!!,
+                    val first = selectedRoute.route.firstOrNull()
+                    if (first == null) {
+                        showToast("路线端点不足，无法更新起点")
+                    } else if (MockServiceHelper.setLocation(
+                            lm,
                             first.first,
                             first.second
                         )
@@ -272,7 +307,7 @@ class RouteMockFragment : Fragment() {
     }
 
     private fun tryCloseService(button: MaterialButton) {
-        if (mockServiceViewModel.locationManager == null) {
+        val lm = mockServiceViewModel.locationManager ?: run {
             showToast("定位服务加载异常")
             return
         }
@@ -286,12 +321,12 @@ class RouteMockFragment : Fragment() {
             button.isClickable = false
             try {
                 val isClosed = withContext(Dispatchers.IO) {
-                    if (!MockServiceHelper.isMockStart(mockServiceViewModel.locationManager!!)) {
+                    if (!MockServiceHelper.isMockStart(lm)) {
                         showToast("模拟服务未启动")
                         return@withContext false
                     }
 
-                    if (MockServiceHelper.tryCloseMock(mockServiceViewModel.locationManager!!)) {
+                    if (MockServiceHelper.tryCloseMock(lm)) {
                         updateMockButtonState(button, "开始模拟", R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
@@ -300,16 +335,25 @@ class RouteMockFragment : Fragment() {
                     }
                 }
                 if (isClosed && mockServiceViewModel.rocker.isStart) {
-                    binding.rocker.isClickable = false
                     mockServiceViewModel.rocker.hide()
                     mockServiceViewModel.rockerCoroutineController.pause()
-                    binding.rocker.isChecked = mockServiceViewModel.rocker.isStart
-                    binding.rocker.isClickable = true
+                    // 视图可能已销毁（返回/切页后协程才回来）：binding 可空访问
+                    _binding?.let {
+                        it.rocker.isClickable = false
+                        it.rocker.isChecked = mockServiceViewModel.rocker.isStart
+                        it.rocker.isClickable = true
+                    }
                 }
             } finally {
                 button.isClickable = true
             }
         }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        // 与 MockFragment/HomeFragment 等项目内其它 Fragment 保持一致：释放视图引用
+        _binding = null
     }
 
 

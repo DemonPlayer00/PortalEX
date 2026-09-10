@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.Build
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -20,6 +21,9 @@ import moe.fuqiuluo.portalex.ext.rockerCoords
 
 @SuppressLint("RtlHardcoded", "ClickableViewAccessibility")
 class Rocker(private val activity: Activity) : View.OnTouchListener {
+    /** 宿主 Activity：供 ViewModel 检测 Activity 重建后是否已过期（旧实例不能再 addView） */
+    val hostActivity: Activity get() = activity
+
     private val root by lazy {
         LayoutInflater.from(activity).inflate(R.layout.layout_rocker, null)!!
     }
@@ -126,16 +130,36 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
         }
     }
     
-    fun show() {
-        windowManager.addView(root, layoutParams)
-        isStart = true
+    /**
+     * 显示悬浮摇杆；返回是否真的加上窗口。
+     * addView 在悬浮窗权限被回收、窗口已存在、宿主 Activity 已销毁等情况下会抛
+     * BadTokenException / IllegalStateException——兜底处理，不让悬浮窗失败变成闪退。
+     */
+    fun show(): Boolean {
+        if (isStart) return true
+        return try {
+            windowManager.addView(root, layoutParams)
+            isStart = true
+            true
+        } catch (e: Exception) {
+            Log.e("Rocker", "显示悬浮摇杆失败", e)
+            false
+        }
     }
 
-    fun hide() {
-        val rockerView = root.findViewById<RockerView>(R.id.rocker)
-        rockerView.reset()
-        windowManager.removeView(root)
-        isStart = false
+    /** 隐藏悬浮摇杆；返回是否成功（本来就没显示时视为成功）。 */
+    fun hide(): Boolean {
+        if (!isStart) return true
+        return try {
+            val rockerView = root.findViewById<RockerView>(R.id.rocker)
+            rockerView.reset()
+            windowManager.removeView(root)
+            isStart = false
+            true
+        } catch (e: Exception) {
+            Log.e("Rocker", "移除悬浮摇杆失败", e)
+            false
+        }
     }
 
     fun savePosition() {

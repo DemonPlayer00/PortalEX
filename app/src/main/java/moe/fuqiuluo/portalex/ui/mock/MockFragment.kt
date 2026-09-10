@@ -100,7 +100,11 @@ class MockFragment : Fragment() {
                 checkedTextView.toggle()
                 lifecycleScope.launch(Dispatchers.Main) {
                     if (checkedTextView.isChecked) {
-                        rocker.show()
+                        // show() 失败（权限被回收/宿主重建）时回退勾选态，避免状态说谎
+                        if (!rocker.show()) {
+                            checkedTextView.isChecked = false
+                            Toast.makeText(requireContext(), "悬浮摇杆显示失败", Toast.LENGTH_SHORT).show()
+                        }
                     } else {
                         rocker.hide()
                         rockerCoroutineController.pause()
@@ -294,11 +298,14 @@ class MockFragment : Fragment() {
                     }
                 }
                 if (isClosed && mockServiceViewModel.rocker.isStart) {
-                    binding.rocker.isClickable = false
                     mockServiceViewModel.rocker.hide()
                     mockServiceViewModel.rockerCoroutineController.pause()
-                    binding.rocker.isChecked = mockServiceViewModel.rocker.isStart
-                    binding.rocker.isClickable = true
+                    // 视图可能已销毁（返回/切页后协程才回来）：binding 可空访问
+                    _binding?.let {
+                        it.rocker.isClickable = false
+                        it.rocker.isChecked = mockServiceViewModel.rocker.isStart
+                        it.rocker.isClickable = true
+                    }
                 }
             } finally {
                 button.isClickable = true
