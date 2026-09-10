@@ -10,6 +10,7 @@ import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
+import android.os.SystemClock
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
@@ -17,7 +18,6 @@ import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.RemoteCommandHandler
 import moe.fuqiuluo.xposed.hooks.gnss.GnssHook
 import moe.fuqiuluo.xposed.hooks.miui.MiuiBlurLocationProviderHook
-import moe.fuqiuluo.xposed.hooks.miui.MiuiLocationManagerHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.nmea.LocationNMEAHook
 import moe.fuqiuluo.xposed.hooks.provider.LocationProviderManagerHook
@@ -33,11 +33,14 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 import kotlin.uuid.ExperimentalUuidApi
 
 
-private const val MAX_SATELLITES = 35 // 北斗系统实际可见卫星数上限
+// 可见卫星数上限：与 FakeLoc.MAX_SATELLITES 共用同一常量（GnssStatus 推送与 Location.extras
+// 的卫星字段必须同量级，否则同一时刻雷达与 extras 互相矛盾，构成交叉检测面）
+private const val MAX_SATELLITES = FakeLoc.MAX_SATELLITES
 
 // 载噪比范围，考虑不同轨道类型
 private const val GEO_MIN_CN0 = 30.0f  // GEO卫星信号较强
@@ -157,7 +160,87 @@ data class MockGnssData(
 )
 
 internal object LocationServiceHook: BaseLocationHook() {
-    val locationListeners = LinkedBlockingQueue<Pair<String, IInterface>>()
+    /**
+     * 一条位置监听器注册。
+     *
+     * [blocked] = 注册时被模块吞掉（`result = null`，框架**不会**回调它）→ 必须由推送链供帧；
+     * false = 已放行真实注册（框架会回调，且帧已被注入链改写）→ **只在饿死时补帧**。
+     * 旧实现不区分两者、对表内所有注册一律投递：被放行的注册会同时收到「框架帧」与
+     * 「推送帧」两份坐标/时间都不同的位置——同一注册重复回调，且两套时间戳互相矛盾。
+     */
+    class ListenerRegistration(
+        val provider: String,
+        val listener: IInterface,
+        val blocked: Boolean
+    ) {
+        /** 最近一次收到位置的时刻（框架投递到达、或我们推送成功时刷新） */
+        val lastDeliveryNanos = AtomicLong(0L)
+    }
+
+    /** 已注册的位置监听器（**旧架构**：统一由宿主心跳推送，无按应用间隔节流） */
+    val locationListeners = LinkedBlockingQueue<ListenerRegistration>()
+
+    /** 一次性取位回调（getCurrentLocation）登记项：记录登记时刻，饿死过久才补投。
+     *  应用室内无星时框架不会投递任何位置，若只登记不改写，应用就一直空等。 */
+    private class OneShotCallback(val callback: IInterface, val registeredNanos: Long)
+
+    private val oneShotCallbacks = LinkedBlockingQueue<OneShotCallback>()
+
+    /** 最近一次向任何注册投递帧的时刻（保活线程据此判断是否需要补帧） */
+    @Volatile private var lastDeliveryNanosGlobal = 0L
+
+    /**
+     * 饿死阈值：某注册超过该时长既没收到框架投递、也没收到我们推送时，才补帧。
+     * 取值 **大于真机 GPS 的 1Hz 出帧周期**——正常定位下框架自己就在送帧（已被注入链改写），
+     * 此时我们不该再插一份坐标/时间都不同的推送帧；只有真的没有源（室内无星、
+     * 注册被拦死）才补，这才是「同一 tick 一帧」。
+     */
+    private const val FRAME_STARVATION_NANOS = 1_200_000_000L
+
+    /** 保活线程节拍：静默期（无坐标变化、无心跳命令）也能保证注册不饿死 */
+    private const val KEEP_ALIVE_TICK_MS = 500L
+
+    private val keepAliveStarted = AtomicBoolean(false)
+
+    /** 构造一帧模拟位置：注入链 + 当前时刻时间戳（模块自己生成的新帧，不是转发的旧帧） */
+    private fun buildFrame(): Location =
+        injectLocation(FakeLoc.lastLocation ?: Location("gps")).apply {
+            time = System.currentTimeMillis()
+            elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+        }
+
+    /** 向单个监听器投一帧；返回是否成功 */
+    private fun deliverFrame(listener: IInterface, frame: Location): Boolean {
+        var error: Throwable? = null
+        kotlin.runCatching {
+            val locations = listOf(frame)
+            val mOnLocationChanged =
+                XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", locations, null)
+            XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
+            return true
+        }.onFailure {
+            if (it is InvocationTargetException && it.targetException is DeadObjectException) {
+                return false
+            }
+            error = it
+        }
+
+        kotlin.runCatching {
+            val mOnLocationChanged =
+                XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", frame)
+            XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(frame))
+            return true
+        }.onFailure {
+            if (it is InvocationTargetException && it.targetException is DeadObjectException) {
+                return false
+            }
+            error = it
+        }
+
+        Logger.error("deliverFrame failed: " + error?.stackTraceToString())
+        Logger.error("The listener all methods: " + listener.javaClass.declaredMethods.joinToString { it.name })
+        return false
+    }
 
     // A random command is generated to prevent some apps from detecting Portal
     operator fun invoke(classLoader: ClassLoader) {
@@ -167,7 +250,6 @@ internal object LocationServiceHook: BaseLocationHook() {
         } else {
             onService(cLocationManagerService)
         }
-        //startDaemon(classLoader)
     }
 
     fun onService(cILocationManager: Class<*>) {
@@ -184,7 +266,6 @@ internal object LocationServiceHook: BaseLocationHook() {
             LocationProviderManagerHook(it)
 
             MiuiBlurLocationProviderHook(it)
-            MiuiLocationManagerHook(it)
             MiuiTelephonyManagerHook(it)
         }
 
@@ -286,16 +367,13 @@ internal object LocationServiceHook: BaseLocationHook() {
                 Logger.debug("requestLocationUpdates: injected! $listener")
             }
 
-            addLocationListenerInner(provider, listener)
+            // 被吞掉（blocked=true）的注册框架不会回调 → 必须由推送链供帧。
+            // （旧实现在此之后还有一段 `disableFusedLocation && provider=="fused"` 分支，
+            //   由于上面 FakeLoc.enable 分支已 return，实际不可达——已删除。）
+            addLocationListenerInner(provider, listener, blocked = FakeLoc.enable)
 
             if (FakeLoc.enable) {
                 result = null
-                return@beforeHook
-            }
-
-            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
-                result = null
-                return@beforeHook
             }
         })
         cILocationManager.hookAllMethods("removeUpdates", afterHook {
@@ -345,13 +423,12 @@ internal object LocationServiceHook: BaseLocationHook() {
                 Logger.debug("registerLocationListener: injected! $listener, from ${BinderUtils.getUidPackageNames()}")
             }
 
-            addLocationListenerInner(provider, listener)
+            addLocationListenerInner(provider, listener, blocked = false)
 
-            // 注册拦截开关同样只在模拟会话期间生效：未开模拟时放行真实定位注册
-            if (FakeLoc.enable && FakeLoc.disableRegisterLocationListener) {
-                result = null
-                return@beforeHook
-            }
+            // 持续注册同样**不拦**（语义已定：允许并注入）：放行真实注册，帧在
+            // 各注入关口被改为模拟值，并由推送链（callOnLocationChanged）持续供帧。
+            // 拦掉一次「注册成功但永远没有回调」= 真机上不存在的异常态，本身就是特征；
+            // 而且持续取位是实体运动类应用的主数据源，拦了它连模拟数据都送不进去。
 
             if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
                 result = null
@@ -537,8 +614,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                     return@beforeHook
                 }
 
-                addLocationListenerInner("GnssBatch", listener)
-                hookILocationListener(listener)
+                addLocationListenerInner("GnssBatch", listener, blocked = false)
             }
         })
         cILocationManager.hookAllMethods("stopGnssBatch", beforeHook {
@@ -562,14 +638,10 @@ internal object LocationServiceHook: BaseLocationHook() {
                     return@beforeHook
                 }
 
-                addLocationListenerInner("gps", listener)
-
-                // 模拟会话期间注册一律拦截（与 registerLocationListener 语义一致）
-                if (FakeLoc.enable) {
-                    result = null
-                }
-
-                hookILocationListener(listener)
+                // flush = 「把缓冲位置都给我」：同样允许并注入（语义与其余取位路径一致）。
+                // 旧实现 result = null 吞掉 flush 请求 → 应用等不到 flush 回调，是真机上
+                // 不存在的异常态，本身就构成特征。
+                addLocationListenerInner("gps", listener, blocked = false)
             }
         })
 
@@ -628,21 +700,29 @@ internal object LocationServiceHook: BaseLocationHook() {
             // 所以不能用固定索引 args[2]，改为按“存在 onLocation 回调方法”的特征查找。
             val callback = args.firstOrNull { arg ->
                 arg != null && arg.javaClass.methods.any { it.name == "onLocation" }
-            } ?: return@beforeHook
+            } as? IInterface ?: return@beforeHook
 
             if (FakeLoc.enableDebugLog) {
                 Logger.debug("getCurrentLocation: injected!")
             }
 
-            // 仅模拟会话期间拦截 getCurrentLocation；未开模拟时透传真实位置
-            if (FakeLoc.enable && FakeLoc.disableGetCurrentLocation) {
-                result = null
-                return@beforeHook
-            }
+            // 允许并注入（语义已定）：**不再 result = null 吞掉调用**。
+            // 未开模拟 = 完全透传真实位置；模拟会话中：
+            //   ① 回调上改写——框架真投递时把位置换成模拟位置；
+            //   ② 登记进一次性投递表——无真实定位源（室内无星）时，由推送链
+            //      （callOnLocationChanged，与监听器同一节拍）补投一次模拟位置。
+            // 旧实现两条都不做：调用被吞 → 应用一个位置都拿不到，
+            // 且传感器模拟的取数链也跟着断（见 SystemSensorManagerHook）。
+            if (!FakeLoc.enable) return@beforeHook
 
             val classCallback = callback.javaClass
             classCallback.onceHookAllMethod("onLocation", beforeHook onLocation@ {
                 val location = args[0] as? Location ?: return@onLocation
+
+                // 框架已投递：从一次性投递表里摘下，避免同一回调被投两次
+                (thisObject as? IInterface)?.let { self ->
+                    oneShotCallbacks.removeIf { it.callback.asBinder() == self.asBinder() }
+                }
 
                 if (FakeLoc.enableDebugLog) {
                     Logger.debug("onLocation(getCurrentLocation): injected!")
@@ -650,6 +730,8 @@ internal object LocationServiceHook: BaseLocationHook() {
 
                 args[0] = injectLocation(location)
             })
+            oneShotCallbacks.removeIf { it.callback.asBinder() == callback.asBinder() }
+            oneShotCallbacks.add(OneShotCallback(callback, SystemClock.elapsedRealtimeNanos()))
         })
 
         cILocationManager.hookAllMethods("sendExtraCommand", beforeHook {
@@ -756,6 +838,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         })
 
         startGnssStatusPusher()
+        startLocationKeepAlive()
 
     }
 
@@ -766,6 +849,8 @@ internal object LocationServiceHook: BaseLocationHook() {
 
         if(XposedBridge.hookAllMethods(classListener, "onLocationChanged", object: XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    // 框架投递到达（无论是否开模拟）：刷新「最近收到位置」时刻
+                    markFrameworkDelivery(param.thisObject)
                     if (param.args.isEmpty()) return
                     if (!FakeLoc.enable) return
 
@@ -795,36 +880,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
     }
 
-//    private fun startDaemon(classLoader: ClassLoader) {
-//        //val cIRemoteCallback = XposedHelpers.findClass("android.os.IRemoteCallback", classLoader)
-//        thread(
-//            name = "LocationUpdater",
-//            isDaemon = true,
-//            start = true,
-//        ) {
-//            while (true) {
-//                kotlin.runCatching {
-//                    if (!FakeLoc.enable) {
-//                        Thread.sleep(3000)
-//                        return@runCatching
-//                    } else {
-//                        Thread.sleep(FakeLoc.updateInterval)
-//                    }
-//
-//                    if (!FakeLoc.enable) return@runCatching // Prevent the last loop from being executed
-//
-//                    if (FakeLoc.enableDebugLog)
-//                        Logger.debug("LocationUpdater: callOnLocationChanged: ${locationListeners.size}")
-//
-//                    callOnLocationChanged()
-//                }.onFailure {
-//                    Logger.error("LocationUpdater", it)
-//                }
-//            }
-//        }
-//    }
-
-    private fun addLocationListenerInner(provider: String, listener: IInterface) {
+    private fun addLocationListenerInner(provider: String, listener: IInterface, blocked: Boolean) {
         val mDeathRecipient = object: IBinder.DeathRecipient {
             override fun binderDied() {}
             override fun binderDied(who: IBinder) {
@@ -833,7 +889,8 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         }
         listener.asBinder().linkToDeath(mDeathRecipient, 0)
-        locationListeners.add(provider to listener)
+        locationListeners.removeIf { it.listener.asBinder() == listener.asBinder() }
+        locationListeners.add(ListenerRegistration(provider, listener, blocked))
         hookILocationListener(listener)
     }
 
@@ -842,57 +899,114 @@ internal object LocationServiceHook: BaseLocationHook() {
     }
 
     private fun removeLocationListenerByBinder(binder: IBinder) {
-        locationListeners.removeIf { it.second.asBinder() == binder }
+        locationListeners.removeIf { it.listener.asBinder() == binder }
     }
 
-    fun callOnLocationChanged() {
+    /**
+     * 心跳投递：位置变更（move / update_location）、显式广播（broadcast_location）、
+     * 启动拉回各自在「坐标已改好」后调用。
+     *
+     * @param force true = 忽略饿死判定，对流经推送链的注册立刻投一帧
+     *   （坐标刚变化 / 显式广播 / 启动拉回：拉回线程正是靠反复强制推送压制真实位置）。
+     *
+     * 投递规则（消除「同一 tick 多份帧」）：
+     * - 被拦死的注册（框架不会回调）：force 或饿死即推 —— 它们是推送链的必需客户；
+     * - 已放行的注册（框架会回调）：**只在饿死时**补帧 —— 否则同一注册会同时收到
+     *   「框架帧」与「推送帧」两份坐标/时间不同的位置（重复回调 + 时间戳自相矛盾）；
+     * - 一次性取位回调：登记后饿死过久才补投一次（框架先投递过的已从表里摘除，不会重复）。
+     */
+    fun callOnLocationChanged(force: Boolean = false) {
+        // 会话外不投递：未开模拟时注入链本身不改写，推帧只会把真实帧原样再送一遍
+        if (!FakeLoc.enable) return
+
         if (FakeLoc.enableDebugLog) {
-            Logger.debug("==> callOnLocationChanged: ${locationListeners.size}")
+            Logger.debug("==> callOnLocationChanged: ${locationListeners.size}, force=$force")
         }
-        locationListeners.forEach { listenerWithProvider ->
-            val listener = listenerWithProvider.second
-            var location = FakeLoc.lastLocation
-            if (location == null) {
-                location = if (listenerWithProvider.first == "GnssBatch") {
-                    Location("gps")
-                } else {
-                    Location(listenerWithProvider.first)
-                }
+
+        // 同一 tick（一次广播）= 同一帧：持续注册的监听器与一次性取位回调共用同一份注入对象。
+        // 时间戳按当前时刻打：本函数产出的是模块自己生成的新帧。
+        val frame = buildFrame()
+        val nowNanos = SystemClock.elapsedRealtimeNanos()
+
+        var delivered = 0
+        locationListeners.forEach { reg ->
+            val starved = nowNanos - reg.lastDeliveryNanos.get() >= FRAME_STARVATION_NANOS
+            val shouldPush = if (reg.blocked) (force || starved) else starved
+            if (!shouldPush) return@forEach
+            if (deliverFrame(reg.listener, frame)) {
+                reg.lastDeliveryNanos.set(nowNanos)
+                delivered++
             }
-            location = injectLocation(location)
+        }
+
+        var oneShotDelivered = 0
+        oneShotCallbacks.forEach { oneShot ->
+            // 饥饿判定：登记后 FRAME_STARVATION_NANOS 内框架可能仍在投递，先等——避免与框架重复
+            if (nowNanos - oneShot.registeredNanos < FRAME_STARVATION_NANOS) return@forEach
+
             var called = false
             var error: Throwable? = null
             kotlin.runCatching {
-                val locations = listOf(location)
-                val mOnLocationChanged = XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", locations, null)
-                XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
+                val mOnLocation = XposedHelpers.findMethodBestMatch(oneShot.callback.javaClass, "onLocation", frame)
+                XposedBridge.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
                 called = true
             }.onFailure {
                 if (it is InvocationTargetException && it.targetException is DeadObjectException) {
-                    return@forEach
+                    called = true // 应用进程已死：摘掉，不再重试
+                } else {
+                    error = it
                 }
-                error = it
             }
-
-            if (!called) runCatching {
-                val mOnLocationChanged = XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", location)
-                XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(location))
-                called = true
-            }.onFailure {
-                if (it is InvocationTargetException && it.targetException is DeadObjectException) {
-                    return@forEach
-                }
-                error = it
-            }
-
-            if (!called) {
-                Logger.error("callOnLocationChanged failed: " + error?.stackTraceToString())
-                Logger.error("The listener all methods: " + listener.javaClass.declaredMethods.joinToString { it.name })
+            if (called) {
+                oneShotCallbacks.removeIf { it.callback.asBinder() == oneShot.callback.asBinder() }
+                oneShotDelivered++
+            } else {
+                Logger.error("callOnLocationChanged(one-shot) failed: " + error?.stackTraceToString())
             }
         }
 
+        if (delivered > 0 || oneShotDelivered > 0) lastDeliveryNanosGlobal = nowNanos
+
         if (FakeLoc.enableDebugLog) {
-            Logger.debug("==> callOnLocationChanged: end")
+            Logger.debug(
+                "==> callOnLocationChanged: end (delivered=$delivered/${locationListeners.size}, oneShot=$oneShotDelivered)"
+            )
+        }
+    }
+
+    /** 框架投递到达：刷新该注册的「最近收到位置」时刻——「已放行的注册」据此判定饿死。 */
+    private fun markFrameworkDelivery(listenerObject: Any?) {
+        val binder = (listenerObject as? IInterface)?.asBinder() ?: return
+        val now = SystemClock.elapsedRealtimeNanos()
+        locationListeners.forEach { reg ->
+            if (reg.listener.asBinder() == binder) reg.lastDeliveryNanos.set(now)
+        }
+    }
+
+    /**
+     * 保活：没有心跳命令、坐标也没变化（设点后静止、只在室内等）时，仍保证被拦死的注册
+     * 与一次性取位回调不饿死——否则应用会停在旧位置或回退到自己的真实位置（拉回）。
+     * 只有「确有注册、且确实静默超过饿死阈值」才补一帧，正常定位下几乎不触发。
+     */
+    private fun startLocationKeepAlive() {
+        if (!keepAliveStarted.compareAndSet(false, true)) return
+        kotlin.concurrent.thread(name = "LocationKeepAlive", isDaemon = true, start = true) {
+            while (true) {
+                try {
+                    Thread.sleep(KEEP_ALIVE_TICK_MS)
+                    if (!FakeLoc.enable) continue
+                    if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) continue
+                    val now = SystemClock.elapsedRealtimeNanos()
+                    if (now - lastDeliveryNanosGlobal >= FRAME_STARVATION_NANOS) {
+                        callOnLocationChanged()
+                    }
+                } catch (_: InterruptedException) {
+                    break
+                } catch (t: Throwable) {
+                    Logger.error("LocationKeepAlive", t)
+                    Thread.sleep(1000)
+                }
+            }
         }
     }
 

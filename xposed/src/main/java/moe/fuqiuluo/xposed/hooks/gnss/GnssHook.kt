@@ -133,32 +133,4 @@ object GnssHook: BaseLocationHook() {
         }
     }
 
-    private fun hookGnssHALAnyVersion(cIGnssStub: Class<*>?) {
-        if (cIGnssStub != null) {
-            cIGnssStub.hookAllMethods("onTransact", beforeHook {
-                val clazz = thisObject.javaClass
-                clazz.onceHookAllMethod("injectBestLocation", beforeHook {
-                    if (FakeLoc.enable) {
-                        result = Unit
-                    }
-
-                    if (FakeLoc.enableDebugLog) {
-                        Logger.debug("injectLocation: $method")
-                    }
-                })
-
-                clazz.onceHookAllMethod("injectLocation", beforeHook {
-                    if (FakeLoc.enable) {
-                        result = Unit
-                    }
-
-                    if (FakeLoc.enableDebugLog) {
-                        Logger.debug("injectLocation: $method")
-                    }
-                })
-            })
-        } else {
-            Logger.error("IGnss\$Stub not found")
-        }
-    }
 }
