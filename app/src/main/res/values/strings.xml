@@ -59,6 +59,8 @@
     <string name="dgc_desc">是否允许调用GetCurrentLocation</string>
     <string name="rll">允许注册位置监听器</string>
     <string name="rll_desc">是否允许应用注册位置监听器</string>
+    <string name="allow_landscape">允许横屏</string>
+    <string name="allow_landscape_desc">可能有视觉问题</string>
     <string name="dfused">禁用融合定位</string>
     <string name="dfused_desc">是否禁用融合定位</string>
     <string name="cdma">网络降级</string>
