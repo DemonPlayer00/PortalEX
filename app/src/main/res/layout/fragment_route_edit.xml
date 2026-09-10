@@ -38,5 +38,22 @@
             android:layout_height="wrap_content" />
     </RadioGroup>
 
+    <!-- 绘制准星：
+         绘制路线时记录的坐标取的是地图中心（baiduMap.mapStatus.target），
+         屏幕上没有任何参照物，拖图时无从判断落点在哪。此处叠一个居中的
+         准星，仅在绘制过程中显示。不可点击，因此不会拦截地图触摸事件。 -->
+    <ImageView
+        android:id="@+id/draw_crosshair"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:clickable="false"
+        android:contentDescription="@string/draw_crosshair"
+        android:focusable="false"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_draw_crosshair"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

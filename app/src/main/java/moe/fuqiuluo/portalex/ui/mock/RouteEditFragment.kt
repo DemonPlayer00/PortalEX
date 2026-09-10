@@ -26,6 +26,7 @@ import com.baidu.mapapi.map.MapPoi
 import com.baidu.mapapi.map.MapStatusUpdateFactory
 import com.baidu.mapapi.map.MarkerOptions
 import com.baidu.mapapi.map.MyLocationData
+import com.baidu.mapapi.map.Polyline
 import com.baidu.mapapi.map.PolylineOptions
 import com.baidu.mapapi.model.LatLng
 import com.baidu.mapapi.search.geocode.ReverseGeoCodeOption
@@ -66,6 +67,19 @@ class RouteEditFragment : Fragment(), MapControlsHost {
     private var mSmoothSegments: ArrayList<Boolean> = arrayListOf()
     private var isDrawing = false
     private var lastPoint: Pair<Double, Double>? = null
+
+    /** 已落地线段的覆盖物（与 mPoints 的相邻点对一一对应），refresh() 时整体重建 */
+    private val mSegmentOverlays = arrayListOf<Polyline>()
+
+    /**
+     * 正在拖动的预览线段。
+     *
+     * 旧实现每次 ACTION_MOVE 都 clear() + 重画全部线段，整个覆盖物层每帧重建，
+     * 肉眼可见地闪。现在预览段就地 [Polyline.setPoints] 更新，拖动过程中
+     * 地图上的覆盖物对象始终不变（颜色用 setColor 原地改）；
+     * ACTION_UP 时它直接“转正”为已落地线段，同样不重建。
+     */
+    private var mPreviewOverlay: Polyline? = null
 
     /** 平滑绘制开关（胶囊按钮控制）：打开时新绘制的线段标记为平滑（绿色） */
     private var smoothDrawing = false
@@ -109,6 +123,10 @@ class RouteEditFragment : Fragment(), MapControlsHost {
 
             setOnMapClickListener(object : BaiduMap.OnMapClickListener {
                 override fun onMapClick(loc: LatLng) {
+                    // 绘制中不插手：markMap() 会 clear() 掉全部覆盖物，
+                    // 而绘制时抬手本身就是一次「点击」，会把刚画好的路线一起抹掉。
+                    if (isDrawing) return
+
                     // 默认获取的gcj02坐标，需要转换一下
                     baiduMapViewModel.markedLoc = loc.wgs84
 
@@ -132,6 +150,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
 
             setOnMapLongClickListener { loc ->
                 if (loc == null) return@setOnMapLongClickListener
+                if (isDrawing) return@setOnMapLongClickListener
 
                 // 默认获取的gcj02坐标，需要转换一下
                 baiduMapViewModel.markedLoc = loc.wgs84
@@ -215,7 +234,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                 val currentPoint = baiduMapViewModel.baiduMap.mapStatus.target.wgs84
 
                 when (it.action) {
-                    MotionEvent.ACTION_DOWN -> { // 新增 DOWN 事件处理
+                    MotionEvent.ACTION_DOWN -> {
                         if (mPoints.size <= 0) {
                             appendPoint(currentPoint)
                         }
@@ -230,8 +249,28 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                     }
 
                     MotionEvent.ACTION_UP -> {
+                        val from = lastPoint
                         appendPoint(currentPoint)
-                        lastPoint = null // 关键修改：重置起点
+                        // 预览段就地转正（只改颜色，不 clear/重建）
+                        val preview = mPreviewOverlay
+                        if (preview != null) {
+                            preview.setColor(segmentColor(mPoints.size - 2))
+                            mSegmentOverlays.add(preview)
+                        } else if (from != null) {
+                            // 只有点击、没有拖动：直接补上这一段，避免抬手的点丢失
+                            addRecordedSegment(mPoints.size - 2)
+                        }
+                        mPreviewOverlay = null
+                        lastPoint = null
+                    }
+
+                    MotionEvent.ACTION_CANCEL -> {
+                        // 手势被打断：把半成品预览段收走，避免留下游离的线头
+                        mPreviewOverlay?.let {
+                            baiduMapViewModel.baiduMap.removeOverLays(listOf(it))
+                        }
+                        mPreviewOverlay = null
+                        lastPoint = null
                     }
                 }
             }
@@ -251,6 +290,16 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         )
     }
 
+    override fun onDestroyView() {
+        super.onDestroyView()
+        // 释放覆盖物与绘制态：它们都指向已随视图销毁的地图对象
+        mSegmentOverlays.clear()
+        mPreviewOverlay = null
+        lastPoint = null
+        isDrawing = false
+        _binding = null
+    }
+
     override fun onResume() {
         super.onResume()
 
@@ -264,6 +313,10 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         ) {
             smoothDrawing = !smoothDrawing
             smoothActionRef?.active = smoothDrawing
+            // 正在拖动的那一段也同步改色，保持所见即所得
+            mPreviewOverlay?.setColor(
+                if (smoothDrawing) HistoricalRoute.COLOR_SMOOTH else HistoricalRoute.COLOR_NORMAL
+            )
             // 仅刷新着色，不重建功能集——避免切换时胶囊意外收起
             (activity as? MainActivity)?.fabBar?.refreshActionTints(fabActions)
         }
@@ -278,6 +331,10 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                 mPoints = arrayListOf()
                 mSmoothSegments = arrayListOf()
                 lastPoint = null
+                mPreviewOverlay = null
+                // 清掉上一次留在图上的路线，且把覆盖物列表重置到干净状态
+                refresh()
+                setCrosshairVisible(true)
             },
             smoothAction,
             FabBarView.Action(
@@ -292,6 +349,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                 getString(R.string.fab_complete_route)
             ) {
                 isDrawing = false
+                setCrosshairVisible(false)
                 if (!showAddRouteDialog()) {
                     Toast.makeText(requireContext(), "选择路线异常", Toast.LENGTH_SHORT).show()
                 }
@@ -329,37 +387,66 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         }
     }
 
+    /** 准星仅在绘制过程中显示，标出当前画笔（地图中心）的落点 */
+    private fun setCrosshairVisible(visible: Boolean) {
+        _binding?.drawCrosshair?.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    /** 第 index 段的颜色：平滑 = 绿，普通 = 蓝（越界按普通算） */
+    private fun segmentColor(index: Int): Int =
+        if (mSmoothSegments.getOrElse(index) { false }) HistoricalRoute.COLOR_SMOOTH
+        else HistoricalRoute.COLOR_NORMAL
+
     private fun refresh() {
-        baiduMapViewModel.baiduMap.clear() // 清除之前的所有覆盖物
+        // 唯一需要 clear() 的时机：路线点集被整体改变（开始绘制 / 撤回）
+        baiduMapViewModel.baiduMap.clear()
+        mSegmentOverlays.clear()
+        mPreviewOverlay = null
         drawRecordedSegments()
     }
 
-    /** 绘制已记录线段：按逐段平滑标志着色（平滑 = 绿色，普通 = 蓝色） */
+    /** 重画全部已落地线段，按逐段平滑标志着色（平滑 = 绿色，普通 = 蓝色） */
     private fun drawRecordedSegments() {
+        mSegmentOverlays.clear()
         for (i in 0 until mPoints.size - 1) {
-            baiduMapViewModel.baiduMap.addOverlay(
-                PolylineOptions()
-                    .color(
-                        if (mSmoothSegments.getOrElse(i) { false }) HistoricalRoute.COLOR_SMOOTH
-                        else HistoricalRoute.COLOR_NORMAL
-                    )
-                    .width(10)
-                    .points(listOf<LatLng>(mPoints[i].gcj02, mPoints[i + 1].gcj02))
-            )
+            addRecordedSegment(i)
         }
     }
 
-    private fun drawLine(start: Pair<Double, Double>, end: Pair<Double, Double>) {
-        baiduMapViewModel.baiduMap.clear() // 清除之前的所有覆盖物
-        drawRecordedSegments()
-
-        // 预览段与当前平滑开关同色，所见即所得
-        baiduMapViewModel.baiduMap.addOverlay(
+    /** 新增第 index 段（mPoints[index] → mPoints[index+1]）的覆盖物 */
+    private fun addRecordedSegment(index: Int): Polyline? {
+        if (index < 0 || index + 1 >= mPoints.size) return null
+        val overlay = baiduMapViewModel.baiduMap.addOverlay(
             PolylineOptions()
-                .color(if (smoothDrawing) HistoricalRoute.COLOR_SMOOTH else HistoricalRoute.COLOR_NORMAL)
+                .color(segmentColor(index))
                 .width(10)
-                .points(listOf<LatLng>(start.gcj02, end.gcj02))
-        )
+                .points(listOf<LatLng>(mPoints[index].gcj02, mPoints[index + 1].gcj02))
+        ) as? Polyline ?: return null
+        mSegmentOverlays.add(overlay)
+        return overlay
+    }
+
+    /**
+     * 拖动预览：首次为新建覆盖物，之后就地 setPoints 更新。
+     * 关键是不能 clear()——每帧重建整个覆盖物层就是闪烁的来源。
+     */
+    private fun drawLine(start: Pair<Double, Double>, end: Pair<Double, Double>) {
+        val points = listOf<LatLng>(start.gcj02, end.gcj02)
+        val existing = mPreviewOverlay
+        if (existing == null) {
+            // 预览段与当前平滑开关同色，所见即所得
+            mPreviewOverlay = baiduMapViewModel.baiduMap.addOverlay(
+                PolylineOptions()
+                    .color(
+                        if (smoothDrawing) HistoricalRoute.COLOR_SMOOTH
+                        else HistoricalRoute.COLOR_NORMAL
+                    )
+                    .width(10)
+                    .points(points)
+            ) as? Polyline
+        } else {
+            existing.setPoints(points)
+        }
     }
 
 
