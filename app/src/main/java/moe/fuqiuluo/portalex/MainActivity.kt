@@ -69,7 +69,6 @@ import com.baidu.mapapi.search.sug.SuggestionSearch
 import com.baidu.mapapi.search.sug.SuggestionSearchOption
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.navigation.NavigationView
-import com.tencent.bugly.crashreport.CrashReport
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.android.permission.RequestPermissions
 import moe.fuqiuluo.portalex.android.widget.FabBarView
@@ -178,7 +177,6 @@ class MainActivity : AppCompatActivity() {
             window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
         }
 
-        CrashReport.setUserSceneTag(this, 261771)
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.N) {
             window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
         }

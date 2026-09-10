@@ -38,8 +38,6 @@ android {
 //            throw GradleException("在 CI 环境中必须提供 google-services.json 文件!")
 //        }
 
-        manifestPlaceholders["BUGLY_APPID"] = "222f9ef298"
-
         // 百度地图/定位/检索 SDK 的 AK。百度按「应用包名 + 签名 SHA1」双重校验，
         // 换包名（portal → portalex）或换签名后旧 AK 必然失效。
         //
@@ -58,18 +56,6 @@ android {
             }
         manifestPlaceholders["BAIDU_MAP_AK"] = baiduMapAk?.takeIf { it.isNotBlank() }
             ?: "REPLACE_WITH_YOUR_BAIDU_MAP_AK"
-
-        // 构建环境信息：不得写入构建机公网 IP / 主机名 / 构建路径。
-        // 这些值会被固化进 APK 的 AndroidManifest.xml，属于可被对方读取的
-        // 模块特征指纹，与 025823e「清除模块特征指纹」的目标直接冲突。
-        //
-        // 说明：BUGLY_BUILD_ENV 并非 Bugly SDK 读取的键（SDK 只读 BUGLY_APPID /
-        // BUGLY_APP_CHANNEL / BUGLY_APP_VERSION / BUGLY_ENABLE_DEBUG / BUGLY_AREA /
-        // BUGLY_DISABLE 等），仅为构建方自定义标注，默认空。
-        // 两个键都改为环境变量注入，未提供时为空，不做任何外部网络请求。
-        manifestPlaceholders["BUGLY_BUILD_ENV"] = System.getenv("BUGLY_BUILD_ENV") ?: ""
-        // Bugly 渠道号（SDK 会读取并上报）：默认空，CI 可注入如 "github-actions"。
-        manifestPlaceholders["APP_CHANNEL"] = System.getenv("APP_CHANNEL") ?: ""
     }
 
     buildTypes {
@@ -79,13 +65,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            manifestPlaceholders["APP_VERSION"] = defaultConfig.versionName ?: "UnknownVersion"
-            manifestPlaceholders["BUGLY_ENABLE_DEBUG"] = "false"
         }
 
         debug {
-            manifestPlaceholders["APP_VERSION"] = "${defaultConfig.versionName}-debug"
-            manifestPlaceholders["BUGLY_ENABLE_DEBUG"] = "true"
         }
     }
 
@@ -229,8 +211,6 @@ dependencies {
     // BaiduLBS_Android.jar（百度定位 SDK）运行时依赖 okhttp：
     // 删除会导致 :remote 进程 NoClassDefFoundError: okhttp3/OkHttpClient$Builder
     implementation(libs.okhttp)
-
-    implementation(libs.bugly)
 
     implementation(libs.geotools)
     implementation(fileTree(mapOf(
