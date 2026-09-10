@@ -61,8 +61,6 @@
   <string name="dfused_desc">ファューズドポジショニングを無効化します</string>
   <string name="cdma">ネットワークを劣化させる</string>
   <string name="cdma_desc">ネットワークを CDMA にダウングレードします</string>
-  <string name="hook_sensor">センサーハイジャッキング</string>
-  <string name="hook_sensor_desc">シュミレートされたリズム (改善予定)</string>
   <string name="show_route">ルートを表示</string>
   <string name="item_report_duration_title">位置報告の間隔</string>
   <string name="item_report_duration_desc">位置を報告する頻度 (ミリ秒単位)</string>

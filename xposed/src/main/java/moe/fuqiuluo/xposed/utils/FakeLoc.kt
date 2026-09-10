@@ -12,6 +12,10 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 
 object FakeLoc {
+    /** 可见卫星数上限（GnssStatus 推送与 Location.extras 卫星字段**共用同一上限**：
+     *  两处各自随机且上限不同时，同一时刻雷达显示与 extras 会互相矛盾，构成交叉检测面）。 */
+    const val MAX_SATELLITES = 35
+
     /**
      * 是否允许打印日志
      */
@@ -39,16 +43,6 @@ object FakeLoc {
      */
     @Volatile
     var enableMockWifi = false
-
-    /**
-     * 是否禁用GetCurrentLocation方法（在部分系统不禁用可能导致hook失效）
-     */
-    var disableGetCurrentLocation = true
-
-    /**
-     * 是否禁用RegisterLocationListener方法
-     */
-    var disableRegisterLocationListener = false
 
     /**
      * 如果TelephonyHook失效，可能需要打开此开关
@@ -122,27 +116,34 @@ object FakeLoc {
      */
     @Volatile var bearing = Random.nextDouble(0.0, 360.0)
 
-    /** 最近一次移动（move 命令）的时间，用于静止检测 */
-    @Volatile var lastMoveTimeNanos = 0L
-
     // ---- 注入角度加工（模块层，数据源侧）----
     // 权威目标 bearing 是路线段方向（允许骤变、直线段恒定）；直接写入会让
-    // 位置/指南针锁死在前进方向。这里加工成「平滑趋近 + 微小扰动」的注入值：
-    // 用时间常数（指数平滑），与调用频率无关（位置回调 1Hz 或 20Hz 手感一致）。
-    private const val BEARING_OUTPUT_TAU = 0.8          // 平滑时间常数（s）
+    // 位置/指南针锁死在前进方向。这里在**权威值（已由 setBearingSlew 限速）**上
+    // 叠加一个低频小扰动——**不再做第二级低通**：传感器侧还会对同一方位做一次平滑，
+    // 两级低通串联会把转向滞后拉到 ~1.5s（同一朝向两套平滑 = 口径分叉）。
     private const val BEARING_OUTPUT_RETARGET_TAU = 0.4 // 扰动目标重选时间常数（s）
     private const val BEARING_OUTPUT_APPROACH_TAU = 0.15// 扰动趋近时间常数（s）
-    private const val BEARING_OUTPUT_JITTER_AMP = 3.0   // 扰动幅度（±度）
+    private const val BEARING_OUTPUT_JITTER_AMP = 1.5   // 扰动幅度（±度；与 bearingAccuracy 量级一致）
 
-    @Volatile private var bearingOutputSmooth = bearing
     @Volatile private var bearingOutputJitter = 0.0
     @Volatile private var bearingOutputJitterTarget = 0.0
     @Volatile private var lastBearingOutputNanos = 0L
 
     /**
+     * 步频-移动速度线性模型（步/分）：cadence = (60 + 30*speed) * 1.15，限幅 60..220。
+     * **唯一公式源**：传感器侧（步数推进/摆动）与位置侧（bearing 摇晃频率）都读它，
+     * 两边频率才会严格一致。
+     */
+    fun cadenceForSpeed(speed: Double): Int {
+        return ((60.0 + 30.0 * speed) * 1.15).toInt().coerceIn(60, 220)
+    }
+
+    /**
      * 加工后的注入角度（度，0~360）：平滑趋近 [bearing] + 微小扰动。
-     * 供位置注入（Location.bearing / NMEA trackAngle）使用；传感器注入侧
-     * 以此为数据源后仍做自己的高频加工，两边都不会锁死。
+     * 供位置注入（Location.bearing / NMEA trackAngle）使用。
+     * **注意**：跑步摇晃（常驻摆动）不在这里做——位置值的更新率由应用请求的间隔决定
+     * （0.9s~1s），在这个采样率上塞 3Hz 摆动只会混叠成噪声；摆动一律由传感器 hook
+     * 在**每个传感器事件**上生成（见 SystemSensorManagerHook.swingOffset）。
      */
     fun processedBearing(): Double {
         val now = System.nanoTime()
@@ -150,10 +151,7 @@ object FakeLoc {
         lastBearingOutputNanos = now
         if (dt > 0.0) {
             val dtc = dt.coerceAtMost(1.0)
-            // 平滑趋近目标（最短角差，避免 359°→1° 绕远）
-            bearingOutputSmooth += shortestAngleDelta(bearing, bearingOutputSmooth) *
-                (1.0 - exp(-dtc / BEARING_OUTPUT_TAU))
-            // 扰动：目标按时间概率重选，再平滑趋近
+            // 扰动：目标按时间概率重选，再平滑趋近（唯一的一级加工）
             if (Random.nextDouble() < 1.0 - exp(-dtc / BEARING_OUTPUT_RETARGET_TAU)) {
                 bearingOutputJitterTarget =
                     Random.nextDouble(-BEARING_OUTPUT_JITTER_AMP, BEARING_OUTPUT_JITTER_AMP)
@@ -161,7 +159,7 @@ object FakeLoc {
             bearingOutputJitter += (bearingOutputJitterTarget - bearingOutputJitter) *
                 (1.0 - exp(-dtc / BEARING_OUTPUT_APPROACH_TAU))
         }
-        return (bearingOutputSmooth + bearingOutputJitter + 360.0) % 360.0
+        return (bearing + bearingOutputJitter + 360.0) % 360.0
     }
 
     /** 最短角差（-180, 180] */
@@ -192,19 +190,9 @@ object FakeLoc {
         bearing = (bearing + delta + 360.0) % 360.0
     }
 
-    /** 是否正在移动（摇杆操作中/自动播放中）：最近 0.4s 内有 move 命令 */
-    val isMoving: Boolean
-        get() = System.nanoTime() - lastMoveTimeNanos < MOVING_WINDOW_NANOS
-
     /**
-     * 移动判定窗口（纳秒）：停止移动后 0.4s 内转为静止。
-     * 步频过渡区目标 < 0.5s——旧实现 2s 导致停止后步频仍在爬升/衰减。
-     */
-    private const val MOVING_WINDOW_NANOS = 400_000_000L
-
-    /**
-     * 速度衰减归零时间（纳秒）：停止移动后 [SPEED_DECAY_NANOS] 内速度线性降到 0，
-     * 与 [MOVING_WINDOW_NANOS] 同步——步频（= 60 + 30*speed）随速度同步过渡。
+     * 速度衰减归零时间（纳秒）：停止移动后 [SPEED_DECAY_NANOS] 内速度线性降到 0——
+     * 步频（= 60 + 30*speed）随速度同步过渡，过渡区 < 0.5s。
      */
     private const val SPEED_DECAY_NANOS = 400_000_000L
 
@@ -262,6 +250,46 @@ object FakeLoc {
         }
 
     /**
+     * 最近 [windowMs] 内的平均速度（m/s）与「该窗口内是否移动」。
+     *
+     * **窗口 = 应用请求的交付间隔**——间隔参数在此进入数据链。
+     * 为何不能用「相邻两帧的瞬时位移」：服务端坐标是按点跳变推进的（自动播放逐点、摇杆步进），
+     * 只有恰好包含那次跳变的帧才算得出速度，其余帧全为 0；而交付间隔由应用决定（可 900ms~1s+），
+     * 应用侧会把这些 0 帧当成静止 → 整段间隔不计步（典型偏差：移动中投出的帧 vel=0，步频掉到下限）。
+     * 按间隔窗口取平均后，任何一帧都代表“这段时间走了多少”，与采样相位无关。
+     *
+     * 位置历史取自 [moveSamples]（仅在坐标变化时记录，位置分段常数，无交付抖动）。
+     */
+    fun averageSpeedOverWindow(windowMs: Long): Pair<Double, Boolean> {
+        val winNanos = windowMs.coerceIn(1L, 10_000L) * 1_000_000L
+        val now = System.nanoTime()
+        val curLat = latitude
+        val curLon = longitude
+        synchronized(moveSamples) {
+            if (moveSamples.isEmpty()) return 0.0 to false
+            val fromNanos = now - winNanos
+            // 窗口起点处的坐标 = 起点之前最近的一次采样（位置分段常数）
+            var startLat = moveSamples.first().lat
+            var startLon = moveSamples.first().lon
+            var startNanos = moveSamples.first().timeNanos
+            for (s in moveSamples) {
+                if (s.timeNanos <= fromNanos) {
+                    startLat = s.lat
+                    startLon = s.lon
+                    startNanos = s.timeNanos
+                } else break
+            }
+            val distM = haversine(startLat, startLon, curLat, curLon)
+            // 瞬移（手动设点/路线跳点）不算速度
+            if (distM > TELEPORT_THRESHOLD_METERS) return 0.0 to false
+            // 实际覆盖时长：采样历史比窗口短时用真实时长，否则按窗口计
+            val spanSec = minOf(now - startNanos, winNanos).coerceAtLeast(1_000_000L) / 1e9
+            val speed = (distM / spanSec).coerceIn(0.0, MAX_MEASURED_SPEED)
+            return speed to (speed > 0.05)
+        }
+    }
+
+    /**
      * 记录一次基础坐标变化（move / update_location），用于按实际位移推算速度，
      * 同时更新移动时间戳（静止检测）。
      */
@@ -281,7 +309,6 @@ object FakeLoc {
                 moveSamples.removeFirst()
             }
         }
-        lastMoveTimeNanos = now
     }
 
     var accuracy = 25.0f
@@ -326,9 +353,10 @@ object FakeLoc {
         if (!enable) return src
 
         val out = Bundle(src ?: Bundle())
-        // 星数：与 GnssStatus 推送的 svCount（minSatellites..35）同量级
-        val count = Random.nextInt(minSatellites, minSatellites + 9)
-        val maxCn0 = Random.nextDouble(38.0, 48.0)
+        // 星数：与 GnssStatus 推送的 svCount 用**同一上限常量**（MAX_SATELLITES），
+        // 否则同一时刻「雷达显示的星数」与「extras 里的星数」范围不同，可交叉比对出不一致
+        val count = Random.nextInt(minSatellites, MAX_SATELLITES + 1)
+        val maxCn0 = Random.nextDouble(30.0, 45.0)
         val meanCn0 = maxCn0 - Random.nextDouble(6.0, 14.0)
         putSameType(out, "satellites", count, count.toDouble())
         putSameType(out, "maxCn0", maxCn0.toInt(), maxCn0)

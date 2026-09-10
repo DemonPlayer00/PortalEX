@@ -248,7 +248,7 @@ class MockServiceViewModel : ViewModel() {
 
         if (!::rockerJob.isInitialized || !rockerJob.isActive) {
             rockerCoroutineController.pause()
-            val delayTime = activity.reportDuration.toLong()
+            val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
             val applicationContext = activity.applicationContext
             rockerJob = viewModelScope.launch {
                 do {
@@ -264,7 +264,11 @@ class MockServiceViewModel : ViewModel() {
                         rockerCoroutineController.pause()
                         continue
                     }
-                    if(!MockServiceHelper.move(lm, FakeLoc.speed / (1000 / delayTime), FakeLoc.bearing)) {
+                    // 每 tick 位移 = 速度 × 本 tick 时长（浮点）。
+                    // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
+                    // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、
+                    // 0 → 直接除零崩溃；而路线播放用的是浮点，两条链速度口径也不一致。
+                    if(!MockServiceHelper.move(lm, FakeLoc.speed * delayTime / 1000.0, FakeLoc.bearing)) {
                         Log.e("MockServiceViewModel", "Failed to move")
                     }
                 } while (isActive)
@@ -276,7 +280,7 @@ class MockServiceViewModel : ViewModel() {
         FakeLoc.accuracy = activity.accuracy
 
         if (!::routeMockJob.isInitialized || !routeMockJob.isActive) {
-            val delayTime = activity.reportDuration.toLong()
+            val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
 
             routeMockJob = viewModelScope.launch {
                 while (isActive) {

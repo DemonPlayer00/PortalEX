@@ -27,10 +27,13 @@ object LocationManagerHook: BaseLocationHook() {
             }
         }
         if(cLocationManager.declaredMethods.filter {
-            it.name == "getLastKnownLocation" && it.parameterTypes.size > 1
+            // getLastKnownLocation(String) 才是应用可见的一次性取位 API（参数个数 1）——
+            // 旧实现限定 parameterTypes.size > 1，把它排除在外，回退去挂不存在的 getLastLocation。
+            it.name == "getLastKnownLocation" || it.name == "getLastLocation"
         }.map {
             XposedBridge.hookMethod(it, hookGetLastKnownLocation)
         }.isEmpty()) {
+            XposedBridge.hookAllMethods(cLocationManager, "getLastKnownLocation", hookGetLastKnownLocation)
             XposedBridge.hookAllMethods(cLocationManager, "getLastLocation", hookGetLastKnownLocation)
         }
 
@@ -117,7 +120,10 @@ object LocationManagerHook: BaseLocationHook() {
         kotlin.runCatching {
             XposedHelpers.findClass("android.location.LocationManager\$GetCurrentLocationTransport", cLocationManager.classLoader)
         }.onSuccess {
+            // 回调方法名随版本变化：老实现是 onLocation，Consumer 形态是 accept——两种都挂，
+            // 不把方法名写死（写死过一次：onLocation 在本机 framework 上根本不存在，静默失效）
             it.onceHookAllMethod("onLocation", hookOnLocation)
+            it.onceHookAllMethod("accept", hookOnLocation)
         }.onFailure {
             XposedBridge.log(it)
         }

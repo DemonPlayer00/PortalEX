@@ -8,8 +8,6 @@ import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
-import moe.fuqiuluo.portalex.ext.disableGetCurrentLocation
-import moe.fuqiuluo.portalex.ext.disableRegisterLocationListener
 import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
@@ -83,17 +81,6 @@ object MockServiceHelper {
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
-    fun isWifiMockStart(locationManager: LocationManager): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "is_wifi_mock_start")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getBoolean("is_wifi_mock_start")
-        }
-        return false
-    }
 
     fun startWifiMock(locationManager: LocationManager): Boolean {
         if (!::randomKey.isInitialized) {
@@ -194,74 +181,11 @@ object MockServiceHelper {
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
-    fun setSpeed(locationManager: LocationManager, speed: Float): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "set_speed")
-        rely.putFloat("speed", speed)
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
-    }
 
-    fun setAltitude(locationManager: LocationManager, altitude: Double): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "set_altitude")
-        rely.putDouble("altitude", altitude)
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
-    }
 
-    fun setSpeedAmplitude(locationManager: LocationManager, speedAmplitude: Double): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "set_speed_amp")
-        rely.putDouble("speed_amplitude", speedAmplitude)
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
-    }
 
-    fun getSpeed(locationManager: LocationManager): Double? {
-        if (!::randomKey.isInitialized) {
-            return null
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "get_speed")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            // 服务端写入的是 Double（putDouble），必须用 getDouble 读取，
-            // 否则 Bundle 类型不匹配会静默返回默认值 0.0
-            return rely.getDouble("speed")
-        }
-        return null
-    }
 
-    fun getBearing(locationManager: LocationManager): Double? {
-        if (!::randomKey.isInitialized) {
-            return null
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "get_bearing")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            // 服务端写入的是 Double，必须用 getDouble 读取
-            return rely.getDouble("bearing")
-        }
-        return null
-    }
 
-    fun getAltitude(locationManager: LocationManager): Double? {
-        if (!::randomKey.isInitialized) {
-            return null
-        }
-        val rely = Bundle()
-        rely.putString("command_id", "get_altitude")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getDouble("altitude")
-        }
-        return null
-    }
 
     fun move(locationManager: LocationManager, distance: Double, bearing: Double): Boolean {
         if (!::randomKey.isInitialized) {
@@ -325,8 +249,6 @@ object MockServiceHelper {
         FakeLoc.altitude = context.altitude
         FakeLoc.speed = context.speed
         FakeLoc.enableDebugLog = context.debug
-        FakeLoc.disableGetCurrentLocation = context.disableGetCurrentLocation
-        FakeLoc.disableRegisterLocationListener = context.disableRegisterLocationListener
         FakeLoc.disableFusedLocation = context.disableFusedProvider
         FakeLoc.needDowngradeToCdma = context.needDowngradeToCdma
         FakeLoc.minSatellites = context.minSatelliteCount
@@ -342,8 +264,6 @@ object MockServiceHelper {
         rely.putDouble("altitude", FakeLoc.altitude)
         rely.putDouble("speed", FakeLoc.speed)
         rely.putBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-        rely.putBoolean("disable_get_current_location", FakeLoc.disableGetCurrentLocation)
-        rely.putBoolean("disable_register_location_listener", FakeLoc.disableRegisterLocationListener)
         rely.putBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
         rely.putBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
         rely.putInt("min_satellites", FakeLoc.minSatellites)

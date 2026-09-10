@@ -132,12 +132,6 @@ var Context.needDowngradeToCdma: Boolean
         putBoolean("needDowngradeToCdma", value)
     }
 
-var Context.hookSensor: Boolean
-    get() = sharedPrefs.getBoolean("hookSensor", false)
-    set(value) = sharedPrefs.edit {
-        putBoolean("hookSensor", value)
-    }
-
 //var Context.updateInterval: Long
 //    get() = sharedPrefs.getLong("updateInterval", FakeLoc.updateInterval)
 //
@@ -156,21 +150,6 @@ var Context.debug: Boolean
     get() = sharedPrefs.getBoolean("debug", FakeLoc.enableDebugLog)
     set(value) = sharedPrefs.edit {
         putBoolean("debug", value)
-    }
-
-var Context.disableGetCurrentLocation: Boolean
-    get() = sharedPrefs.getBoolean("disableGetCurrentLocation", FakeLoc.disableGetCurrentLocation)
-    set(value) = sharedPrefs.edit {
-        putBoolean("disableGetCurrentLocation", value)
-    }
-
-var Context.disableRegisterLocationListener: Boolean
-    get() = sharedPrefs.getBoolean(
-        "disableRegitserLocationListener",
-        FakeLoc.disableRegisterLocationListener
-    )
-    set(value) = sharedPrefs.edit {
-        putBoolean("disableRegitserLocationListener", value)
     }
 
 var Context.disableFusedProvider: Boolean
@@ -221,7 +200,8 @@ var Context.enableNMEA: Boolean
     }
 
 var Context.disableWifiScan: Boolean
-    get() = sharedPrefs.getBoolean("disableWifiScan", FakeLoc.enableNMEA)
+    // 默认 false：旧实现默认取 FakeLoc.enableNMEA（复制粘贴的错键），开关初始状态会错乱
+    get() = sharedPrefs.getBoolean("disableWifiScan", false)
     set(value) = sharedPrefs.edit {
         putBoolean("disableWifiScan", value)
         FakeLoc.enableMockWifi = value
