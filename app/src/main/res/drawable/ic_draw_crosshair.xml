@@ -1,0 +1,38 @@
+<!-- 绘制准星：标记「画笔点」的位置。
+     绘制时记录的坐标取的是地图中心（mapStatus.target），屏幕上没有参照物，
+     拖图时无法判断落点在哪。白色细线 + 深色描边，保证在普通图与卫星图上
+     都有对比度。仅绘制过程中显示，不可交互（不拦截地图触摸）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="40dp"
+    android:height="40dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- 描边层（深色、更粗） -->
+    <path
+        android:pathData="M24,4 V13 M24,35 V44 M4,24 H13 M35,24 H44"
+        android:strokeColor="#73000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="7" />
+    <path
+        android:pathData="M15,24 A9,9 0 1,1 33,24 A9,9 0 1,1 15,24"
+        android:strokeColor="#73000000"
+        android:strokeWidth="7" />
+    <path
+        android:pathData="M21,24 A3,3 0 1,1 27,24 A3,3 0 1,1 21,24"
+        android:fillColor="#73000000" />
+
+    <!-- 主线（白色） -->
+    <path
+        android:pathData="M24,4 V13 M24,35 V44 M4,24 H13 M35,24 H44"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.5" />
+    <path
+        android:pathData="M15,24 A9,9 0 1,1 33,24 A9,9 0 1,1 15,24"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.5" />
+    <path
+        android:pathData="M22.5,24 A1.5,1.5 0 1,1 25.5,24 A1.5,1.5 0 1,1 22.5,24"
+        android:fillColor="#FFFFFFFF" />
+</vector>
