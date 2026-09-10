@@ -495,13 +495,6 @@ class HomeFragment : Fragment(), MapControlsHost {
         super.onDestroy()
 
         baiduMapViewModel.isExists = false
-        // recreate（深/浅切换）时本 fragment 可能在 backstack：view 未重建则
-        // onCreateView 未执行、mLocationClient 未初始化——访问会崩
-        if (::mLocationClient.isInitialized && mLocationClient.isStarted)
-            mLocationClient.stop()
-        if (_binding != null) {
-            binding.bmapView.map.isMyLocationEnabled = false
-        }
     }
 
     override fun onPause() {
@@ -524,6 +517,23 @@ class HomeFragment : Fragment(), MapControlsHost {
 
     override fun onDestroyView() {
         super.onDestroyView()
+
+        // 关掉本页的「我的位置」图层：视图即将销毁，蓝点跟随状态不能留到下一个视图
+        // （下一次 onCreateView 会重新置 isMyLocationEnabled = true）
+        if (_binding != null) {
+            binding.bmapView.map.isMyLocationEnabled = false
+        }
+        // 定位客户端随视图创建，也必须随视图释放：NavigationUI + saveState 离页时
+        // fragment 留在回退栈上、只销毁 view（onDestroyView 跑、onDestroy 不跑），
+        // 不在此 stop 会持续后台定位，enableLocInForeground 挂的前台服务也一直不撒
+        // （实测：停在 Route Mock 页、首页已不可见时，定位服务仍保留 1 条 ConnectionRecord；
+        //   修复后同场景为 0 条，回到首页则重新建立新连接）
+        // recreate（深/浅切换）时本 fragment 可能在 backstack：view 未重建则
+        // onCreateView 未执行、mLocationClient 未初始化——访问会崩
+        if (::mLocationClient.isInitialized && mLocationClient.isStarted) {
+            mLocationClient.disableLocInForeground(true)
+            mLocationClient.stop()
+        }
         _binding = null
     }
 }
