@@ -19,3 +19,6 @@ app/google-services.json
 
 # 工作区技能目录：本地工具，不入库
 /skills/
+
+# 代理工作笔记（日常记忆/长期记忆）：本地记录，不属于仓库代码
+/memory/
