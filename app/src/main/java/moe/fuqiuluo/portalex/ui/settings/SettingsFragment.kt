@@ -24,10 +24,7 @@ import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
-import moe.fuqiuluo.portalex.ext.disableGetCurrentLocation
-import moe.fuqiuluo.portalex.ext.disableRegisterLocationListener
 import moe.fuqiuluo.portalex.ext.disableWifiScan
-import moe.fuqiuluo.portalex.ext.hookSensor
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
@@ -133,29 +130,11 @@ class SettingsFragment : Fragment() {
             }
         })
 
-        binding.dgcSwitch.isChecked = !context.disableGetCurrentLocation
-        binding.dgcSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
-            override fun onCheckedChanged(
-                buttonView: CompoundButton,
-                isChecked: Boolean
-            ) {
-                context.disableGetCurrentLocation = !isChecked
-                showToast(if (!isChecked) "禁止应用使用该方法" else "已允许应用使用该方法")
-                updateRemoteConfig()
-            }
-        })
+        // 允许获取当前位置（新）：语义已定为「允许并注入」——不再提供拦截开关。
+        // 开关保留在设置页仅作说明（布局里 checked=true / enabled=false），不再写任何配置。
 
-        binding.rllSwitch.isChecked = !context.disableRegisterLocationListener
-        binding.rllSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
-            override fun onCheckedChanged(
-                buttonView: CompoundButton,
-                isChecked: Boolean
-            ) {
-                context.disableRegisterLocationListener = !isChecked
-                showToast(if (!isChecked) "禁止应用使用该方法" else "已允许应用使用该方法")
-                updateRemoteConfig()
-            }
-        })
+        // 允许注册位置监听器：语义已定为「允许并注入」——持续拒绝回调在真机上不存在，
+        // 本身就是特征；开关保留在设置页仅作说明（布局里 checked=true / enabled=false）。
 
         binding.dfusedSwitch.isChecked = context.disableFusedProvider
         binding.dfusedSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
@@ -181,24 +160,16 @@ class SettingsFragment : Fragment() {
             }
         })
 
-        binding.sensorHookSwitch.isChecked = context.hookSensor
-        binding.sensorHookSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
-            override fun onCheckedChanged(
-                buttonView: CompoundButton,
-                isChecked: Boolean
-            ) {
-                context.hookSensor = isChecked
-                showToast("重新启动生效")
-                updateRemoteConfig()
-            }
-        })
+        // 「传感器模拟」开关已移除：传感器 hook 恒安装（仅由 LSPosed 作用域决定是否注入），
+        // 偏好项从未被模块读取——留着就是一个骗人的开关。
 
         binding.reportDurationLayout.setOnClickListener {
             showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
                 it.substring(0, it.length - 2)
             }) {
                 val value = it.toIntOrNull()
-                if (value == null || value < 0) {
+                // 下限 1ms：0 会让摇杆/播放循环 delay(0) 空转并触发除零
+                if (value == null || value < 1) {
                     Toast.makeText(context, "上报间隔不合法", Toast.LENGTH_SHORT).show()
                     return@showDialog
                 } else if (value > 1000) {

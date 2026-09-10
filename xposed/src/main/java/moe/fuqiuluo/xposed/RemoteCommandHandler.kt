@@ -139,18 +139,15 @@ object RemoteCommandHandler {
                 return true
             }
             "set_speed_amp" -> {
-                val speedAmplitude = rely.getDouble("speed_amplitude", 1.0)
-                FakeLoc.speedAmplitude = speedAmplitude
+                FakeLoc.speedAmplitude = rely.numberOr("speed_amplitude", FakeLoc.speedAmplitude)
                 return true
             }
             "set_altitude" -> {
-                val altitude = rely.getDouble("altitude", 0.0)
-                FakeLoc.altitude = altitude
+                FakeLoc.altitude = rely.numberOr("altitude", FakeLoc.altitude)
                 return true
             }
             "set_speed" -> {
-                val speed = rely.getDouble("speed", 0.0)
-                FakeLoc.speed = speed
+                FakeLoc.speed = rely.numberOr("speed", FakeLoc.speed)
                 return true
             }
             "set_bearing" -> {
@@ -173,62 +170,55 @@ object RemoteCommandHandler {
                 FakeLoc.bearing = bearing
                 FakeLoc.hasBearings = true
                 return updateCoordinate(newLoc.first, newLoc.second).also {
-                    if (FakeLoc.isSystemServerProcess) LocationServiceHook.callOnLocationChanged()
+                    // force：坐标已变化，立刻送达（推送链的被拦死注册必须拿到这一步的位移）
+                    if (FakeLoc.isSystemServerProcess) LocationServiceHook.callOnLocationChanged(force = true)
                 }
             }
             "update_location" -> {
                 val mode = rely.getString("mode")
                 var newLat = rely.getDouble("lat", 0.0)
                 var newLon = rely.getDouble("lon", 0.0)
+                // 统一落点入口：写坐标后**立即投递一帧**。
+                // 旧回调架构下只有 move / broadcast_location 会投递，而**路线自动播放**走的是
+                // update_location——不在此投递就会出现「坐标在推进但应用收不到」：
+                // 表现为位置不动、被拉回真实坐标、GPS 信号差（长时间无帧）。
+                fun applyCoordinate(lat: Double, lon: Double, explicitBearing: Double? = null): Boolean {
+                    val ok = updateCoordinate(lat, lon, updateBearing = true, explicitBearing = explicitBearing)
+                    if (ok && FakeLoc.isSystemServerProcess) {
+                        // force：路线播放/设点每 tick 都推进坐标，必须立刻送达
+                        LocationServiceHook.callOnLocationChanged(force = true)
+                    }
+                    return ok
+                }
                 when(mode) {
-                    "+" -> {
-                        newLat += FakeLoc.latitude
-                        newLon += FakeLoc.longitude
-                        return updateCoordinate(newLat, newLon, updateBearing = true)
-                    }
-                    "-" -> {
-                        newLat = FakeLoc.latitude - newLat
-                        newLon = FakeLoc.longitude - newLon
-                        return updateCoordinate(newLat, newLon, updateBearing = true)
-                    }
-                    "*" -> {
-                        newLat *= FakeLoc.latitude
-                        newLon *= FakeLoc.longitude
-                        return updateCoordinate(newLat, newLon, updateBearing = true)
-                    }
+                    "+" -> return applyCoordinate(newLat + FakeLoc.latitude, newLon + FakeLoc.longitude)
+                    "-" -> return applyCoordinate(FakeLoc.latitude - newLat, FakeLoc.longitude - newLon)
+                    "*" -> return applyCoordinate(newLat * FakeLoc.latitude, newLon * FakeLoc.longitude)
                     "/" -> {
                         if (newLat == 0.0 || newLon == 0.0) {
                             return false
                         }
-                        newLat /= FakeLoc.latitude
-                        newLon /= FakeLoc.longitude
-                        return updateCoordinate(newLat, newLon, updateBearing = true)
+                        return applyCoordinate(FakeLoc.latitude / newLat, FakeLoc.longitude / newLon)
                     }
                     "=" -> {
                         // 路线播放：方位随位置显式下发（路线切线）——弧长推进每 tick 位移
                         // 仅约 0.2m，达不到位移法 1m 门控，靠位移推算会导致朝向永不更新。
                         val explicitBearing =
                             if (rely.containsKey("bearing")) rely.getDouble("bearing") else null
-                        return updateCoordinate(
-                            newLat, newLon,
-                            updateBearing = true,
-                            explicitBearing = explicitBearing
-                        )
+                        return applyCoordinate(newLat, newLon, explicitBearing)
                     }
                     "random" -> {
-                        return updateCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0), updateBearing = true)
+                        return applyCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0))
                     }
                 }
                 return true
             }
             "put_config" -> {
                 val enable = rely.getBoolean("enable", FakeLoc.enable)
-                val speed = rely.getDouble("speed", FakeLoc.speed)
-                val altitude = rely.getDouble("altitude", FakeLoc.altitude)
-                val accuracy = rely.getFloat("accuracy", FakeLoc.accuracy)
+                val speed = rely.numberOr("speed", FakeLoc.speed)
+                val altitude = rely.numberOr("altitude", FakeLoc.altitude)
+                val accuracy = rely.numberOr("accuracy", FakeLoc.accuracy.toDouble()).toFloat()
                 val enableDebugLog = rely.getBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-                val disableGetCurrentLocation = rely.getBoolean("disable_get_current_location", FakeLoc.disableGetCurrentLocation)
-                val disableRegisterLocationListener = rely.getBoolean("disable_register_location_listener", FakeLoc.disableRegisterLocationListener)
                 val disableFusedLocation = rely.getBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
                 val needDowngradeToCdma = rely.getBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
                 var minSatellites = rely.getInt("min_satellites", 12)
@@ -247,8 +237,6 @@ object RemoteCommandHandler {
                 FakeLoc.altitude = altitude
                 FakeLoc.accuracy = accuracy
                 FakeLoc.enableDebugLog = enableDebugLog
-                FakeLoc.disableGetCurrentLocation = disableGetCurrentLocation
-                FakeLoc.disableRegisterLocationListener = disableRegisterLocationListener
                 FakeLoc.disableFusedLocation = disableFusedLocation
                 FakeLoc.needDowngradeToCdma = needDowngradeToCdma
                 FakeLoc.minSatellites = minSatellites
@@ -271,8 +259,6 @@ object RemoteCommandHandler {
                 rely.putParcelable("last_location", FakeLoc.lastLocation)
                 rely.putBoolean("enable_log", FakeLoc.enableLog)
                 rely.putBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-                rely.putBoolean("disable_get_current_location", FakeLoc.disableGetCurrentLocation)
-                rely.putBoolean("disable_register_location_listener", FakeLoc.disableRegisterLocationListener)
                 rely.putBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
                 rely.putBoolean("enable_agps", FakeLoc.enableAGPS)
                 rely.putBoolean("enable_nmea", FakeLoc.enableNMEA)
@@ -283,7 +269,8 @@ object RemoteCommandHandler {
                 return true
             }
             "broadcast_location" -> {
-                LocationServiceHook.callOnLocationChanged()
+                // force：显式广播就是「现在推一帧」——反定位拉回线程靠反复强制推送压制真实位置
+                LocationServiceHook.callOnLocationChanged(force = true)
                 return true
             }
             else -> return false
@@ -326,7 +313,7 @@ object RemoteCommandHandler {
         kotlin.concurrent.thread(name = "InitialPullback", isDaemon = true, start = true) {
             try {
                 Thread.sleep(500)
-                LocationServiceHook.callOnLocationChanged()
+                LocationServiceHook.callOnLocationChanged(force = true)
             } catch (_: InterruptedException) {
                 // 忽略中断
             }
@@ -396,3 +383,11 @@ object RemoteCommandHandler {
         }
     }
 }
+
+/**
+ * 读取 Bundle 中的数值并兼容 Int/Long/Float/Double。
+ * Bundle.getDouble 在键值是 Float 时会**静默返回默认值**（类型不符），
+ * App 侧 putFloat 写、服务端 getDouble 读过一次就是恒 0——这里按 Number 统一取。
+ */
+private fun Bundle.numberOr(key: String, default: Double): Double =
+    (get(key) as? Number)?.toDouble() ?: default

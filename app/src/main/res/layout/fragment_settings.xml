@@ -231,6 +231,9 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
+                    android:checked="true"
+                    android:enabled="false"
+                    android:alpha="0.5"
                     app:useMaterialThemeColors="true"
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
@@ -265,6 +268,9 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
+                    android:checked="true"
+                    android:enabled="false"
+                    android:alpha="0.5"
                     app:useMaterialThemeColors="true"
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
@@ -329,41 +335,6 @@
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/cdma_switch"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/sensor_hook_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:visibility="gone"
-                android:gravity="center_vertical"
-                android:padding="5dp"
-                android:orientation="horizontal">
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center_vertical">
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/hook_sensor"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/hook_sensor_desc"
-                        android:textSize="11sp" />
-                </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/sensor_hook_switch"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"

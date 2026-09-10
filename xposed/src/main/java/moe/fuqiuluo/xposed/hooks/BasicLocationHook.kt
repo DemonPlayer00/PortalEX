@@ -55,49 +55,18 @@ object BasicLocationHook: BaseLocationHook() {
                 mLocationsField.isAccessible = true
                 val mLocations = mLocationsField.get(locationResult) as ArrayList<*>
 
-                val originLocation = mLocations.firstOrNull() as? Location
-                    ?: Location(LocationManager.GPS_PROVIDER)
-
-                val location = Location(originLocation.provider)
-
-                val jitterLat = FakeLoc.jitterLocation()
-                location.latitude = jitterLat.first
-                location.longitude = jitterLat.second
-                location.altitude = FakeLoc.offset_altitude
-                // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
-                location.speed = if (FakeLoc.isMoving) {
-                    (FakeLoc.measuredSpeed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).coerceAtLeast(0.0).toFloat()
-                } else {
-                    0.0f
+                // 统一走主注入路径（BaseLocationHook.injectLocation）：
+                // writeToParcel 是帧跨进程的必经关口，这里口径必须与推送链一致。
+                // **逐条注入并保留批次长度**：旧实现只取 first 再写回单元素 ArrayList，
+                // 批量位置（onLocationBatch / flush 批次）除首帧外全部丢失。
+                val injected = ArrayList<Location>(maxOf(1, mLocations.size))
+                mLocations.forEach { item ->
+                    (item as? Location)?.let { injected.add(injectLocation(it)) }
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
+                if (injected.isEmpty()) {
+                    injected.add(injectLocation(Location(LocationManager.GPS_PROVIDER)))
                 }
-
-                location.time = originLocation.time
-                location.accuracy = originLocation.accuracy
-                var modBearing = FakeLoc.bearing % 360.0 + 0.0
-                if (modBearing < 0) {
-                    modBearing += 360.0
-                }
-                if (location.hasBearing()) {
-                    location.bearing = modBearing.toFloat()
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    // 朝向精度：真实设备量级 1~5 度（原实现写入角度值，异常）
-                    location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
-                }
-                location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
-                }
-                // extras 透传原始数据，但系统自带的卫星字段要改写（理由同 BaseLocationHook）
-                location.extras = FakeLoc.sanitizeGnssExtras(originLocation.extras)
-
-                mLocationsField.set(locationResult, arrayListOf(location))
+                mLocationsField.set(locationResult, injected)
             }
         }.onFailure {
            Logger.error("Failed to hook LocationResult", it)

@@ -22,6 +22,16 @@ import java.util.Collections
 import kotlin.random.Random
 
 object LocationProviderManagerHook {
+    /** 逐条注入（保留批次长度与顺序）：返回可直接写回 mLocations 的列表 */
+    private fun injectAll(locations: List<*>): ArrayList<Location> {
+        val injected = ArrayList<Location>(maxOf(1, locations.size))
+        locations.forEach { item -> (item as? Location)?.let { injected.add(injectLocation(it)) } }
+        if (injected.isEmpty()) {
+            injected.add(injectLocation(Location(LocationManager.GPS_PROVIDER)))
+        }
+        return injected
+    }
+
     private val hookOnFetchLocationResult = beforeHook {
         if (args.isEmpty()) return@beforeHook
         if (!FakeLoc.enable) return@beforeHook
@@ -39,53 +49,17 @@ object LocationProviderManagerHook {
         mLocationsField.isAccessible = true
         val mLocations = mLocationsField.get(locationResult) as ArrayList<*>
 
-        val originLocation = mLocations.firstOrNull() as? Location
-            ?: Location(LocationManager.GPS_PROVIDER)
-        val location = Location(originLocation.provider)
-
-        val jitterLat = FakeLoc.jitterLocation()
-        location.latitude = jitterLat.first
-        location.longitude = jitterLat.second
-        location.altitude = FakeLoc.offset_altitude
-        // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
-        location.speed = if (FakeLoc.isMoving) {
-            (FakeLoc.measuredSpeed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).coerceAtLeast(0.0).toFloat()
-        } else {
-            0.0f
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
-        }
-
-        location.time = originLocation.time
-        location.accuracy = originLocation.accuracy
-        var modBearing = FakeLoc.bearing % 360.0 + 0.0
-        if (modBearing < 0) {
-            modBearing += 360.0
-        }
-        location.bearing = modBearing.toFloat()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasBearingAccuracy()) {
-            // 朝向精度：真实设备量级 1~5 度（原实现写入角度值，异常）
-            location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
-        }
-        location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
-        }
-        // extras 透传原始数据，但系统自带的卫星字段要改写（理由同 BaseLocationHook）
-        location.extras = FakeLoc.sanitizeGnssExtras(originLocation.extras)
-
-        mLocationsField.set(locationResult, arrayListOf(location))
+        // 统一走主注入路径（BaseLocationHook.injectLocation）：
+        // 一个注入实现、一套字段口径——否则同一 tick 里「一次性取位」与
+        // 「持续注册」拿到的帧会在 bearing（平滑/原始）与 accuracy（配置值/原始帧）上分岔。
+        // **逐条注入并保留批次长度**：旧实现替换为单元素，批量位置除首帧外全部丢失。
+        mLocationsField.set(locationResult, injectAll(mLocations))
     }
 
     operator fun invoke(classLoader: ClassLoader) {
         hookLocationProviderManager(classLoader)
         hookDelegateLocationProvider(classLoader)
         hookPassiveLocationProvider(classLoader)
-        hookProxyLocationProvider(classLoader)
         hookAbstractLocationProvider(classLoader)
         hookOtherProvider(classLoader)
         hookGeofenceProvider(classLoader)
@@ -120,13 +94,6 @@ object LocationProviderManagerHook {
                 }
             })
         }
-
-    }
-
-    private fun hookProxyLocationProvider(classLoader: ClassLoader) {
-        val cProxyLocationProvider = XposedHelpers.findClassIfExists("com.android.server.location.provider.proxy.ProxyLocationProvider", classLoader)
-            ?: return
-
 
     }
 
@@ -205,18 +172,20 @@ object LocationProviderManagerHook {
             val hookedListeners = Collections.synchronizedSet(HashSet<String>())
             if(cLocationProviderManager.onceHookAllMethod("getCurrentLocation", object: XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (param.args.size < 4 || param.args[3] == null) return
+                    // 回调不写死索引：新签名 (provider, request, ILocationCallback, packageName, …)
+                    // 的 args[3] 是包名字符串，旧签名 (request, ILocationCallback, packageName) 是 args[2]。
+                    val callback = param.args.firstOrNull { arg ->
+                        arg != null && arg.javaClass.methods.any { it.name == "onLocation" }
+                    } ?: return
 
-                    val callback = param.args[3]
                     if (FakeLoc.enableDebugLog) {
                         Logger.debug("getCurrentLocation injected: $callback")
                     }
 
-                    // 仅模拟会话期间拦截：未开模拟时透传真实位置
-                    if (FakeLoc.enable && FakeLoc.disableGetCurrentLocation) {
-                        param.result = null
-                        return
-                    }
+                    // 允许并注入：不再 param.result = null。未开模拟透传真实位置；
+                    // 模拟会话中回调上改写为模拟位置（与 LocationServiceHook 同语义；
+                    // 该层不重复登记一次性投递表，避免同一回调被投两次）。
+                    if (!FakeLoc.enable) return
 
                     val classCallback = callback.javaClass
                     if (hookedListeners.contains(classCallback.name)) return // Prevent repeated hooking
@@ -258,46 +227,8 @@ object LocationProviderManagerHook {
             val mLocations = mLocationsField.get(locationResult) as? ArrayList<*>
                 ?: return@onceHookMethodBefore
 
-            val originLocation = mLocations.firstOrNull() as? Location
-                ?: Location(LocationManager.GPS_PROVIDER)
-            val location = Location(originLocation.provider)
-
-            val jitterLat = FakeLoc.jitterLocation()
-            location.latitude = jitterLat.first
-            location.longitude = jitterLat.second
-            location.altitude = FakeLoc.offset_altitude
-            // 与主注入路径一致：移动中 = 实际位移推算速度±抖动，静止 = 0
-            location.speed = if (FakeLoc.isMoving) {
-                (FakeLoc.measuredSpeed + Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)).coerceAtLeast(0.0).toFloat()
-            } else {
-                0.0f
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
-            }
-
-            location.time = originLocation.time
-            location.accuracy = originLocation.accuracy
-            var modBearing = FakeLoc.bearing % 360.0 + 0.0
-            if (modBearing < 0) {
-                modBearing += 360.0
-            }
-            location.bearing = modBearing.toFloat()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && originLocation.hasBearingAccuracy()) {
-                // 朝向精度：真实设备量级 1~5 度（原实现写入角度值，异常）
-                location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
-            }
-            location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
-            }
-            // extras 透传原始数据，但系统自带的卫星字段要改写（理由同 BaseLocationHook）
-            location.extras = FakeLoc.sanitizeGnssExtras(originLocation.extras)
-
-            mLocationsField.set(locationResult, arrayListOf(location))
+            // 同 hookOnFetchLocationResult：统一走主注入路径 + 保留批次长度
+            mLocationsField.set(locationResult, injectAll(mLocations))
 
             if (FakeLoc.enableDebugLog) {
                 Logger.debug("onReportLocation: injected!")

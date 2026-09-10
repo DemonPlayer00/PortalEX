@@ -105,7 +105,8 @@ abstract class BaseDivineService {
             FakeLoc.enable = rely.getBoolean("enable", FakeLoc.enable)
             FakeLoc.latitude = rely.getDouble("latitude", FakeLoc.latitude)
             FakeLoc.longitude = rely.getDouble("longitude", FakeLoc.longitude)
-            FakeLoc.altitude = rely.getDouble("altitude", FakeLoc.offset_altitude)
+            // 默认值用 altitude 本体：offset_altitude 是带随机抖动的 getter，每次求值都不同
+            FakeLoc.altitude = rely.getDouble("altitude", FakeLoc.altitude)
             FakeLoc.speed = rely.getDouble("speed", FakeLoc.speed)
             FakeLoc.speedAmplitude = rely.getDouble("speed_amplitude", FakeLoc.speedAmplitude)
             FakeLoc.hasBearings = rely.getBoolean("has_bearings", FakeLoc.hasBearings)
@@ -117,8 +118,6 @@ abstract class BaseDivineService {
             }
             FakeLoc.enableLog = rely.getBoolean("enable_log", FakeLoc.enableLog)
             FakeLoc.enableDebugLog = rely.getBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-            FakeLoc.disableGetCurrentLocation = rely.getBoolean("disable_get_current_location", FakeLoc.disableGetCurrentLocation)
-            FakeLoc.disableRegisterLocationListener = rely.getBoolean("disable_register_location_listener", FakeLoc.disableRegisterLocationListener)
             FakeLoc.disableFusedLocation = rely.getBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
             FakeLoc.enableAGPS = rely.getBoolean("enable_agps", FakeLoc.enableAGPS)
             FakeLoc.enableNMEA = rely.getBoolean("enable_nmea", FakeLoc.enableNMEA)

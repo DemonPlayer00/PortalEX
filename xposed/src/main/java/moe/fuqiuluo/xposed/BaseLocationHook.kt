@@ -3,6 +3,7 @@ package moe.fuqiuluo.xposed
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
+import android.os.SystemClock
 import de.robv.android.xposed.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
@@ -11,7 +12,13 @@ import moe.microbios.nmea.NmeaValue
 import kotlin.random.Random
 
 abstract class BaseLocationHook: BaseDivineService() {
-    fun injectLocation(originLocation: Location, realLocation: Boolean = true): Location {
+    /**
+     * @param speedWindowMs 速度平均窗口（毫秒），默认 1s = 真机 GPS 的自然出帧率。
+     *   服务端坐标按点跳变推进，若按“相邻两帧”取瞬时速度，只有恰好包含跳变的帧才有速度，
+     *   其余帧为 0 → 应用侧整段间隔不计步（步频掉到下限）。按窗口平均后任何一帧都代表
+     *   “这段时间走了多少”，与采样相位无关。
+     */
+    fun injectLocation(originLocation: Location, realLocation: Boolean = true, speedWindowMs: Long = 1000L): Location {
         if (realLocation) {
             if (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     originLocation.provider == LocationManager.GPS_PROVIDER && originLocation.isComplete
@@ -28,9 +35,13 @@ abstract class BaseLocationHook: BaseDivineService() {
         if (!FakeLoc.enable)
             return originLocation
 
-        if (originLocation.latitude + originLocation.longitude == FakeLoc.latitude + FakeLoc.longitude) {
-            // Already processed
-            return originLocation
+        // 已注入判定：按字段严格比较（旧实现比较经纬度**之和**——不同坐标和值相同会误命中，
+        // 命中即整体跳过改写，包括 extras 清洗）。默认坐标 (0,0) 不参与判定，避免真实 (0,0) fix 误命中。
+        if (FakeLoc.latitude != 0.0 || FakeLoc.longitude != 0.0) {
+            if (originLocation.latitude == FakeLoc.latitude && originLocation.longitude == FakeLoc.longitude) {
+                // Already processed
+                return originLocation
+            }
         }
 
         if (FakeLoc.disableNetworkLocation && originLocation.provider == LocationManager.NETWORK_PROVIDER) {
@@ -46,9 +57,12 @@ abstract class BaseLocationHook: BaseDivineService() {
         // 速度由实际模拟位移推算（FakeLoc.measuredSpeed）：移动中 = 实测速度 ± 抖动，静止 = 0。
         // 早期实现直接写入配置速度，与注入的位置变化无关（跨帧对比位移与 speed 即可发现矛盾）。
         val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
-        val measuredSpeed = FakeLoc.measuredSpeed
-        location.speed = if (FakeLoc.isMoving) {
-            (measuredSpeed + speedAmp).coerceAtLeast(0.0).toFloat()
+        // 速度：按**交付间隔窗口**取平均（间隔参数在此进入数据链）——
+        // 旧实现直接写瞬时 measuredSpeed（400ms 衰减窗口）：交付间隔由应用决定（可 900ms+）时，
+        // 采样常踩到衰减谷值或跳变之间的空档 → 帧携带 vel=0 → 应用侧整段间隔不计步 → 步频偏低。
+        val (frameSpeed, frameMoving) = FakeLoc.averageSpeedOverWindow(speedWindowMs)
+        location.speed = if (frameMoving) {
+            (frameSpeed + speedAmp).coerceAtLeast(0.0).toFloat()
         } else {
             0.0f
         }
@@ -62,7 +76,10 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.altitude = 80.0
         }
 
-        location.time = originLocation.time
+        // 时间戳统一：注入帧一律携带「生成本帧的时刻」，与推送链 buildFrame() 同语义。
+        // 旧实现沿用 originLocation.time/elapsedRealtimeNanos（真实 fix 的旧时刻），
+        // 于是同一坐标在「推送帧」与「框架帧」上有两套时间——应用按时间差算速率/去重会自相矛盾。
+        location.time = System.currentTimeMillis()
 
         // final addition of zero is to remove -0 results. while these are technically within the
         // range [0, 360) according to IEEE semantics, this eliminates possible user confusion.
@@ -78,7 +95,7 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.bearingAccuracyDegrees = Random.nextDouble(1.0, 5.0).toFloat()
         }
 
-        location.elapsedRealtimeNanos = originLocation.elapsedRealtimeNanos
+        location.elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
         }
@@ -145,7 +162,8 @@ abstract class BaseLocationHook: BaseDivineService() {
                     if (value.status == "V") return nmeaStr
                     updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
                     // 同步速度和航向（m/s → 节，1 m/s = 1.94384 knots）
-                    value.speedKnots = FakeLoc.measuredSpeed * 1.94384
+                    // 与注入帧统一口径：窗口平均（旧实现用瞬时 measuredSpeed，两条链对不上账）
+                    value.speedKnots = FakeLoc.averageSpeedOverWindow(1000L).first * 1.94384
                     value.trackAngle = FakeLoc.processedBearing()
                     value.toNmeaString()
                 }
