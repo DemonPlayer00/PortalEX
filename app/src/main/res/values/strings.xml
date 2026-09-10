@@ -24,6 +24,7 @@
     <string name="loc_detail_text">逆地理编码，根据经纬度获取地址信息</string>
     <string name="latlon">经纬度</string>
     <string name="route_set">路线经纬度</string>
+    <string name="route_smooth_set">平滑数组（true/false，每个端点对应其后线段，最后一个端点无线段）</string>
     <string name="address">地址</string>
     <string name="input_lat">请输入纬度</string>
     <string name="input_lon">请输入经度</string>
@@ -66,6 +67,7 @@
     <string name="hook_sensor_desc">模拟步频（待完善）</string>
     <string name="show_route">显示路线</string>
     <string name="fab_start_route">开始绘制路线</string>
+    <string name="fab_smooth_draw">平滑绘制（切换线段平滑）</string>
     <string name="fab_complete_route">完成路线</string>
     <string name="rollback">撤回上一点</string>
     <string name="item_report_duration_title">位置上报间隔</string>

@@ -35,10 +35,11 @@ class FabBarView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : LinearLayout(context, attrs) {
 
-    /** 单个功能按钮定义 */
+    /** 单个功能按钮定义；[active] 控制选中态着色（绿色），可在点击后变更并刷新 */
     class Action(
         val iconRes: Int,
         val contentDescription: String?,
+        var active: Boolean = false,
         val onClick: () -> Unit
     )
 
@@ -103,7 +104,7 @@ class FabBarView @JvmOverloads constructor(
                     contentDescription = action.contentDescription
                     background = rippleBackground()
                     setImageResource(action.iconRes)
-                    imageTintList = iconTintList()
+                    imageTintList = actionTintList(action.active)
                     setOnClickListener { action.onClick() }
                 }
             )
@@ -111,6 +112,18 @@ class FabBarView @JvmOverloads constructor(
         visibility = if (actions.isEmpty()) View.GONE else View.VISIBLE
         resetClosed()
         requestLayout()
+    }
+
+    /**
+     * 按 [actions] 的序号刷新按钮着色（不改变展开/收起态）——用于开关型功能按钮
+     * （如路线平滑绘制）点击后立即反映选中态，避免重建功能集导致胶囊意外收起。
+     */
+    fun refreshActionTints(actions: List<Action>) {
+        for (i in 0 until actionsContainer.childCount) {
+            val action = actions.getOrNull(i) ?: continue
+            (actionsContainer.getChildAt(i) as? ImageButton)?.imageTintList =
+                actionTintList(action.active)
+        }
     }
 
     /** 展开：主按钮旋转 90° + outline 裁剪窗口向右生长 */
@@ -208,5 +221,14 @@ class FabBarView @JvmOverloads constructor(
         // resourceId 为 0，直接 getColor(0) 会崩，不能那样取
         val color = MaterialColors.getColor(context, R.attr.portalFabIconTint, Color.LTGRAY)
         return ColorStateList.valueOf(color)
+    }
+
+    /** 按钮着色：选中态 = 绿色，普通 = 主题图标色 */
+    private fun actionTintList(active: Boolean): ColorStateList =
+        if (active) ColorStateList.valueOf(ACTIVE_TINT) else iconTintList()
+
+    companion object {
+        /** 选中态着色（平滑绘制开关 / 平滑线段颜色同源） */
+        val ACTIVE_TINT: Int = Color.rgb(0, 200, 83)
     }
 }

@@ -110,12 +110,8 @@ class MockFragment : Fragment() {
 
             rocker.setRockerListener(object: RockerView.Companion.OnMoveListener {
                 override fun onAngle(angle: Double) {
-                    val lm = locationManager
-                    if (lm != null) {
-                        MockServiceHelper.setBearing(lm, angle)
-                    }
-                    FakeLoc.bearing = angle
-                    FakeLoc.hasBearings = true
+                    // 自动播放中由路线切线控制朝向，手动摇杆不抢占
+                    handleRockerAngle(angle)
                 }
 
                 override fun onLockChanged(isLocked: Boolean) {

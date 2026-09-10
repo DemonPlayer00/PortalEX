@@ -94,9 +94,9 @@ abstract class BaseLocationHook: BaseDivineService() {
         // extras 只透传原始数据，不写任何模块自有键：extras 随 Parcel 到达每个拿到该
         // Location 的应用，键名再中性也是指纹（真实 Location 的 extras 不会长这样）。
         // 传感器侧改从标准字段（location.speed / location.bearing）取数，无需私有通路。
-        originLocation.extras?.let {
-            location.extras = it
-        }
+        // extras 只透传原始数据，不写任何模块自有键；但系统自带的卫星字段要改写——
+        // 位置伪造到户外后，真实环境（室内）的 satellites=0 会与位置矛盾。
+        location.extras = FakeLoc.sanitizeGnssExtras(originLocation.extras)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             if (originLocation.hasMslAltitude()) {

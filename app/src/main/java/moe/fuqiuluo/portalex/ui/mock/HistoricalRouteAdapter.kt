@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.textview.MaterialTextView
 import moe.fuqiuluo.portalex.R
@@ -18,6 +19,7 @@ class HistoricalRouteAdapter(
     ) : RecyclerView.ViewHolder(root) {
         val name: MaterialTextView = root.findViewById(R.id.name)
         val route: MaterialTextView = root.findViewById(R.id.desc)
+        val smoothDesc: TextView = root.findViewById(R.id.smooth_desc)
     }
 
     operator fun get(position: Int): HistoricalRoute {
@@ -46,6 +48,12 @@ class HistoricalRouteAdapter(
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         holder.name.text = dataSet[position].name
         holder.route.text = dataSet[position].route.toString()
+        val smooth = dataSet[position].smooth
+        holder.smoothDesc.text = if (smooth.isEmpty()) {
+            "平滑: 无"
+        } else {
+            "平滑: [" + smooth.joinToString(",") { if (it) "T" else "F" } + "]"
+        }
         holder.root.setOnClickListener {
             onItemClicked(dataSet[position], false)
         }

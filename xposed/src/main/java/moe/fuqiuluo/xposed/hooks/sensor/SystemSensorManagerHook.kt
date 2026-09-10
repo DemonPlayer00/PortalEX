@@ -34,12 +34,16 @@ import java.util.concurrent.atomic.AtomicInteger
  * → 按 handle→type 改写 values 为模拟值 → 投递应用。事件载体始终是真实回调数据，
  * 无主动注入/定时调度——回调在，模拟就在。
  *
- * 注入对象 = 步数 + 航向族（旋转 / 地磁 / 重力），被选中的用户应用永远收到虚拟数据：
+ * 注入对象 = 步数 + 航向族（旋转 / 地磁 / 重力 / 角速度），被选中的用户应用永远收到虚拟数据：
  * - 步数：移动中按速度 cadence 推进；静止时停留不增长。
  * - 航向族：旋转（ORIENTATION/ROTATION_VECTOR/GAME_ROTATION_VECTOR）、地磁
  *   （MAGNETIC_FIELD[_UNCALIBRATED]）、重力（GRAVITY）共用**同一虚拟方位**——
  *   App 用旋转传感器取方向、用 getRotationMatrix(gravity, magnetic) 合成指南针，
  *   两条路径得到一致结果，且不随真实设备转动/倾斜变化。
+ * - 角速度（GYROSCOPE[_UNCALIBRATED]）= 同一虚拟方位的变化率：方位平滑转弯时
+ *   输出短时角速度峰值、静止≈0——与旋转/地磁路径协调一致，App 航向融合
+ *   （陀螺仪积分 + 磁力计绝对方位）不会因「磁力计说在转弯、陀螺仪却说没动」
+ *   的冲突在信任切换时指针间歇大角度旋转。
  * - 无真实传感器时：getDefaultSensor/getSensorList/getFullSensorsList 暴露伪造步计数器。
  *
  * 模块层加工链（角度/方向，单一数据源，不依赖 App/系统端处理）：
@@ -59,6 +63,10 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object SystemSensorManagerHook {
     // ---- 传感器类型（Android Sensor.TYPE_*） ----
+    private const val TYPE_ACCELEROMETER = 1
+    private const val TYPE_ACCELEROMETER_UNCALIBRATED = 35
+    private const val TYPE_LINEAR_ACCELERATION = 10
+    private const val TYPE_GEOMAGNETIC_ROTATION_VECTOR = 20
     private const val TYPE_STEP_COUNTER = 19
     private const val TYPE_ORIENTATION = 3
     private const val TYPE_ROTATION_VECTOR = 11
@@ -66,12 +74,23 @@ object SystemSensorManagerHook {
     private const val TYPE_MAGNETIC_FIELD = 2
     private const val TYPE_MAGNETIC_FIELD_UNCALIBRATED = 14
     private const val TYPE_GRAVITY = 9
+    private const val TYPE_GYROSCOPE = 4
+    private const val TYPE_GYROSCOPE_UNCALIBRATED = 16
 
-    // 航向族：旋转（欧拉角/四元数）、地磁（矢量）、重力（合成航向的辅助输入，固定平放姿态）
-    // 是**同一虚拟方位的不同表现形式**，必须同 tick 注入——所有判断/调度只认这一个集合。
+    // 姿态输入族 + 航向族：旋转（欧拉角/四元数）、地磁（矢量）、重力（合成航向辅助输入，
+    // 固定平放姿态）、角速度（同一虚拟方位的运动学表现，积分=方位）、姿态输入
+    // （加速度计/线性加速度 = 同一平放虚拟姿态，供 getRotationMatrix(accel, mag) 融合）——
+    // 是**同一虚拟方位/姿态的不同表现形式**，必须同 tick 注入——所有判断/调度只认这一个集合。
+    // - 陀螺仪缺失时，App 航向融合会因「磁力计说在转弯、陀螺仪却说没动」冲突，信任切换时
+    //   指针间歇大角度旋转；同源注入后两条路径一致。
+    // - 加速度计缺失时（真实放行），getRotationMatrix(真实 accel 倾角, 注入 mag) 会把真实
+    //   设备姿态注入与虚拟方位矛盾，投影突变导致指针大角度旋转；模拟平放后全输入同源。
     private val HEADING_SENSOR_TYPES = setOf(
         TYPE_ORIENTATION, TYPE_ROTATION_VECTOR, TYPE_GAME_ROTATION_VECTOR,
-        TYPE_MAGNETIC_FIELD, TYPE_MAGNETIC_FIELD_UNCALIBRATED, TYPE_GRAVITY
+        TYPE_MAGNETIC_FIELD, TYPE_MAGNETIC_FIELD_UNCALIBRATED, TYPE_GRAVITY,
+        TYPE_GYROSCOPE, TYPE_GYROSCOPE_UNCALIBRATED,
+        TYPE_ACCELEROMETER, TYPE_ACCELEROMETER_UNCALIBRATED, TYPE_LINEAR_ACCELERATION,
+        TYPE_GEOMAGNETIC_ROTATION_VECTOR
     )
     // 注入集合 = 步数 + 航向族
     private val INJECTABLE_SENSOR_TYPES = HEADING_SENSOR_TYPES + TYPE_STEP_COUNTER
@@ -155,6 +174,19 @@ object SystemSensorManagerHook {
     private val magneticBiasX = kotlin.random.Random.nextDouble(-3.0, 3.0)
     private val magneticBiasY = kotlin.random.Random.nextDouble(-3.0, 3.0)
 
+    // 陀螺仪角速度真值：虚拟方位变化率（绕设备 Z 轴，rad/s）。
+    // 与磁力计/旋转族同源（同 tick 注入）：方位平滑转弯时角速度 = d(方位)/dt，
+    // 静止时 ≈0——符合真实陀螺仪连续输出。
+    // 虚拟方位按 20Hz 节拍跃迁推进，相邻事件角速度呈脉冲状，低通后接近真实连续曲线。
+    private const val GYRO_SMOOTH_ALPHA = 0.25
+    @Volatile private var lastAzimuthNanos = 0L
+    @Volatile private var lastAzimuthAngle = Double.NaN
+    @Volatile private var smoothGyroZ = 0.0
+    // 未校准陀螺仪 bias（估计漂移通道，rad/s）：真实设备 bias 漂移极慢，视作进程恒定常量
+    private val gyroDriftX = kotlin.random.Random.nextDouble(-0.008, 0.008)
+    private val gyroDriftY = kotlin.random.Random.nextDouble(-0.008, 0.008)
+    private val gyroDriftZ = kotlin.random.Random.nextDouble(-0.008, 0.008)
+
     /**
      * 扰动推进（趋近模型）：
      * - 移动：目标 = 步频同步摆动 + 手持微动（±1.5° 内概率重选，同款趋近）
@@ -181,7 +213,15 @@ object SystemSensorManagerHook {
      * （与扰动趋近同模型：骤变目标 → 平滑过渡）
      */
     private fun advanceBearing() {
-        smoothBearing += (bearingTarget - smoothBearing) * BEARING_APPROACH_ALPHA
+        // 方位角是环形量（0..360）：差值必须归一化到 [-180, 180] 走最短弧。
+        // 否则目标跨过 0/360 边界时（如 350°→10°）线性差值为 -340°，平滑方位会
+        // 朝反方向绕一大圈（340°）才到达目标——指针间歇大角度旋转的根因之一。
+        var delta = bearingTarget - smoothBearing
+        if (delta > 180.0) delta -= 360.0
+        if (delta < -180.0) delta += 360.0
+        smoothBearing += delta * BEARING_APPROACH_ALPHA
+        // 归一化回 [0, 360)，避免平滑方位自身越界（越界会再次放大差值误差）
+        smoothBearing = (smoothBearing % 360.0 + 360.0) % 360.0
     }
 
     private fun advanceSwing() {
@@ -263,7 +303,12 @@ object SystemSensorManagerHook {
      * 唯一运动学真值——旋转、地磁、合成航向全部从此派生；
      * 扰动目标骤变（状态切换/目标重选）时趋近值平滑过渡，无闪现。
      */
-    private fun virtualAzimuth(): Double = smoothBearing + jitterOffset
+    private fun virtualAzimuth(): Double {
+        // 输出归一化：偏移叠加可能越界（smoothBearing 近 360 + 正偏移 > 360），
+        // 越界值会让 App 的方位处理路径分裂（部分 App 归一、部分不归一）
+        val az = smoothBearing + jitterOffset
+        return (az % 360.0 + 360.0) % 360.0
+    }
 
     /**
      * 虚拟方位 → 各传感器的**表现形式**（同一数据源的一次派生）：
@@ -279,10 +324,47 @@ object SystemSensorManagerHook {
             TYPE_MAGNETIC_FIELD -> magneticVector(azimuth, uncalibrated = false)
             TYPE_MAGNETIC_FIELD_UNCALIBRATED -> magneticVector(azimuth, uncalibrated = true)
             TYPE_GRAVITY -> floatArrayOf(0f, 0f, 9.81f)
-            TYPE_ROTATION_VECTOR, TYPE_GAME_ROTATION_VECTOR -> rotationQuaternion(azimuth)
+            TYPE_ACCELEROMETER, TYPE_ACCELEROMETER_UNCALIBRATED -> {
+                // 平放姿态（同 GRAVITY）：消除真实加速度计倾角注入破坏融合投影
+                floatArrayOf(0f, 0f, 9.81f, 0f, 0f, 0f)
+            }
+            TYPE_LINEAR_ACCELERATION -> floatArrayOf(0f, 0f, 0f)
+            TYPE_ROTATION_VECTOR, TYPE_GAME_ROTATION_VECTOR,
+            TYPE_GEOMAGNETIC_ROTATION_VECTOR -> rotationQuaternion(azimuth)
+            TYPE_GYROSCOPE -> floatArrayOf(0f, 0f, gyroscopeZ())
+            TYPE_GYROSCOPE_UNCALIBRATED -> floatArrayOf(
+                0f, 0f, gyroscopeZ() + gyroDriftZ.toFloat(),
+                gyroDriftX.toFloat(), gyroDriftY.toFloat(), gyroDriftZ.toFloat()
+            )
             // 注入集合内每种类型都必须有显式数据源；遗漏宁可空数组（不发事件）也不静默套用四元数
             else -> FloatArray(0)
         }
+    }
+
+    /**
+     * 陀螺仪角速度（平放绕设备 Z 轴，rad/s）：虚拟方位变化率 d(azimuth)/dt。
+     *
+     * 每次陀螺仪事件采样：方位差 / 事件间隔（±180° 环绕处理），再低通趋近——
+     * 20Hz 方位节拍在任意事件频率下输出平滑的角速度曲线（转弯=短时角速度峰值，
+     * 静止≈0），与磁力计/旋转族的方位变化完全协调，App 航向融合无冲突。
+     */
+    private fun gyroscopeZ(): Float {
+        val azimuth = virtualAzimuth()
+        val now = System.nanoTime()
+        var raw = 0.0
+        if (!lastAzimuthAngle.isNaN()) {
+            val dt = (now - lastAzimuthNanos) / 1_000_000_000.0
+            if (dt > 0.0) {
+                var d = azimuth - lastAzimuthAngle
+                if (d > 180.0) d -= 360.0
+                if (d < -180.0) d += 360.0
+                raw = Math.toRadians(d) / dt
+            }
+        }
+        lastAzimuthNanos = now
+        lastAzimuthAngle = azimuth
+        smoothGyroZ += (raw - smoothGyroZ) * GYRO_SMOOTH_ALPHA
+        return smoothGyroZ.toFloat()
     }
 
     /** 朝向（欧拉角形式）：values[0] = 方位角（度，0=北，顺时针） */

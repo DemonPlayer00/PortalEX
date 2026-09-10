@@ -93,12 +93,8 @@ class RouteMockFragment : Fragment() {
             }
             rocker.setRockerListener(object : RockerView.Companion.OnMoveListener {
                 override fun onAngle(angle: Double) {
-                    val lm = locationManager
-                    if (lm != null) {
-                        MockServiceHelper.setBearing(lm, angle)
-                    }
-                    FakeLoc.bearing = angle
-                    FakeLoc.hasBearings = true
+                    // 自动播放中由路线切线控制朝向，手动摇杆不抢占
+                    handleRockerAngle(angle)
                 }
 
                 override fun onLockChanged(isLocked: Boolean) {
@@ -115,24 +111,11 @@ class RouteMockFragment : Fragment() {
                     rockerCoroutineController.resume()
                 }
             })
-            rocker.setRockerAutoListener(object : Rocker.Companion.OnAutoListener {
-                override fun onAutoPlay(isPlay: Boolean) {
-                    if (isPlay) {
-                        routeMockCoroutine.resume()
-                    } else {
-                        routeMockCoroutine.pause()
-                    }
-                }
-
-                override fun onAutoLock(isLock: Boolean) {
-
-                }
-            })
         }
 
         requireContext().selectRoute?.let {
             binding.mockRouteName.text = it.name
-            mockServiceViewModel.selectedRoute = it
+            mockServiceViewModel.selectRouteForPlayback(it)
         }
 
 
@@ -156,7 +139,8 @@ class RouteMockFragment : Fragment() {
                 Toast.makeText(requireContext(), "长按", Toast.LENGTH_SHORT).show()
             } else {
                 binding.mockRouteName.text = route.name
-                mockServiceViewModel.selectedRoute = route
+                // 选中路线 → 立即完整重置播放器（重选同一条也从头开始）
+                mockServiceViewModel.selectRouteForPlayback(route)
                 requireContext().selectRoute = route
 
                 val lm = mockServiceViewModel.locationManager

@@ -283,7 +283,26 @@ object MockServiceHelper {
         return updateLocation(locationManager, lat, lon, "=")
     }
 
-    fun updateLocation(locationManager: LocationManager, lat: Double, lon: Double, mode: String): Boolean {
+    /**
+     * 设置位置。[bearing] 非空时随位置显式下发朝向（自动播放的路线切线方向）——
+     * 系统侧直接采用，不走位移推算（弧长推进步长小，位移法 1m 门控会挡住朝向更新）。
+     */
+    fun setLocation(
+        locationManager: LocationManager,
+        lat: Double,
+        lon: Double,
+        bearing: Double?
+    ): Boolean {
+        return updateLocation(locationManager, lat, lon, "=", bearing)
+    }
+
+    fun updateLocation(
+        locationManager: LocationManager,
+        lat: Double,
+        lon: Double,
+        mode: String,
+        bearing: Double? = null
+    ): Boolean {
         if (!::randomKey.isInitialized) {
             return false
         }
@@ -292,6 +311,9 @@ object MockServiceHelper {
         rely.putDouble("lat", lat)
         rely.putDouble("lon", lon)
         rely.putString("mode", mode)
+        if (bearing != null) {
+            rely.putDouble("bearing", bearing)
+        }
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
@@ -325,6 +347,7 @@ object MockServiceHelper {
         rely.putBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
         rely.putBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
         rely.putInt("min_satellites", FakeLoc.minSatellites)
+        rely.putBoolean("loop_broadcast_location", context.loopBroadcastlocation)
         rely.putBoolean("enable_agps", FakeLoc.enableAGPS)
         rely.putBoolean("enable_nmea", FakeLoc.enableNMEA)
         rely.putBoolean("disable_request_geofence", FakeLoc.disableRequestGeofence)
@@ -345,19 +368,11 @@ object MockServiceHelper {
         if (!appContext.loopBroadcastlocation) return
 
         isRunning = true
-        var lastGpsResetTime = 0L
 
         loopThread = Thread {
             Log.d("MockServiceHelper", "loopBoardcast: Start")
             while (isRunning) {
                 try {
-                    // 每隔 15 秒重置一次 GPS 辅助数据，防止 HAL 超时停止回调
-                    val now = System.currentTimeMillis()
-                    if (now - lastGpsResetTime > 15000) {
-                        resetGpsProvider(locationManager)
-                        lastGpsResetTime = now
-                    }
-
                     broadcastLocation(locationManager)
                     Thread.sleep(delayTime)
                 } catch (e: InterruptedException) {
@@ -369,22 +384,6 @@ object MockServiceHelper {
             }
         }
         loopThread!!.start()
-    }
-
-    /**
-     * 重置 GPS 辅助数据，强制 HAL 冷启动
-     */
-    private fun resetGpsProvider(locationManager: LocationManager) {
-        try {
-            locationManager.sendExtraCommand(LocationManager.GPS_PROVIDER, "delete_aiding_data", null)
-            Thread.sleep(200)
-            // 可选：同时注入时间和星历辅助数据，加速恢复
-            locationManager.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_time_injection", null)
-            locationManager.sendExtraCommand(LocationManager.GPS_PROVIDER, "force_xtra_injection", null)
-            Log.i("MockServiceHelper", "执行 GPS 重置，防止 HAL 超时")
-        } catch (e: Exception) {
-            Log.e("MockServiceHelper", "GPS 重置失败", e)
-        }
     }
 
     private fun stopLoopBroadcastLocation(){

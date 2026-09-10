@@ -82,6 +82,9 @@ object RemoteCommandHandler {
                     FakeLoc.bearing = kotlin.random.Random.nextDouble(0.0, 360.0)
                 }
 
+                // 启动拉回：设备在室内无真实 GPS 回调时，目标应用会停在原有位置，
+                // 需手动摇杆/路线播放一次才到预定位置——这里 0.5s 后单次推送当前位置
+                scheduleInitialPullback()
                 return true
             }
             "stop" -> {
@@ -210,7 +213,15 @@ object RemoteCommandHandler {
                         return updateCoordinate(newLat, newLon, updateBearing = true)
                     }
                     "=" -> {
-                        return updateCoordinate(newLat, newLon, updateBearing = true)
+                        // 路线播放：方位随位置显式下发（路线切线）——弧长推进每 tick 位移
+                        // 仅约 0.2m，达不到位移法 1m 门控，靠位移推算会导致朝向永不更新。
+                        val explicitBearing =
+                            if (rely.containsKey("bearing")) rely.getDouble("bearing") else null
+                        return updateCoordinate(
+                            newLat, newLon,
+                            updateBearing = true,
+                            explicitBearing = explicitBearing
+                        )
                     }
                     "random" -> {
                         return updateCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0), updateBearing = true)
@@ -237,6 +248,7 @@ object RemoteCommandHandler {
                 val enableNMEA = rely.getBoolean("enable_nmea", FakeLoc.enableNMEA)
                 val disableRequestGeofence = rely.getBoolean("disable_request_geofence", FakeLoc.disableRequestGeofence)
                 val disableGetFromLocation = rely.getBoolean("disable_get_from_location", FakeLoc.disableGetFromLocation)
+                val loopBroadcastLocation = rely.getBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -252,6 +264,7 @@ object RemoteCommandHandler {
                 FakeLoc.enableNMEA = enableNMEA
                 FakeLoc.disableRequestGeofence = disableRequestGeofence
                 FakeLoc.disableGetFromLocation = disableGetFromLocation
+                FakeLoc.loopBroadcastLocation = loopBroadcastLocation
                 return true
             }
             "sync_config" -> {
@@ -274,6 +287,7 @@ object RemoteCommandHandler {
                 rely.putBoolean("hide_mock", FakeLoc.hideMock)
                 rely.putBoolean("hook_wifi", FakeLoc.hookWifi)
                 rely.putBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
+                rely.putBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
                 return true
             }
             "broadcast_location" -> {
@@ -326,14 +340,49 @@ object RemoteCommandHandler {
 //        return LocationServiceProxyHook.injectLocation(location, realLocation)
 //    }
 
+    /**
+     * 启动拉回（单次版反定位拉回）：模拟启动 0.5s 后主动推送一次当前位置。
+     *
+     * 模拟启动只是改写系统回调：若设备室内无真实 GPS 上报，目标应用会停在
+     * 原有位置，需手动摇杆/自动路线播放一次才能到预定位置。这里在启动后延迟
+     * 0.5s 单次 callOnLocationChanged，把位置立即拉到预定坐标。
+     * 仅在反定位拉回（loopBroadcastLocation）未开启时使用——开启时已有循环线程
+     * 周期广播，避免重复推送。stop 后延迟线程若才触发，callOnLocationChanged
+     * 内 injectLocation 会因 enable=false 原样返回，无害。
+     */
+    private fun scheduleInitialPullback() {
+        if (FakeLoc.loopBroadcastLocation) return
+        if (!FakeLoc.isSystemServerProcess) return
+        kotlin.concurrent.thread(name = "InitialPullback", isDaemon = true, start = true) {
+            try {
+                Thread.sleep(500)
+                LocationServiceHook.callOnLocationChanged()
+            } catch (_: InterruptedException) {
+                // 忽略中断
+            }
+        }
+    }
+
     /** 方向参考点（滚动）：累计位移达到 [BEARING_REF_MIN_DIST_M] 才重算方向，过滤逐点轨迹噪声 */
     @Volatile private var bearingRefLat = Double.NaN
     @Volatile private var bearingRefLon = Double.NaN
     private const val BEARING_REF_MIN_DIST_M = 3.0
 
-    private fun updateCoordinate(newLat: Double, newLon: Double, updateBearing: Boolean = false): Boolean {
+    private fun updateCoordinate(
+        newLat: Double,
+        newLon: Double,
+        updateBearing: Boolean = false,
+        explicitBearing: Double? = null
+    ): Boolean {
         if (newLat in -90.0..90.0 && newLon in -180.0..180.0) {
-            if (updateBearing) {
+            if (updateBearing && explicitBearing != null) {
+                // 显式方位（自动播放：App 侧按平滑路径算出切线方向）：直接采用，
+                // 不再走位移推算——步长小于位移法门控时朝向不会更新。
+                FakeLoc.setBearingSlew(explicitBearing)
+                FakeLoc.hasBearings = true
+                bearingRefLat = newLat
+                bearingRefLon = newLon
+            } else if (updateBearing) {
                 // 自动播放（update_location 路线推进）：按实际位移方向更新朝向。
                 // 路线播放是逐点跳点推进，直接用相邻两点方向会被密集点位 + 轨迹噪声
                 // 带得乱跳（表现为角度忽然随机转动），因此：

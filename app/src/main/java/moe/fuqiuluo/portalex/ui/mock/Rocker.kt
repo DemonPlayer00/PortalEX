@@ -43,7 +43,6 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
             playAuto(root.findViewById(R.id.rocker))
         }
     var autoLockStatus = false
-    var autoListener: OnAutoListener? = null
 
     init {
         layoutParams.flags = (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
@@ -99,7 +98,6 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
             } else {
                 root.findViewById<View>(R.id.auto_lock).setBackgroundResource(R.drawable.baseline_manual_24)
             }
-            autoListener?.onAutoLock(autoLockStatus)
         }
     }
 
@@ -112,7 +110,6 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
                 .setBackgroundResource(R.drawable.baseline_play_24)
             upController()
         }
-        autoListener?.onAutoPlay(autoStatus)
         rockerView.auto(autoStatus)
     }
     
@@ -154,10 +151,6 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
         rockerView.listener = listener
     }
 
-    fun setRockerAutoListener(listener: OnAutoListener) {
-        autoListener = listener
-    }
-
     fun invokeOnTouchEvent(joystickX: Float, joystickY: Float) {
         val rockerView = root.findViewById<RockerView>(R.id.rocker)
         // 模拟摇杆移动 调用onTouchEvent
@@ -170,7 +163,7 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
         val rockerView = root.findViewById<RockerView>(R.id.rocker)
         // 模拟摇杆移动 调用onTouchEvent
         rockerView.onTouchEvent(MotionEvent.obtain(1000, 1000, MotionEvent.ACTION_UP, 0f, 0f, 0))
-        rockerView.auto(true)
+        rockerView.auto(false)
     }
 
     override fun onTouch(v: View?, event: MotionEvent?): Boolean {
@@ -200,13 +193,5 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
             else -> {}
         }
         return false
-    }
-
-
-    companion object {
-        interface OnAutoListener {
-            fun onAutoPlay(isPlay: Boolean)
-            fun onAutoLock(isLock: Boolean)
-        }
     }
 }

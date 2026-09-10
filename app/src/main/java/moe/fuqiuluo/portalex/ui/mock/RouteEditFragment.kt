@@ -47,7 +47,6 @@ import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import java.math.BigDecimal
-import java.util.List
 import kotlin.random.Random
 
 
@@ -59,8 +58,20 @@ class RouteEditFragment : Fragment(), MapControlsHost {
     private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
 
     private var mPoints: ArrayList<Pair<Double, Double>> = arrayListOf()
+
+    /**
+     * 逐端点平滑标志（与 [mPoints] 等长）：mSmoothSegments[i] = 「端点 i 之后的线段
+     * （i → i+1）是否平滑」；最后一个端点没有后续线段（占位 false）。
+     */
+    private var mSmoothSegments: ArrayList<Boolean> = arrayListOf()
     private var isDrawing = false
     private var lastPoint: Pair<Double, Double>? = null
+
+    /** 平滑绘制开关（胶囊按钮控制）：打开时新绘制的线段标记为平滑（绿色） */
+    private var smoothDrawing = false
+
+    /** 当前注册在悬浮胶囊上的功能集（供选中态刷新） */
+    private var fabActions: List<FabBarView.Action> = emptyList()
 
 
     override fun onCreateView(
@@ -206,7 +217,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                 when (it.action) {
                     MotionEvent.ACTION_DOWN -> { // 新增 DOWN 事件处理
                         if (mPoints.size <= 0) {
-                            mPoints.add(currentPoint)
+                            appendPoint(currentPoint)
                         }
                         lastPoint = currentPoint
                     }
@@ -219,7 +230,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                     }
 
                     MotionEvent.ACTION_UP -> {
-                        mPoints.add(currentPoint)
+                        appendPoint(currentPoint)
                         lastPoint = null // 关键修改：重置起点
                     }
                 }
@@ -243,78 +254,111 @@ class RouteEditFragment : Fragment(), MapControlsHost {
     override fun onResume() {
         super.onResume()
 
-        // 注册悬浮胶囊功能集：路线模拟 = 开始绘制 / 撤回 / 完成 / 我的位置
+        // 注册悬浮胶囊功能集：路线模拟 = 开始绘制 / 平滑绘制 / 撤回 / 完成 / 我的位置
         // （胶囊为 Activity 级单实例，切换功能集自动重置收起态）
-        (activity as? MainActivity)?.fabBar?.setActions(
-            listOf(
-                FabBarView.Action(
-                    R.drawable.baseline_add_location_24,
-                    getString(R.string.fab_start_route)
-                ) {
-                    isDrawing = true
-                    mPoints = arrayListOf()
-                    lastPoint = null
-                },
-                FabBarView.Action(
-                    R.drawable.baseline_rollback_24,
-                    getString(R.string.rollback)
-                ) {
-                    if (mPoints.size > 0) {
-                        mPoints.removeAt(mPoints.size - 1)
-                        refresh()
-                    }
-                },
-                FabBarView.Action(
-                    R.drawable.baseline_complete_24,
-                    getString(R.string.fab_complete_route)
-                ) {
-                    isDrawing = false
-                    if (!showAddRouteDialog()) {
-                        Toast.makeText(requireContext(), "选择路线异常", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                FabBarView.Action(
-                    R.drawable.baseline_my_location_24,
-                    getString(R.string.follow_location)
-                ) {
-                    baiduMapViewModel.baiduMap.locateMe()
+        var smoothActionRef: FabBarView.Action? = null
+        val smoothAction = FabBarView.Action(
+            R.drawable.baseline_smooth_route_24,
+            getString(R.string.fab_smooth_draw),
+            smoothDrawing
+        ) {
+            smoothDrawing = !smoothDrawing
+            smoothActionRef?.active = smoothDrawing
+            // 仅刷新着色，不重建功能集——避免切换时胶囊意外收起
+            (activity as? MainActivity)?.fabBar?.refreshActionTints(fabActions)
+        }
+        smoothActionRef = smoothAction
+
+        fabActions = listOf(
+            FabBarView.Action(
+                R.drawable.baseline_add_location_24,
+                getString(R.string.fab_start_route)
+            ) {
+                isDrawing = true
+                mPoints = arrayListOf()
+                mSmoothSegments = arrayListOf()
+                lastPoint = null
+            },
+            smoothAction,
+            FabBarView.Action(
+                R.drawable.baseline_rollback_24,
+                getString(R.string.rollback)
+            ) {
+                removeLastPoint()
+                refresh()
+            },
+            FabBarView.Action(
+                R.drawable.baseline_complete_24,
+                getString(R.string.fab_complete_route)
+            ) {
+                isDrawing = false
+                if (!showAddRouteDialog()) {
+                    Toast.makeText(requireContext(), "选择路线异常", Toast.LENGTH_SHORT).show()
                 }
-            )
+            },
+            FabBarView.Action(
+                R.drawable.baseline_my_location_24,
+                getString(R.string.follow_location)
+            ) {
+                baiduMapViewModel.baiduMap.locateMe()
+            }
         )
+        (activity as? MainActivity)?.fabBar?.setActions(fabActions)
+    }
+
+    /** 追加端点：把「上一端点 → 新端点」线段的平滑标志记在上一端点索引上 */
+    private fun appendPoint(point: Pair<Double, Double>) {
+        if (mPoints.isNotEmpty()) {
+            while (mSmoothSegments.size < mPoints.size) mSmoothSegments.add(false)
+            mSmoothSegments[mPoints.size - 1] = smoothDrawing
+        }
+        mPoints.add(point)
+        mSmoothSegments.add(false) // 新端点：其后尚无线段
+    }
+
+    /** 撤回最后端点；新末位端点无线段，标志复位 */
+    private fun removeLastPoint() {
+        if (mPoints.isEmpty()) return
+        mPoints.removeAt(mPoints.size - 1)
+        if (mSmoothSegments.size > mPoints.size) {
+            mSmoothSegments.removeAt(mSmoothSegments.size - 1)
+        }
+        while (mSmoothSegments.size < mPoints.size) mSmoothSegments.add(false)
+        if (mSmoothSegments.isNotEmpty()) {
+            mSmoothSegments[mSmoothSegments.size - 1] = false
+        }
     }
 
     private fun refresh() {
         baiduMapViewModel.baiduMap.clear() // 清除之前的所有覆盖物
+        drawRecordedSegments()
+    }
 
-        // 绘制之前记录的点到点的线
+    /** 绘制已记录线段：按逐段平滑标志着色（平滑 = 绿色，普通 = 蓝色） */
+    private fun drawRecordedSegments() {
         for (i in 0 until mPoints.size - 1) {
             baiduMapViewModel.baiduMap.addOverlay(
                 PolylineOptions()
-                    .color(Color.argb(178, 0, 78, 255))
+                    .color(
+                        if (mSmoothSegments.getOrElse(i) { false }) HistoricalRoute.COLOR_SMOOTH
+                        else HistoricalRoute.COLOR_NORMAL
+                    )
                     .width(10)
-                    .points(List.of<LatLng>(mPoints[i].gcj02, mPoints[i + 1].gcj02))
+                    .points(listOf<LatLng>(mPoints[i].gcj02, mPoints[i + 1].gcj02))
             )
         }
     }
 
     private fun drawLine(start: Pair<Double, Double>, end: Pair<Double, Double>) {
         baiduMapViewModel.baiduMap.clear() // 清除之前的所有覆盖物
+        drawRecordedSegments()
 
-        // 绘制之前记录的点到点的线
-        for (i in 0 until mPoints.size - 1) {
-            baiduMapViewModel.baiduMap.addOverlay(
-                PolylineOptions()
-                    .color(Color.argb(178, 0, 78, 255))
-                    .width(10)
-                    .points(List.of<LatLng>(mPoints[i].gcj02, mPoints[i + 1].gcj02))
-            )
-        }
-
+        // 预览段与当前平滑开关同色，所见即所得
         baiduMapViewModel.baiduMap.addOverlay(
             PolylineOptions()
-                .color(Color.argb(178, 0, 78, 255))
+                .color(if (smoothDrawing) HistoricalRoute.COLOR_SMOOTH else HistoricalRoute.COLOR_NORMAL)
                 .width(10)
-                .points(List.of<LatLng>(start.gcj02, end.gcj02))
+                .points(listOf<LatLng>(start.gcj02, end.gcj02))
         )
     }
 
@@ -376,6 +420,13 @@ class RouteEditFragment : Fragment(), MapControlsHost {
 
         editRoute.setText(JSON.toJSONString(mPoints))
 
+        // 平滑数组编辑框：每个端点对应其后线段是否平滑，最后一个端点无线段（占位 false）
+        val editSmooth = dialogView.findViewById<TextInputEditText>(R.id.etRouteSmooth)
+        editSmooth.setText(
+            List(mPoints.size) { mSmoothSegments.getOrElse(it) { false } }
+                .joinToString(",") { if (it) "true" else "false" }
+        )
+
         val builder = MaterialAlertDialogBuilder(requireContext())
         builder.setTitle(null)
         val dialog = builder
@@ -425,9 +476,21 @@ class RouteEditFragment : Fragment(), MapControlsHost {
                     return true
                 }
 
+                // 解析平滑数组（容错：空 = 全不平滑；长度不足补 false；非法字符拒绝保存）
+                val smoothParsed = parseSmoothInput(editSmooth.text?.toString().orEmpty())
+                if (smoothParsed == null) {
+                    Toast.makeText(
+                        requireContext(),
+                        "平滑数组格式错误（true/false，逗号分隔）",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@setPositiveButton
+                }
+                val smooth = List(mPoints.size) { smoothParsed.getOrElse(it) { false } }
+
                 with(requireContext()) {
                     val routes = HistoricalRoute.parseList(jsonHistoricalRoutes)
-                    routes.add(HistoricalRoute(name, mPoints))
+                    routes.add(HistoricalRoute(name, mPoints, smooth))
                     jsonHistoricalRoutes = HistoricalRoute.listToJson(routes)
                 }
 
@@ -438,5 +501,25 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         dialog.shiftAboveIme(requireActivity().window.decorView)
 
         return true
+    }
+
+    /**
+     * 解析平滑数组文本：支持 `true,false` / `[true,false]` / `1,0` / `T,F`。
+     * 空文本 = 空列表（全不平滑）；任一元素非法返回 null。
+     */
+    private fun parseSmoothInput(text: String): List<Boolean>? {
+        val cleaned = text.trim().removePrefix("[").removeSuffix("]").trim()
+        if (cleaned.isEmpty()) return emptyList()
+        val result = mutableListOf<Boolean>()
+        for (item in cleaned.split(",")) {
+            result.add(
+                when (item.trim().lowercase()) {
+                    "true", "1", "t" -> true
+                    "false", "0", "f" -> false
+                    else -> return null
+                }
+            )
+        }
+        return result
     }
 }
