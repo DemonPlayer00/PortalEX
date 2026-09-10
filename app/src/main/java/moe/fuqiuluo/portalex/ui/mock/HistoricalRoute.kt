@@ -24,6 +24,12 @@ data class HistoricalRoute(
 
         /** 平滑线段颜色（编辑/预览一致） */
         val COLOR_SMOOTH = Color.argb(178, 0, 200, 83)
+
+        /**
+         * 预览段颜色（紫色）：端点尚未确定的那一段，仅路线编辑页使用。
+         * 抬手落地时会被换成对应段色（普通蓝 / 平滑绿）。
+         */
+        val COLOR_PREVIEW = Color.argb(178, 156, 39, 176)
         /**
          * 显式 JSON 读写。
          *
