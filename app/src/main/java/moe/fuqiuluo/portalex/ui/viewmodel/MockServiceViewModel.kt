@@ -80,6 +80,18 @@ class MockServiceViewModel : ViewModel() {
     }
 
     /**
+     * 清除选中路线（路线被删除等）：彻底重置播放器并关闭自动播放，
+     * 避免播放器继续持有已不存在的路线（幽灵路线）。
+     */
+    fun clearSelectedRoute() {
+        selectedRoute = null
+        resetPlayback(null)
+        if (::rocker.isInitialized) {
+            rocker.autoStatus = false
+        }
+    }
+
+    /**
      * 手动摇杆角度：自动播放中忽略——播放中方向由路线切线控制，
      * 否则两者互相抢占（表现出来就是「碰一下摇杆播放就乱了」）。
      */
@@ -102,6 +114,9 @@ class MockServiceViewModel : ViewModel() {
      */
     private fun buildPath(route: HistoricalRoute): List<PathPoint> {
         val points = route.route
+        // 端点不足 2 个构不成任何线段（脏数据/未绘制路线）→ 返回空路径；
+        // 调用方 resetPlayback 对空路径一律按「不可播放」处理，绝不抛异常。
+        if (points.size < 2) return emptyList()
         val path = mutableListOf<PathPoint>()
         fun append(p: Pair<Double, Double>, segment: Int) {
             val prev = path.lastOrNull()
@@ -214,6 +229,20 @@ class MockServiceViewModel : ViewModel() {
     var selectedRoute: HistoricalRoute? = null
 
     fun initRocker(activity: Activity): Rocker {
+        // Activity 被重建（深浅色切换、进程恢复等，ViewModel 会存活）后，旧 Rocker 仍
+        // 持有已销毁的 Activity 与它的 WindowManager——继续用它 addView 会抛
+        // BadTokenException。检测到换绑立即重建，并尽力恢复显示/自动播放状态。
+        if (::rocker.isInitialized && rocker.hostActivity !== activity) {
+            val wasStarted = rocker.isStart
+            val wasAutoPlaying = rocker.autoStatus
+            runCatching { rocker.hide() }
+                .onFailure { Log.e("MockServiceViewModel", "解绑旧悬浮摇杆失败", it) }
+            rocker = Rocker(activity)
+            if (wasStarted) {
+                runCatching { rocker.show() }
+                rocker.autoStatus = wasAutoPlaying
+            }
+        }
         if (!::rocker.isInitialized) {
             rocker = Rocker(activity)
         }

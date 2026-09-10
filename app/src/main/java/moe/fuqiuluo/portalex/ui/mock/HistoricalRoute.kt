@@ -41,22 +41,28 @@ data class HistoricalRoute(
 
         fun toJson(route: HistoricalRoute): String = route.toJsonObject().toJSONString()
 
-        /** 解析路线列表；脏数据跳过，绝不抛异常（保证页面可用）。 */
+        /**
+         * 解析路线列表；脏数据跳过，绝不抛异常（保证页面可用）。
+         *
+         * 注意：**逐条**都要容错——字段类型非法（如 `"route":"abc"`、`"first":"abc"`）
+         * 会在 [parseRoute] 内部抛 JSONException/NumberFormatException，只包顶层 parse
+         * 会让异常逃出并在 onBind/onCreateView 阶段崩溃。
+         */
         fun parseList(json: String): MutableList<HistoricalRoute> {
             if (json.isBlank()) return mutableListOf()
             val array = runCatching { JSONArray.parse(json) }.getOrNull() ?: return mutableListOf()
             val routes = mutableListOf<HistoricalRoute>()
             for (i in 0 until array.size) {
-                parseRoute(array[i])?.let { routes.add(it) }
+                runCatching { parseRoute(array[i]) }.getOrNull()?.let { routes.add(it) }
             }
             return routes
         }
 
-        /** 解析单条路线；解析失败返回 null。 */
+        /** 解析单条路线；解析失败返回 null（不抛异常）。 */
         fun parse(json: String): HistoricalRoute? {
             if (json.isBlank()) return null
             val element = runCatching { JSON.parse(json) }.getOrNull() ?: return null
-            return parseRoute(element)
+            return runCatching { parseRoute(element) }.getOrNull()
         }
 
         private fun parseRoute(element: Any?): HistoricalRoute? {
