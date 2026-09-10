@@ -393,8 +393,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
      * 胶囊钉在左下角，不同方向会从不同侧遮住列表：
      * - 竖屏：屏幕高，胶囊在下面 → 列表底部让出「胶囊高度 + 16dp」；
      * - 横屏：屏幕矮、横向有余量 → 改成列表左侧让出「胶囊宽度 + 16dp」，
-     *   不再吃竖向空间；同时把「历史路线」标题的左侧缩进拉到与列表卡片一致，
-     *   两者才在同一条竖线上。
+     *   不再吃竖向空间；同时把「历史路线」标题也跟过去，且保持与竖屏相同的
+     *   相对关系（比列表左缘再缩进 12dp，而不是与它齐平）。
      *
      * 本页也是 configChanges 下不重新 inflate 的页面，所以由
      * [FabBarAvoidanceHost] 在旋转时被 Activity 叫一次。
@@ -419,11 +419,14 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
             card.layoutParams = lp
         }
 
-        // 标题跟随列表：横屏对齐到让位后的卡片左边，竖屏回原缩进
+        // 标题跟随列表：横屏跟到让位后的卡片左边，竖屏回原缩进。
+        // 始终比卡片左缘再缩进「标题缩进 - 卡片基础边距」（= 12dp，即竖屏 20dp-8dp），
+        // 让标题与列表的相对关系在两种方向下保持一致。
         val label = _binding?.historicalRouteLabel ?: return
         val labelLp = label.layoutParams as? ViewGroup.MarginLayoutParams ?: return
-        val wantLabelStart = if (landscape) avoid
-        else resources.getDimensionPixelSize(R.dimen.history_label_margin)
+        val labelMargin = resources.getDimensionPixelSize(R.dimen.history_label_margin)
+        val labelOffset = labelMargin - base
+        val wantLabelStart = if (landscape) avoid + labelOffset else labelMargin
         if (labelLp.marginStart != wantLabelStart) {
             labelLp.marginStart = wantLabelStart
             label.layoutParams = labelLp
