@@ -8,7 +8,6 @@ import android.Manifest.permission.ACCESS_WIFI_STATE
 import android.Manifest.permission.CHANGE_WIFI_STATE
 import android.Manifest.permission.FOREGROUND_SERVICE
 import android.Manifest.permission.INTERNET
-import android.Manifest.permission.READ_PHONE_STATE
 import android.Manifest.permission.VIBRATE
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -106,7 +105,6 @@ class MainActivity : AppCompatActivity() {
             ACCESS_LOCATION_EXTRA_COMMANDS,
             ACCESS_WIFI_STATE,
             CHANGE_WIFI_STATE,
-            READ_PHONE_STATE,
             INTERNET,
             ACCESS_NETWORK_STATE,
             VIBRATE
@@ -147,7 +145,6 @@ class MainActivity : AppCompatActivity() {
             ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION -> "Portal需要完整位置权限"
             ACCESS_LOCATION_EXTRA_COMMANDS -> "Portal需要额外位置命令权限和系统交互"
             CHANGE_WIFI_STATE, ACCESS_WIFI_STATE -> "Portal需要访问Wi-Fi状态"
-            READ_PHONE_STATE -> "Portal需要读取设备信息"
             ACCESS_NETWORK_STATE, INTERNET -> "Portal需要访问网络"
             VIBRATE -> "Portal需要访问传感器"
             else -> "需要 $permission 才能运行"
@@ -334,7 +331,6 @@ class MainActivity : AppCompatActivity() {
                     ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION -> "Portal需要完整位置权限"
                     ACCESS_LOCATION_EXTRA_COMMANDS -> "Portal需要额外位置命令权限和系统交互"
                     CHANGE_WIFI_STATE, ACCESS_WIFI_STATE -> "Portal需要访问Wi-Fi状态"
-                    READ_PHONE_STATE -> "Portal需要读取设备信息"
                     ACCESS_NETWORK_STATE, INTERNET -> "Portal需要访问网络"
                     VIBRATE -> "Portal需要访问传感器"
                     else -> "需要 $permission 才能运行"
