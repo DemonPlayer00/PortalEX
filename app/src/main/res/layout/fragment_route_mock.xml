@@ -105,17 +105,19 @@
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
+            android:id="@+id/historical_route_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:layout_marginLeft="20dp"
-            android:layout_marginRight="20dp"
+            android:layout_marginStart="@dimen/history_label_margin"
+            android:layout_marginEnd="@dimen/history_label_margin"
             android:layout_marginBottom="4dp"
             android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:text="@string/history_route"/>
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/historical_route_card"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:layout_margin="8dp"
