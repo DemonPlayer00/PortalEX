@@ -90,6 +90,33 @@ usage threshold to prevent abuse and reduce impact. PortalEX will not release an
 usable installation packages (.apk). You must compile it yourself using tools such as
 Android Studio or Gradle. PortalEX will not provide tutorials unrelated to the project itself.
 
+## 用你自己的 fork 跑 CI（可选）
+
+本仓库不携带任何私有数据：没有签名证书，也没有百度 AK。fork 之后你跑的工作流会自己
+生成一把签名证书（存在该 fork 的 Actions 缓存里），并把申请 AK 需要的两行信息打印在
+Job Summary 里：
+
+| 项 | 来自哪里 |
+|:--|:--|
+| 应用包名 | `moe.fuqiuluo.portalex`（固定） |
+| 签名 SHA1 | 首次运行后出现在 Job Summary |
+
+流程：
+
+1. 在 fork 里跑一次 **Build Apks**（百度 AK 输入框留空）
+2. 打开该次运行的 **Job Summary**，抄下包名与签名 SHA1
+3. 到 [百度地图开放平台](https://lbsyun.baidu.com/) 建一个 **Android SDK** 应用，
+   填上面两行，勾选「地点检索」，申请 AK
+4. 再跑一次，把 AK 填进手动触发时的 `baidu_map_ak` 输入框
+5. 下载 Artifact 安装
+
+不给 AK 也能编译（地图会正常显示，因为瓦片走 CDN 不校验 AK），但**地点检索与逆地理
+会失效**。签名证书由工作流管理，缓存被清除后会重新生成，SHA1 随之改变，需要重新登记。
+
+> 本地直接用 `./gradlew :app:assembleArm64Debug` 编译是另一条路：用的是你机器上
+> `~/.android/debug.keystore` 的 SHA1，同样拿它去申请 AK 即可，全程不需要任何 Secret。
+> 详细说明见 [`docs/baidu-map-sdk.md`](docs/baidu-map-sdk.md)。
+
 # Thanks
 
 - [GoGoGo](https://github.com/ZCShou/GoGoGo)
