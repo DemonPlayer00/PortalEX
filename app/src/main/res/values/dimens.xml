@@ -5,5 +5,11 @@
     <dimen name="nav_header_vertical_spacing">8dp</dimen>
     <dimen name="nav_header_height">176dp</dimen>
     <dimen name="fab_margin">16dp</dimen>
+    <!-- 悬浮胶囊距「地图控件（内容区）左下角」的固定间距。
+         刻意不带方向/尺寸限定符：不论竖屏、横屏还是宽屏，胶囊与左下角的距离都
+         必须一样，不能因为屏幕长宽比变化而改值（旧实现用的是带限定符的
+         fab_margin，竖屏 16dp / 横屏 48dp，旋转后会停在旧方向的取值）。
+         本机 560dpi 下 16dp = 56px。见 FabBarView.recalibrate。 -->
+    <dimen name="fab_corner_margin">16dp</dimen>
     <dimen name="fab_sub_margin">8dp</dimen>
 </resources>

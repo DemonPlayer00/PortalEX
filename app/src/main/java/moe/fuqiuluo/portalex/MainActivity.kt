@@ -15,6 +15,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
@@ -589,6 +590,12 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
 
         mSuggestionSearch?.destroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 旋转后重新摆放悬浮胶囊：布局不会重新 inflate，边距会停在旧方向的取值
+        fabBar.recalibrate()
     }
 
     companion object {

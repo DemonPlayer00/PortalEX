@@ -43,13 +43,15 @@
         </ListView>
     </LinearLayout>
 
-    <!-- 悬浮胶囊条：全应用单实例，跨界面统一切换功能集（见 FabBarView） -->
+    <!-- 悬浮胶囊条：全应用单实例，跨界面统一切换功能集（见 FabBarView）。
+         距地图控件左下角的间距用无限定符的 fab_corner_margin：
+         不论竖屏横屏，与左下角的距离保持一致。 -->
     <moe.fuqiuluo.portalex.android.widget.FabBarView
         android:id="@+id/fab_bar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|start"
-        android:layout_marginStart="@dimen/fab_margin"
-        android:layout_marginBottom="@dimen/fab_margin" />
+        android:layout_marginStart="@dimen/fab_corner_margin"
+        android:layout_marginBottom="@dimen/fab_corner_margin" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
