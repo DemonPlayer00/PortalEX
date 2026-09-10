@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
+import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
@@ -63,7 +64,7 @@ object RemoteCommandHandler {
             }
             "start" -> {
                 val speed = rely.getDouble("speed", FakeLoc.speed)
-                val altitude = rely.getDouble("altitude", FakeLoc.offset_altitude)
+                val altitude = rely.getDouble("altitude", FakeLoc.altitude)
                 val accuracy = rely.getFloat("accuracy", FakeLoc.accuracy)
 
                 FakeLoc.enable = true
@@ -154,6 +155,16 @@ object RemoteCommandHandler {
                 val bearing = rely.getDouble("bearing", 0.0)
                 FakeLoc.bearing = bearing
                 FakeLoc.hasBearings = true
+                // 朝向变了就立刻投一帧：摇杆只转向不位移时，若不投递，应用侧要等保活补帧
+                // （1.2s）才看到新朝向——就是"转了半天不动，然后跳一下"。
+                // 限流 80ms（≈12Hz）：摇杆拖动事件可达 60Hz，逐事件推流既浪费又异常。
+                val nowNanos = SystemClock.elapsedRealtimeNanos()
+                if (FakeLoc.isSystemServerProcess &&
+                    nowNanos - lastBearingPushNanos >= BEARING_PUSH_MIN_INTERVAL_NANOS
+                ) {
+                    lastBearingPushNanos = nowNanos
+                    LocationServiceHook.callOnLocationChanged(force = true)
+                }
                 return true
             }
             "move" -> {
@@ -320,6 +331,19 @@ object RemoteCommandHandler {
         }
     }
 
+    /**
+     * 配置镜像入口：把另一进程同步来的坐标走**唯一落点入口**写入。
+     * 供 BaseDivineService.syncConfig 使用——直写 FakeLoc.latitude/longitude 会绕过
+     * 位移记录（速度推算/静止检测的数据源），构成同一节点的第二条入边。
+     */
+    fun applySyncedCoordinate(lat: Double, lon: Double) {
+        updateCoordinate(lat, lon)
+    }
+
+    /** 朝向变化推流的最小间隔：摇杆拖动事件很密，限到 ~12Hz 足够平滑且不异常 */
+    private const val BEARING_PUSH_MIN_INTERVAL_NANOS = 80_000_000L
+    @Volatile private var lastBearingPushNanos = 0L
+
     /** 方向参考点（滚动）：累计位移达到 [BEARING_REF_MIN_DIST_M] 才重算方向，过滤逐点轨迹噪声 */
     @Volatile private var bearingRefLat = Double.NaN
     @Volatile private var bearingRefLon = Double.NaN
@@ -335,16 +359,15 @@ object RemoteCommandHandler {
             if (updateBearing && explicitBearing != null) {
                 // 显式方位（自动播放：App 侧按平滑路径算出切线方向）：直接采用，
                 // 不再走位移推算——步长小于位移法门控时朝向不会更新。
-                FakeLoc.setBearingSlew(explicitBearing)
+                // 直接写权威目标：平滑过渡由位置端输出（processedBearing 的中轴低通）完成
+                FakeLoc.bearing = (explicitBearing % 360.0 + 360.0) % 360.0
                 FakeLoc.hasBearings = true
                 bearingRefLat = newLat
                 bearingRefLon = newLon
             } else if (updateBearing) {
-                // 自动播放（update_location 路线推进）：按实际位移方向更新朝向。
-                // 路线播放是逐点跳点推进，直接用相邻两点方向会被密集点位 + 轨迹噪声
-                // 带得乱跳（表现为角度忽然随机转动），因此：
-                // ① 用滚动参考点（累计位移 ≥ 3m 才重算方向，方向基线更长更稳定）
-                // ② 再经转向速率限制（setBearingSlew），噪声不会瞬间改朝向
+                // 按实际位移方向更新朝向（权威目标）。路线播放是逐点跳点推进，直接用相邻
+                // 两点方向会被密集点位 + 轨迹噪声带得乱跳，因此用**滚动参考点**（累计位移
+                // ≥ 3m 才重算方向，基线更长更稳定）；输出端的中轴低通再负责平滑过渡。
                 val dLat = newLat - FakeLoc.latitude
                 val dLon = newLon - FakeLoc.longitude
                 // 近似距离（米）：1° 纬度 ≈ 111.32km，经度按 cos(纬度) 折算
@@ -360,8 +383,8 @@ object RemoteCommandHandler {
                         (newLon - bearingRefLon) * Math.cos(Math.toRadians(newLat))
                     ) * 111320.0
                     if (refDistM >= BEARING_REF_MIN_DIST_M) {
-                        FakeLoc.setBearingSlew(
-                            FakeLoc.calculateBearing(bearingRefLat, bearingRefLon, newLat, newLon)
+                        FakeLoc.bearing = FakeLoc.calculateBearing(
+                            bearingRefLat, bearingRefLon, newLat, newLon
                         )
                         // 已有明确朝向：避免下次 start 重新随机分配（角度忽然换向）
                         FakeLoc.hasBearings = true

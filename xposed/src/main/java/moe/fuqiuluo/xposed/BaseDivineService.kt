@@ -103,8 +103,12 @@ abstract class BaseDivineService {
         rely.putString("command_id", "sync_config")
         if(locationManager.sendExtraCommand("portal", randomKey, rely)) {
             FakeLoc.enable = rely.getBoolean("enable", FakeLoc.enable)
-            FakeLoc.latitude = rely.getDouble("latitude", FakeLoc.latitude)
-            FakeLoc.longitude = rely.getDouble("longitude", FakeLoc.longitude)
+            // 坐标不再直写：走**唯一落点入口**（记录位移历史，供速度推算/静止检测使用）。
+            // 直写会让坐标节点多出一条绕过记录的入边（同一节点两个写者）。
+            RemoteCommandHandler.applySyncedCoordinate(
+                rely.getDouble("latitude", FakeLoc.latitude),
+                rely.getDouble("longitude", FakeLoc.longitude)
+            )
             // 默认值用 altitude 本体：offset_altitude 是带随机抖动的 getter，每次求值都不同
             FakeLoc.altitude = rely.getDouble("altitude", FakeLoc.altitude)
             FakeLoc.speed = rely.getDouble("speed", FakeLoc.speed)

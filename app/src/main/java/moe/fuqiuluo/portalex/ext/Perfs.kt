@@ -109,7 +109,8 @@ var Context.speed: Double
     }
 
 var Context.altitude: Double
-    get() = sharedPrefs.getFloat("altitude", FakeLoc.offset_altitude.toFloat()).toDouble()
+    // 默认值取配置高度本体：offset_altitude 是每帧重新掷骰的注入抖动，不该当默认值
+    get() = sharedPrefs.getFloat("altitude", FakeLoc.altitude.toFloat()).toDouble()
     set(value) = sharedPrefs.edit {
         putFloat("altitude", value.toFloat())
     }

@@ -57,8 +57,10 @@ import java.util.concurrent.atomic.AtomicInteger
  *   位置回调 bearing → bearingTarget（权威目标，允许骤变）
  *     → advanceBearing()：smoothBearing 平滑趋近（低通，~0.75s —— **唯一的一级方位低通**；
  *       位置侧 FakeLoc.processedBearing 只叠加小扰动，不再做第二级低通）
- *     → advanceJitter()：jitterOffset 平滑扰动（静止 ±3°、移动 = 步频摆动 + 手持微动）
- *     → virtualAzimuth() = smoothBearing + jitterOffset（唯一输出）
+ *   位置帧 bearing = 位置端生成器的**帧频段**（平滑中轴 + 漂移 + 微抖，不含摆动）
+ *     → advanceBearing()：smoothBearing = 对该帧值的跟随低通（τ≈0.25s）
+ *     → virtualAzimuth() = smoothBearing + 位置端生成器的**快频段**（±3° 往复摆动 + 微抖，
+ *       按传感器事件率取样：FakeLoc.sampleBearingJitter）
  *     → sensorValuesFor(type)：欧拉角 / 四元数 / 地磁矢量 / 重力常量
  *   加工节拍 = 事件驱动（每事件一次，按 Δt 缩放；见 advanceMotionForEvent）。
  * - 步频 cadence(步/min) = (60 + 30*speed) * 1.15，限幅 60..220（慢走 1.2m/s→110，3.5→189，慢跑 3.0→172）。
@@ -75,6 +77,7 @@ object SystemSensorManagerHook {
     private const val TYPE_LINEAR_ACCELERATION = 10
     private const val TYPE_GEOMAGNETIC_ROTATION_VECTOR = 20
     private const val TYPE_STEP_COUNTER = 19
+    private const val TYPE_STEP_DETECTOR = 18
     private const val TYPE_ORIENTATION = 3
     private const val TYPE_ROTATION_VECTOR = 11
     private const val TYPE_GAME_ROTATION_VECTOR = 15
@@ -100,7 +103,9 @@ object SystemSensorManagerHook {
         TYPE_GEOMAGNETIC_ROTATION_VECTOR
     )
     // 注入集合 = 步数 + 航向族
-    private val INJECTABLE_SENSOR_TYPES = HEADING_SENSOR_TYPES + TYPE_STEP_COUNTER
+    // 注入集合 = 步数（计数器 + 检测器，两者必须同源：计数器在涨而检测器不响会被交叉比对）+ 航向族
+    private val INJECTABLE_SENSOR_TYPES =
+        HEADING_SENSOR_TYPES + TYPE_STEP_COUNTER + TYPE_STEP_DETECTOR
 
     // sensor handle -> sensor type（dispatchSensorEvent 只提供 handle）
     private val sensorHandleTypeMap = ConcurrentHashMap<Int, Int>()
@@ -121,8 +126,9 @@ object SystemSensorManagerHook {
     private var stepFraction = 0.0
     @Volatile private var lastStepAdvanceNanos = 0L
 
-    // 伪造的步计数传感器（无真实传感器时暴露给 App）
+    // 伪造的步数传感器（无真实传感器时暴露给 App）：计数器 19 + 检测器 18
     private var fakeStepSensor: Sensor? = null
+    private var fakeStepDetectorSensor: Sensor? = null
 
     // 运动学输入缓存（m/s | 度 | 是否移动中）——由应用注册的监听器回调同步（标准字段）。
     // 初值取配置速度（FakeLoc.speed）：旧实现写死 1.5，与配置默认 3.05 不一致。
@@ -137,40 +143,14 @@ object SystemSensorManagerHook {
     @Volatile private var lastSyncLat = Double.NaN
     @Volatile private var lastSyncLon = Double.NaN
 
-    // 扰动平滑（趋近模型）：真实设备传感器从未完全静止（手部微颤/环境噪声），
-    // 且姿态有惯性——角度不会瞬时跳变。
-    // 实现 = 目标值 jitterTarget + 趋近值 jitterOffset：
-    // 每 tick 按比例向目标趋近（低通），目标骤变（状态切换/目标重选/摆动更新）
-    // 时趋近值平滑过渡到目标——不闪现、不跳变（修掉此前"左右摇摆一次后闪现"）。
-    // - 静止：目标每 tick 以 12.5% 概率在 ±3° 内重选（平均每 ~0.4s 换目标，
-    //   平滑扫动覆盖 ±3°——修掉此前"晃动不超过 1°"的过小问题）
-    // - 移动：目标 = 步频同步摆动（±5~6° 余弦波）+ 每 tick ±1.5° 手持微动叠加
-    private const val JITTER_IDLE_AMP = 0.6        // 静止扰动幅度（±0.6°：只防“针死住”，不掩盖过渡）
-    private const val JITTER_MOVING_AMP = 0.25     // 移动叠加扰动幅度（手持微动；与摆动合计 ≤ ~1.2°）
-    /** 弱摆动幅度（方案 B）：0.7 + 0.04*speed（3.5m/s → 0.84°），与手持微动合计 ≤ ~1.2° */
-    private const val SWING_AMP_BASE = 0.7
-    private const val SWING_AMP_PER_SPEED = 0.04
-    private const val JITTER_APPROACH_ALPHA = 0.35 // 趋近系数：每 tick 向目标靠近比例（20Hz → ~0.4s 收敛）
-    private const val JITTER_RETARGET_PROB = 0.125 // 每 tick 重选目标概率（平均 0.4s 一次，静止/移动同款）
-    private const val BEARING_APPROACH_ALPHA = 0.2 // 方位趋近系数：每 tick 向目标靠近 20%（20Hz → ~0.75s 平滑转弯）
-    @Volatile private var jitterTarget = 0.0       // 扰动目标（状态源，允许骤变）
-    @Volatile private var jitterOffset = 0.0       // 注入用趋近值（向目标平滑过渡）
-    @Volatile private var jitterHandTarget = 0.0   // 手持微动目标（移动时 ±1.5° 内概率重选，同款趋近模型）
-
-    // 朝向摆动（蜜罐规避）：平滑曲线（余弦波）往复。当前为**弱摆动**档
-    // （0.7 + 0.04*speed ≈ 0.84°，与手持微动合计 ≤ ~1.2°）——不再盖住方位过渡。
-    // 注意：旧注释里的「5.0 + 0.35*speed / 范围中心 ±0.5° / ±5~6°」是已废弃的强摆动档，
-    //      别照着改回来。
-    // - 中轴（注入方位）= 平滑朝向 smoothBearing（向权威目标 bearingTarget 趋近，
-    //   摇杆转向/路线转弯时平滑过渡而非瞬跳）；注入值 = 中轴 + 扰动 offset
-    // - 波峰→波谷（或反过来）为一个更新点：半周期完成时峰谷交替，朝另一边随机抽取目标幅度
-    // - 半周期持续时间 = 每一步的时间间隔（步数推进时按步分摊记录）
-    // - 曲线平滑：swingOffset = side * amp * cos(π * phase)，半周期内从峰到谷
-    @Volatile private var swingOffset = 0.0
-    @Volatile private var swingSide = 1.0          // 当前峰值所在侧（+1/-1）
-    @Volatile private var swingAmp = SWING_AMP_BASE // 当前目标峰值幅度（SWING_AMP_BASE ±0.1）
-    @Volatile private var swingPhaseStartNanos = System.nanoTime()
-    @Volatile private var swingHalfPeriodNanos = 500_000_000L // 半周期时长（初始 500ms）
+    // 朝向的两条来源（都由**位置端**定义，本进程只取用，不产生任何随机/摆动）：
+    //   ① 中轴：随位置帧到达（位置端已做 τ=0.45s 低通）→ 本进程再跟随一次低通，
+    //      把离散帧插值成连续曲线（τ ≈ 0.25s：既平滑，又不至于把转向拖太久）；
+    //   ② 快频段（±3° 随机往复摆动 + 微抖）：本进程按**传感器事件率**向同一生成器取样
+    //      （FakeLoc.sampleBearingJitter）。帧里不含它，故不存在叠加两次。
+    // 为什么摆动必须按事件率取：位置帧间隔由应用请求/保活决定（实测静止 1.5s），
+    // 1.5s 的采样率承载 1~1.4Hz 摆动只会变成"跳一次、锁住、再跳"（已实测复现）。
+    private const val BEARING_APPROACH_ALPHA = 0.18  // 每 50ms tick 靠近 18% → τ ≈ 0.25s
 
     // 虚拟世界环境（每进程仅生成一次——世界固有属性，不是每 tick 重新掷骰）：
     // 所有航向族传感器读到的都是**同一个虚拟世界**的同一磁场：
@@ -196,27 +176,6 @@ object SystemSensorManagerHook {
     private val gyroDriftZ = kotlin.random.Random.nextDouble(-0.008, 0.008)
 
     /**
-     * 扰动推进（趋近模型）：
-     * - 移动：目标 = 步频摆动（±0.84°）+ 手持微动（±0.25°）
-     * - 静止：目标按概率在 ±0.6° 内重选
-     * - 幅度必须远小于角度过渡幅度，否则指针看上去只是“原地抖”（过渡被掩没）
-     */
-    private fun advanceJitter(dtSec: Double) {
-        val retarget = probForDelta(dtSec, JITTER_RETARGET_PROB)
-        if (movingCache) {
-            // 移动（摇杆/自动播放）：目标 = 步频摆动 + 手持微动（幅度已压低）
-            // 手持微动与静止同款（概率重选 + 趋近）：低频平滑扫动而非高频噪声
-            if (kotlin.random.Random.nextDouble() < retarget) {
-                jitterHandTarget = kotlin.random.Random.nextDouble(-JITTER_MOVING_AMP, JITTER_MOVING_AMP)
-            }
-            jitterTarget = swingOffset + jitterHandTarget
-        } else if (kotlin.random.Random.nextDouble() < retarget) {
-            jitterTarget = kotlin.random.Random.nextDouble(-JITTER_IDLE_AMP, JITTER_IDLE_AMP)
-        }
-        jitterOffset += (jitterTarget - jitterOffset) * alphaForDelta(dtSec, JITTER_APPROACH_ALPHA)
-    }
-
-    /**
      * 方位平滑（趋近）：摇杆转向/自动播放路线转弯时 bearingTarget 骤变，
      * smoothBearing 向目标趋近——角度传感器/指南针平滑转弯而非瞬跳。
      */
@@ -230,30 +189,9 @@ object SystemSensorManagerHook {
         smoothBearing = (smoothBearing % 360.0 + 360.0) % 360.0
     }
 
-    private fun advanceSwing(dtSec: Double) {
-        // 摆动状态机仅移动时推进；移动→静止的摆动残余由趋近平滑（advanceJitter）接管，
-        // 平滑过渡到静止微动目标——不再“左右摇摆一次后闪现”
-        if (!movingCache) return
-        val now = System.nanoTime()
-        var elapsed = now - swingPhaseStartNanos
-        if (elapsed >= swingHalfPeriodNanos) {
-            // 更新点：峰谷交替，朝另一边随机抽取目标幅度
-            // 幅度与速度联动（越快摆动越大）：中心 = SWING_AMP_BASE + SWING_AMP_PER_SPEED*speed
-            swingSide = -swingSide
-            val swingCenter = SWING_AMP_BASE + SWING_AMP_PER_SPEED * speedCache
-            swingAmp = kotlin.random.Random.nextDouble(swingCenter - 0.1, swingCenter + 0.1)
-            swingPhaseStartNanos = now
-            elapsed = 0
-        }
-        val phase = (elapsed.toDouble() / swingHalfPeriodNanos).coerceIn(0.0, 1.0)
-        swingOffset = swingSide * swingAmp * Math.cos(Math.PI * phase)
-    }
-
-    /** 推进全部运动学量（[dtSec] = 距上次推进时长） */
+    /** 推进运动学量（[dtSec] = 距上次推进时长）：只平滑权威方位，扰动另行叠加 */
     private fun advanceMotion(dtSec: Double) {
-        advanceSwing(dtSec)
         advanceBearing(dtSec)
-        advanceJitter(dtSec)
     }
 
     /**
@@ -277,30 +215,11 @@ object SystemSensorManagerHook {
         return 1.0 - Math.pow(1.0 - alphaPerTick, ticks)
     }
 
-    /** 「每 tick 的概率」→「时长 dtSec 的等效概率」 */
-    private fun probForDelta(dtSec: Double, probPerTick: Double): Double {
-        if (dtSec <= 0.0) return 0.0
-        val ticks = (dtSec / TICK_SEC).coerceIn(0.0, 8.0)
-        return 1.0 - Math.pow(1.0 - probPerTick, ticks)
-    }
-
     /**
      * 记录**每一步**的时间间隔（秒）：摆动半周期与步频同步。
      * 传入的是本间隔 / 本段步数——交付间隔变长后若直接拿交付间隔当步间隔，
      * 摆频会被拉长数倍（角度摆动明显变慢），这就是把间隔参数带进计算的第二个修正点。
      */
-    /**
-     * 记录**每一步**的时间间隔（秒）：摆动半周期与步频同步。
-     * 传入的是本间隔 / 本段步数——交付间隔变长后若直接拿交付间隔当步间隔，
-     * 摆频会被拉长数倍（角度摆动明显变慢）。
-     */
-    private fun onStepAdvance(perStepSec: Double) {
-        val intervalNanos = (perStepSec * 1_000_000_000.0).toLong()
-        if (intervalNanos in 100_000_000L..3_000_000_000L) {
-            swingHalfPeriodNanos = intervalNanos
-        }
-    }
-
     // 运动学推进：事件驱动（见 advanceMotionForEvent）；TICK_SEC = 旧实现固定节拍，
     // 只用于把「每 tick 的比例/概率」折算成任意 dt 的等效值
     private const val TICK_SEC = 0.05
@@ -331,14 +250,13 @@ object SystemSensorManagerHook {
         cadenceForSpeed(speed) / 60.0 * intervalSec
 
     /**
-     * **虚拟方位数据源**：模拟 bearing + 趋近平滑扰动（jitterOffset）。
-     * 唯一运动学真值——旋转、地磁、合成航向全部从此派生；
-     * 扰动目标骤变（状态切换/目标重选）时趋近值平滑过渡，无闪现。
+     * **虚拟方位数据源**：跟随帧得到的中轴 + 位置端生成器按事件率取样出的 ±3° 往复摆动。
+     * 唯一运动学真值——旋转、地磁、合成航向全部从此派生。
      */
     private fun virtualAzimuth(): Double {
-        // 输出归一化：偏移叠加可能越界（smoothBearing 近 360 + 正偏移 > 360），
-        // 越界值会让 App 的方位处理路径分裂（部分 App 归一、部分不归一）
-        val az = smoothBearing + jitterOffset
+        // 中轴来自帧（位置端），摆动向位置端生成器按事件率取样——本进程不产生任何随机量
+        val az = smoothBearing + FakeLoc.sampleBearingJitter()
+        // 归一化：越界值会让 App 的方位处理路径分裂（部分 App 归一、部分不归一）
         return (az % 360.0 + 360.0) % 360.0
     }
 
@@ -443,6 +361,11 @@ object SystemSensorManagerHook {
 
     @SuppressLint("SoonBlockedPrivateApi")
     private fun createFakeStepSensor() {
+        fakeStepSensor = buildFakeStepSensor("Step Counter Sensor", TYPE_STEP_COUNTER)
+        fakeStepDetectorSensor = buildFakeStepSensor("Step Detector Sensor", TYPE_STEP_DETECTOR)
+    }
+
+    private fun buildFakeStepSensor(displayName: String, sensorType: Int): Sensor? {
         try {
             val sensorClass = Class.forName("android.hardware.Sensor")
             val constructor = sensorClass.getDeclaredConstructor()
@@ -450,7 +373,7 @@ object SystemSensorManagerHook {
             val sensor = constructor.newInstance() as Sensor
             sensorClass.getDeclaredField("mType").apply {
                 isAccessible = true
-                setInt(sensor, TYPE_STEP_COUNTER)
+                setInt(sensor, sensorType)
             }
 
             fun setField(name: String, value: Any) {
@@ -468,8 +391,12 @@ object SystemSensorManagerHook {
                 }
             }
 
-            setField("mName", "Step Counter Sensor")
-            setField("mStringType", "android.sensor.step_counter")
+            setField("mName", displayName)
+            setField(
+                "mStringType",
+                if (sensorType == TYPE_STEP_DETECTOR) "android.sensor.step_detector"
+                else "android.sensor.step_counter"
+            )
             setField("mMaxRange", Float.MAX_VALUE)
             setField("mResolution", 1f)
             setField("mVendor", "Google Inc.")
@@ -484,9 +411,10 @@ object SystemSensorManagerHook {
             setField("mId", System.identityHashCode(sensor))
             setField("mHandle", System.identityHashCode(sensor))
 
-            fakeStepSensor = sensor
+            return sensor
         } catch (t: Throwable) {
             XposedBridge.log("[Portal] create fake step sensor failed: ${t.message}")
+            return null
         }
     }
 
@@ -500,14 +428,17 @@ object SystemSensorManagerHook {
 
         fun exposeSensorInList(result: Any?, type: Int) {
             val list = result as? MutableList<Sensor> ?: return
-            if (type == TYPE_STEP_COUNTER || type == Sensor.TYPE_ALL) {
-                if (!list.any { it.type == TYPE_STEP_COUNTER }) {
-                    fakeStepSensor?.let {
-                        list.add(it)
-                        if (FakeLoc.enableDebugLog) Logger.debug("injected fake step sensor into list")
+            fun addIfMissing(sensor: Sensor?, sensorType: Int) {
+                if (sensor == null) return
+                if (type == sensorType || type == Sensor.TYPE_ALL) {
+                    if (!list.any { it.type == sensorType }) {
+                        list.add(sensor)
+                        if (FakeLoc.enableDebugLog) Logger.debug("injected fake step sensor($sensorType) into list")
                     }
                 }
             }
+            addIfMissing(fakeStepSensor, TYPE_STEP_COUNTER)
+            addIfMissing(fakeStepDetectorSensor, TYPE_STEP_DETECTOR)
         }
 
         cSystemSensorManager?.declaredMethods?.filter {
@@ -515,8 +446,12 @@ object SystemSensorManagerHook {
         }?.forEach { m ->
             m.onceHook(afterHook {
                 val type = args[0] as Int
-                if (type == TYPE_STEP_COUNTER && result == null) {
-                    result = fakeStepSensor
+                if (result == null) {
+                    result = when (type) {
+                        TYPE_STEP_COUNTER -> fakeStepSensor
+                        TYPE_STEP_DETECTOR -> fakeStepDetectorSensor
+                        else -> null
+                    }
                 }
             })
         }
@@ -546,7 +481,13 @@ object SystemSensorManagerHook {
                 m.onceHook(afterHook {
                     val type = args[0] as Int
                     when (m.name) {
-                        "getDefaultSensor" -> if (type == TYPE_STEP_COUNTER && result == null) result = fakeStepSensor
+                        "getDefaultSensor" -> if (result == null) {
+                            result = when (type) {
+                                TYPE_STEP_COUNTER -> fakeStepSensor
+                                TYPE_STEP_DETECTOR -> fakeStepDetectorSensor
+                                else -> null
+                            }
+                        }
                         "getSensorList" -> exposeSensorInList(result, type)
                     }
                 })
@@ -578,8 +519,9 @@ object SystemSensorManagerHook {
                             val handle = XposedHelpers.callMethod(sensor, "getHandle") as? Int
                             if (handle != null) sensorHandleTypeMap[handle] = sensor.type
                         }
-                        // 步数：记录 listener——on-change 类型无持续回调，改由位置回调驱动投递
-                        if (sensor.type == TYPE_STEP_COUNTER) {
+                        // 步数（计数器/检测器）：记录 listener——on-change 类型无持续回调，
+                        // 改由位置回调驱动投递（两者共用同一步事件源，不会互相矛盾）
+                        if (sensor.type == TYPE_STEP_COUNTER || sensor.type == TYPE_STEP_DETECTOR) {
                             val listener = args.firstOrNull { it is SensorEventListener } as? SensorEventListener
                             val handler = args.firstOrNull { it is Handler } as? Handler
                             if (listener != null) stepListeners.add(StepListener(listener, handler, sensor))
@@ -636,9 +578,14 @@ object SystemSensorManagerHook {
             addSampleNoise(type, values)
             return
         }
+        if (type == TYPE_STEP_DETECTOR) {
+            // 步检测器：每步一次，值恒为 1.0（检测语义），与步数计数器的推进严格同源
+            values[0] = 1.0f
+            return
+        }
         if (type != TYPE_STEP_COUNTER) return
 
-        // 步数：真实事件（on-change，设备走路时才有）只改写为模拟真值
+        // 步数计数器：真实事件（on-change，设备走路时才有）只改写为模拟真值
         values[0] = globalSteps.get().toFloat()
     }
 
@@ -688,7 +635,6 @@ object SystemSensorManagerHook {
         }
         val baseCount = globalSteps.get()
         globalSteps.addAndGet(whole)
-        onStepAdvance(dtSec / whole)
         // 步数：真机 TYPE_STEP_COUNTER 是 on-change——每发生一步就发一次（步行时 ~1.5~3 Hz），
         // 与位置回调率无关。这里把本间隔累积的每一步**按步间隔分摊投递**：
         // 事件率回到真实步率，每步的时间戳落在各自步点（应用按事件时间算步频也准）。
@@ -700,11 +646,15 @@ object SystemSensorManagerHook {
         }
     }
 
-    /** 向步数 listener 投递一次累计步数事件（每个用自己注册的 Sensor 对象） */
+    /**
+     * 向步数 listener 投递一次步事件：计数器 listener 收到累计步数，检测器 listener 收到 1.0
+     * （**同一次步事件、同一时间戳**——两者不可能对不上）。
+     */
     private fun emitStepEvent(count: Int, timestampNanos: Long) {
         if (stepListeners.isEmpty()) return
         for (reg in stepListeners) {
-            val event = createSensorEvent(floatArrayOf(count.toFloat()), reg.sensor, timestampNanos) ?: continue
+            val value = if (reg.sensor.type == TYPE_STEP_DETECTOR) 1.0f else count.toFloat()
+            val event = createSensorEvent(floatArrayOf(value), reg.sensor, timestampNanos) ?: continue
             try {
                 val handler = reg.handler
                 if (handler != null) {
