@@ -534,6 +534,10 @@ class HomeFragment : Fragment(), MapControlsHost {
             mLocationClient.disableLocInForeground(true)
             mLocationClient.stop()
         }
+        // 地图视图同样随视图销毁：生命周期只转发了 create/resume/pause/saveInstanceState，
+        // 不转发 onDestroy 的话 GL 线程、SDK 线程池与显存不随 view 释放
+        // （实测：每轮进出首页 +1 个 pool-N 线程、线程总数 +1、PSS 约 +2 MB，单调累积）
+        _binding?.bmapView?.onDestroy()
         _binding = null
     }
 }
