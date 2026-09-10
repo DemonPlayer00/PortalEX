@@ -263,6 +263,13 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         return binding.root
     }
 
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        // MapView 需要自己的一套生命周期；不转发的话地图不会初始化/恢复渲染
+        binding.bmapView.onCreate(requireContext(), savedInstanceState)
+    }
+
     /** 三点展开栏入口：当前是否卫星图（未选中=普通图） */
     override fun isSatellite(): Boolean =
         binding.mapTypeGroup.checkedRadioButtonId == R.id.map_type_satellite
@@ -274,17 +281,48 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         )
     }
 
+    override fun onPause() {
+        super.onPause()
+
+        if (_binding != null) {
+            binding.bmapView.onPause()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+
+        if (_binding != null) {
+            // 切换 Fragment 时该方法也会被触发，此时 view 已销毁，不能转发
+            binding.bmapView.onSaveInstanceState(outState)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+
+        // 地图已随视图销毁，标记地图不再存在（主界面搜索选中会看这个标记）
+        baiduMapViewModel.isExists = false
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         // 释放覆盖物与绘制态：它们都指向已随视图销毁的地图对象
         mSegmentOverlays.clear()
         mPreviewOverlay = null
         isDrawing = false
+        // 先把覆盖物清干净，再销毁地图视图，释放 GL 线程与显存
+        _binding?.bmapView?.onDestroy()
         _binding = null
     }
 
     override fun onResume() {
         super.onResume()
+
+        // 回到前台时恢复地图渲染（与 HomeFragment 一致）
+        if (_binding != null) {
+            binding.bmapView.onResume()
+        }
 
         // 注册悬浮胶囊功能集：路线模拟 = 开始绘制 / 平滑绘制 / 撤回 / 完成 / 我的位置
         // （胶囊为 Activity 级单实例，切换功能集自动重置收起态）
