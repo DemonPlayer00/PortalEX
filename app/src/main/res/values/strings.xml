@@ -70,6 +70,7 @@
     <string name="fab_smooth_draw">平滑绘制（切换线段平滑）</string>
     <string name="fab_complete_route">完成路线</string>
     <string name="rollback">撤回上一点</string>
+    <string name="draw_crosshair">绘制准星（当前画笔落点）</string>
     <string name="item_report_duration_title">位置上报间隔</string>
     <string name="item_report_duration_desc">上报位置的频率单位毫秒(ms)</string>
     <string name="item_report_duration_value">100ms</string>
