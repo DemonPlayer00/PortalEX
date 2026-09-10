@@ -11,12 +11,12 @@ android {
     namespace = "moe.fuqiuluo.portalex"
     compileSdk = 36
 
-    // 必须显式声明，且与 :xposed 一致。
-    // 不声明时 :app 会回退到 AGP 内置默认 NDK 版本（9.3.0 为 28.2.13676358），
-    // 若本机/CI 未安装该版本，app 的 ndkPlatform 就处于未配置状态：
-    // strip<Variant>DebugSymbols 找不到 strip 工具，只打印一句
+    // app/libs 下的预编译 .so（百度地图/定位、libtiny_magic）由 AGP 的
+    // strip<Variant>DebugSymbols 处理。不声明时 :app 会回退到 AGP 内置默认
+    // NDK 版本（9.3.0 为 28.2.13676358），若本机/CI 未安装该版本，app 的
+    // ndkPlatform 就处于未配置状态：strip 工具找不到，只打印一句
     // "missing strip tool for ABI ... Packaging it as is." 便退化为原样拷贝，
-    // release 包的 libportal.so 因而仍保留 DWARF 段与构建机绝对路径。
+    // 这些 .so 会带着原始符号表与构建方绝对路径进包。
     ndkVersion = "27.3.13750724"
 
     defaultConfig {
