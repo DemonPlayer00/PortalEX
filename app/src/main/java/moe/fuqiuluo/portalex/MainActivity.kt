@@ -426,11 +426,16 @@ class MainActivity : AppCompatActivity() {
         mSearchList.onItemClickListener = OnItemClickListener { parent, view, pos, id ->
             val lngText = (view.findViewById<View>(R.id.poi_longitude) as TextView).text.toString()
             val latText = (view.findViewById<View>(R.id.poi_latitude) as TextView).text.toString()
+            // 条目数据来自百度检索结果，异常/空值不应该变成崩溃
+            val lng = lngText.toDoubleOrNull()
+            val lat = latText.toDoubleOrNull()
+            if (lng == null || lat == null) {
+                Toast.makeText(this@MainActivity, "坐标数据异常", Toast.LENGTH_SHORT).show()
+                return@OnItemClickListener
+            }
             with(baiduMapViewModel) {
                 markName = (view.findViewById<View>(R.id.poi_name) as TextView).text.toString()
 
-                val lng = lngText.toDouble() // wgs84
-                val lat = latText.toDouble()
                 markedLoc = lat to lng
                 if (isExists) {
                     val gcjLoc = markedLoc!!.gcj02
@@ -449,55 +454,60 @@ class MainActivity : AppCompatActivity() {
         if (mSuggestionSearch == null) {
             mSuggestionSearch = SuggestionSearch.newInstance()
             mSuggestionSearch?.setOnGetSuggestionResultListener { suggestionResult ->
-                if (suggestionResult == null || suggestionResult.allSuggestions == null) {
-                    Toast.makeText(this@MainActivity, "未搜索到相关位置", Toast.LENGTH_SHORT).show()
-                } else {
-                    val data = suggestionResult.toPoi(
-                        baiduMapViewModel.currentLocation
-                    ).map { it.toMap() } // wgs84
-
-                    val simAdapt = SimpleAdapter(
-                        this@MainActivity, data,
-                        R.layout.layout_search_poi_item,
-                        arrayOf(Poi.KEY_NAME, Poi.KEY_ADDRESS, Poi.KEY_LONGITUDE_RAW, Poi.KEY_LATITUDE_RAW, Poi.KEY_TAG),
-                        intArrayOf(R.id.poi_name, R.id.poi_address, R.id.poi_longitude, R.id.poi_latitude, R.id.poi_tag)
-                    )
-                    mSearchList.setAdapter(simAdapt)
-                    binding.appBarMain.searchLinear.visibility = View.VISIBLE
+                // 诊断：AK 失效 / 服务未授权时 SDK 只回错误码 + 空列表，必须把错误码打出来
+                Log.i(
+                    "PortalSearch",
+                    "result=${suggestionResult?.javaClass?.simpleName} error=${suggestionResult?.error} " +
+                        "status=${suggestionResult?.status} count=${suggestionResult?.allSuggestions?.size}"
+                )
+                val suggestions = suggestionResult?.allSuggestions
+                if (suggestions == null) {
+                    val err = suggestionResult?.error
+                    val hint = when {
+                        err == null -> "未搜索到相关位置"
+                        err.name.contains("PERMISSION", true) -> "AK 未通过校验：$err"
+                        err.name.contains("NETWORK", true) -> "网络异常：$err"
+                        else -> "检索失败：$err"
+                    }
+                    Toast.makeText(this@MainActivity, hint, Toast.LENGTH_LONG).show()
+                    binding.appBarMain.searchLinear.visibility = View.INVISIBLE
+                    return@setOnGetSuggestionResultListener
                 }
+
+                val data = suggestionResult.toPoi(
+                    baiduMapViewModel.currentLocation
+                ).map { it.toMap() } // wgs84
+
+                // 结果被过滤为空（缺 key/pt）时不能只留一个空白面板
+                if (data.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "未搜索到相关位置", Toast.LENGTH_SHORT).show()
+                    binding.appBarMain.searchLinear.visibility = View.INVISIBLE
+                    return@setOnGetSuggestionResultListener
+                }
+
+                val simAdapt = SimpleAdapter(
+                    this@MainActivity, data,
+                    R.layout.layout_search_poi_item,
+                    arrayOf(Poi.KEY_NAME, Poi.KEY_ADDRESS, Poi.KEY_LONGITUDE_RAW, Poi.KEY_LATITUDE_RAW, Poi.KEY_TAG),
+                    intArrayOf(R.id.poi_name, R.id.poi_address, R.id.poi_longitude, R.id.poi_latitude, R.id.poi_tag)
+                )
+                mSearchList.setAdapter(simAdapt)
+                binding.appBarMain.searchLinear.visibility = View.VISIBLE
             }
         }
 
         searchView.setOnQueryTextListener(object: SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
                 if (query.isNullOrBlank()) return false
-                try {
-                    mSuggestionSearch!!.requestSuggestion(SuggestionSearchOption()
-                        .keyword(query)
-                        .city(mCityString)
-                    )
-
-                    baiduMapViewModel.baiduMap.clear()
-                    binding.appBarMain.searchLinear.visibility = View.INVISIBLE
-                } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "搜索出错", Toast.LENGTH_SHORT).show()
-                    Log.e("MainActivity", "Search error: ${e.stackTraceToString()}")
-                }
+                requestSuggestion(query)
+                baiduMapViewModel.baiduMap.clear()
+                binding.appBarMain.searchLinear.visibility = View.INVISIBLE
                 return true
             }
 
             override fun onQueryTextChange(newText: String?): Boolean {
                 if (!newText.isNullOrBlank()) {
-                    try {
-                        mSuggestionSearch!!.requestSuggestion(
-                            SuggestionSearchOption()
-                                .keyword(newText)
-                                .city(mCityString)
-                        )
-                    } catch (e: Exception) {
-                        Toast.makeText(this@MainActivity, "搜索出错", Toast.LENGTH_SHORT).show()
-                        Log.e("MainActivity", "Search error: ${e.stackTraceToString()}")
-                    }
+                    requestSuggestion(newText)
                 } else {
                     binding.appBarMain.searchLinear.visibility = View.GONE
                 }
@@ -505,6 +515,43 @@ class MainActivity : AppCompatActivity() {
             }
         })
         return true
+    }
+
+    /**
+     * 发起地点联想检索（SuggestionSearch）。
+     *
+     * 注意：本仓库内置的百度检索 SDK（`BaiduLBS_Android.jar`）在
+     * `SuggestionSearch.requestSuggestion` 里会强制校验 `option`、`mKeyword`、`mCity`
+     * 三者均非 null（否则抛 `IllegalArgumentException: BDMapSDKException: option or
+     * keyword or city can not be null`），**`city` 实测必填**，与文档说的“可选”不符：
+     *
+     * ```
+     * javap -c com.baidu.mapapi.search.sug.SuggestionSearch
+     *   21: getfield mKeyword ; 25: ifnull -> throw
+     *   28: getfield mCity    ; 32: ifnonnull -> 45
+     *   35: new IllegalArgumentException("option or keyword or city can not be null")
+     * ```
+     *
+     * 所以 `city` 为空时必须回退到 "全国"，否则永远只会弹「搜索出错」。
+     * `mCityString` 由 HomeFragment/RouteEditFragment 的逆地理结果写入，未定位前为 null。
+     */
+    private fun requestSuggestion(keyword: String) {
+        val search = mSuggestionSearch ?: SuggestionSearch.newInstance().also {
+            mSuggestionSearch = it
+        }
+        try {
+            val cityName = mCityString?.takeIf { it.isNotBlank() } ?: DEFAULT_CITY
+            Log.i("PortalSearch", "request keyword=$keyword city=$cityName")
+            search.requestSuggestion(
+                SuggestionSearchOption()
+                    .keyword(keyword)
+                    .city(cityName)
+                    .citylimit(false)
+            )
+        } catch (e: Exception) {
+            Log.e("PortalSearch", "request error: ${e.stackTraceToString()}")
+            Toast.makeText(this@MainActivity, "搜索出错", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun markMap() = with(baiduMapViewModel) {
@@ -552,6 +599,9 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_PERMISSIONS_CODE = 111
+
+        /** 检索 SDK 强制要求 city 非 null；未拿到逆地理城市时用全国检索 */
+        private const val DEFAULT_CITY = "全国"
 
         internal var mCityString: String? = null
             set(value) {

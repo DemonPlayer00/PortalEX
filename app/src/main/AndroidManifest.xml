@@ -65,7 +65,7 @@
             tools:ignore="ForegroundServicePermission" />
         <meta-data
             android:name="com.baidu.lbsapi.API_KEY"
-            android:value="UzCD3gLYg3M9Ue2749hm1jsHX2DyfMUF" />
+            android:value="${BAIDU_MAP_AK}" />
 
         <!-- Xposed 模块配置 -->
         <meta-data
