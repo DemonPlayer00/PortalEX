@@ -238,5 +238,15 @@ var Context.loopBroadcastlocation: Boolean
  * 传感器模拟开关（默认开 = 客户端主动注入步数/朝向；关闭 = 禁用传感器模拟）
  */
 
+/**
+ * 是否允许横屏。默认关闭（锁竖屏）——横屏下部分界面尚未完全适配，
+ * 需要横屏的用户可以在设置页手动打开。
+ */
+var Context.allowLandscape: Boolean
+    get() = sharedPrefs.getBoolean("allowLandscape", false)
+    set(value) = sharedPrefs.edit {
+        putBoolean("allowLandscape", value)
+    }
+
 
 
