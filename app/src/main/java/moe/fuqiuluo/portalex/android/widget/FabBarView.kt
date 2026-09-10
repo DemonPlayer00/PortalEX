@@ -91,6 +91,9 @@ class FabBarView @JvmOverloads constructor(
     /** 当前展开状态（单实例唯一来源） */
     val isOpened: Boolean get() = mOpened
 
+    /** 收起态可见外廓的边长（60dp 正方形）。页面做避让时用它算按钮占多大 */
+    val collapsedSize: Int get() = collapsedWidth()
+
     /**
      * 统一切换功能集：空集 = 隐藏胶囊；非空 = 重建功能按钮并重置为
      * 干净收起态（新页面一律从收起开始，不残留上一页面的展开状态）。

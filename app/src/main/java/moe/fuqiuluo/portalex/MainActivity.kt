@@ -78,6 +78,7 @@ import moe.fuqiuluo.portalex.bdmap.toPoi
 import moe.fuqiuluo.portalex.databinding.ActivityMainBinding
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
+import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
@@ -596,6 +597,12 @@ class MainActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         // 旋转后重新摆放悬浮胶囊：布局不会重新 inflate，边距会停在旧方向的取值
         fabBar.recalibrate()
+        // 需要给胶囊让位的页面（如路线模拟的历史列表）也得按新方向重算一次
+        val navHost = supportFragmentManager
+            .findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
+        navHost?.childFragmentManager?.fragments?.forEach {
+            (it as? FabBarAvoidanceHost)?.avoidFabBar()
+        }
     }
 
     companion object {
