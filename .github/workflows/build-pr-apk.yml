@@ -1,5 +1,9 @@
 name: Pull Request Check
 
+# 与 build-apk.yml 同源：不需要任何私有数据即可跑通。
+# PR 事件没有 workflow_dispatch 输入，百度 AK 只能来自本仓库 Secret；
+# fork 来的 PR 拿不到 Secret，AK 会回退到占位符（不影响编译验证）。
+
 on:
   pull_request:
     branches: [ master ]
@@ -10,7 +14,7 @@ on:
       - '.github/**'
       - '.idea/**'
       - '!.github/workflows/**'
-      -
+
 jobs:
   build:
     name: Build Portal
@@ -47,19 +51,71 @@ jobs:
           key: gradle-builds-core-${{ github.sha }}
           restore-keys: gradle-builds
 
+      - name: Restore Debug Keystore
+        id: ks
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: portalex-debug-keystore-v1
+
+      - name: Setup Debug Keystore
+        id: kssetup
+        env:
+          # 与 build-apk.yml 同源：全部可选，不配也能跑（自动生成 + 缓存）
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          DEBUG_STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD || 'android' }}
+          DEBUG_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS || 'androiddebugkey' }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD || 'android' }}
+        run: |
+          STORE_PASS="${DEBUG_STORE_PASSWORD:-android}"
+          KEY_PASS="${DEBUG_KEY_PASSWORD:-android}"
+          ALIAS="${DEBUG_ALIAS:-androiddebugkey}"
+          KS="$HOME/.android/debug.keystore"
+          mkdir -p "$HOME/.android"
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$KS"
+            echo "签名证书来源：构建者自备（Secret DEBUG_KEYSTORE_BASE64）"
+          elif [ -f "$KS" ]; then
+            echo "签名证书来源：Actions 缓存"
+          else
+            keytool -genkeypair -v \
+              -keystore "$KS" \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "签名证书来源：本次新建（未自备证书，首次运行）"
+            echo "generated=1" >> $GITHUB_OUTPUT
+          fi
+          SHA1=$(keytool -list -v -keystore "$KS" -alias "$ALIAS" -storepass "$STORE_PASS" | grep -m1 -i "SHA1:" | awk '{print $2}')
+          echo "本次签名证书 SHA1: $SHA1"
+          echo "### 签名 SHA1: $SHA1" >> $GITHUB_STEP_SUMMARY
+          echo "KEYSTORE_PATH=$KS" >> $GITHUB_ENV
+          echo "KEYSTORE_PASSWORD=$STORE_PASS" >> $GITHUB_ENV
+          echo "KEY_ALIAS=$ALIAS" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KEY_PASS" >> $GITHUB_ENV
+
+      - name: Save Debug Keystore
+        if: steps.kssetup.outputs.generated == '1'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: portalex-debug-keystore-v1
+
       - name: Build with Gradle
         run: |
-          echo ${{ secrets.SIGN_KEYSTORE_BASE64 }} | base64 -d > keystore.jks
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --build-cache --parallel --warning-mode all --stacktrace
           echo "APK_FILE_ALL=$(find app/build/outputs/apk/app/release -name '*.apk')" >> $GITHUB_ENV
           echo "APK_FILE_ARM64=$(find app/build/outputs/apk/arm64/release -name '*.apk')" >> $GITHUB_ENV
           echo "APK_FILE_X86_64=$(find app/build/outputs/apk/x64/release -name '*.apk')" >> $GITHUB_ENV
         env:
-          KEYSTORE_PATH: "../keystore.jks"
-          KEYSTORE_PASSWORD: ${{ secrets.SIGN_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.SIGN_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.SIGN_KEY_PASSWORD }}
+          BAIDU_MAP_AK: ${{ secrets.BAIDU_MAP_AK }}
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
 
       - name: Set Portal Version
         run: |
