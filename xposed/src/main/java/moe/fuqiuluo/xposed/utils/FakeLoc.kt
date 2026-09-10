@@ -2,6 +2,7 @@ package moe.fuqiuluo.xposed.utils
 
 import android.location.Location
 import android.os.Bundle
+import android.os.SystemClock
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -112,22 +113,10 @@ object FakeLoc {
      * - 应用启动时随机分配中心角度
      * - 移动中由 move/摇杆/自动播放路线更新为移动方向（允许骤变）
      * - 静止（未操作摇杆、未自动播放）时保持稳定（永远虚拟注入，不随真实设备转动）
-     * 注入时经 [processedBearing] 加工（平滑趋近 + 微小扰动），本字段本身不做平滑。
+     * 本字段是**权威目标**（允许骤变）；对外输出由 [processedBearing] 生成——
+     * 中轴低通 + 随机往复摆动都在那里，传感器侧只跟随帧值，不再加工。
      */
     @Volatile var bearing = Random.nextDouble(0.0, 360.0)
-
-    // ---- 注入角度加工（模块层，数据源侧）----
-    // 权威目标 bearing 是路线段方向（允许骤变、直线段恒定）；直接写入会让
-    // 位置/指南针锁死在前进方向。这里在**权威值（已由 setBearingSlew 限速）**上
-    // 叠加一个低频小扰动——**不再做第二级低通**：传感器侧还会对同一方位做一次平滑，
-    // 两级低通串联会把转向滞后拉到 ~1.5s（同一朝向两套平滑 = 口径分叉）。
-    private const val BEARING_OUTPUT_RETARGET_TAU = 0.4 // 扰动目标重选时间常数（s）
-    private const val BEARING_OUTPUT_APPROACH_TAU = 0.15// 扰动趋近时间常数（s）
-    private const val BEARING_OUTPUT_JITTER_AMP = 1.5   // 扰动幅度（±度；与 bearingAccuracy 量级一致）
-
-    @Volatile private var bearingOutputJitter = 0.0
-    @Volatile private var bearingOutputJitterTarget = 0.0
-    @Volatile private var lastBearingOutputNanos = 0L
 
     /**
      * 步频-移动速度线性模型（步/分）：cadence = (60 + 30*speed) * 1.15，限幅 60..220。
@@ -138,31 +127,126 @@ object FakeLoc {
         return ((60.0 + 30.0 * speed) * 1.15).toInt().coerceIn(60, 220)
     }
 
+    // ---- 朝向生成器（**唯一所有者 = 位置端**；app 端只跟随，不做任何加工）----
+    //
+    // 输出 = 平滑中轴 + 随机往复摆动 + 低频漂移 + 高频微抖，全部在这里生成：
+    //  · 中轴：权威朝向的低通（τ = CENTER_TAU）——中轴变化（摇杆转向 / 路线转弯）时
+    //    **平滑过渡到目标**，不跳变；
+    //  · 摆动：±3° 内的**随机往复**——中轴不变（摆动关于中轴对称），每次换边时在两侧
+    //    各取一个随机幅值，半周期 0.35~0.75s 随机；移动与静止用**同一个**摆动；
+    //  · 漂移/微抖：慢速磁环境漂移 + 手部微抖（真机磁罗盘从不是干净的正弦）。
+    //
+    // 位置帧直接携带这里的结果（Location.bearing / NMEA trackAngle）；传感器侧只把帧值
+    // 做一次**跟随低通**（插值，使其在每个事件上都连续），不再自产或叠加任何分量。
+    private const val CENTER_TAU = 0.45          // 中轴低通时间常数（s）：转向平滑过渡
+    private const val SWAY_MAX_DEG = 3.0         // 摆动单侧最大幅值（±3°）
+    private const val SWAY_MIN_DEG = 0.5         // 摆动单侧最小幅值（避免"这轮不摆"的巧合）
+    private const val SWAY_HALF_PERIOD_MIN_NANOS = 350_000_000L   // 半周期下限（s）
+    private const val SWAY_HALF_PERIOD_MAX_NANOS = 750_000_000L   // 半周期上限（s）
+    // 基础扰动（指南针的"针底噪"）——按需求调大：
+    //  · 漂移：真机磁罗盘受磁环境/姿态影响会缓慢游走数度，故主项 ±2.0°(0.05Hz) + 次项 ±1.0°(0.017Hz)；
+    //  · 微抖：手部持机的抖动约 ±0.3~1°，取 ±0.6°、τ=0.12s（平滑动而不是白噪声）。
+    private const val DRIFT_AMP_PRIMARY = 2.0    // 低频漂移主项（±度）
+    private const val DRIFT_AMP_SECONDARY = 1.0  // 低频漂移次项（±度）
+    private const val DRIFT_HZ_PRIMARY = 0.05    // 漂移主项频率（Hz）
+    private const val DRIFT_HZ_SECONDARY = 0.017 // 漂移次项频率（Hz）
+    private const val MICRO_JITTER_AMP = 0.6     // 高频微抖（±度）
+    private const val MICRO_JITTER_TAU = 0.12    // 微抖时间常数（s）
+
+    /** 平滑后的中轴（跟随 [bearing]） */
+    @Volatile private var centerBearing = bearing
+    @Volatile private var lastBearingSampleNanos = 0L
+
+    // 随机往复摆动状态：swayFrom → swayTo 为**半个周期**，换边时起点 = 上一次终点
+    // （值与斜率都连续），并在新的一侧随机取幅值——中轴不因此移动。
+    @Volatile private var swayPhaseStartNanos = 0L
+    @Volatile private var swayHalfPeriodNanos = 500_000_000L
+    @Volatile private var swayFrom = 0.0
+    @Volatile private var swayTo = 0.0
+    @Volatile private var swaySide = 1.0
+
+    @Volatile private var microTarget = 0.0
+    @Volatile private var microOffset = 0.0
+    private val driftPhase1 = Random.nextDouble(0.0, Math.PI * 2)
+    private val driftPhase2 = Random.nextDouble(0.0, Math.PI * 2)
+
+    private fun randomSwayHalfPeriod(): Long =
+        Random.nextLong(SWAY_HALF_PERIOD_MIN_NANOS, SWAY_HALF_PERIOD_MAX_NANOS)
+
     /**
-     * 加工后的注入角度（度，0~360）：平滑趋近 [bearing] + 微小扰动。
-     * 供位置注入（Location.bearing / NMEA trackAngle）使用。
-     * **注意**：跑步摇晃（常驻摆动）不在这里做——位置值的更新率由应用请求的间隔决定
-     * （0.9s~1s），在这个采样率上塞 3Hz 摆动只会混叠成噪声；摆动一律由传感器 hook
-     * 在**每个传感器事件**上生成（见 SystemSensorManagerHook.swingOffset）。
+     * 随机往复摆动（±[SWAY_MAX_DEG] 内，中轴不变）：
+     * 半周期内从 [swayFrom] 平滑走到 [swayTo]（两端导数为 0 的余弦缓动），
+     * 到点后**换到另一侧**重新随机取幅值，起点承接上一次终点——值连续、斜率连续，
+     * 因此看起来是"来回游走"而不是"跳一下再跳回来"。
+     */
+    private fun advanceSway(now: Long): Double {
+        if (swayPhaseStartNanos == 0L) {
+            swayPhaseStartNanos = now
+            swaySide = 1.0
+            swayFrom = 0.0
+            swayTo = Random.nextDouble(SWAY_MIN_DEG, SWAY_MAX_DEG)
+            swayHalfPeriodNanos = randomSwayHalfPeriod()
+        }
+        var elapsed = now - swayPhaseStartNanos
+        if (elapsed >= swayHalfPeriodNanos) {
+            swayFrom = swayTo
+            swaySide = -swaySide
+            swayTo = swaySide * Random.nextDouble(SWAY_MIN_DEG, SWAY_MAX_DEG)
+            swayPhaseStartNanos = now
+            swayHalfPeriodNanos = randomSwayHalfPeriod()
+            elapsed = 0
+        }
+        val t = (elapsed.toDouble() / swayHalfPeriodNanos).coerceIn(0.0, 1.0)
+        val ease = (1.0 - cos(Math.PI * t)) / 2.0
+        return swayFrom + (swayTo - swayFrom) * ease
+    }
+
+    /**
+     * 注入朝向（位置帧 / NMEA trackAngle 用）：平滑中轴 + 低频漂移（慢频段）。
+     *
+     * **不含 ±3° 随机往复摆动**：位置帧的到达间隔由应用请求/保活决定（实测静止时 1.5s），
+     * 在这个采样率上携带 1~1.4Hz 的摆动只会变成"每隔一秒多跳一次并锁定"；
+     * 真机 GPS course 也不含这种步态分量。摆动由传感器端按**事件率采样同一生成器**
+     * （见 [sampleBearingJitter]）——生成器与状态仍在位置端，传感器端只是取采样点。
      */
     fun processedBearing(): Double {
         val now = System.nanoTime()
-        val dt = if (lastBearingOutputNanos == 0L) 0.0 else (now - lastBearingOutputNanos) / 1e9
-        lastBearingOutputNanos = now
+        val dt = if (lastBearingSampleNanos == 0L) 0.0
+        else ((now - lastBearingSampleNanos) / 1e9).coerceIn(0.0, 1.0)
+        lastBearingSampleNanos = now
+
         if (dt > 0.0) {
-            val dtc = dt.coerceAtMost(1.0)
-            // 扰动：目标按时间概率重选，再平滑趋近（唯一的一级加工）
-            if (Random.nextDouble() < 1.0 - exp(-dtc / BEARING_OUTPUT_RETARGET_TAU)) {
-                bearingOutputJitterTarget =
-                    Random.nextDouble(-BEARING_OUTPUT_JITTER_AMP, BEARING_OUTPUT_JITTER_AMP)
+            // 中轴平滑趋近权威目标（最短角差，跨 0/360 不绕远）——转向时平滑过渡
+            centerBearing += shortestAngleDelta(bearing, centerBearing) *
+                (1.0 - exp(-dt / CENTER_TAU))
+            centerBearing = (centerBearing % 360.0 + 360.0) % 360.0
+            // 微抖：目标概率重选 + 平滑趋近
+            if (Random.nextDouble() < 1.0 - exp(-dt / MICRO_JITTER_TAU)) {
+                microTarget = Random.nextDouble(-MICRO_JITTER_AMP, MICRO_JITTER_AMP)
             }
-            bearingOutputJitter += (bearingOutputJitterTarget - bearingOutputJitter) *
-                (1.0 - exp(-dtc / BEARING_OUTPUT_APPROACH_TAU))
+            microOffset += (microTarget - microOffset) * (1.0 - exp(-dt / MICRO_JITTER_TAU))
         }
-        return (bearing + bearingOutputJitter + 360.0) % 360.0
+
+        // 低频漂移：两条慢正弦（时间的纯函数，连续无跳变）
+        val tSec = now / 1e9
+        val drift = DRIFT_AMP_PRIMARY * sin(2.0 * Math.PI * DRIFT_HZ_PRIMARY * tSec + driftPhase1) +
+            DRIFT_AMP_SECONDARY * sin(2.0 * Math.PI * DRIFT_HZ_SECONDARY * tSec + driftPhase2)
+
+        val value = centerBearing + drift
+        return (value % 360.0 + 360.0) % 360.0
     }
 
-    /** 最短角差（-180, 180] */
+    /**
+     * 传感器端采样：本拍**快频段** = ±3° 随机往复摆动（[advanceSway]）+ 微抖（[microOffset]）。
+     *
+     * 为什么快频段必须在这里取：位置帧间隔由应用请求/保活决定（静止实测 1.5s），
+     * 且传感器侧对帧值还有一次跟随低通（τ≈0.25s）——把 1Hz 以上的分量放进帧里，
+     * 要么混叠成"跳一次锁一秒"，要么被低通滤掉。生成器与状态仍在位置端，
+     * 传感器侧只是按事件率取采样点。
+     */
+    fun sampleBearingJitter(): Double = advanceSway(System.nanoTime()) + microOffset
+
+    /** 最短角差（-180, 180]：方位角是环形量，跨 0/360 必须走最短弧） */
     private fun shortestAngleDelta(target: Double, current: Double): Double {
         var d = (target - current) % 360.0
         if (d > 180.0) d -= 360.0
@@ -170,35 +254,9 @@ object FakeLoc {
         return d
     }
 
-    // ---- 权威朝向的转向速率限制 ----
-    // 路线播放是逐点跳点推进，若直接用相邻两点方向重算 bearing，密集点位 +
-    // 轨迹噪声会让朝向忽然随机转动（表现为指南针乱转）。这里限制每秒最大转角。
-    @Volatile private var lastBearingSlewNanos = 0L
-
     /**
-     * 更新权威朝向（带转向速率限制）：朝 [target] 转，但每秒最多
-     * [maxTurnDegPerSec] 度——噪声方向不会让角度瞬间乱跳，真实急转弯仍能在
-     * 1 秒左右转过去（120°/s 时）。
-     */
-    fun setBearingSlew(target: Double, maxTurnDegPerSec: Double = 120.0) {
-        val now = System.nanoTime()
-        val dt = if (lastBearingSlewNanos == 0L) 1.0
-        else ((now - lastBearingSlewNanos) / 1e9).coerceIn(0.05, 2.0)
-        lastBearingSlewNanos = now
-        val maxTurn = maxTurnDegPerSec * dt
-        val delta = shortestAngleDelta(target, bearing).coerceIn(-maxTurn, maxTurn)
-        bearing = (bearing + delta + 360.0) % 360.0
-    }
-
-    /**
-     * 速度衰减归零时间（纳秒）：停止移动后 [SPEED_DECAY_NANOS] 内速度线性降到 0——
-     * 步频（= 60 + 30*speed）随速度同步过渡，过渡区 < 0.5s。
-     */
-    private const val SPEED_DECAY_NANOS = 400_000_000L
-
-    /**
-     * 速度推算采样窗口（纳秒）：取窗口内基础坐标的位移 / 时间差得到速度。
-     * 窗口只用于保留历史采样（下次移动时算速度），不决定衰减速度。
+     * 速度推算采样窗口（纳秒）：只在坐标变化时记录采样，用于按位移推算速度。
+     * 窗口只用于保留历史采样，不决定衰减速度（衰减由 [averageSpeedOverWindow] 的窗口决定）。
      */
     private const val SPEED_WINDOW_NANOS = 2_000_000_000L
 
@@ -208,55 +266,19 @@ object FakeLoc {
     /** 注入速度上限（m/s，288km/h）：防止异常位移产生荒谬速度 */
     private const val MAX_MEASURED_SPEED = 80.0
 
+    /** 基础坐标（未抖动）变化采样，用于按实际位移推算速度 */
     private data class MoveSample(val timeNanos: Long, val lat: Double, val lon: Double)
 
-    /** 基础坐标（未抖动）变化采样，用于按实际位移推算速度 */
     private val moveSamples = ArrayDeque<MoveSample>()
-
-    /**
-     * 由实际模拟位移推算的速度（m/s）。
-     *
-     * 取最近窗口内基础坐标的位移 / 时间差。用**基础坐标**而非注入时抖动后的坐标，
-     * 与真实 GPS 用多普勒测速同理：静止时位置抖动不应体现为速度。
-     * - 窗口内采样不足 2 个（静止/单次瞬移）→ 0
-     * - 停止移动后：超过 2 倍采样间隔开始线性衰减，窗口末尾归零
-     * - 位置跳变（> [TELEPORT_THRESHOLD_METERS]）→ 重置窗口，不产生虚高速度
-     */
-    val measuredSpeed: Double
-        get() = synchronized(moveSamples) {
-            if (moveSamples.size < 2) return 0.0
-            val now = System.nanoTime()
-            val newest = moveSamples.last()
-            val oldest = moveSamples.first()
-            val age = now - newest.timeNanos
-            if (age > SPEED_WINDOW_NANOS) return 0.0
-            val spanNanos = newest.timeNanos - oldest.timeNanos
-            if (spanNanos <= 0L) return 0.0
-
-            val raw = haversine(oldest.lat, oldest.lon, newest.lat, newest.lon) /
-                (spanNanos / 1_000_000_000.0)
-
-            // 停止移动后线性衰减：最多 1 个采样间隔内保持全速（避免采样稀疏时立即掉速），
-            // 然后到 SPEED_DECAY_NANOS 归零——步频过渡区硬上限 < 0.5s，与采样间隔无关
-            val avgInterval = spanNanos.toDouble() / (moveSamples.size - 1)
-            val fullSpeedUntil = minOf(avgInterval, SPEED_DECAY_NANOS * 0.5)
-            val decay = if (age <= fullSpeedUntil) {
-                1.0
-            } else {
-                ((SPEED_DECAY_NANOS - age) / (SPEED_DECAY_NANOS - fullSpeedUntil))
-                    .coerceIn(0.0, 1.0)
-            }
-            (raw * decay).coerceIn(0.0, MAX_MEASURED_SPEED)
-        }
 
     /**
      * 最近 [windowMs] 内的平均速度（m/s）与「该窗口内是否移动」。
      *
-     * **窗口 = 应用请求的交付间隔**——间隔参数在此进入数据链。
+     * 调用方传入的窗口 = 一帧所代表的时长（注入帧默认 1s = 真机 GPS 的自然出帧率）。
      * 为何不能用「相邻两帧的瞬时位移」：服务端坐标是按点跳变推进的（自动播放逐点、摇杆步进），
-     * 只有恰好包含那次跳变的帧才算得出速度，其余帧全为 0；而交付间隔由应用决定（可 900ms~1s+），
-     * 应用侧会把这些 0 帧当成静止 → 整段间隔不计步（典型偏差：移动中投出的帧 vel=0，步频掉到下限）。
-     * 按间隔窗口取平均后，任何一帧都代表“这段时间走了多少”，与采样相位无关。
+     * 只有恰好包含那次跳变的帧才算得出速度，其余帧全为 0 → 应用侧会把这些 0 帧当成静止，
+     * 整段不计步（典型偏差：移动中投出的帧 vel=0，步频掉到下限）。
+     * 按窗口取平均后，任何一帧都代表“这段时间走了多少”，与采样相位无关。
      *
      * 位置历史取自 [moveSamples]（仅在坐标变化时记录，位置分段常数，无交付抖动）。
      */
@@ -290,8 +312,8 @@ object FakeLoc {
     }
 
     /**
-     * 记录一次基础坐标变化（move / update_location），用于按实际位移推算速度，
-     * 同时更新移动时间戳（静止检测）。
+     * 记录一次基础坐标变化（move / update_location / 配置镜像），
+     * 供 [averageSpeedOverWindow] 按实际位移推算速度。
      */
     fun recordCoordinateChange(lat: Double, lon: Double) {
         val now = System.nanoTime()
@@ -353,16 +375,45 @@ object FakeLoc {
         if (!enable) return src
 
         val out = Bundle(src ?: Bundle())
-        // 星数：与 GnssStatus 推送的 svCount 用**同一上限常量**（MAX_SATELLITES），
-        // 否则同一时刻「雷达显示的星数」与「extras 里的星数」范围不同，可交叉比对出不一致
-        val count = Random.nextInt(minSatellites, MAX_SATELLITES + 1)
-        val maxCn0 = Random.nextDouble(30.0, 45.0)
-        val meanCn0 = maxCn0 - Random.nextDouble(6.0, 14.0)
+        // 星数与载噪比取**当前卫星快照**：与 GnssStatus 推送同一份采样——
+        // 两处各自随机（即便上限相同）也会让同一时刻的雷达与 extras 互相矛盾
+        val snapshot = currentGnssSnapshot()
+        val count = snapshot.svCount
+        val maxCn0 = snapshot.maxCn0
+        val meanCn0 = snapshot.meanCn0
         putSameType(out, "satellites", count, count.toDouble())
         putSameType(out, "maxCn0", maxCn0.toInt(), maxCn0)
         putSameType(out, "meanCn0", meanCn0.toInt(), meanCn0)
         return out
     }
+
+    /**
+     * 卫星快照：可见星数 + **每颗星的载噪比**（单位 dB-Hz）。
+     * maxCn0/meanCn0 由同一份列表派生——不再是两个独立的随机数，
+     * 于是「GnssStatus 里各星 C/N0」与「Location.extras 的 maxCn0/meanCn0」永远自洽。
+     */
+    class GnssSnapshot(val svCount: Int, val cn0s: DoubleArray) {
+        val maxCn0: Double get() = cn0s.maxOrNull() ?: 0.0
+        val meanCn0: Double get() = if (cn0s.isEmpty()) 0.0 else cn0s.average()
+    }
+
+    /**
+     * 卫星快照的生成：**按时间桶确定**（桶 = 1 秒）。
+     *
+     * 为什么必须确定性：extras 的改写发生在多个进程（system_server、fused provider、
+     * 各家 NLP SDK 进程），快照对象无法跨进程共享；把生成做成「时间桶 → 固定随机序列」的
+     * 纯函数后，**任何进程在同一秒内都得到同一份卫星数据**，与真机 1Hz 上报的物理事实一致。
+     */
+    fun gnssSnapshotForBucket(bucketSec: Long): GnssSnapshot {
+        val rng = Random(bucketSec * 1_000_003L + minSatellites * 7919L + 0x5DEECE66DL)
+        val svCount = rng.nextInt(minSatellites, MAX_SATELLITES + 1)
+        val cn0s = DoubleArray(svCount) { 24.0 + rng.nextDouble() * 21.0 }   // 24~45 dB-Hz（真机量级）
+        return GnssSnapshot(svCount, cn0s)
+    }
+
+    /** 当前时间桶的卫星快照（桶 = 1 秒，与真机 GNSS 上报周期一致） */
+    fun currentGnssSnapshot(): GnssSnapshot =
+        gnssSnapshotForBucket(SystemClock.elapsedRealtimeNanos() / 1_000_000_000L)
 
     /** 按 [key] 原值的类型写入新值，避免读取方类型不符取到默认值。 */
     private fun putSameType(b: Bundle, key: String, intValue: Int, doubleValue: Double) {
@@ -375,16 +426,55 @@ object FakeLoc {
         }
     }
 
-    fun jitterLocation(lat: Double = latitude, lon: Double = longitude, n: Double = Random.nextDouble(0.0, accuracy.toDouble()), angle: Double = bearing): Pair<Double, Double> {
-        val earthRadius = 6371000.0
-        val radiusInDegrees = n / 15 / earthRadius * (180 / PI)
+    // ---- 位置偏移（注入坐标相对配置点的抖动）----
+    // 旧实现：**每次调用**独立掷一次「0~accuracy 米 + 随机方向」→ 相邻两帧的位置可差 2×accuracy
+    // （默认 25m 时就是 50m/0.1s ≈ 500m/s），与同一帧的上报速度、连续轨迹自相矛盾，可被交叉检测，
+    // 也让轨迹像布朗运动。现在改为二维慢游走（Ornstein-Uhlenbeck，τ=3s）——
+    // 秒级尺度上连续（与速度自洽），长时间尺度上仍在 accuracy 范围内游走（真机 GPS 误差形态）。
+    // 参数标定：注入口径下相邻帧的偏移变化会被读成"额外速度"（Δ位置/Δ时间）。
+    // 推送节拍可到 100ms（reportDuration），故 σ 取 0.18 m/√s —— 100ms 帧的偏移变化约 0.06m
+    // （等效 ~0.6 m/s，仅占上报速度的一小部分），1s 帧约 0.18m，静止长时间游走 std ≈ 0.28m。
+    private const val POSITION_JITTER_TAU = 5.0
+    private const val POSITION_JITTER_SIGMA = 0.18  // 每 √s 的扩散步长（m）
+    private val positionJitterLock = Any()
+    private val jitterGauss = java.util.Random()
+    @Volatile private var jitterEastM = 0.0
+    @Volatile private var jitterNorthM = 0.0
+    @Volatile private var lastJitterNanos = 0L
 
-        val jitterAngle = if (Random.nextBoolean()) angle + 45 else angle - 45
+    private fun advancePositionJitter() {
+        val now = System.nanoTime()
+        val dt = if (lastJitterNanos == 0L) 0.0
+        else ((now - lastJitterNanos) / 1e9).coerceIn(0.0, 5.0)
+        lastJitterNanos = now
+        if (dt <= 0.0) return
+        val decay = exp(-dt / POSITION_JITTER_TAU)
+        val kick = POSITION_JITTER_SIGMA * sqrt(dt)
+        synchronized(positionJitterLock) {
+            jitterEastM = jitterEastM * decay + jitterGauss.nextGaussian() * kick
+            jitterNorthM = jitterNorthM * decay + jitterGauss.nextGaussian() * kick
+        }
+    }
 
-        val newLat = lat + radiusInDegrees * cos(Math.toRadians(jitterAngle))
-        val newLon = lon + radiusInDegrees * sin(Math.toRadians(jitterAngle)) / cos(Math.toRadians(lat))
-
-        return Pair(newLat, newLon)
+    /**
+     * 注入坐标 = 配置坐标 + 缓慢游走的偏移（夹在 ±[n] 米内）。
+     * @param n 偏移上限（米），默认取配置的水平精度 accuracy——与上报的 hAcc 自洽。
+     * @param angle 已不再参与运算（保留形参以兼容调用点）：偏移方向由游走过程决定，
+     *   不再按 bearing 强行选边。
+     */
+    fun jitterLocation(
+        lat: Double = latitude,
+        lon: Double = longitude,
+        n: Double = accuracy.toDouble(),
+        angle: Double = bearing
+    ): Pair<Double, Double> {
+        advancePositionJitter()
+        val bound = n.coerceAtLeast(0.0)
+        val east = jitterEastM.coerceIn(-bound, bound)
+        val north = jitterNorthM.coerceIn(-bound, bound)
+        val dLat = north / 111320.0
+        val dLon = east / (111320.0 * cos(Math.toRadians(lat)))
+        return Pair(lat + dLat, lon + dLon)
     }
 
     fun moveLocation(lat: Double = latitude, lon: Double = longitude, n: Double, angle: Double = bearing): Pair<Double, Double> {

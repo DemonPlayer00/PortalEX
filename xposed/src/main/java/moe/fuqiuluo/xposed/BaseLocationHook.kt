@@ -53,7 +53,10 @@ abstract class BaseLocationHook: BaseDivineService() {
         val jitterLat = FakeLoc.jitterLocation()
         location.latitude = jitterLat.first
         location.longitude = jitterLat.second
-        location.altitude = FakeLoc.offset_altitude
+        // 高度：**每帧只采样一次**（offset_altitude 是带抖动的 getter，多次求值会给出不同值，
+        // 同一帧的 altitude / mslAltitude 自相矛盾）
+        val frameAltitude = FakeLoc.offset_altitude
+        location.altitude = frameAltitude
         // 速度由实际模拟位移推算（FakeLoc.measuredSpeed）：移动中 = 实测速度 ± 抖动，静止 = 0。
         // 早期实现直接写入配置速度，与注入的位置变化无关（跨帧对比位移与 speed 即可发现矛盾）。
         val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
@@ -117,7 +120,7 @@ abstract class BaseLocationHook: BaseDivineService() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             if (originLocation.hasMslAltitude()) {
-                location.mslAltitudeMeters = FakeLoc.offset_altitude
+                location.mslAltitudeMeters = frameAltitude
             }
             if (originLocation.hasMslAltitudeAccuracy()) {
                 // 高度精度：真实设备量级 1~5 米。原实现写入高度值本身（80.0），异常。
