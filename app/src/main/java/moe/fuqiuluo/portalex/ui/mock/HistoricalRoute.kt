@@ -1,14 +1,29 @@
 package moe.fuqiuluo.portalex.ui.mock
 
+import android.graphics.Color
 import com.alibaba.fastjson2.JSON
 import com.alibaba.fastjson2.JSONArray
 import com.alibaba.fastjson2.JSONObject
 
 data class HistoricalRoute(
     val name: String,
-    val route: List<Pair<Double, Double>>
+    val route: List<Pair<Double, Double>>,
+    /**
+     * 逐端点平滑标志：smooth[i] = 「端点 i 之后的线段（i → i+1）是否平滑过渡」。
+     * 长度与 [route] 端点一一对应；**最后一个端点没有后续线段**（占位 false）。
+     * 旧数据无该字段时补全为全 false（行为同不平滑）。
+     */
+    val smooth: List<Boolean> = emptyList()
 ) {
+    /** 第 index 段（端点 index → index+1）是否需要平滑；越界/缺省一律 false */
+    fun isSmooth(index: Int): Boolean = smooth.getOrElse(index) { false }
+
     companion object {
+        /** 普通线段颜色（编辑/预览一致） */
+        val COLOR_NORMAL = Color.argb(178, 0, 78, 255)
+
+        /** 平滑线段颜色（编辑/预览一致） */
+        val COLOR_SMOOTH = Color.argb(178, 0, 200, 83)
         /**
          * 显式 JSON 读写。
          *
@@ -72,7 +87,19 @@ data class HistoricalRoute(
                     }
                 }
             }
-            return HistoricalRoute(name, points)
+            return HistoricalRoute(name, points, parseSmooth(obj, points.size))
+        }
+
+        /** 解析逐端点平滑标志；缺失/非法一律 false，长度对齐端点数 */
+        private fun parseSmooth(obj: JSONObject, pointCount: Int): List<Boolean> {
+            val array = obj.getJSONArray("smooth") ?: return List(pointCount) { false }
+            return List(pointCount) { i ->
+                when (val v = array.get(i)) {
+                    is Boolean -> v
+                    is Number -> v.toInt() != 0
+                    else -> false
+                }
+            }
         }
 
         private fun HistoricalRoute.toJsonObject(): JSONObject {
@@ -86,6 +113,9 @@ data class HistoricalRoute(
                 points.add(point)
             }
             obj["route"] = points
+            val smoothArray = JSONArray()
+            smooth.forEach { smoothArray.add(it) }
+            obj["smooth"] = smoothArray
             return obj
         }
     }

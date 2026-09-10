@@ -1,6 +1,7 @@
 package moe.fuqiuluo.xposed.utils
 
 import android.location.Location
+import android.os.Bundle
 import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -301,6 +302,49 @@ object FakeLoc {
         val a = sin(deltaPhi / 2).pow(2) + cos(phi1) * cos(phi2) * sin(deltaLambda / 2).pow(2)
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return radius * c
+    }
+
+    // ---- 系统 GNSS extras 的卫星字段改写 ----
+    /**
+     * 改写/补充系统 GNSS extras 的卫星字段（satellites / maxCn0 / meanCn0）。
+     *
+     * 真实 GNSS 引擎会把当前环境的星数与载噪比写进 Location.extras（ColorOS 实测
+     * 室内：satellites=0 / maxCn0=0 / meanCn0=0）。位置被伪造到户外后，这些字段
+     * 仍是真实环境的值——「人已在户外跑、头顶 0 颗卫星」自相矛盾。跑步类 App 直接
+     * 读 extras.satellites 判信号强度，于是等待页只看 provider 状态（正常），一开跑
+     * 就一路「信号差」、拒绝记录轨迹。
+     *
+     * 实现：**强制添加/改写**三键，不区分 provider。位置模拟到户外后，无论注入
+     * 回调来自 GPS 还是 passive/network（系统 GPS 引擎休眠后只剩被动回调、无卫星
+     * 键），注入位置都必须自带户外量级卫星字段——否则删除 GPS 辅助数据重置后引擎
+     * 停摆，App 信号差问题重演。真实设备上被动位置也常携带最近一次 GPS fix 的卫星
+     * extras，此形态不构成检测指纹。键名是系统/厂商 GPS 实现的标准字段；写入沿用
+     * 原键类型（int/long/float/double），无原键时按 AOSP/ColorOS 标准写 int，避免
+     * 读取方按原类型取值时类型不符。
+     */
+    fun sanitizeGnssExtras(src: Bundle?): Bundle? {
+        if (!enable) return src
+
+        val out = Bundle(src ?: Bundle())
+        // 星数：与 GnssStatus 推送的 svCount（minSatellites..35）同量级
+        val count = Random.nextInt(minSatellites, minSatellites + 9)
+        val maxCn0 = Random.nextDouble(38.0, 48.0)
+        val meanCn0 = maxCn0 - Random.nextDouble(6.0, 14.0)
+        putSameType(out, "satellites", count, count.toDouble())
+        putSameType(out, "maxCn0", maxCn0.toInt(), maxCn0)
+        putSameType(out, "meanCn0", meanCn0.toInt(), meanCn0)
+        return out
+    }
+
+    /** 按 [key] 原值的类型写入新值，避免读取方类型不符取到默认值。 */
+    private fun putSameType(b: Bundle, key: String, intValue: Int, doubleValue: Double) {
+        when (b.get(key)) {
+            is Int -> b.putInt(key, intValue)
+            is Long -> b.putLong(key, intValue.toLong())
+            is Float -> b.putFloat(key, doubleValue.toFloat())
+            is Double -> b.putDouble(key, doubleValue)
+            else -> b.putInt(key, intValue)
+        }
     }
 
     fun jitterLocation(lat: Double = latitude, lon: Double = longitude, n: Double = Random.nextDouble(0.0, accuracy.toDouble()), angle: Double = bearing): Pair<Double, Double> {

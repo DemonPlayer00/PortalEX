@@ -41,12 +41,12 @@ import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
 import moe.fuqiuluo.portalex.ext.selectRoute
+import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import java.math.BigDecimal
-import java.util.List
 import kotlin.random.Random
 
 class HomeFragment : Fragment(), MapControlsHost {
@@ -202,12 +202,14 @@ class HomeFragment : Fragment(), MapControlsHost {
 
         binding.showRoute.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
-                requireContext().selectRoute?.route?.let {
-                    previewRoute(it)
+                requireContext().selectRoute?.let { route ->
+                    previewRoute(route)
                     // 选中路线后，将视角移动到起点
-                    baiduMapViewModel.baiduMap.setMapStatus(
-                        MapStatusUpdateFactory.newLatLng(it.first().gcj02)
-                    )
+                    route.route.firstOrNull()?.let {
+                        baiduMapViewModel.baiduMap.setMapStatus(
+                            MapStatusUpdateFactory.newLatLng(it.gcj02)
+                        )
+                    }
                 }
             } else {
                 baiduMapViewModel.baiduMap.clear()
@@ -236,16 +238,16 @@ class HomeFragment : Fragment(), MapControlsHost {
     /** 三点展开栏入口：当前显示路线状态 */
     fun isShowRouteChecked(): Boolean = binding.showRoute.isChecked
 
-    private fun previewRoute(points: kotlin.collections.List<Pair<Double, Double>>) {
+    /** 预览路线：按逐段平滑标志着色（平滑 = 绿色，普通 = 蓝色），与编辑界面一致 */
+    private fun previewRoute(route: HistoricalRoute) {
         baiduMapViewModel.baiduMap.clear() // 清除之前的所有覆盖物
 
-        // 绘制之前记录的点到点的线
-        for (i in 0 until points.size - 1) {
+        for (i in 0 until route.route.size - 1) {
             baiduMapViewModel.baiduMap.addOverlay(
                 PolylineOptions()
-                    .color(Color.argb(178, 0, 78, 255))
+                    .color(if (route.isSmooth(i)) HistoricalRoute.COLOR_SMOOTH else HistoricalRoute.COLOR_NORMAL)
                     .width(10)
-                    .points(List.of<LatLng>(points[i].gcj02, points[i + 1].gcj02))
+                    .points(listOf<LatLng>(route.route[i].gcj02, route.route[i + 1].gcj02))
             )
         }
     }

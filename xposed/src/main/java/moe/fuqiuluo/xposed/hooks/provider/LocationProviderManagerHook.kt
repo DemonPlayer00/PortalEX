@@ -75,9 +75,8 @@ object LocationProviderManagerHook {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
         }
-        originLocation.extras?.let {
-            location.extras = it
-        }
+        // extras 透传原始数据，但系统自带的卫星字段要改写（理由同 BaseLocationHook）
+        location.extras = FakeLoc.sanitizeGnssExtras(originLocation.extras)
 
         mLocationsField.set(locationResult, arrayListOf(location))
     }
@@ -295,9 +294,8 @@ object LocationProviderManagerHook {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 location.verticalAccuracyMeters = originLocation.verticalAccuracyMeters
             }
-            originLocation.extras?.let {
-                location.extras = it
-            }
+            // extras 透传原始数据，但系统自带的卫星字段要改写（理由同 BaseLocationHook）
+            location.extras = FakeLoc.sanitizeGnssExtras(originLocation.extras)
 
             mLocationsField.set(locationResult, arrayListOf(location))
 
