@@ -311,6 +311,13 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         mSegmentOverlays.clear()
         mPreviewOverlay = null
         isDrawing = false
+        // 定位客户端随视图创建，也必须随视图释放：不 stop 会继续后台定位，
+        // 且 enableLocInForeground 挂的前台服务一直不撒
+        // （实测每次进出本页 +2 个服务连接，且 isForeground 恒为 true）
+        if (::mLocationClient.isInitialized && mLocationClient.isStarted) {
+            mLocationClient.disableLocInForeground(true)
+            mLocationClient.stop()
+        }
         // 先把覆盖物清干净，再销毁地图视图，释放 GL 线程与显存
         _binding?.bmapView?.onDestroy()
         _binding = null
