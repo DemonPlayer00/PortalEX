@@ -217,6 +217,12 @@ object MockServiceHelper {
         lon: Double,
         bearing: Double?
     ): Boolean {
+        // 本进程镜像同一次赋值：App 侧的 FakeLoc.bearing 与系统侧保持同一口径
+        // （否则自动播放结束后，App 侧仍拿着旧朝向）
+        if (bearing != null) {
+            FakeLoc.bearing = bearing
+            FakeLoc.hasBearings = true
+        }
         return updateLocation(locationManager, lat, lon, "=", bearing)
     }
 

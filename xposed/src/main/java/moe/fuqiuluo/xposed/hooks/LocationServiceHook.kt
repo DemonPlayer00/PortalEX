@@ -909,10 +909,11 @@ internal object LocationServiceHook: BaseLocationHook() {
      * @param force true = 忽略饿死判定，对流经推送链的注册立刻投一帧
      *   （坐标刚变化 / 显式广播 / 启动拉回：拉回线程正是靠反复强制推送压制真实位置）。
      *
-     * 投递规则（消除「同一 tick 多份帧」）：
-     * - 被拦死的注册（框架不会回调）：force 或饿死即推 —— 它们是推送链的必需客户；
-     * - 已放行的注册（框架会回调）：**只在饿死时**补帧 —— 否则同一注册会同时收到
-     *   「框架帧」与「推送帧」两份坐标/时间不同的位置（重复回调 + 时间戳自相矛盾）；
+     * 投递规则：
+     * - **force（坐标刚变化 / 显式广播 / 启动拉回 / 摇杆转向）→ 投给所有注册**：
+     *   位置或朝向变了就必须让每个消费者立刻看到——已放行的注册同样需要，否则它们只能等
+     *   保活补帧（1.2s 起），表现出来就是"跳一次、锁住一秒"（实测复现）。
+     * - 非 force（保活补帧）→ 只投给**饿死**的注册：正常定位下框架自己在送帧，不该再叠一份。
      * - 一次性取位回调：登记后饿死过久才补投一次（框架先投递过的已从表里摘除，不会重复）。
      */
     fun callOnLocationChanged(force: Boolean = false) {
@@ -931,7 +932,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         var delivered = 0
         locationListeners.forEach { reg ->
             val starved = nowNanos - reg.lastDeliveryNanos.get() >= FRAME_STARVATION_NANOS
-            val shouldPush = if (reg.blocked) (force || starved) else starved
+            val shouldPush = force || starved
             if (!shouldPush) return@forEach
             if (deliverFrame(reg.listener, frame)) {
                 reg.lastDeliveryNanos.set(nowNanos)
@@ -1016,7 +1017,10 @@ internal object LocationServiceHook: BaseLocationHook() {
     private val gnssPusherStarted = AtomicBoolean(false)
 
     private fun buildMockGnssData(): MockGnssData {
-        val svCount = Random.nextInt(FakeLoc.minSatellites, MAX_SATELLITES + 1)
+        // 星数与每星 C/N0 取**当前卫星快照**（时间桶确定性）：与 Location.extras 的
+        // satellites/maxCn0/meanCn0 出自同一份数据——两个通道不可能再互相矛盾
+        val snapshot = FakeLoc.currentGnssSnapshot()
+        val svCount = snapshot.svCount
         return MockGnssData(
             svCount = svCount,
             svidWithFlags = IntArray(svCount),
@@ -1046,11 +1050,8 @@ internal object LocationServiceHook: BaseLocationHook() {
                         ((GnssFlags.CONSTELLATION_BEIDOU and GnssFlags.CONSTELLATION_TYPE_MASK) shl GnssFlags.CONSTELLATION_TYPE_SHIFT_WIDTH) or
                         flags
 
-                cn0s[index] = when (sat.type) {
-                    is OrbitType.GEO -> Random.nextFloat(GEO_MIN_CN0, GEO_MAX_CN0)
-                    is OrbitType.IGSO -> Random.nextFloat(IGSO_MIN_CN0, IGSO_MAX_CN0)
-                    is OrbitType.MEO -> Random.nextFloat(MEO_MIN_CN0, MEO_MAX_CN0)
-                }
+                // C/N0 来自快照（同一时间桶内所有进程/通道一致），不再各掷一次骰子
+                cn0s[index] = snapshot.cn0s[index].toFloat()
                 elevations[index] = Random.nextFloat(sat.type.elevationRange.start, sat.type.elevationRange.endInclusive)
                 azimuths[index] = Random.nextFloat(0f, 360f)
                 carrierFreqs[index] = when (Random.nextInt(3)) {

@@ -24,8 +24,8 @@ import kotlin.math.abs
 
 class MockServiceViewModel : ViewModel() {
     lateinit var rocker: Rocker
-    private lateinit var rockerJob: Job
-    private lateinit var routeMockJob: Job
+    /** 唯一运动推进器（摇杆步进 / 路线播放共用一条循环） */
+    private lateinit var motionJob: Job
     var isRockerLocked = false
     val rockerCoroutineController = CoroutineController()
 
@@ -246,95 +246,109 @@ class MockServiceViewModel : ViewModel() {
             rocker = Rocker(activity)
         }
 
-        if (!::rockerJob.isInitialized || !rockerJob.isActive) {
-            rockerCoroutineController.pause()
-            val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
-            val applicationContext = activity.applicationContext
-            rockerJob = viewModelScope.launch {
-                do {
-                    rockerCoroutineController.controlledCoroutine()
-                    delay(delayTime)
-
-                    // 自动播放中：位置/朝向由路线播放器独占推进，手动摇杆不插手
-                    if (isAutoPlaying) continue
-
-                    val lm = locationManager
-                    if (lm == null) {
-                        // 定位服务尚未就绪（权限未授予等），暂停循环等待下次恢复
-                        rockerCoroutineController.pause()
-                        continue
-                    }
-                    // 每 tick 位移 = 速度 × 本 tick 时长（浮点）。
-                    // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
-                    // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、
-                    // 0 → 直接除零崩溃；而路线播放用的是浮点，两条链速度口径也不一致。
-                    if(!MockServiceHelper.move(lm, FakeLoc.speed * delayTime / 1000.0, FakeLoc.bearing)) {
-                        Log.e("MockServiceViewModel", "Failed to move")
-                    }
-                } while (isActive)
-            }
-        }
+        ensureMotionLoop(activity)
 
         FakeLoc.speed = activity.speed
         FakeLoc.altitude = activity.altitude
         FakeLoc.accuracy = activity.accuracy
 
-        if (!::routeMockJob.isInitialized || !routeMockJob.isActive) {
-            val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
+        return rocker
+    }
 
-            routeMockJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(delayTime)
-
-                    // 播放开关 = 悬浮摇杆自动播放状态（唯一事实源，不另维护暂停状态机）；
-                    // 关闭时只空转等待，不做定位/重建（重新开启后又从重置态开始）。
-                    if (!isAutoPlaying) continue
-                    val lm = locationManager ?: continue
-                    val selected = selectedRoute
-                    if (selected == null || selected.route.size < 2) continue
-
-                    // 路线变化 → 重建路径并完整重置（选中时已重置，此处兼容外部改选）
-                    if (cachedRoute !== selected) resetPlayback(selected)
-
-                    // 起点定位（每次重置后一次）
-                    if (!pathInitialized) {
-                        MockServiceHelper.setLocation(lm, pathPoints[0].lat, pathPoints[0].lon)
-                        pathInitialized = true
-                        continue
-                    }
-
-                    // 按速度推进弧长，直接在路线上插值出本 tick 的目标点并设置位置：
-                    // 不再盲推 + 距离检测（盲推在曲线密集采样点上会失准、批量跳点）。
-                    routeTravelled += FakeLoc.speed * (delayTime / 1000.0)
-
-                    if (routeTravelled >= routeDistance) {
-                        // 完成：精确落在终点，停播并彻底重置（下次播放从头开始）
-                        val end = pathPoints.last()
-                        MockServiceHelper.setLocation(lm, end.lat, end.lon)
-                        resetPlayback(null)
-                        rocker.autoStatus = false
-                        playCompletionSound(activity)
-                        continue
-                    }
-
-                    val target = pointAt(routeTravelled)
-                    // 朝向 = 路线切线（向前 2m 处的方向）——平滑段切线连续变化，
-                    // 普通段即段方向；随位置显式下发，系统侧不再依赖位移推算。
-                    val ahead = lookaheadPoint(
-                        minOf(routeTravelled + TANGENT_LOOKAHEAD_M, routeDistance)
-                    )
-                    val bearing = if (ahead == target) null else azimuthOf(target, ahead)
-                    if (FakeLoc.enableDebugLog) {
-                        Log.d("MockServiceViewModel", "弧长 $routeTravelled/$routeDistance → ${target.first}, ${target.second}, 朝向: $bearing")
-                    }
-                    if (!MockServiceHelper.setLocation(lm, target.first, target.second, bearing)) {
-                        Log.e("MockServiceViewModel", "设置位置失败")
-                    }
+    /**
+     * **唯一运动推进器**：摇杆步进与路线播放共用一条循环。
+     *
+     * 两种模式是「同一位置的两种来源」——此前是两个独立协程各自写位置，只靠 `isAutoPlaying`
+     * 标志互斥；合并后每条 tick **只有一个分支**会写位置，互斥从「共享标志」变成「结构互斥」。
+     */
+    private fun ensureMotionLoop(activity: Activity) {
+        if (::motionJob.isInitialized && motionJob.isActive) return
+        motionJob = viewModelScope.launch {
+            while (isActive) {
+                // 间隔每次重新读：设置页改完立即生效，且钳制下限 1ms（避免 delay(0) 空转与除零）
+                val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
+                delay(delayTime)
+                if (isAutoPlaying) {
+                    advanceRoutePlayback(activity, delayTime)
+                } else {
+                    advanceRockerMove(delayTime)
                 }
             }
         }
+    }
 
-        return rocker
+    /**
+     * 手动模式：摇杆步进一帧。
+     *
+     * 暂停门是**非阻塞**的（[CoroutineController.consume]）：暂停只表示「这一 tick 不动」，
+     * 循环必须继续转——否则「松开摇杆（暂停）→ 启动自动播放」会卡死在等待 Resume 上，
+     * 路线播放永远推进不了（就停在原地）。旧实现是两个独立协程，路线播放不受摇杆暂停影响，
+     * 合并后必须保住这一点。
+     */
+    private fun advanceRockerMove(delayTime: Long) {
+        if (rockerCoroutineController.consume()) return
+        val lm = locationManager ?: return   // 定位服务未就绪：本 tick 跳过，下次自动重试
+        // 每 tick 位移 = 速度 × 本 tick 时长（浮点）。
+        // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
+        // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、0 → 除零崩溃。
+        if (!MockServiceHelper.move(lm, FakeLoc.speed * delayTime / 1000.0, FakeLoc.bearing)) {
+            Log.e("MockServiceViewModel", "Failed to move")
+        }
+    }
+
+    /** 自动模式：按速度推进弧长，在路线上插值出位置并下发切线朝向 */
+    private fun advanceRoutePlayback(activity: Activity, delayTime: Long) {
+        val lm = locationManager ?: return
+        val selected = selectedRoute
+        if (selected == null || selected.route.size < 2) return
+
+        // 路线变化 → 重建路径并完整重置（选中时已重置，此处兼容外部改选）
+        if (cachedRoute !== selected) resetPlayback(selected)
+
+        // 起点定位（每次重置后一次）：下发成功才算初始化，失败下个 tick 重试（不推进弧长）
+        if (!pathInitialized) {
+            if (MockServiceHelper.setLocation(lm, pathPoints[0].lat, pathPoints[0].lon)) {
+                pathInitialized = true
+            } else {
+                Log.e("MockServiceViewModel", "路线起点下发失败，下个 tick 重试")
+            }
+            return
+        }
+
+        // 按速度推进弧长，直接在路线上插值出本 tick 的目标点并设置位置：
+        // 不再盲推 + 距离检测（盲推在曲线密集采样点上会失准、批量跳点）。
+        val advanceMeters = FakeLoc.speed * (delayTime / 1000.0)
+        routeTravelled += advanceMeters
+
+        if (routeTravelled >= routeDistance) {
+            // 完成：精确落在终点，停播并彻底重置（下次播放从头开始）
+            val end = pathPoints.last()
+            MockServiceHelper.setLocation(lm, end.lat, end.lon)
+            resetPlayback(null)
+            rocker.autoStatus = false
+            playCompletionSound(activity)
+            return
+        }
+
+        val target = pointAt(routeTravelled)
+        // 朝向 = 路线切线（向前 2m 处的方向）——平滑段切线连续变化，
+        // 普通段即段方向；随位置显式下发，系统侧不再依赖位移推算。
+        val ahead = lookaheadPoint(
+            minOf(routeTravelled + TANGENT_LOOKAHEAD_M, routeDistance)
+        )
+        val bearing = if (ahead == target) null else azimuthOf(target, ahead)
+        if (FakeLoc.enableDebugLog) {
+            Log.d(
+                "MockServiceViewModel",
+                "弧长 $routeTravelled/$routeDistance → ${target.first}, ${target.second}, 朝向: $bearing"
+            )
+        }
+        if (!MockServiceHelper.setLocation(lm, target.first, target.second, bearing)) {
+            // 下发失败（服务未就绪 / 进程重建）：回退本 tick 推进量，下个 tick 重试同一位置——
+            // 否则会出现「进度在走、位置原地不动」并一路跑到终点（看起来就是卡在原位）
+            routeTravelled -= advanceMeters
+            Log.e("MockServiceViewModel", "设置位置失败，回退本 tick 推进量待重试")
+        }
     }
 
     private fun playCompletionSound(activity: Activity) {
