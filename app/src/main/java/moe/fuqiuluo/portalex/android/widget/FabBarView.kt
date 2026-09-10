@@ -126,6 +126,23 @@ class FabBarView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 旋转后重新摆一次位置：胶囊与「地图控件（内容区）左下角」的距离固定为
+     * [R.dimen.fab_corner_margin]（无限定符，本机 560dpi 下 = 56px）。
+     *
+     * 为何需要：Activity 声明了 configChanges，旋转时不会重建也不会重新 inflate
+     * 布局 —— XML 里写下的 layout_margin* 只能停在首次 inflate 那一刻的值，
+     * 旋转后不会自己重算。这里每次旋转都显式重设一次，把位置钉住。
+     */
+    fun recalibrate() {
+        val margin = resources.getDimensionPixelSize(R.dimen.fab_corner_margin)
+        val lp = layoutParams as? MarginLayoutParams ?: return
+        if (lp.marginStart == margin && lp.bottomMargin == margin) return
+        lp.marginStart = margin
+        lp.bottomMargin = margin
+        layoutParams = lp
+    }
+
     /** 展开：主按钮旋转 90° + outline 裁剪窗口向右生长 */
     fun open() {
         if (mOpened) return
