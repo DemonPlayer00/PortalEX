@@ -17,8 +17,10 @@ import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
 import moe.fuqiuluo.portalex.ext.accuracy
+import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
@@ -253,6 +255,13 @@ class SettingsFragment : Fragment() {
         binding.loopBroadcastLocationSwitch.setOnCheckedChangeListener { _, isChecked ->
             requireContext().loopBroadcastlocation = isChecked
             showToast("重启模拟生效")
+        }
+
+        binding.allowLandscapeSwitch.isChecked = requireContext().allowLandscape
+        binding.allowLandscapeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().allowLandscape = isChecked
+            // 立即生效：MainActivity 是 configChanges 的单 Activity，不会重建
+            (activity as? MainActivity)?.applyOrientationPreference()
         }
         return root
     }

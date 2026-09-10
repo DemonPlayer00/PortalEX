@@ -13,6 +13,7 @@ import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
@@ -76,6 +77,7 @@ import moe.fuqiuluo.portalex.android.window.OverlayUtils
 import moe.fuqiuluo.portalex.bdmap.Poi
 import moe.fuqiuluo.portalex.bdmap.toPoi
 import moe.fuqiuluo.portalex.databinding.ActivityMainBinding
+import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
@@ -185,6 +187,8 @@ class MainActivity : AppCompatActivity() {
         // so the binding must exist before the lifecycle coroutine may suspend
         // on the permission prompt.
         initBinding()
+        // 按「允许横屏」设置应用屏幕方向（默认锁竖屏）
+        applyOrientationPreference()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
@@ -602,6 +606,24 @@ class MainActivity : AppCompatActivity() {
             .findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
         navHost?.childFragmentManager?.fragments?.forEach {
             (it as? FabBarAvoidanceHost)?.avoidFabBar()
+        }
+    }
+
+    /**
+     * 按「允许横屏」设置应用屏幕方向。
+     *
+     * 关闭时锁竖屏——横屏下部分界面尚未完全适配；开启时回到系统默认（随传感器）。
+     * MainActivity 声明了 configChanges，设置页切换后不会重建，所以提供这个方法
+     * 让设置页立即调用一次。
+     */
+    fun applyOrientationPreference() {
+        val want = if (allowLandscape) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+        if (requestedOrientation != want) {
+            requestedOrientation = want
         }
     }
 
