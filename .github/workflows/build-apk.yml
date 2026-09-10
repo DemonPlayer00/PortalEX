@@ -1,7 +1,19 @@
 name: Build Apks
 
+# 设计原则（与 README「为什么不发布 APK」一致）：
+#   本仓库不发布任何安装包，也不携带任何私有数据（签名证书、百度 AK）。
+#   fork 之后由使用者自己跑本工作流产出可用包——在此之前需要先拿到
+#   本仓库的签名 SHA1（见每次运行的 Job Summary），去百度地图开放平台
+#   注册自己的应用并申请 AK，再把 AK 传给本工作流。
+#   除可选的 BAIDU_MAP_AK 外，本工作流不需要任何 Secret 即可跑通。
+
 on:
   workflow_dispatch:
+    inputs:
+      baidu_map_ak:
+        description: '百度地图 AK（留空则回退到本仓库 Secret BAIDU_MAP_AK）。注意：该值会记录在本次运行里。'
+        required: false
+        type: string
   push:
     branches: [ master ]
     paths-ignore:
@@ -21,13 +33,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          
+
       - name: Setup Java 21
         uses:  gmitch215/setup-java@6d2c5e1f82f180ae79f799f0ed6e3e5efb4e664d
         with:
           distribution: jetbrains
           java-version: 21
-          
+
       - name: Cache Gradle Dependencies
         uses: actions/cache@v4
         with:
@@ -47,23 +59,109 @@ jobs:
           key: gradle-builds-core-${{ github.sha }}
           restore-keys: gradle-builds
 
-      - name: Setup google-services.json
+      # ---------- 签名证书：零配置 ----------
+      # 密钥对由 keytool 随机生成，无法写进版本库；本工作流把首次生成的证书
+      # 存进 Actions 缓存，之后每次复用，SHA1 因而在本仓库内保持稳定。
+      # （缓存被清除时会重新生成，SHA1 随之改变，需重新登记到百度控制台。）
+      - name: Restore Debug Keystore
+        id: ks
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: portalex-debug-keystore-v1
+
+      - name: Setup Debug Keystore
+        id: kssetup
+        env:
+          # 全部可选：不配任何一条也能跑（自动生成 + 缓存）。
+          # 想把签名固定成自己手里那把证书时，配前四条；
+          # 后三条给非标准证书用（别名/口令不是 androiddebugkey/android 的）。
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          DEBUG_STORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD || 'android' }}
+          DEBUG_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS || 'androiddebugkey' }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD || 'android' }}
         run: |
-          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > app/google-services.json
+          STORE_PASS="${DEBUG_STORE_PASSWORD:-android}"
+          KEY_PASS="${DEBUG_KEY_PASSWORD:-android}"
+          ALIAS="${DEBUG_ALIAS:-androiddebugkey}"
+          KS="$HOME/.android/debug.keystore"
+          mkdir -p "$HOME/.android"
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 -d > "$KS"
+            echo "签名证书来源：构建者自备（Secret DEBUG_KEYSTORE_BASE64）"
+          elif [ -f "$KS" ]; then
+            echo "签名证书来源：Actions 缓存"
+          else
+            keytool -genkeypair -v \
+              -keystore "$KS" \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "签名证书来源：本次新建（未自备证书，首次运行）"
+            echo "generated=1" >> $GITHUB_OUTPUT
+          fi
+          SHA1=$(keytool -list -v -keystore "$KS" -alias "$ALIAS" -storepass "$STORE_PASS" | grep -m1 -i "SHA1:" | awk '{print $2}')
+          echo "本次签名证书 SHA1: $SHA1"
+          {
+            echo "### 本仓库的签名证书（申请百度 AK 用这两行）"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|:--|:--|"
+            echo "| 应用包名 | moe.fuqiuluo.portalex |"
+            echo "| 签名 SHA1 | $SHA1 |"
+            echo ""
+            echo "到百度地图开放平台创建 Android SDK 应用，填上面两行，"
+            echo "再申请 AK（同一应用下勾选「地点检索」）。"
+            echo "取到 AK 后填进本工作流手动触发时的 baidu_map_ak 输入框，"
+            echo "或在本仓库配置 Secret BAIDU_MAP_AK。"
+            echo ""
+            echo "证书由 Actions 缓存保管：缓存被清除后会重新生成，SHA1 会变，需要重新登记。"
+          } >> $GITHUB_STEP_SUMMARY
+          echo "KEYSTORE_PATH=$KS" >> $GITHUB_ENV
+          echo "KEYSTORE_PASSWORD=$STORE_PASS" >> $GITHUB_ENV
+          echo "KEY_ALIAS=$ALIAS" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KEY_PASS" >> $GITHUB_ENV
+
+      - name: Save Debug Keystore
+        if: steps.kssetup.outputs.generated == '1'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: portalex-debug-keystore-v1
+
+      # ---------- 百度 AK：可选 ----------
+      # 不提供也能构建，但 AK 会是占位符，地图照常出图、检索/逆地理不可用。
+      - name: Mask Baidu Map AK
+        if: ${{ inputs.baidu_map_ak != '' }}
+        env:
+          INPUT_AK: ${{ inputs.baidu_map_ak }}
+        run: echo "::add-mask::$INPUT_AK"
+
+      - name: Check Baidu Map AK
+        env:
+          BAIDU_MAP_AK: ${{ inputs.baidu_map_ak || secrets.BAIDU_MAP_AK }}
+        run: |
+          if [ -z "$BAIDU_MAP_AK" ]; then
+            echo "::warning::未提供百度 AK，APK 内将写入占位符：地图可正常显示，但地点检索/逆地理不可用。请先按 Job Summary 里的包名+SHA1 申请 AK。"
+          else
+            echo "百度 AK 已注入（长度 ${#BAIDU_MAP_AK}）"
+          fi
 
       - name: Build with Gradle
         run: |
-          echo ${{ secrets.SIGN_KEYSTORE_BASE64 }} | base64 -d > keystore.jks
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --build-cache --parallel --warning-mode all --stacktrace
           echo "APK_FILE_ALL=$(find app/build/outputs/apk/app/release -name '*.apk')" >> $GITHUB_ENV
           echo "APK_FILE_ARM64=$(find app/build/outputs/apk/arm64/release -name '*.apk')" >> $GITHUB_ENV
           echo "APK_FILE_X86_64=$(find app/build/outputs/apk/x64/release -name '*.apk')" >> $GITHUB_ENV
         env:
-          KEYSTORE_PATH: "../keystore.jks"
-          KEYSTORE_PASSWORD: ${{ secrets.SIGN_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.SIGN_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.SIGN_KEY_PASSWORD }}
+          BAIDU_MAP_AK: ${{ inputs.baidu_map_ak || secrets.BAIDU_MAP_AK }}
+          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
 
       - name: Set Portal Version
         run: |
