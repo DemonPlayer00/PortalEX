@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
-import moe.fuqiuluo.dobby.Dobby
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
@@ -18,7 +17,6 @@ object RemoteCommandHandler {
     // 由 BaseDivineService 的 exchange_key 在 client 进程同步为系统侧 key（两进程同一把钥匙）；
     // 旧实现各进程 lazy 生成各自的随机值，系统转发来的指令永远通不过校验（配置不传播的根因）
     internal var randomKey: String = "portal_" + Random.nextDouble()
-    private var isLoadedLibrary = false
 
     @SuppressLint("UnsafeDynamicallyLoadedCode")
     fun handleInstruction(command: String, rely: Bundle): Boolean {
@@ -69,9 +67,6 @@ object RemoteCommandHandler {
                 val accuracy = rely.getFloat("accuracy", FakeLoc.accuracy)
 
                 FakeLoc.enable = true
-                if (isLoadedLibrary) {
-                    Dobby.setStatus(true)
-                }
 
                 FakeLoc.speed = speed
                 FakeLoc.altitude = altitude
@@ -90,9 +85,6 @@ object RemoteCommandHandler {
             "stop" -> {
                 FakeLoc.enable = false
                 FakeLoc.hasBearings = false
-                if (isLoadedLibrary) {
-                    Dobby.setStatus(false)
-                }
                 return true
             }
             "is_start" -> {
@@ -292,28 +284,6 @@ object RemoteCommandHandler {
             }
             "broadcast_location" -> {
                 LocationServiceHook.callOnLocationChanged()
-                return true
-            }
-            "load_library" -> {
-                val path = rely.getString("path") ?: return false
-
-                if (isLoadedLibrary && path.endsWith("libportal.so")) {
-                    rely.putString("result", "success")
-                    return true
-                }
-                runCatching {
-                    System.load(path)
-                }.onSuccess {
-                    rely.putString("result", "success")
-                    isLoadedLibrary = true
-                }.onFailure {
-                    rely.putString("result", it.stackTraceToString())
-                }
-
-                if (isLoadedLibrary) {
-                    Dobby.setStatus(FakeLoc.enable)
-                }
-
                 return true
             }
             else -> return false
