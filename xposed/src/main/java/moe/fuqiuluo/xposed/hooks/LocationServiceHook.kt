@@ -254,10 +254,10 @@ internal object LocationServiceHook: BaseLocationHook() {
 
     fun onService(cILocationManager: Class<*>) {
     /*
-     * ===================== onService 分段地图（431 行） =====================
+     * ===================== onService 分段地图（60 行） =====================
      *
-     * 这个函数把"位置服务出口上的全部 hook"按主题排成一串。读它的时候按段跳，
-     * 不要当成 431 行平铺代码；**段 6~9 已拆成 object 内 private fun**（段 1~5 仍平铺，见下）：
+     * 这个函数**只剩一条按主题排好的调用链**：位置服务出口上的全部 hook 各自拆成
+     * object 内 private fun（段 1~9，见各自 KDoc）。读代码时按段跳，不要当成平铺逻辑。
      *
      *   段 1  取位（getLastLocation）            立即更新虚拟坐标/计步/路线推进
      *   段 2  监听器注册家族                      requestLocationUpdates / removeUpdates /
@@ -272,13 +272,12 @@ internal object LocationServiceHook: BaseLocationHook() {
      *   段 8  provider 可见性                     isProviderEnabled(ForUser)：含握手门禁
      *   段 9  厂商/第三方 SDK 控制器包抑制         setExtraLocationControllerPackage*
      *
-     * 状态：段 6~9 = `hookCurrentLocation` / `hookExtraCommand` / `hookProviderEnabled` /
-     * `hookVendorControllerPackage`（见各自 KDoc）；段 1~5 仍是平铺代码（本函数内可分块跳读）。
-     *
      * ⚠️ **顺序敏感**：同一方法上的多个回调按注册顺序执行（XposedBridge 语义），
-     * 所以段的先后不能重排。将来若要继续拆成 private fun，注意两点（我试过，都栽在这里）：
+     * 所以这些调用行的先后不能重排 —— 段函数只负责"装 hook"，调用顺序即注册顺序。
+     *
+     * 拆段时踩过的两个坑（别再踩）：
      *   ① 段首必须取**构造的开头**（例如段 8 的真开头是 `if(`，注释行在它内部）——
-     *      按"向前吃注释"取边界会把 `if(` 留在上一段，切出语法错误；
+     *      按"向前吃注释"取边界会把 `if(` 留在上一段，切出语法错误；切完先做括号配平断言。
      *   ② 段函数必须放在 **object 内部**（它们用 oneShotCallbacks 等对象级成员；
      *      放到文件级会变成 Unresolved reference），并且替换段体时**别丢掉 onService 的收尾 `}`**。
      * =======================================================================
@@ -303,356 +302,11 @@ internal object LocationServiceHook: BaseLocationHook() {
         LocationNMEAHook(cILocationManager)
 
         hookLastLocation(cILocationManager)   // 段 1：取位（getLastLocation）
-        // ===== 段 2 · 监听器注册家族（requestLocationUpdates / (un)registerLocationListener）=====
-        // android 12 and later remove `requestLocationUpdates`
-        cILocationManager.hookAllMethods("requestLocationUpdates", beforeHook {
-            // android 7.0.0
-            // void requestLocationUpdates(in LocationRequest request, in ILocationListener listener, String packageName);
-            //
-            // oneway interface ILocationListener
-            //{
-            //    void onLocationChanged(in Location location);
-            //    void onStatusChanged(String provider, int status, in Bundle extras);
-            //    void onProviderEnabled(String provider);
-            //    void onProviderDisabled(String provider);
-            //}
-            //
-            // android 7.1.1 ~ 9.0.0
-            // void requestLocationUpdates(in LocationRequest request, in ILocationListener listener,
-            //            in PendingIntent intent, String packageName);
-            //
-            // oneway interface ILocationListener
-            //{
-            //    void onLocationChanged(in Location location);
-            //    void onStatusChanged(String provider, int status, in Bundle extras);
-            //    void onProviderEnabled(String provider);
-            //    void onProviderDisabled(String provider);
-            //
-            // android 10.0.0
-            // oneway interface ILocationListener
-            //{
-            //    @UnsupportedAppUsage
-            //    void onLocationChanged(in Location location);
-            //    @UnsupportedAppUsage
-            //    void onProviderEnabled(String provider);
-            //    @UnsupportedAppUsage
-            //    void onProviderDisabled(String provider);
-            //    // --- deprecated ---
-            //    @UnsupportedAppUsage
-            //    void onStatusChanged(String provider, int status, in Bundle extras);
-            //}
-            //
-            // android 11.0.0
-            // void requestLocationUpdates(in LocationRequest request, in ILocationListener listener,
-            //            in PendingIntent intent, String packageName, String featureId, String listenerId);
-            //
-            // oneway interface ILocationListener
-            //{
-            //    @UnsupportedAppUsage
-            //    void onLocationChanged(in Location location);
-            //    @UnsupportedAppUsage
-            //    void onProviderEnabled(String provider);
-            //    @UnsupportedAppUsage
-            //    void onProviderDisabled(String provider);
-            //    // called when the listener is removed from the server side; no further callbacks are expected
-            //    void onRemoved();
-            //}
-            // android 12 and later
-            // remove this method
-            val provider = kotlin.runCatching {
-                XposedHelpers.callMethod(args[0], "getProvider") as? String
-            }.getOrNull() ?: "gps"
+        hookListenerRegistration(cILocationManager)   // 段 2：监听器注册家族（requestLocationUpdates / (un)registerLocationListener）
 
-            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
-                Logger.error("requestLocationUpdates: listener is null: $method")
-                return@beforeHook
-            }
-
-            if(FakeLoc.enableDebugLog) {
-                Logger.debug("requestLocationUpdates: injected! $listener")
-            }
-
-            // 被吞掉（blocked=true）的注册框架不会回调 → 必须由推送链供帧。
-            // （旧实现在此之后还有一段 `disableFusedLocation && provider=="fused"` 分支，
-            //   由于上面 FakeLoc.enable 分支已 return，实际不可达——已删除。）
-            addLocationListenerInner(provider, listener, blocked = FakeLoc.enable)
-
-            if (FakeLoc.enable) {
-                result = null
-            }
-        })
-        cILocationManager.hookAllMethods("removeUpdates", afterHook {
-            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
-                Logger.error("removeUpdates: listener is null: $method")
-                return@afterHook
-            }
-            if(FakeLoc.enableDebugLog) {
-                Logger.debug("removeUpdates: injected! $listener")
-            }
-
-            removeLocationListenerInner(listener)
-        })
-        cILocationManager.hookAllMethods("registerLocationListener", beforeHook {
-            // android 12 ~ android 15
-            // void registerLocationListener(String provider, in LocationRequest request, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
-            //
-            // oneway interface ILocationListener
-            //{
-            //    void onLocationChanged(in List<Location> locations, in @nullable IRemoteCallback onCompleteCallback);
-            //    void onProviderEnabledChanged(String provider, boolean enabled);
-            //    void onFlushComplete(int requestCode);
-            //}
-            val provider = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                kotlin.runCatching {
-                    XposedHelpers.callMethod(args[1], "getProvider") as? String
-                }.getOrNull()
-            } else {
-                args[0] as? String
-            } ?: "gps"
-
-            // 网络注册拦截仅在模拟会话期间（enable=true）生效；未开模拟时完全透传，
-            // 否则所有依赖网络定位的应用拿不到真实位置、状态栏也不会有定位图标。
-            if (FakeLoc.enable && provider == "network") {
-                if (FakeLoc.enableDebugLog) Logger.debug("Blocked network provider registration")
-                result = null
-                return@beforeHook
-            }
-
-
-            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
-                Logger.error("registerLocationListener: listener is null: $method")
-                return@beforeHook
-            }
-
-            if(FakeLoc.enableDebugLog) {
-                Logger.debug("registerLocationListener: injected! $listener, from ${BinderUtils.getUidPackageNames()}")
-            }
-
-            addLocationListenerInner(provider, listener, blocked = false)
-
-            // 持续注册同样**不拦**（语义已定：允许并注入）：放行真实注册，帧在
-            // 各注入关口被改为模拟值，并由推送链（callOnLocationChanged）持续供帧。
-            // 拦掉一次「注册成功但永远没有回调」= 真机上不存在的异常态，本身就是特征；
-            // 而且持续取位是实体运动类应用的主数据源，拦了它连模拟数据都送不进去。
-
-            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
-                result = null
-                return@beforeHook
-            }
-        })
-        cILocationManager.hookAllMethods("unregisterLocationListener", afterHook {
-            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
-                Logger.error("unregisterLocationListener: listener is null: $method")
-                return@afterHook
-            }
-        // ===== 段 3 · GNSS 批量回调（条件块：onLocationBatch 注入）=====
-            if(FakeLoc.enableDebugLog) {
-                Logger.debug("unregisterLocationListener: injected! $listener")
-            }
-
-            removeLocationListenerInner(listener)
-        })
-
-        run {
-            cILocationManager.hookAllMethods("addGnssBatchingCallback", beforeHook {
-                if (hasThrowable() || args.isEmpty() || args[0] == null) return@beforeHook
-                val callback = args[0] ?: return@beforeHook
-                val classCallback = callback.javaClass
-
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("addGnssBatchingCallback: injected!")
-                }
-
-                classCallback.onceHookAllMethod("onLocationBatch", beforeHook onLocationBatch@ {
-                    if (args.isEmpty()) return@onLocationBatch
-
-                    if (!FakeLoc.enable) {
-                        return@onLocationBatch
-                    }
-
-                    if (FakeLoc.enableDebugLog) {
-                        Logger.debug("onLocationBatch: injected!")
-                    }
-
-                    // onLocationBatch(List<Location> locations, @nullable IRemoteCallback cb)
-                    // 也可能是单 Location 的旧版回调。两种形态都要支持，避免 List 强转 Location 崩溃。
-                    when (val data = args[0] ?: return@onLocationBatch) {
-                        is Location -> {
-                            args[0] = injectLocation(data)
-                        }
-                        is List<*> -> {
-                            args[0] = data.mapNotNull { it as? Location }.map { injectLocation(it) }
-                        }
-                        else -> {
-                            Logger.error("onLocationBatch: unknown arg type ${data.javaClass.name}")
-                        }
-                    }
-                })
-            })
-        }
-
-        // ===== 段 4 · 围栏 / 取址 / 测试 provider =====
-        cILocationManager.hookAllMethods("requestGeofence", beforeHook {
-            if (FakeLoc.enable && FakeLoc.disableRequestGeofence && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("requestGeofence: injected!")
-                }
-                result = null
-            }
-        })
-//        cILocationManager.hookAllMethods("removeGeofence", beforeHook {
-//        })
-
-        cILocationManager.hookAllMethods("getFromLocation", beforeHook {
-            if (FakeLoc.enable && FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("getFromLocation: injected!")
-                }
-                result = null
-            }
-        })
-
-        cILocationManager.hookAllMethods("getFromLocationName", beforeHook {
-            if (FakeLoc.enable && FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("getFromLocationName: injected!")
-                }
-                result = null
-            }
-        })
-
-        cILocationManager.hookAllMethods("addTestProvider", beforeHook {
-            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("addTestProvider: injected!")
-                }
-                result = null
-            }
-        })
-
-        cILocationManager.hookAllMethods("removeTestProvider", beforeHook {
-            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("removeTestProvider: injected!")
-                }
-                result = null
-            }
-        })
-
-        cILocationManager.hookAllMethods("setTestProviderLocation", beforeHook {
-            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("setTestProviderLocation: injected!")
-                }
-                result = null
-            }
-        })
-
-        cILocationManager.hookAllMethods("setTestProviderEnabled", beforeHook {
-            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("setTestProviderEnabled: injected!")
-                }
-                result = null
-            }
-        })
-
-        // ===== 段 5 · GNSS 状态与批处理（回调入队 + 主动推送 + flush）=====
-        // ============ GNSS 状态注入（适配 SDK 36/ColorOS） ============
-        // registerGnssStatusCallback：
-        // 1) 回调对象入队（死亡自动移除），供主动推送使用；
-        // 2) 安装 onSvStatusChanged 注入 hook——方法查找用 methods（public，含继承/接口），
-        //    不再用 declaredMethods：实测 SDK 36 上 Proxy 类声明差异导致 onceHookAllMethod
-        //    找不到（find onSvStatusChanged failed!），卫星注入 hook 装不上、雷达恒 0G。
-        // 3) 模拟开启时立即主动推送一次。
-        // 主动推送由 GnssStatusPusher 守护线程驱动：即使室内 GNSS 引擎闲置、系统从不回调，
-        // 雷达也能持续收到模拟卫星数据（与 callOnLocationChanged 同机制）。
-        XposedBridge.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam?) {
-                    if(param == null || param.args.isEmpty() || param.args[0] == null) return
-
-                    val callback = param.args[0] ?: return
-                    val cIGnssStatusListener = callback.javaClass
-
-                    if(FakeLoc.enableDebugLog) {
-                        Logger.debug("registerGnssStatusCallback: injected! ${cIGnssStatusListener.name}")
-                    }
-
-                    val listener = callback as? IInterface ?: return
-                    if (!gnssStatusListeners.contains(listener)) {
-                        val mDeathRecipient = object: IBinder.DeathRecipient {
-                            override fun binderDied() {}
-                            override fun binderDied(who: IBinder) {
-                                who.unlinkToDeath(this, 0)
-                                gnssStatusListeners.remove(listener)
-                            }
-                        }
-                        kotlin.runCatching { listener.asBinder().linkToDeath(mDeathRecipient, 0) }
-                        gnssStatusListeners.add(listener)
-                    }
-
-                    hookGnssStatusListener(cIGnssStatusListener)
-
-                    if (FakeLoc.enableMockGnss) {
-                        pushGnssStatus()
-                    }
-                }
-            })
-
-        cILocationManager.hookAllMethods("unregisterGnssStatusCallback", afterHook {
-            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: return@afterHook
-            if (FakeLoc.enableDebugLog) {
-                Logger.debug("unregisterGnssStatusCallback: ${listener.javaClass.name}")
-            }
-            gnssStatusListeners.remove(listener)
-        })
-        // android 11+
-        // @EnforcePermission("LOCATION_HARDWARE")
-        // void startGnssBatch(long periodNanos, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
-        //
-        // void startGnssBatch(long periodNanos, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
-        cILocationManager.hookAllMethods("startGnssBatch", beforeHook {
-            if(FakeLoc.enableDebugLog) {
-                Logger.debug("startGnssBatch: injected!")
-            }
-
-            if (FakeLoc.enable && !FakeLoc.enableAGPS && args.size >= 2) {
-                val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
-                    Logger.error("startGnssBatch: listener is null: $method")
-                    return@beforeHook
-                }
-
-                addLocationListenerInner("GnssBatch", listener, blocked = false)
-            }
-        })
-        cILocationManager.hookAllMethods("stopGnssBatch", beforeHook {
-            if (FakeLoc.enable && !FakeLoc.enableAGPS && args.size >= 2) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("stopGnssBatch: injected!")
-                }
-            }
-            //locationListeners.removeIf { it.first == "GnssBatch" }
-        })
-
-        //  void requestListenerFlush(String provider, in ILocationListener listener, int requestCode);
-        cILocationManager.hookAllMethods("requestListenerFlush", beforeHook {
-            if (FakeLoc.enable && !FakeLoc.enableAGPS && args.size >= 2) {
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("requestListenerFlush: injected!")
-                }
-
-                val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
-                    Logger.error("requestListenerFlush: listener is null: $method")
-                    return@beforeHook
-                }
-
-                // flush = 「把缓冲位置都给我」：同样允许并注入（语义与其余取位路径一致）。
-                // 旧实现 result = null 吞掉 flush 请求 → 应用等不到 flush 回调，是真机上
-                // 不存在的异常态，本身就构成特征。
-                addLocationListenerInner("gps", listener, blocked = false)
-            }
-        })
-
+        hookGnssBatchingCallback(cILocationManager)   // 段 3：GNSS 批量回调（条件块：onLocationBatch 注入）
+        hookGeofenceAndTestProvider(cILocationManager)   // 段 4：围栏 / 取址 / 测试 provider
+        hookGnssStatusAndBatch(cILocationManager)   // 段 5：GNSS 状态与批处理（回调入队 + 主动推送 + flush）
         hookCurrentLocation(cILocationManager)   // 取位请求（getCurrentLocation）：允许并注入，并登记一次性投递表
         hookExtraCommand(cILocationManager)   // 命令通道与 provider 开关的拦截（sendExtraCommand → portal 分发）
         hookProviderEnabled(cILocationManager)   // provider 可见性（isProviderEnabled / ForUser，含握手门禁）
@@ -1313,6 +967,385 @@ internal object LocationServiceHook: BaseLocationHook() {
         startGnssStatusPusher()
         startLocationKeepAlive()
 
+    }
+
+    /**
+     * 监听器注册家族：requestLocationUpdates / unregisterLocationListener / registerLocationListener。
+     * 
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（含段首横幅、仅整体缩进对齐）。
+     * 注册顺序必须与 [onService] 里的调用顺序一致。
+     */
+    private fun hookListenerRegistration(cILocationManager: Class<*>) {
+        // ===== 段 2 · 监听器注册家族（requestLocationUpdates / (un)registerLocationListener）=====
+        // android 12 and later remove `requestLocationUpdates`
+        cILocationManager.hookAllMethods("requestLocationUpdates", beforeHook {
+            // android 7.0.0
+            // void requestLocationUpdates(in LocationRequest request, in ILocationListener listener, String packageName);
+            //
+            // oneway interface ILocationListener
+            //{
+            //    void onLocationChanged(in Location location);
+            //    void onStatusChanged(String provider, int status, in Bundle extras);
+            //    void onProviderEnabled(String provider);
+            //    void onProviderDisabled(String provider);
+            //}
+            //
+            // android 7.1.1 ~ 9.0.0
+            // void requestLocationUpdates(in LocationRequest request, in ILocationListener listener,
+            //            in PendingIntent intent, String packageName);
+            //
+            // oneway interface ILocationListener
+            //{
+            //    void onLocationChanged(in Location location);
+            //    void onStatusChanged(String provider, int status, in Bundle extras);
+            //    void onProviderEnabled(String provider);
+            //    void onProviderDisabled(String provider);
+            //
+            // android 10.0.0
+            // oneway interface ILocationListener
+            //{
+            //    @UnsupportedAppUsage
+            //    void onLocationChanged(in Location location);
+            //    @UnsupportedAppUsage
+            //    void onProviderEnabled(String provider);
+            //    @UnsupportedAppUsage
+            //    void onProviderDisabled(String provider);
+            //    // --- deprecated ---
+            //    @UnsupportedAppUsage
+            //    void onStatusChanged(String provider, int status, in Bundle extras);
+            //}
+            //
+            // android 11.0.0
+            // void requestLocationUpdates(in LocationRequest request, in ILocationListener listener,
+            //            in PendingIntent intent, String packageName, String featureId, String listenerId);
+            //
+            // oneway interface ILocationListener
+            //{
+            //    @UnsupportedAppUsage
+            //    void onLocationChanged(in Location location);
+            //    @UnsupportedAppUsage
+            //    void onProviderEnabled(String provider);
+            //    @UnsupportedAppUsage
+            //    void onProviderDisabled(String provider);
+            //    // called when the listener is removed from the server side; no further callbacks are expected
+            //    void onRemoved();
+            //}
+            // android 12 and later
+            // remove this method
+            val provider = kotlin.runCatching {
+                XposedHelpers.callMethod(args[0], "getProvider") as? String
+            }.getOrNull() ?: "gps"
+
+            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
+                Logger.error("requestLocationUpdates: listener is null: $method")
+                return@beforeHook
+            }
+
+            if(FakeLoc.enableDebugLog) {
+                Logger.debug("requestLocationUpdates: injected! $listener")
+            }
+
+            // 被吞掉（blocked=true）的注册框架不会回调 → 必须由推送链供帧。
+            // （旧实现在此之后还有一段 `disableFusedLocation && provider=="fused"` 分支，
+            //   由于上面 FakeLoc.enable 分支已 return，实际不可达——已删除。）
+            addLocationListenerInner(provider, listener, blocked = FakeLoc.enable)
+
+            if (FakeLoc.enable) {
+                result = null
+            }
+        })
+        cILocationManager.hookAllMethods("removeUpdates", afterHook {
+            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
+                Logger.error("removeUpdates: listener is null: $method")
+                return@afterHook
+            }
+            if(FakeLoc.enableDebugLog) {
+                Logger.debug("removeUpdates: injected! $listener")
+            }
+
+            removeLocationListenerInner(listener)
+        })
+        cILocationManager.hookAllMethods("registerLocationListener", beforeHook {
+            // android 12 ~ android 15
+            // void registerLocationListener(String provider, in LocationRequest request, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
+            //
+            // oneway interface ILocationListener
+            //{
+            //    void onLocationChanged(in List<Location> locations, in @nullable IRemoteCallback onCompleteCallback);
+            //    void onProviderEnabledChanged(String provider, boolean enabled);
+            //    void onFlushComplete(int requestCode);
+            //}
+            val provider = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                kotlin.runCatching {
+                    XposedHelpers.callMethod(args[1], "getProvider") as? String
+                }.getOrNull()
+            } else {
+                args[0] as? String
+            } ?: "gps"
+
+            // 网络注册拦截仅在模拟会话期间（enable=true）生效；未开模拟时完全透传，
+            // 否则所有依赖网络定位的应用拿不到真实位置、状态栏也不会有定位图标。
+            if (FakeLoc.enable && provider == "network") {
+                if (FakeLoc.enableDebugLog) Logger.debug("Blocked network provider registration")
+                result = null
+                return@beforeHook
+            }
+
+
+            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
+                Logger.error("registerLocationListener: listener is null: $method")
+                return@beforeHook
+            }
+
+            if(FakeLoc.enableDebugLog) {
+                Logger.debug("registerLocationListener: injected! $listener, from ${BinderUtils.getUidPackageNames()}")
+            }
+
+            addLocationListenerInner(provider, listener, blocked = false)
+
+            // 持续注册同样**不拦**（语义已定：允许并注入）：放行真实注册，帧在
+            // 各注入关口被改为模拟值，并由推送链（callOnLocationChanged）持续供帧。
+            // 拦掉一次「注册成功但永远没有回调」= 真机上不存在的异常态，本身就是特征；
+            // 而且持续取位是实体运动类应用的主数据源，拦了它连模拟数据都送不进去。
+
+            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+                result = null
+                return@beforeHook
+            }
+        })
+        cILocationManager.hookAllMethods("unregisterLocationListener", afterHook {
+            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
+                Logger.error("unregisterLocationListener: listener is null: $method")
+                return@afterHook
+            }
+            if(FakeLoc.enableDebugLog) {
+                Logger.debug("unregisterLocationListener: injected! $listener")
+            }
+
+            removeLocationListenerInner(listener)
+        })
+    }
+
+    /**
+     * GNSS 批量回调（条件块）：addGnssBatchingCallback 内再挂 onLocationBatch 注入。
+     * 
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（含段首横幅、仅整体缩进对齐）。
+     */
+    private fun hookGnssBatchingCallback(cILocationManager: Class<*>) {
+        // ===== 段 3 · GNSS 批量回调（条件块：onLocationBatch 注入）=====
+        run {
+            cILocationManager.hookAllMethods("addGnssBatchingCallback", beforeHook {
+                if (hasThrowable() || args.isEmpty() || args[0] == null) return@beforeHook
+                val callback = args[0] ?: return@beforeHook
+                val classCallback = callback.javaClass
+
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("addGnssBatchingCallback: injected!")
+                }
+
+                classCallback.onceHookAllMethod("onLocationBatch", beforeHook onLocationBatch@ {
+                    if (args.isEmpty()) return@onLocationBatch
+
+                    if (!FakeLoc.enable) {
+                        return@onLocationBatch
+                    }
+
+                    if (FakeLoc.enableDebugLog) {
+                        Logger.debug("onLocationBatch: injected!")
+                    }
+
+                    // onLocationBatch(List<Location> locations, @nullable IRemoteCallback cb)
+                    // 也可能是单 Location 的旧版回调。两种形态都要支持，避免 List 强转 Location 崩溃。
+                    when (val data = args[0] ?: return@onLocationBatch) {
+                        is Location -> {
+                            args[0] = injectLocation(data)
+                        }
+                        is List<*> -> {
+                            args[0] = data.mapNotNull { it as? Location }.map { injectLocation(it) }
+                        }
+                        else -> {
+                            Logger.error("onLocationBatch: unknown arg type ${data.javaClass.name}")
+                        }
+                    }
+                })
+            })
+        }
+    }
+
+    /**
+     * 围栏 / 取址 / 测试 provider：requestGeofence、(add/remove)TestProvider、getFromLocation*。
+     * 
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（含段首横幅、仅整体缩进对齐）。
+     */
+    private fun hookGeofenceAndTestProvider(cILocationManager: Class<*>) {
+        // ===== 段 4 · 围栏 / 取址 / 测试 provider =====
+        cILocationManager.hookAllMethods("requestGeofence", beforeHook {
+            if (FakeLoc.enable && FakeLoc.disableRequestGeofence && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("requestGeofence: injected!")
+                }
+                result = null
+            }
+        })
+//        cILocationManager.hookAllMethods("removeGeofence", beforeHook {
+//        })
+
+        cILocationManager.hookAllMethods("getFromLocation", beforeHook {
+            if (FakeLoc.enable && FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("getFromLocation: injected!")
+                }
+                result = null
+            }
+        })
+
+        cILocationManager.hookAllMethods("getFromLocationName", beforeHook {
+            if (FakeLoc.enable && FakeLoc.disableGetFromLocation && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("getFromLocationName: injected!")
+                }
+                result = null
+            }
+        })
+
+        cILocationManager.hookAllMethods("addTestProvider", beforeHook {
+            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("addTestProvider: injected!")
+                }
+                result = null
+            }
+        })
+
+        cILocationManager.hookAllMethods("removeTestProvider", beforeHook {
+            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("removeTestProvider: injected!")
+                }
+                result = null
+            }
+        })
+
+        cILocationManager.hookAllMethods("setTestProviderLocation", beforeHook {
+            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("setTestProviderLocation: injected!")
+                }
+                result = null
+            }
+        })
+
+        cILocationManager.hookAllMethods("setTestProviderEnabled", beforeHook {
+            if (FakeLoc.enable && !FakeLoc.enableAGPS) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("setTestProviderEnabled: injected!")
+                }
+                result = null
+            }
+        })
+    }
+
+    /**
+     * GNSS 状态与批处理：registerGnssStatusCallback 入队 + 主动推送、start/stopGnssBatch、requestListenerFlush。
+     * 
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（含段首横幅、仅整体缩进对齐）。
+     */
+    private fun hookGnssStatusAndBatch(cILocationManager: Class<*>) {
+        // ===== 段 5 · GNSS 状态与批处理（回调入队 + 主动推送 + flush）=====
+        // ============ GNSS 状态注入（适配 SDK 36/ColorOS） ============
+        // registerGnssStatusCallback：
+        // 1) 回调对象入队（死亡自动移除），供主动推送使用；
+        // 2) 安装 onSvStatusChanged 注入 hook——方法查找用 methods（public，含继承/接口），
+        //    不再用 declaredMethods：实测 SDK 36 上 Proxy 类声明差异导致 onceHookAllMethod
+        //    找不到（find onSvStatusChanged failed!），卫星注入 hook 装不上、雷达恒 0G。
+        // 3) 模拟开启时立即主动推送一次。
+        // 主动推送由 GnssStatusPusher 守护线程驱动：即使室内 GNSS 引擎闲置、系统从不回调，
+        // 雷达也能持续收到模拟卫星数据（与 callOnLocationChanged 同机制）。
+        XposedBridge.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam?) {
+                    if(param == null || param.args.isEmpty() || param.args[0] == null) return
+
+                    val callback = param.args[0] ?: return
+                    val cIGnssStatusListener = callback.javaClass
+
+                    if(FakeLoc.enableDebugLog) {
+                        Logger.debug("registerGnssStatusCallback: injected! ${cIGnssStatusListener.name}")
+                    }
+
+                    val listener = callback as? IInterface ?: return
+                    if (!gnssStatusListeners.contains(listener)) {
+                        val mDeathRecipient = object: IBinder.DeathRecipient {
+                            override fun binderDied() {}
+                            override fun binderDied(who: IBinder) {
+                                who.unlinkToDeath(this, 0)
+                                gnssStatusListeners.remove(listener)
+                            }
+                        }
+                        kotlin.runCatching { listener.asBinder().linkToDeath(mDeathRecipient, 0) }
+                        gnssStatusListeners.add(listener)
+                    }
+
+                    hookGnssStatusListener(cIGnssStatusListener)
+
+                    if (FakeLoc.enableMockGnss) {
+                        pushGnssStatus()
+                    }
+                }
+            })
+
+        cILocationManager.hookAllMethods("unregisterGnssStatusCallback", afterHook {
+            val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: return@afterHook
+            if (FakeLoc.enableDebugLog) {
+                Logger.debug("unregisterGnssStatusCallback: ${listener.javaClass.name}")
+            }
+            gnssStatusListeners.remove(listener)
+        })
+        // android 11+
+        // @EnforcePermission("LOCATION_HARDWARE")
+        // void startGnssBatch(long periodNanos, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
+        //
+        // void startGnssBatch(long periodNanos, in ILocationListener listener, String packageName, @nullable String attributionTag, String listenerId);
+        cILocationManager.hookAllMethods("startGnssBatch", beforeHook {
+            if(FakeLoc.enableDebugLog) {
+                Logger.debug("startGnssBatch: injected!")
+            }
+
+            if (FakeLoc.enable && !FakeLoc.enableAGPS && args.size >= 2) {
+                val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
+                    Logger.error("startGnssBatch: listener is null: $method")
+                    return@beforeHook
+                }
+
+                addLocationListenerInner("GnssBatch", listener, blocked = false)
+            }
+        })
+        cILocationManager.hookAllMethods("stopGnssBatch", beforeHook {
+            if (FakeLoc.enable && !FakeLoc.enableAGPS && args.size >= 2) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("stopGnssBatch: injected!")
+                }
+            }
+            //locationListeners.removeIf { it.first == "GnssBatch" }
+        })
+
+        //  void requestListenerFlush(String provider, in ILocationListener listener, int requestCode);
+        cILocationManager.hookAllMethods("requestListenerFlush", beforeHook {
+            if (FakeLoc.enable && !FakeLoc.enableAGPS && args.size >= 2) {
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("requestListenerFlush: injected!")
+                }
+
+                val listener = args.filterIsInstance<IInterface>().firstOrNull() ?: run {
+                    Logger.error("requestListenerFlush: listener is null: $method")
+                    return@beforeHook
+                }
+
+                // flush = 「把缓冲位置都给我」：同样允许并注入（语义与其余取位路径一致）。
+                // 旧实现 result = null 吞掉 flush 请求 → 应用等不到 flush 回调，是真机上
+                // 不存在的异常态，本身就构成特征。
+                addLocationListenerInner("gps", listener, blocked = false)
+            }
+        })
     }
 }
 
