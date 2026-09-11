@@ -1,9 +1,11 @@
 package moe.fuqiuluo.xposed
 
 import android.annotation.SuppressLint
+import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
+import android.os.Process
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
@@ -16,14 +18,69 @@ import java.util.Collections
 import kotlin.random.Random
 
 object RemoteCommandHandler {
+
+    /**
+     * 命令通道的两个入口。门禁不同，必须区分，不能靠默认值糊过去：
+     *  - [PROVIDER]：`LocationManagerService.sendExtraCommand("portal", …)`——**任何应用都能打**，
+     *    因此要求调用者 uid 通过 [BinderUtils.isLocationProviderEnabled]（只有模块自身）**且**带对钥匙。
+     *  - [PROXY]：代理 Binder 的 `onTransact`——调用者只可能是转发指令的 system_server，
+     *    因此要求 `uid == SYSTEM_UID`（另有钥匙校验）。
+     */
+    enum class Origin { PROVIDER, PROXY }
+
     private val proxyBinders by lazy { Collections.synchronizedList(arrayListOf<IBinder>()) }
     private val needProxyCmd = arrayOf("start", "stop", "set_speed_amp", "set_altitude", "set_speed", "update_location", "set_bearing", "move", "put_config")
+
+    /** 已被拒绝过的 uid：门禁告警只记一次，免得被别的应用刷日志（刷日志本身就是一种提示） */
+    private val warnedDeniedUids = Collections.synchronizedSet(HashSet<Int>())
+
     // 由 BaseDivineService 的 exchange_key 在 client 进程同步为系统侧 key（两进程同一把钥匙）；
     // 旧实现各进程 lazy 生成各自的随机值，系统转发来的指令永远通不过校验（配置不传播的根因）
-    internal var randomKey: String = "portal_" + Random.nextDouble()
+    // SecureRandom（旧实现用 java.util.Random：种子可枚举，钥匙不该赌这个）
+    internal var randomKey: String = newKey()
+
+    private fun newKey(): String {
+        val bytes = ByteArray(16)
+        java.security.SecureRandom().nextBytes(bytes)
+        return "portal_" + bytes.joinToString("") { "%02x".format(it) }
+    }
 
     @SuppressLint("UnsafeDynamicallyLoadedCode")
-    fun handleInstruction(command: String, rely: Bundle): Boolean {
+    fun handleInstruction(command: String, rely: Bundle, origin: Origin = Origin.PROVIDER): Boolean {
+        /*
+         * ---- 门禁（两道，缺一不可）----
+         *
+         * 这里修的是**实测可利用**的越权：旧实现在 exchange_key 的门禁失败后**没有 return**，
+         * 控制流继续往下走到指令分发 ⇒ 任何应用只要把 command 写成 "exchange_key"、再在
+         * extras 里带 command_id，就能执行任意指令。实测（第三方包、uid≠模块）：
+         *   · get_sensor_status ⇒ 返回 true 且回包带 26 个内部字段（含 portal_gate 里的模块 uid）
+         *   · is_start / put_config / set_sensor_mock / set_proxy ⇒ 均可执行
+         *     （能关掉注入层、也能把自己注册成指令代理 ⇒ 检测与破坏都成立）
+         * 另外我们的 hook 是在 beforeHook 里直接 `result = true`，**平台自己的权限检查会被跳过**
+         * ⇒ 连 ACCESS_LOCATION_EXTRA_COMMANDS 都不需要。
+         *
+         * 现在的规则：入口先判调用者，**不通过就立刻返回**（不落到分发）；
+         * 对外表现与"这个 provider 不存在"一致 —— 剩下交给平台原实现，不制造可判定的差异。
+         */
+        when (origin) {
+            Origin.PROVIDER -> {
+                val uid = BinderUtils.getCallerUid()
+                if (uid != BinderUtils.moduleOwnerUid()) {
+                    if (warnedDeniedUids.add(uid)) {
+                        Logger.warn("拒绝来自 uid=$uid 的命令通道访问（该通道只对模块自身开放）")
+                    }
+                    return false
+                }
+            }
+            Origin.PROXY -> {
+                // 代理指令只可能由 system_server 转发过来（proxy binder 是注册给系统的）
+                if (Binder.getCallingUid() != Process.SYSTEM_UID) {
+                    Logger.warn("代理通道拒绝 uid=${Binder.getCallingUid()}（只接受系统转发）")
+                    return false
+                }
+            }
+        }
+
         // Exchange key -> returns a random key -> is used to verify that it is the PortalManager
         if (command == "exchange_key") {
             val userId = BinderUtils.getCallerUid()
@@ -31,10 +88,10 @@ object RemoteCommandHandler {
                 rely.putString("key", randomKey)
                 return true
             }
-            // Go back and see if the instruction has been processed to prevent it from being detected by others
-        } else if (command != randomKey) {
+            // 拿不到钥匙：既不回答，也**绝不继续分发**（旧实现少了这个 return）
             return false
         }
+        if (command != randomKey) return false
         val commandId = rely.getString("command_id") ?: return false
 
         kotlin.runCatching {
