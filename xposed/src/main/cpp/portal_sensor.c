@@ -86,6 +86,14 @@ typedef int (*ps_enable_fn)(void *self, int handle, int enabled, long long perio
                            long long batch_ns, int flags);
 
 #define MAX_SEGS 8
+/*
+ * install 偏移数组的索引契约（Kotlin 侧同名常量见 hooks/sensor/InstallOffsets.kt，必须同序）：
+ *   0 relroAddr · 1 relroSize · 2 poll(AIDL) · 3 pollFmq(AIDL) · 4 poll(HIDL) · 5 pollFmq(HIDL)
+ *   6 enableDisable（可选：老版本 Kotlin 只传 6 项）
+ */
+#define VW_INSTALL_OFFSET_COUNT 7
+#define VW_INSTALL_OFFSET_REQUIRED 6
+
 #define MAX_TARGETS 4
 
 /* 采样率请求记录（环形，最近 EN_REQ_CAP 条；只读观测，不影响框架逻辑） */
@@ -632,12 +640,13 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_install(JNIEnv *env, jo
     (void) thiz;
     if (offsets == NULL) return JNI_FALSE;
     jsize len = (*env)->GetArrayLength(env, offsets);
-    if (len < MAX_TARGETS + 2) {
-        LOGE("install: offsets array too short (%d)", (int) len);
+    /* 索引契约见 Kotlin 侧 InstallOffsets：0=relroAddr 1=relroSize 2..5=四个 poll 出口
+     * 6=enableDisable（可选）。少一项就不是我们认识的协议 —— 宁可明确不装。 */
+    if (len < VW_INSTALL_OFFSET_REQUIRED) {
+        LOGE("install: offsets array too short (%d < %d)", (int) len, VW_INSTALL_OFFSET_REQUIRED);
         return JNI_FALSE;
     }
-    /* 第 7 项（enableDisable）可选：老版本 Kotlin 只传 6 项 */
-    int want = (len >= MAX_TARGETS + 3) ? (MAX_TARGETS + 3) : (MAX_TARGETS + 2);
+    int want = (len >= VW_INSTALL_OFFSET_COUNT) ? VW_INSTALL_OFFSET_COUNT : VW_INSTALL_OFFSET_REQUIRED;
     jlong vals[MAX_TARGETS + 3] = {0};
     (*env)->GetLongArrayRegion(env, offsets, 0, want, vals);
     return do_install(vals, want) ? JNI_TRUE : JNI_FALSE;

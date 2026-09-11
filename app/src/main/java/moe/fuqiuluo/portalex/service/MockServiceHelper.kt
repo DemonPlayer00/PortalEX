@@ -21,10 +21,13 @@ import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
+import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
+import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.PortalProtocol
 
 object MockServiceHelper {
-    const val PROVIDER_NAME = "portal"
+    const val PROVIDER_NAME = PortalProtocol.PROVIDER
     private lateinit var randomKey: String
 
     private var loopThread :Thread ?= null
@@ -73,8 +76,8 @@ object MockServiceHelper {
     fun tryInitService(locationManager: LocationManager) {
         val rely = Bundle()
         Log.d("MockServiceHelper", "Try to init service")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, "exchange_key", rely)) {
-            rely.getString("key")?.let {
+        if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, "exchange_key", rely)) {
+            rely.getString(Key.EXCHANGE_REPLY)?.let {
                 randomKey = it
                 Log.d("MockServiceHelper", "Service init success, key: $randomKey")
             }
@@ -88,9 +91,9 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "is_start")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getBoolean("is_start")
+        rely.putString(Key.COMMAND_ID, Cmd.IS_START)
+        if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
+            return rely.getBoolean(Key.IS_START)
         }
         return false
     }
@@ -100,9 +103,9 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "is_gnss_start")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getBoolean("is_gnss_start")
+        rely.putString(Key.COMMAND_ID, Cmd.IS_GNSS_START)
+        if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
+            return rely.getBoolean(Key.IS_GNSS_START)
         }
         return false
     }
@@ -112,8 +115,8 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "start_gnss_mock")
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        rely.putString(Key.COMMAND_ID, Cmd.START_GNSS_MOCK)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     fun stopGnssMock(locationManager: LocationManager): Boolean {
@@ -121,8 +124,8 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "stop_gnss_mock")
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        rely.putString(Key.COMMAND_ID, Cmd.STOP_GNSS_MOCK)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
 
@@ -131,8 +134,8 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "start_wifi_mock")
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        rely.putString(Key.COMMAND_ID, Cmd.START_WIFI_MOCK)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     fun stopWifiMock(locationManager: LocationManager): Boolean {
@@ -140,8 +143,8 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "stop_wifi_mock")
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        rely.putString(Key.COMMAND_ID, Cmd.STOP_WIFI_MOCK)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     fun tryOpenMock(
@@ -154,16 +157,16 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "start")
-        rely.putDouble("speed", speed)
-        rely.putDouble("altitude", altitude)
-        rely.putFloat("accuracy", accuracy)
+        rely.putString(Key.COMMAND_ID, Cmd.START)
+        rely.putDouble(Key.SPEED, speed)
+        rely.putDouble(Key.ALTITUDE, altitude)
+        rely.putFloat(Key.ACCURACY, accuracy)
         // App 侧状态同步：putConfig 不再携带 enable，避免打开设置页/GNSS 页时把模拟误关
         FakeLoc.enable = true
         startLoopBroadcastLocation(locationManager)
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
-        return if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
+        return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             isMockStart(locationManager)
         } else {
             false
@@ -175,11 +178,11 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "stop")
+        rely.putString(Key.COMMAND_ID, Cmd.STOP)
         stopLoopBroadcastLocation()
         runCatching { Portal.appContext }.getOrNull()?.let { stopSensorPollKeepAlive(it) }
         FakeLoc.enable = false
-        if (locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
+        if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             return !isMockStart(locationManager)
         }
         return false
@@ -190,9 +193,9 @@ object MockServiceHelper {
             return null
         }
         val rely = Bundle()
-        rely.putString("command_id", "get_location")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return Pair(rely.getDouble("lat"), rely.getDouble("lon"))
+        rely.putString(Key.COMMAND_ID, Cmd.GET_LOCATION)
+        if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
+            return Pair(rely.getDouble(Key.LAT), rely.getDouble(Key.LON))
         }
         return null
     }
@@ -202,9 +205,9 @@ object MockServiceHelper {
             return null
         }
         val rely = Bundle()
-        rely.putString("command_id", "get_listener_size")
-        if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
-            return rely.getInt("size")
+        rely.putString(Key.COMMAND_ID, Cmd.GET_LISTENER_SIZE)
+        if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
+            return rely.getInt(Key.LISTENER_SIZE)
         }
         return null
     }
@@ -214,8 +217,8 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "broadcast_location")
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        rely.putString(Key.COMMAND_ID, Cmd.BROADCAST_LOCATION)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     fun setBearing(locationManager: LocationManager, bearing: Double): Boolean {
@@ -223,9 +226,9 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "set_bearing")
-        rely.putDouble("bearing", bearing)
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        rely.putString(Key.COMMAND_ID, Cmd.SET_BEARING)
+        rely.putDouble(Key.BEARING, bearing)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
 
@@ -239,15 +242,15 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "move")
-        rely.putDouble("n", distance)
-        rely.putDouble("bearing", bearing)
+        rely.putString(Key.COMMAND_ID, Cmd.MOVE)
+        rely.putDouble(Key.DISTANCE, distance)
+        rely.putDouble(Key.BEARING, bearing)
 
         if (FakeLoc.enableDebugLog) {
             Log.d("MockServiceHelper", "move: distance=$distance, bearing=$bearing")
         }
 
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     fun setLocation(locationManager: LocationManager, lat: Double, lon: Double): Boolean {
@@ -284,14 +287,14 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "update_location")
-        rely.putDouble("lat", lat)
-        rely.putDouble("lon", lon)
-        rely.putString("mode", mode)
+        rely.putString(Key.COMMAND_ID, Cmd.UPDATE_LOCATION)
+        rely.putDouble(Key.LAT, lat)
+        rely.putDouble(Key.LON, lon)
+        rely.putString(Key.MODE, mode)
         if (bearing != null) {
-            rely.putDouble("bearing", bearing)
+            rely.putDouble(Key.BEARING, bearing)
         }
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     fun putConfig(locationManager: LocationManager, context: Context): Boolean {
@@ -317,27 +320,27 @@ object MockServiceHelper {
         FakeLoc.noiseProfile = context.sensorNoise
 
         val rely = Bundle()
-        rely.putString("command_id", "put_config")
+        rely.putString(Key.COMMAND_ID, Cmd.PUT_CONFIG)
         // 不再携带 enable：模拟启停只由 start/stop 命令控制（旧实现 App 侧 enable 恒 false，
         // 打开设置页/GNSS 页触发的 put_config 会把系统侧模拟静默关闭）
-        rely.putDouble("altitude", FakeLoc.altitude)
-        rely.putDouble("speed", FakeLoc.speed)
-        rely.putBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-        rely.putBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
-        rely.putBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
-        rely.putInt("min_satellites", FakeLoc.minSatellites)
-        rely.putBoolean("loop_broadcast_location", context.loopBroadcastlocation)
-        rely.putBoolean("enable_agps", FakeLoc.enableAGPS)
-        rely.putBoolean("enable_nmea", FakeLoc.enableNMEA)
-        rely.putBoolean("disable_request_geofence", FakeLoc.disableRequestGeofence)
-        rely.putBoolean("disable_get_from_location", FakeLoc.disableGetFromLocation)
-        rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
-        rely.putInt("sensor_grid_hz", FakeLoc.sensorGridHz)
-        rely.putFloat("cadence_scale", FakeLoc.cadenceScale.toFloat())
+        rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
+        rely.putDouble(Key.SPEED, FakeLoc.speed)
+        rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
+        rely.putBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
+        rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
+        rely.putInt(Key.MIN_SATELLITES, FakeLoc.minSatellites)
+        rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, context.loopBroadcastlocation)
+        rely.putBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
+        rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
+        rely.putBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
+        rely.putBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
+        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+        rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
+        rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
-        rely.putFloatArray("noise_profile", FakeLoc.noiseProfile)
+        rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
 
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
     /**
@@ -349,8 +352,8 @@ object MockServiceHelper {
             return null
         }
         val rely = Bundle()
-        rely.putString("command_id", "get_sensor_status")
-        return if (locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) rely else null
+        rely.putString(Key.COMMAND_ID, Cmd.GET_SENSOR_STATUS)
+        return if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) rely else null
     }
 
     fun isServiceInit(): Boolean {
@@ -369,18 +372,18 @@ object MockServiceHelper {
             return false
         }
         val rely = Bundle()
-        rely.putString("command_id", "set_sensor_mock")
-        rely.putBoolean("binder_sensor_mock", enabled)
+        rely.putString(Key.COMMAND_ID, Cmd.SET_SENSOR_MOCK)
+        rely.putBoolean(Key.BINDER_SENSOR_MOCK, enabled)
         // 这条命令是 App 启动时唯一会走到的"系统侧传感器配置"载体：
         // 噪声档随它一起恢复，否则系统进程重启后校准结果就丢了（退回硬编码默认）。
         runCatching {
             val ctx = Portal.appContext
             FakeLoc.noiseProfile = ctx.sensorNoise
             FakeLoc.sensorGridHz = ctx.sensorGridHz
-            rely.putFloatArray("noise_profile", FakeLoc.noiseProfile)
-            rely.putInt("sensor_grid_hz", FakeLoc.sensorGridHz)
+            rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
+            rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
         }.onFailure { Log.w("MockServiceHelper", "传感器侧配置恢复失败：${it.message}") }
-        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
 
