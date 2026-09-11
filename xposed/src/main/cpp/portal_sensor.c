@@ -90,6 +90,16 @@ static int g_installed = 0;
 static int g_rt_clock = 0;
 
 /*
+ * 步数两条流（TYPE_STEP_COUNTER/DETECTOR）改由 **poll 路径**注入。
+ * 缘由：实测 Java 客户端从运行时通道拿到的计数器值是**陈旧恒定值**（标记值实验证明我们的值没到），
+ * 而 NDK 客户端能看到真值 —— 说明该类型在"给 Java 客户端投递"这条路上被换值。
+ * poll 路径此前是能把正确值送到应用的，故把这两条流放回去，其余类型仍走运行时通道。
+ */
+static int g_steps_via_poll = 0;
+
+static int is_step_type(int32_t type) { return type == 18 || type == 19; }
+
+/*
  * 通用出口观测器：记录**我们没有接管**的类型的到达情况（类型 / 条数 / 最近值 / 最近时间）。
  * 目的：厂商私有传感器（如 pedometer_minute 33171034、oplus_activity_recognition 33171037）
  * 也在同一个出口上，应用可能从它们读步频/活动 —— 只监控、不改写，用于判断
@@ -303,15 +313,35 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
      * 绝不能再注入一份（同一条事件送两份 = 应用侧翻倍/抖动）。
      * 生成与栅格推进改由 Java 侧泵线程按时钟调用 vw_generate（见 runtimeFrame）。
      */
-    if (g_rt_clock) return kept;
+    if (g_rt_clock && !g_steps_via_poll) return kept;
+    if (g_steps_via_poll) {
+        struct timespec ts2;
+        clock_gettime(CLOCK_BOOTTIME, &ts2);
+        long long now2 = (long long) ts2.tv_sec * 1000000000LL + ts2.tv_nsec;
+        portal_sensor_event_t tmp[64];
+        int n2 = vw_generate(tmp, 64, now2);
+        for (int i = 0; i < n2 && kept < (long) cap; i++) {
+            if (!is_step_type(tmp[i].type)) continue;
+            buf[kept++] = tmp[i];
+        }
+        return kept;
+    }
 
     struct timespec ts;
     clock_gettime(CLOCK_BOOTTIME, &ts); /* 传感器事件时间基（= elapsedRealtimeNanos） */
     long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
 
     long room = (long) cap - kept;
-    if (room > 0) {
-        kept += vw_generate(buf + kept, (int) room, now);
+    if (g_steps_via_poll) {
+        /* 只把步数两条流放在 poll 路径上（其余类型由运行时通道投递） */
+        portal_sensor_event_t tmp[64];
+        int n2 = vw_generate(tmp, 64, now);
+        for (int i = 0; i < n2 && kept < (long) cap; i++) {
+            if (!is_step_type(tmp[i].type)) continue;
+            buf[kept++] = tmp[i];
+        }
+    } else {
+        if (room > 0) kept += vw_generate(buf + kept, (int) room, now);
     }
     return kept;
 }
@@ -535,16 +565,19 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_runtimeFrame(JNIEnv *en
         if (v != NULL) (*env)->ReleaseFloatArrayElements(env, values, v, JNI_ABORT);
         return 0;
     }
+    int out = 0;
     for (int i = 0; i < cap; i++) {
-        m[i * META_STRIDE + 0] = buf[i].sensor;
-        m[i * META_STRIDE + 1] = buf[i].type;
-        m[i * META_STRIDE + 2] = buf[i].timestamp;
-        m[i * META_STRIDE + 3] = value_count_for_type(buf[i].type);
-        for (int k = 0; k < VALUE_STRIDE; k++) v[i * VALUE_STRIDE + k] = buf[i].data.f[k];
+        if (g_steps_via_poll && is_step_type(buf[i].type)) continue; /* 归 poll 路径 */
+        m[out * META_STRIDE + 0] = buf[i].sensor;
+        m[out * META_STRIDE + 1] = buf[i].type;
+        m[out * META_STRIDE + 2] = buf[i].timestamp;
+        m[out * META_STRIDE + 3] = value_count_for_type(buf[i].type);
+        for (int k = 0; k < VALUE_STRIDE; k++) v[out * VALUE_STRIDE + k] = buf[i].data.f[k];
+        out++;
     }
     (*env)->ReleaseLongArrayElements(env, meta, m, 0);
     (*env)->ReleaseFloatArrayElements(env, values, v, 0);
-    return cap;
+    return out;
 }
 
 /**
@@ -561,6 +594,16 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_realStepCounter(JNIEnv 
     (void) env;
     (void) thiz;
     return (jlong) vw_real_step_counter();
+}
+
+/** 步数两条流是否改由 poll 路径注入（见 g_steps_via_poll 的说明） */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setStepsViaPoll(JNIEnv *env, jobject thiz,
+                                                                        jboolean on) {
+    (void) env;
+    (void) thiz;
+    g_steps_via_poll = on ? 1 : 0;
+    LOGI("steps via poll: %s", g_steps_via_poll ? "on" : "off");
 }
 
 JNIEXPORT jlong JNICALL

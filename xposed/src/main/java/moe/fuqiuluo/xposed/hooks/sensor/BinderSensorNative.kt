@@ -125,6 +125,15 @@ internal object BinderSensorNative {
     external fun setRuntimeClock(active: Boolean)
 
     /**
+     * 把**步数两条流**（TYPE_STEP_COUNTER/DETECTOR）改由 poll 路径注入，其余类型仍走运行时通道。
+     *
+     * 缘由（实测）：Java 客户端从运行时通道拿到的计数器值是**陈旧恒定值**（标记值实验证明我们推的值
+     * 没到客户端），而 NDK 客户端能看到真值 —— 该类型在"给 Java 客户端投递"这条路上被换值。
+     * poll 路径此前能给应用送到正确值，故把这两条流放回去。
+     */
+    external fun setStepsViaPoll(on: Boolean)
+
+    /**
      * 取一帧"截至 [nowNanos] 应发出的事件"（运行时通道专用）。
      *
      * [meta] 每事件 4 个 long：`handle / type / timestamp / values 个数`；
