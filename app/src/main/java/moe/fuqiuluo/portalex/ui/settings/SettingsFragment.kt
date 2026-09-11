@@ -174,13 +174,13 @@ class SettingsFragment : Fragment() {
         binding.binderSensorMockSwitch.isChecked = requireContext().binderSensorMock
         binding.binderSensorMockSwitch.setOnCheckedChangeListener { _, isChecked ->
             requireContext().binderSensorMock = isChecked
-            showToast(if (isChecked) "已开启外周传感器模拟（重启目标应用生效）" else "已关闭外周传感器模拟")
+            showToast(if (isChecked) "已开启外周传感器模拟" else "已关闭外周传感器模拟")
             updateRemoteConfig()
         }
 
         // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
         binding.cadenceScaleLayout.setOnClickListener {
-            showDialog("步频倍率（1=原公式）", "%.2f".format(context.cadenceScale)) {
+            showDialog("步频倍率（1=不调整）", "%.2f".format(context.cadenceScale)) {
                 val v = it.trim().toDoubleOrNull()
                 if (v == null || v <= 0.0 || v > 10.0) {
                     Toast.makeText(context, "请输入 0.2 ~ 3.0 的数值", Toast.LENGTH_SHORT).show()
@@ -226,7 +226,6 @@ class SettingsFragment : Fragment() {
                 }
                 context.reportDuration = value
                 binding.reportDurationValue.text = "%dms".format(value)
-                showToast("重新启动APP生效")
             }
         }
 
@@ -244,7 +243,6 @@ class SettingsFragment : Fragment() {
                 }
                 context.minSatelliteCount = value
                 binding.satelliteCountValue.text = "%d颗".format(value)
-                showToast("重新启动模拟生效")
                 updateRemoteConfig()
             }
         }
@@ -273,7 +271,6 @@ class SettingsFragment : Fragment() {
         binding.loopBroadcastLocationSwitch.isChecked = requireContext().loopBroadcastlocation
         binding.loopBroadcastLocationSwitch.setOnCheckedChangeListener { _, isChecked ->
             requireContext().loopBroadcastlocation = isChecked
-            showToast("重启模拟生效")
         }
 
         binding.allowLandscapeSwitch.isChecked = requireContext().allowLandscape

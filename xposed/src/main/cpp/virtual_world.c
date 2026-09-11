@@ -872,9 +872,8 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[0] = (float) (-g_mag_h * sin(theta));
             e->data.f[1] = (float) (g_mag_h * cos(theta));
             e->data.f[2] = (float) (-g_mag_h * g_mag_dip);
-            /* 磁噪声按实测逐轴定标（PKG110 静止 19s 窗口：真机 σ = 0.21 / 0.12 / 0.32 µT）。
-             * 均匀分布 [−A,A] 的 σ = A/√3 ⇒ A = σ·√3 = 0.36 / 0.21 / 0.56。
-             * 此前三轴统一 0.3（σ≈0.17），z 轴比真机安静一倍。 */
+            /* 磁场逐轴定标：真机静止实测 σ ≈ 0.21 / 0.12 / 0.32 µT（同一机型 19s 探针窗口），
+             * 默认 σ 即取该值（见 g_noise）；Calibration 页会按本机实测覆盖。 */
             add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
@@ -884,9 +883,8 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[3] = (float) g_mag_bias_x;
             e->data.f[4] = (float) g_mag_bias_y;
             e->data.f[5] = 0.0f;
-            /* 磁噪声按实测逐轴定标（PKG110 静止 19s 窗口：真机 σ = 0.21 / 0.12 / 0.32 µT）。
-             * 均匀分布 [−A,A] 的 σ = A/√3 ⇒ A = σ·√3 = 0.36 / 0.21 / 0.56。
-             * 此前三轴统一 0.3（σ≈0.17），z 轴比真机安静一倍。 */
+            /* 磁场逐轴定标：真机静止实测 σ ≈ 0.21 / 0.12 / 0.32 µT（同一机型 19s 探针窗口），
+             * 默认 σ 即取该值（见 g_noise）；Calibration 页会按本机实测覆盖。 */
             add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_GRAVITY:
@@ -944,12 +942,11 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
         default:
             break;
     }    /*
-     * 陀螺（实测驱动）：注入的陀螺 x/y 曾**恒为 0.000**，而真机（PKG110，19s 探针窗口）
-     * 三轴 σ = **0.001 rad/s** —— 钉死在 0 是可判定的伪造痕迹。z 的转弯角速度保持不变。
+     * 陀螺（实测驱动）：真机三轴都有噪声，静止实测 σ≈0.001 rad/s；x/y 只体现零偏与噪声，
+     * z 是转弯角速度 + 零偏 + 噪声。
      *
-     * 这里还补上了**零偏**：真机陀螺的零参考物理上就是 0，所以静止窗口的实测中位数
-     * 就是它的零偏（PKG110 实测 z≈0.09 rad/s）。此前我们注入的陀螺零偏恒为 0，
-     * 与"设备真实零偏"这一必然存在的量不符 —— 由 Calibration 页按实测中位数写入。
+     * **零偏**：真机陀螺的零参考物理上就是 0，所以静止窗口的实测中位数就是它的零偏；
+     * 该量必然存在且逐机不同，由 Calibration 页按实测中位数写入（默认 0）。
      */
     if (e->type == PS_TYPE_GYROSCOPE || e->type == PS_TYPE_GYROSCOPE_UNCALIBRATED) {
         e->data.f[0] = g_noise[VW_NOISE_GYRO_BIAS];

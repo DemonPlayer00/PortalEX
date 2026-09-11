@@ -105,7 +105,7 @@ class CalibrationFragment : Fragment() {
     private fun confirmReset() {
         MaterialAlertDialogBuilder(requireContext())
             .setTitle("恢复默认噪声档")
-            .setMessage("会丢掉当前所有噪声项（含一键校准的结果）。默认值取自 PKG110 实测。")
+            .setMessage("会丢掉当前所有噪声项（含一键校准的结果），回到内置的通用量级默认值。")
             .setPositiveButton("恢复") { _, _ ->
                 requireContext().sensorNoise = SensorNoise.DEFAULTS.copyOf()
                 renderValues(requireContext().sensorNoise)
