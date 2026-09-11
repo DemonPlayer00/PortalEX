@@ -1,4 +1,27 @@
-#include "virtual_world.h"
+#include "vw_internal.h"
+
+/*
+ * ============================ 文件结构地图 ============================
+ *
+ * 这是"虚拟世界"的主文件：**时间轴 + 通道表 + 生成器 + 事件填充**。
+ * 按主题拆出去的部分：
+ *   · vw_rand.c    —— xorshift 与高斯抽样（纯机械能力）
+ *   · vw_noise.c   —— 注入噪声档（逐轴 σ + 陀螺零偏，Calibration 页可编辑）
+ * 内部接口与**世界锁**见 vw_internal.h；对外接口见 virtual_world.h。
+ *
+ * 本文件自上而下：
+ *   ① 时间网格（tick/抖动）与生成时钟        —— 决定"什么时候出数据"
+ *   ② 通道表 g_chan                          —— 每个类型一个通道：速率/活跃/批量
+ *   ③ 世界状态与运动学（速度/方位/步态/摆动） —— "世界现在是什么样"
+ *   ④ 步事件队列                             —— on-change 的两条流（计数器/检测器）
+ *   ⑤ 观测与统计（诊断）                     —— 只读记账，允许竞态
+ *   ⑥ fill_event / fill_values               —— 事件内容（含噪声与精度字段）
+ *   ⑦ vw_generate                            —— **两个消费者共用一条时间轴**的核心
+ *
+ * 改这里的铁律：`vw_generate` 的"归属判定"与"队尾清扫"必须成对看（历史上两处都丢过事件）；
+ * 不变量由 host 测试守着：`sh xposed/src/main/cpp/test/run.sh`。
+ * =====================================================================
+ */
 
 #include <math.h>
 #include <pthread.h>
@@ -76,7 +99,8 @@ static vw_channel_t g_chan[MAX_CHANNELS] = {
     {PS_TYPE_STEP_DETECTOR, 0, -1, 0, 0},
 };
 
-static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+/* 世界锁：定义在这里，按主题拆出去的文件共用同一把（见 vw_internal.h，别发私有锁） */
+pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---- Java 推来的状态快照 ---- */
 static int g_active = 0;
@@ -223,23 +247,6 @@ static const long long SWAY_HALF_MAX_NS = 750000000LL;
 static const double MICRO_JITTER_AMP = 0.6;
 static const double MICRO_JITTER_TAU = 0.12;
 
-/* ---- 轻量 PRNG（不碰 libc rand 的全局状态） ---- */
-static uint64_t g_rng = 0x9E3779B97F4A7C15ULL;
-
-static uint64_t rng_next(void) {
-    uint64_t x = g_rng;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    g_rng = x;
-    return x;
-}
-
-static double rng_unit(void) { return (double) (rng_next() >> 11) * (1.0 / 9007199254740992.0); }
-
-static double rng_range(double lo, double hi) { return lo + (hi - lo) * rng_unit(); }
-
-
 /*
  * 时间戳去网格化
  * --------------
@@ -302,8 +309,8 @@ int vw_owns_type(int32_t type) {
 void vw_init(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    g_rng ^= (uint64_t) ts.tv_nsec * 0x2545F4914F6CDD1DULL ^ (uint64_t) getpid();
-    rng_next();
+    vw_rng_seed_process(); /* 每进程一份不同的序列，见 vw_rand.c */
+    vw_rng_next();         /* 预热一步：保持与拆分前完全相同的抽取序列（行为等价） */
     g_mag_h = rng_range(28.0, 42.0);
     g_mag_dip = rng_range(0.8, 1.2);
     g_mag_bias_x = rng_range(-3.0, 3.0);
@@ -777,85 +784,6 @@ static void fill_event(portal_sensor_event_t *e, const vw_channel_t *ch, long lo
     e->flags = ch->flags;
 }
 
-/*
- * ---- 噪声档（Calibration 页可编辑） ----
- *
- * 逐轴 σ + 高斯动态值。默认 σ = **旧硬编码半宽 / √3**（旧口径是均匀分布 [−A,A]，
- * σ = A/√3）⇒ 不改动时**方差与旧行为一致**，只是分布从均匀改为高斯（本次口径变更）。
- * 陀螺零偏默认 0 = 旧行为（旧实现没有零偏项）。
- * 写入走 [vw_set_noise]（在 g_lock 内），读取在 [fill_values]（同样在 g_lock 内，
- * 因为它只从 vw_generate 调用）⇒ 不需要额外同步。
- */
-static float g_noise[VW_NOISE_COUNT] = {
-    /* GYRO σ x/y/z     */ 0.000577f, 0.000577f, 0.000577f,   /* 0.001/√3 */
-    /* GYRO 零偏 x/y/z  */ 0.0f, 0.0f, 0.0f,
-    /* ACCEL σ          */ 0.005774f, 0.005774f, 0.005774f,   /* 0.01/√3 */
-    /* GRAVITY σ        */ 0.005774f, 0.005774f, 0.005774f,
-    /* LINEAR σ         */ 0.005774f, 0.005774f, 0.005774f,
-    /* MAG σ            */ 0.2078f, 0.1212f, 0.3233f,         /* 0.36/0.21/0.56 ÷ √3 */
-    /* ORIENT σ         */ 0.0866f,                          /* 0.15/√3 */
-    /* ROTVEC σ         */ 0.000866f,                        /* 0.0015/√3 */
-};
-
-/** 标准正态（Box–Muller）。rng_unit() ∈ [0,1) ⇒ u1 取 0 时 log 发散，兜一个下限。 */
-static double rng_gauss(void) {
-    double u1 = rng_unit();
-    if (u1 < 1e-12) u1 = 1e-12;
-    double u2 = rng_unit();
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
-}
-
-static void add_noise_i(portal_sensor_event_t *e, int index, float sigma) {
-    if (index < 0 || index >= 16) return;
-    if (!(sigma > 0.0f)) return;
-    e->data.f[index] += (float) (rng_gauss() * (double) sigma);
-}
-
-/** 三轴逐轴叠加（[base] 为该传感器 σ 的起始槽） */
-static void add_noise_xyz(portal_sensor_event_t *e, int base) {
-    add_noise_i(e, 0, g_noise[base]);
-    add_noise_i(e, 1, g_noise[base + 1]);
-    add_noise_i(e, 2, g_noise[base + 2]);
-}
-
-void vw_set_noise(int index, float amp) {
-    if (index < 0 || index >= VW_NOISE_COUNT) return;
-    if (amp != amp) return; /* NaN 丢弃 */
-    int is_bias = (index >= VW_NOISE_BIAS_BASE && index <= VW_NOISE_BIAS_END);
-    if (is_bias) {
-        /* 零偏可为负（真机零偏本来就是有符号的）；±50 防手滑 */
-        if (amp > 50.0f) amp = 50.0f;
-        if (amp < -50.0f) amp = -50.0f;
-    } else {
-        if (!(amp >= 0.0f)) return; /* σ 为负无意义 */
-        if (amp > 50.0f) amp = 50.0f;
-    }
-    pthread_mutex_lock(&g_lock);
-    float old = g_noise[index];
-    g_noise[index] = amp;
-    pthread_mutex_unlock(&g_lock);
-    if (old != amp) LOGI("noise[%d] %.5f -> %.5f", index, old, amp);
-}
-
-void vw_get_noise(float *out, int count) {
-    if (out == NULL || count <= 0) return;
-    pthread_mutex_lock(&g_lock);
-    for (int i = 0; i < count && i < VW_NOISE_COUNT; i++) out[i] = g_noise[i];
-    pthread_mutex_unlock(&g_lock);
-}
-
-int vw_dump_noise(char *out, size_t out_size) {
-    if (out == NULL || out_size == 0) return 0;
-    float n[VW_NOISE_COUNT];
-    vw_get_noise(n, VW_NOISE_COUNT);
-    int w = snprintf(out, out_size,
-                     "gy=%.4f/%.4f/%.4f bias=%.4f/%.4f/%.4f acc=%.4f/%.4f/%.4f "
-                     "grav=%.4f/%.4f/%.4f lin=%.4f/%.4f/%.4f mag=%.3f/%.3f/%.3f o=%.4f r=%.4f",
-                     n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9], n[10], n[11],
-                     n[12], n[13], n[14], n[15], n[16], n[17], n[18], n[19]);
-    return w > 0 ? w : 0;
-}
-
 /* 按类型填充 16 通道数据（与 SystemSensorManagerHook.sensorValuesFor 同口径） */
 /*
  * AOSP 客户端对"3 值类型"的**精度**是从 `data[3]` 的**最低字节**读的
@@ -876,14 +804,14 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
     switch (e->type) {
         case PS_TYPE_ORIENTATION:
             e->data.f[0] = (float) az;
-            add_noise_i(e, 0, g_noise[VW_NOISE_ORIENT]);
+            add_noise_i(e, 0, vw_noise_raw(VW_NOISE_ORIENT));
             break;
         case PS_TYPE_MAGNETIC_FIELD:
             e->data.f[0] = (float) (-g_mag_h * sin(theta));
             e->data.f[1] = (float) (g_mag_h * cos(theta));
             e->data.f[2] = (float) (-g_mag_h * g_mag_dip);
             /* 磁场逐轴定标：真机静止实测 σ ≈ 0.21 / 0.12 / 0.32 µT（同一机型 19s 探针窗口），
-             * 默认 σ 即取该值（见 g_noise）；Calibration 页会按本机实测覆盖。 */
+             * 默认 σ 即取该值（见 vw_noise.c）；Calibration 页会按本机实测覆盖。 */
             add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
@@ -894,7 +822,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[4] = (float) g_mag_bias_y;
             e->data.f[5] = 0.0f;
             /* 磁场逐轴定标：真机静止实测 σ ≈ 0.21 / 0.12 / 0.32 µT（同一机型 19s 探针窗口），
-             * 默认 σ 即取该值（见 g_noise）；Calibration 页会按本机实测覆盖。 */
+             * 默认 σ 即取该值（见 vw_noise.c）；Calibration 页会按本机实测覆盖。 */
             add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_GRAVITY:
@@ -959,9 +887,9 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
      * 该量必然存在且逐机不同，由 Calibration 页按实测中位数写入（默认 0）。
      */
     if (e->type == PS_TYPE_GYROSCOPE || e->type == PS_TYPE_GYROSCOPE_UNCALIBRATED) {
-        e->data.f[0] = g_noise[VW_NOISE_GYRO_BIAS];
-        e->data.f[1] = g_noise[VW_NOISE_GYRO_BIAS + 1];
-        e->data.f[2] += g_noise[VW_NOISE_GYRO_BIAS + 2];
+        e->data.f[0] = vw_noise_raw(VW_NOISE_GYRO_BIAS);
+        e->data.f[1] = vw_noise_raw(VW_NOISE_GYRO_BIAS + 1);
+        e->data.f[2] += vw_noise_raw(VW_NOISE_GYRO_BIAS + 2);
         add_noise_xyz(e, VW_NOISE_GYRO);
     }
 
