@@ -116,6 +116,13 @@ internal object BinderSensorNative {
     /** 注入总开关（关 = 真实事件原样放行，不做任何压制/注入） */
     external fun setActive(active: Boolean)
 
+    /**
+     * 用框架自己的传感器表播种 `type → handle`（三元组 `[type, handle, flags, ...]`）。
+     * 这类映射不依赖真实事件，所以步数计数器这种"不走路就没有事件"的 on-change
+     * 传感器也能拿到 handle；已知映射不会被它覆盖（真实事件携带的更可信）。
+     */
+    external fun setHandleMap(triples: LongArray)
+
     /** 状态快照（速度 m/s / 注入方位角度 / 是否移动 / 累计步数 / 该快照的时刻） */
     external fun updateState(
         speed: Double,

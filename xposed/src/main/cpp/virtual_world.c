@@ -9,6 +9,7 @@
 #define LOG_TAG "PortalSensor"
 #include <android/log.h>
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
 /* ---- 时间网格 ---- */
 /* 10ms 基准栅格：所有周期都是它的整数倍，事件天然按时间升序交织，
@@ -16,7 +17,7 @@
 #define TICK_NS 10000000LL
 #define MAX_TICKS_PER_CALL 200 /* 单次最多追 2s，再长就丢旧数据 */
 #define STEP_QUEUE_CAP 64
-#define MAX_CHANNELS 12
+#define MAX_CHANNELS 14
 
 typedef struct {
     int32_t type;
@@ -39,6 +40,9 @@ static vw_channel_t g_chan[MAX_CHANNELS] = {
     {PS_TYPE_MAGNETIC_FIELD, 4, -1, 0, 0},
     {PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED, 4, -1, 0, 0},
     {PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR, 4, -1, 0, 0},
+    /* 步数两兄弟不在栅格上（on-change，由步事件队列驱动），period 0 = 不参与栅格 */
+    {PS_TYPE_STEP_COUNTER, 0, -1, 0, 0},
+    {PS_TYPE_STEP_DETECTOR, 0, -1, 0, 0},
 };
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -178,6 +182,25 @@ void vw_set_handle(int32_t type, int32_t handle, uint32_t sensor_flags) {
             g_chan[i].known = 1;
             break;
         }
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void vw_seed_handle(int32_t type, int32_t handle, uint32_t sensor_flags) {
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (g_chan[i].type != type) continue;
+        if (!g_chan[i].known) {
+            g_chan[i].handle = handle;
+            g_chan[i].flags = sensor_flags;
+            g_chan[i].known = 1;
+            LOGI("sensor type %d -> handle 0x%x (flags 0x%x) [framework list]", type, handle,
+                 sensor_flags);
+        } else if (g_chan[i].handle != handle) {
+            LOGW("sensor type %d: framework list says 0x%x but events say 0x%x - keeping the latter",
+                 type, handle, g_chan[i].handle);
+        }
+        break;
     }
     pthread_mutex_unlock(&g_lock);
 }
@@ -470,6 +493,7 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
         long long tick_index = t / TICK_NS;
         for (int c = 0; c < MAX_CHANNELS; c++) {
             if (!g_chan[c].known) continue;
+            if (g_chan[c].period_ticks <= 0) continue; /* 步数传感器不参与栅格 */
             if (tick_index % g_chan[c].period_ticks != 0) continue;
             if (n >= cap) {
                 g_dropped++;

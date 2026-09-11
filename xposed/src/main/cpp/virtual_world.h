@@ -87,6 +87,16 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
 void vw_set_handle(int32_t type, int32_t handle, uint32_t sensor_flags);
 
 /**
+ * 用**框架自己的传感器表**（system_server 侧 `SensorManager.getSensorList` +
+ * 隐藏 `Sensor.getHandle()`）播种映射：这类映射不依赖真实事件，因此像步数计数器
+ * 这种"不走路就没有事件"的 on-change 传感器也能拿到 handle。
+ *
+ * 语义与 [vw_set_handle] 不同：只在未知时写入，已知且不一致时**不覆盖**，
+ * 只打一条告警——真实事件携带的 handle 是框架实际分发用的那个，更可信。
+ */
+void vw_seed_handle(int32_t type, int32_t handle, uint32_t sensor_flags);
+
+/**
  * 生成截至 [now_nanos] 应发出的全部事件，写入 [out]（容量 [cap]）。
  * 事件按时间升序、跨类型交织（应用侧按时间戳算 dt 不会出现负值）。
  * 积压超过容量时**丢弃最旧的**，保证最新数据的时间戳仍准确。
