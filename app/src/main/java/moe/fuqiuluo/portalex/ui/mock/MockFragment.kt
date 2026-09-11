@@ -33,14 +33,12 @@ import moe.fuqiuluo.portalex.ext.selectLocation
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
-import moe.fuqiuluo.portalex.ui.viewmodel.MockViewModel
 import moe.fuqiuluo.xposed.utils.FakeLoc
 
 class MockFragment : Fragment() {
     private var _binding: FragmentMockBinding? = null
     private val binding get() = _binding!!
 
-    private val mockViewModel by lazy { ViewModelProvider(this)[MockViewModel::class.java] }
     private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
 
     @SuppressLint("SetTextI18n")
