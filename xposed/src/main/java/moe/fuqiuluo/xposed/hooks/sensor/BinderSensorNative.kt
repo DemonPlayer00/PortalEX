@@ -209,4 +209,15 @@ internal object BinderSensorNative {
 
     /** 先把所有栅格通道标成不活跃，随后按 dump 灌活跃者（缺席即静默） */
     external fun clearChannelHints()
+
+    /**
+     * Calibration 页：按索引设置某一路注入噪声的**半宽**（均匀分布 [−A, A]，等效 σ = A/√3）。
+     *
+     * 索引表与 [moe.fuqiuluo.xposed.utils.SensorNoise] / 原生 `VW_NOISE_*` 逐项一致。
+     * 只改幅度，不动任何运动学量；原生层会丢弃负值/NaN 并把上限钳到 50。
+     */
+    external fun setNoise(index: Int, amp: Float)
+
+    /** 噪声档回读（诊断字符串，格式 `o=0.150 m=0.360/0.210/0.560 …`） */
+    external fun noiseProfile(): String
 }

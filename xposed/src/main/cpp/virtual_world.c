@@ -239,7 +239,6 @@ static double rng_unit(void) { return (double) (rng_next() >> 11) * (1.0 / 90071
 
 static double rng_range(double lo, double hi) { return lo + (hi - lo) * rng_unit(); }
 
-static float rng_noise(float amp) { return (float) ((rng_unit() * 2.0 - 1.0) * amp); }
 
 /*
  * 时间戳去网格化
@@ -768,8 +767,83 @@ static void fill_event(portal_sensor_event_t *e, const vw_channel_t *ch, long lo
     e->flags = ch->flags;
 }
 
-static void add_noise_i(portal_sensor_event_t *e, int index, float amp) {
-    if (index >= 0 && index < 16) e->data.f[index] += rng_noise(amp);
+/*
+ * ---- 噪声档（Calibration 页可编辑） ----
+ *
+ * 逐轴 σ + 高斯动态值。默认 σ = **旧硬编码半宽 / √3**（旧口径是均匀分布 [−A,A]，
+ * σ = A/√3）⇒ 不改动时**方差与旧行为一致**，只是分布从均匀改为高斯（本次口径变更）。
+ * 陀螺零偏默认 0 = 旧行为（旧实现没有零偏项）。
+ * 写入走 [vw_set_noise]（在 g_lock 内），读取在 [fill_values]（同样在 g_lock 内，
+ * 因为它只从 vw_generate 调用）⇒ 不需要额外同步。
+ */
+static float g_noise[VW_NOISE_COUNT] = {
+    /* GYRO σ x/y/z     */ 0.000577f, 0.000577f, 0.000577f,   /* 0.001/√3 */
+    /* GYRO 零偏 x/y/z  */ 0.0f, 0.0f, 0.0f,
+    /* ACCEL σ          */ 0.005774f, 0.005774f, 0.005774f,   /* 0.01/√3 */
+    /* GRAVITY σ        */ 0.005774f, 0.005774f, 0.005774f,
+    /* LINEAR σ         */ 0.005774f, 0.005774f, 0.005774f,
+    /* MAG σ            */ 0.2078f, 0.1212f, 0.3233f,         /* 0.36/0.21/0.56 ÷ √3 */
+    /* ORIENT σ         */ 0.0866f,                          /* 0.15/√3 */
+    /* ROTVEC σ         */ 0.000866f,                        /* 0.0015/√3 */
+};
+
+/** 标准正态（Box–Muller）。rng_unit() ∈ [0,1) ⇒ u1 取 0 时 log 发散，兜一个下限。 */
+static double rng_gauss(void) {
+    double u1 = rng_unit();
+    if (u1 < 1e-12) u1 = 1e-12;
+    double u2 = rng_unit();
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+}
+
+static void add_noise_i(portal_sensor_event_t *e, int index, float sigma) {
+    if (index < 0 || index >= 16) return;
+    if (!(sigma > 0.0f)) return;
+    e->data.f[index] += (float) (rng_gauss() * (double) sigma);
+}
+
+/** 三轴逐轴叠加（[base] 为该传感器 σ 的起始槽） */
+static void add_noise_xyz(portal_sensor_event_t *e, int base) {
+    add_noise_i(e, 0, g_noise[base]);
+    add_noise_i(e, 1, g_noise[base + 1]);
+    add_noise_i(e, 2, g_noise[base + 2]);
+}
+
+void vw_set_noise(int index, float amp) {
+    if (index < 0 || index >= VW_NOISE_COUNT) return;
+    if (amp != amp) return; /* NaN 丢弃 */
+    int is_bias = (index >= VW_NOISE_BIAS_BASE && index <= VW_NOISE_BIAS_END);
+    if (is_bias) {
+        /* 零偏可为负（真机零偏本来就是有符号的）；±50 防手滑 */
+        if (amp > 50.0f) amp = 50.0f;
+        if (amp < -50.0f) amp = -50.0f;
+    } else {
+        if (!(amp >= 0.0f)) return; /* σ 为负无意义 */
+        if (amp > 50.0f) amp = 50.0f;
+    }
+    pthread_mutex_lock(&g_lock);
+    float old = g_noise[index];
+    g_noise[index] = amp;
+    pthread_mutex_unlock(&g_lock);
+    if (old != amp) LOGI("noise[%d] %.5f -> %.5f", index, old, amp);
+}
+
+void vw_get_noise(float *out, int count) {
+    if (out == NULL || count <= 0) return;
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < count && i < VW_NOISE_COUNT; i++) out[i] = g_noise[i];
+    pthread_mutex_unlock(&g_lock);
+}
+
+int vw_dump_noise(char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) return 0;
+    float n[VW_NOISE_COUNT];
+    vw_get_noise(n, VW_NOISE_COUNT);
+    int w = snprintf(out, out_size,
+                     "gy=%.4f/%.4f/%.4f bias=%.4f/%.4f/%.4f acc=%.4f/%.4f/%.4f "
+                     "grav=%.4f/%.4f/%.4f lin=%.4f/%.4f/%.4f mag=%.3f/%.3f/%.3f o=%.4f r=%.4f",
+                     n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9], n[10], n[11],
+                     n[12], n[13], n[14], n[15], n[16], n[17], n[18], n[19]);
+    return w > 0 ? w : 0;
 }
 
 /* 按类型填充 16 通道数据（与 SystemSensorManagerHook.sensorValuesFor 同口径） */
@@ -792,7 +866,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
     switch (e->type) {
         case PS_TYPE_ORIENTATION:
             e->data.f[0] = (float) az;
-            add_noise_i(e, 0, 0.15f);
+            add_noise_i(e, 0, g_noise[VW_NOISE_ORIENT]);
             break;
         case PS_TYPE_MAGNETIC_FIELD:
             e->data.f[0] = (float) (-g_mag_h * sin(theta));
@@ -801,9 +875,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             /* 磁噪声按实测逐轴定标（PKG110 静止 19s 窗口：真机 σ = 0.21 / 0.12 / 0.32 µT）。
              * 均匀分布 [−A,A] 的 σ = A/√3 ⇒ A = σ·√3 = 0.36 / 0.21 / 0.56。
              * 此前三轴统一 0.3（σ≈0.17），z 轴比真机安静一倍。 */
-            add_noise_i(e, 0, 0.36f);
-            add_noise_i(e, 1, 0.21f);
-            add_noise_i(e, 2, 0.56f);
+            add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
             e->data.f[0] = (float) (-g_mag_h * sin(theta) + g_mag_bias_x);
@@ -815,9 +887,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             /* 磁噪声按实测逐轴定标（PKG110 静止 19s 窗口：真机 σ = 0.21 / 0.12 / 0.32 µT）。
              * 均匀分布 [−A,A] 的 σ = A/√3 ⇒ A = σ·√3 = 0.36 / 0.21 / 0.56。
              * 此前三轴统一 0.3（σ≈0.17），z 轴比真机安静一倍。 */
-            add_noise_i(e, 0, 0.36f);
-            add_noise_i(e, 1, 0.21f);
-            add_noise_i(e, 2, 0.56f);
+            add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_GRAVITY:
             /* 重力只含恒定分量：走路的周期分量在 LINEAR_ACCELERATION 里，
@@ -825,9 +895,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[0] = 0.0f;
             e->data.f[1] = 0.0f;
             e->data.f[2] = 9.81f;
-            add_noise_i(e, 0, 0.01f);
-            add_noise_i(e, 1, 0.01f);
-            add_noise_i(e, 2, 0.01f);
+            add_noise_xyz(e, VW_NOISE_GRAVITY);
             break;
         case PS_TYPE_ACCELEROMETER:
         case PS_TYPE_ACCELEROMETER_UNCALIBRATED: {
@@ -841,9 +909,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[3] = 0.0f;
             e->data.f[4] = 0.0f;
             e->data.f[5] = 0.0f;
-            add_noise_i(e, 0, 0.01f);
-            add_noise_i(e, 1, 0.01f);
-            add_noise_i(e, 2, 0.01f);
+            add_noise_xyz(e, VW_NOISE_ACCEL);
             break;
         }
         case PS_TYPE_LINEAR_ACCELERATION: {
@@ -852,9 +918,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[0] = (float) gx;
             e->data.f[1] = (float) gy;
             e->data.f[2] = (float) gz;
-            add_noise_i(e, 0, 0.01f);
-            add_noise_i(e, 1, 0.01f);
-            add_noise_i(e, 2, 0.01f);
+            add_noise_xyz(e, VW_NOISE_LINEAR);
             break;
         }
         case PS_TYPE_ROTATION_VECTOR:
@@ -865,33 +929,33 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[1] = 0.0f;
             e->data.f[2] = (float) (-sin(half));
             e->data.f[3] = (float) cos(half);
-            add_noise_i(e, 0, 0.0015f);
-            add_noise_i(e, 1, 0.0015f);
-            add_noise_i(e, 2, 0.0015f);
+            add_noise_xyz(e, VW_NOISE_ROTVEC);
             break;
         }
         case PS_TYPE_GYROSCOPE:
             e->data.f[2] = (float) gyro_z(now);
-            add_noise_i(e, 2, 0.001f);
             break;
         case PS_TYPE_GYROSCOPE_UNCALIBRATED:
             e->data.f[2] = (float) (gyro_z(now) + g_gyro_drift_z);
             e->data.f[3] = (float) g_gyro_drift_x;
             e->data.f[4] = (float) g_gyro_drift_y;
             e->data.f[5] = (float) g_gyro_drift_z;
-            add_noise_i(e, 2, 0.001f);
             break;
         default:
             break;
     }    /*
-     * 陀螺三轴噪声（实测驱动）：注入的陀螺 x/y 曾**恒为 0.000**，而真机（PKG110，
-     * 19s 探针窗口）三轴 σ = **0.001 rad/s** —— 钉死在 0 是可判定的伪造痕迹。
-     * 量级按实测取 1e-3（此前误取 5e-3，比真机大 5 倍）。z 的转弯角速度保持不变，只叠噪声。
+     * 陀螺（实测驱动）：注入的陀螺 x/y 曾**恒为 0.000**，而真机（PKG110，19s 探针窗口）
+     * 三轴 σ = **0.001 rad/s** —— 钉死在 0 是可判定的伪造痕迹。z 的转弯角速度保持不变。
+     *
+     * 这里还补上了**零偏**：真机陀螺的零参考物理上就是 0，所以静止窗口的实测中位数
+     * 就是它的零偏（PKG110 实测 z≈0.09 rad/s）。此前我们注入的陀螺零偏恒为 0，
+     * 与"设备真实零偏"这一必然存在的量不符 —— 由 Calibration 页按实测中位数写入。
      */
     if (e->type == PS_TYPE_GYROSCOPE || e->type == PS_TYPE_GYROSCOPE_UNCALIBRATED) {
-        add_noise_i(e, 0, 0.001f);
-        add_noise_i(e, 1, 0.001f);
-        add_noise_i(e, 2, 0.001f);
+        e->data.f[0] = g_noise[VW_NOISE_GYRO_BIAS];
+        e->data.f[1] = g_noise[VW_NOISE_GYRO_BIAS + 1];
+        e->data.f[2] += g_noise[VW_NOISE_GYRO_BIAS + 2];
+        add_noise_xyz(e, VW_NOISE_GYRO);
     }
 
     if (type_uses_accuracy(e->type)) {
