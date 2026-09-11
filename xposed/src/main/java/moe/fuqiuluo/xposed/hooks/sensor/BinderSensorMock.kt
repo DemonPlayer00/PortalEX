@@ -138,6 +138,8 @@ object BinderSensorMock {
         rely.putString("rt_channel", SystemRuntimeChannel.status())
         // 厂商私有传感器清单（仅展示：它们也在同一个事件出口上，但不在接管集合内）
         rely.putString("priv_sensors", SensorHandleMap.privateTypes() ?: "（读不到）")
+        // 应用期望频率（框架采用值 + 客户端原始请求；见 SensorRateProbe）
+        rely.putString("sensor_rates", SensorRateProbe.status())
         // 运动学权威值（system_server 侧）
         val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
         rely.putDouble("measured_speed", speed)

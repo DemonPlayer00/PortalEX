@@ -33,6 +33,13 @@ internal object LibSymbols {
     private const val SYM_HIDL_POLL = "_ZN7android20HidlSensorHalWrapper4pollEP15sensors_event_tm"
     private const val SYM_HIDL_FMQ = "_ZN7android20HidlSensorHalWrapper7pollFmqEP15sensors_event_tm"
 
+    /**
+     * 「应用期望频率」的入口（可选）：`SensorEventConnection::enableDisable(int, bool, int64, int64, int)`
+     * —— 应用注册传感器时的采样周期只在这一层可见（Java 侧只是转发）。详见 portal_sensor.c。
+     */
+    private const val SYM_ENABLE_DISABLE =
+        "_ZN7android13SensorService21SensorEventConnection13enableDisableEiblli"
+
     /** SHT_DYNSYM：导出符号表。本路径用不到它（隐藏符号在 mini debug info 里），
      *  能力保留给"需要读导出表"的场合。 */
     private const val SHT_DYNSYM_TYPE = 11
@@ -48,19 +55,22 @@ internal object LibSymbols {
         val pollHidl: Long,
         val fmqHidl: Long,
         val relroAddr: Long,
-        val relroSize: Long
+        val relroSize: Long,
+        /** 采样率观测入口（0 = 本 ROM 没有 / 没解析到，只是拿不到频率，不影响注入） */
+        val enableDisable: Long = 0L
     ) {
         val usable: Boolean
             get() = pollAidl != 0L || fmqAidl != 0L || pollHidl != 0L || fmqHidl != 0L
 
         /** 交给原生层的偏移数组（顺序与 BinderSensorNative.install 约定一致） */
         fun toOffsets(): LongArray = longArrayOf(
-            relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl
+            relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl, enableDisable
         )
 
         override fun toString(): String =
             "pollA=0x${pollAidl.toString(16)} fmqA=0x${fmqAidl.toString(16)} " +
                     "pollH=0x${pollHidl.toString(16)} fmqH=0x${fmqHidl.toString(16)} " +
+                    "en=0x${enableDisable.toString(16)} " +
                     "relro=0x${relroAddr.toString(16)}+0x${relroSize.toString(16)} @$libPath"
     }
 
@@ -109,7 +119,8 @@ internal object LibSymbols {
             pollHidl = syms.symbolValue(SYM_HIDL_POLL),
             fmqHidl = syms.symbolValue(SYM_HIDL_FMQ),
             relroAddr = relro?.addr ?: 0L,
-            relroSize = relro?.size ?: 0L
+            relroSize = relro?.size ?: 0L,
+            enableDisable = syms.symbolValue(SYM_ENABLE_DISABLE)
         )
         return resolved
     }
