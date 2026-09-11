@@ -116,6 +116,9 @@ int vw_step_rate_per_min(long long now_nanos);
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);
 
+/** 步态波形口径的短描述（诊断用，常量字符串） */
+const char *vw_gait_describe(void);
+
 /** 把已学到的 type→handle 映射写成 "1:0xb 2:0x15 ..."，返回写入长度 */
 int vw_dump_handles(char *out, size_t out_size);
 
