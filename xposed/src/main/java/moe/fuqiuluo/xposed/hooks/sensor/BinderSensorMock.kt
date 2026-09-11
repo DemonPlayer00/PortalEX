@@ -156,6 +156,7 @@ object BinderSensorMock {
         rely.putDouble("bearing_frame", FakeLoc.processedBearing())
         rely.putDouble("gait_speed", speed)
         rely.putInt("cadence_intent", FakeLoc.cadenceForSpeed(speed))
+        rely.putDouble("cadence_scale", FakeLoc.cadenceScale)
         rely.putLong("steps_total", steps)
         // 客户端视角的"开机总步数"（我们推送的 STEP_COUNTER 值）
         rely.putLong("steps_boot", runCatching { BinderSensorNative.stepCounterValue() }
@@ -360,6 +361,7 @@ object BinderSensorMock {
             BinderSensorNative.setActive(true)
             Logger.info(
                 "BinderSensorMock: activated base=$stepsBase (real=$real) " +
+                        "cadenceScale=${FakeLoc.cadenceScale} " +
                         "(${BinderSensorNative.status()})"
             )
         }

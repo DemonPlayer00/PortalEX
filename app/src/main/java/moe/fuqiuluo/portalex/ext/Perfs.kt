@@ -228,6 +228,16 @@ var Context.loopBroadcastlocation: Boolean
  * （每个通道仍按框架仲裁后的周期发数据），只是让更快的档位能落地；调粗则会把它压慢。
  * 钳在 20~400Hz。（原生层还会再钳一次 2.5~50ms，防手滑。）
  */
+/**
+ * 步频倍率（微调"步频 ↔ 速度"关系）。默认 1.0；可填整数或小数。
+ * 1.0 = 逐位保持原公式；>1 = 同速度下步频更高，<1 = 更低。钳在 0.2~3.0 防手滑。
+ */
+var Context.cadenceScale: Float
+    get() = sharedPrefs.getFloat("cadenceScale", 1.0f)
+    set(value) = sharedPrefs.edit {
+        putFloat("cadenceScale", if (value <= 0f) 1.0f else value.coerceIn(0.2f, 3.0f))
+    }
+
 var Context.sensorGridHz: Int
     get() = sharedPrefs.getInt("sensorGridHz", 0)
     set(value) = sharedPrefs.edit {
