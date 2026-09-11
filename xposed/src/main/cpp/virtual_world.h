@@ -110,6 +110,15 @@ void vw_stats(long long *emitted, long long *dropped, long long *suppressed);
 /** 记一次"真实事件被压制"（诊断用） */
 void vw_note_suppressed(long long n);
 
+/** 近 5 秒实际发出的步事件换算成步/分（诊断页用：与"意图步频"对照） */
+int vw_step_rate_per_min(long long now_nanos);
+
+/** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
+long long vw_step_events_total(void);
+
+/** 把已学到的 type→handle 映射写成 "1:0xb 2:0x15 ..."，返回写入长度 */
+int vw_dump_handles(char *out, size_t out_size);
+
 #ifdef __cplusplus
 }
 #endif

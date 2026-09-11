@@ -403,7 +403,15 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     for (int i = 0; i < g_target_count; i++) {
         APPEND(" [%s=0x%lx]", g_targets[i].name, (unsigned long) g_targets[i].off);
     }
+    struct timespec now_ts;
+    clock_gettime(CLOCK_BOOTTIME, &now_ts);
+    long long now_ns = (long long) now_ts.tv_sec * 1000000000LL + now_ts.tv_nsec;
     APPEND(" emitted=%lld dropped=%lld suppressed=%lld", emitted, dropped, suppressed);
+    APPEND(" steps=%lld step_rate=%d/min", vw_step_events_total(),
+           vw_step_rate_per_min(now_ns));
+    char handles[256];
+    vw_dump_handles(handles, sizeof(handles));
+    APPEND(" handles=[%s]", handles);
 #undef APPEND
     return (*env)->NewStringUTF(env, buf);
 }

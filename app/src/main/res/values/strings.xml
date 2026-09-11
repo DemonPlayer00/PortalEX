@@ -61,6 +61,7 @@
     <string name="rll_desc">始终允许并注入模拟位置（不可关闭）</string>
     <string name="allow_landscape">允许横屏</string>
     <string name="allow_landscape_desc">可能有视觉问题</string>
+    <string name="menu_test">Test</string>
     <string name="binder_sensor_mock">Binder 外周传感器模拟</string>
     <string name="binder_sensor_mock_desc">实验性：只在系统框架层伪造外周传感器，不注入目标应用；需重启目标应用生效</string>
     <string name="dfused">禁用融合定位</string>
