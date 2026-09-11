@@ -58,9 +58,16 @@ object BinderSensorMock {
         if (FakeLoc.enableBinderSensorMock) {
             ensureSupervisor()
             // 用户刚刚改的开关：不受退避影响，必须当场给出结论
-            return ensureNative(force = true)
+            val ok = ensureNative(force = true)
+            // S1 探针：只解析 + 读 mPtr，不注册任何东西（零副作用；解析可重试）
+            Logger.info("BinderSensorMock: ${SystemRuntimeChannel.probe()}")
+            SystemRuntimeChannel.resolveFailure?.let {
+                Logger.error("BinderSensorMock: 运行时通道解析失败：$it")
+            }
+            return ok
         }
         deactivate()
+        SystemRuntimeChannel.releaseCarrier()
         return true
     }
 
@@ -88,6 +95,8 @@ object BinderSensorMock {
         rely.putBoolean("native_ready", nativeReady)
         rely.putBoolean("active", active)
         rely.putString("native", runCatching { BinderSensorNative.status() }.getOrDefault("n/a"))
+        // 运行时投递通道（"投递 100% 可控"那条路）的状态
+        rely.putString("rt_channel", SystemRuntimeChannel.status())
         // 运动学权威值（system_server 侧）
         val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
         rely.putDouble("measured_speed", speed)
@@ -207,8 +216,18 @@ object BinderSensorMock {
         val dt = if (lastTickNanos == 0L) 0.0 else (now - lastTickNanos) / 1e9
         lastTickNanos = now
 
-        // 只有「实验开关打开」且「模拟会话在跑」时才注入；否则真实传感器原样透传
-        val want = FakeLoc.enableBinderSensorMock && FakeLoc.enable
+        // 开关关闭 == 什么都不做（不装载、不注入、不注册载体）
+        if (!FakeLoc.enableBinderSensorMock) {
+            deactivate()
+            return
+        }
+        // S2：运行时通道的**载体引导**只与实验开关同步，与"模拟会话是否在跑"无关
+        // —— 它只启动框架的运行时投递机制（事件缓冲 + RuntimeSensorHandler 线程），
+        // 不推送任何数据，载体本身对客户端不可见。投递接管在后续阶段接入。
+        if (nativeReady) SystemRuntimeChannel.ensureCarrier()
+
+        // 只有「模拟开关打开」且「模拟会话在跑」时才注入；否则真实传感器原样透传
+        val want = FakeLoc.enable
         if (!want) {
             deactivate()
             return
@@ -237,6 +256,7 @@ object BinderSensorMock {
             BinderSensorNative.setActive(true)
             Logger.info("BinderSensorMock: activated (${BinderSensorNative.status()})")
         }
+        // S2：载体引导在上面的"开关打开"分支里已经做过（幂等），这里只推进状态
         BinderSensorNative.updateState(speed, FakeLoc.processedBearing(), moving, steps, now)
     }
 }
