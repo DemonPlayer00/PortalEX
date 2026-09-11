@@ -347,8 +347,31 @@ int vw_poll_types_enabled(void) {
 
 int vw_tick_ns_dbg(void) { return (int) g_tick_ns; }
 
-/** 依据当前活跃通道里最快的采用值调细栅格（2.5ms ~ 10ms） */
+static void refresh_tick_locked(void);
+
+/* 固定栅格覆盖（0 = 自动）：设置页「注入栅格分辨率」下发，单位纳秒 */
+static long long g_tick_override_ns = 0;
+
+void vw_set_tick_override(long long ns) {
+    if (ns > 0) {
+        if (ns < MIN_TICK_NS) ns = MIN_TICK_NS;      /* 上限 400Hz */
+        if (ns > 50000000LL) ns = 50000000LL;        /* 下限 20Hz */
+    }
+    pthread_mutex_lock(&g_lock);
+    g_tick_override_ns = ns > 0 ? ns : 0;
+    refresh_tick_locked();
+    pthread_mutex_unlock(&g_lock);
+}
+
+/** 依据当前活跃通道里最快的采用值调细栅格（2.5ms ~ 10ms；有覆盖时以覆盖为准） */
 static void refresh_tick_locked(void) {
+    if (g_tick_override_ns > 0) {
+        if (g_tick_override_ns != g_tick_ns) {
+            LOGI("tick -> %.2f ms (override)", g_tick_override_ns / 1e6);
+            g_tick_ns = g_tick_override_ns;
+        }
+        return;
+    }
     long long fastest = 0;
     for (int i = 0; i < MAX_CHANNELS; i++) {
         if (g_chan[i].period_ticks <= 0) continue;
