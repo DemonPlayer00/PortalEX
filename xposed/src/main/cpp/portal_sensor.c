@@ -53,6 +53,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/system_properties.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -67,8 +68,135 @@
 
 typedef long (*ps_poll_fn)(void *self, portal_sensor_event_t *events, size_t count);
 
+/*
+ * 「应用期望频率」的入口：`SensorEventConnection::enableDisable`
+ * ------------------------------------------------------------------
+ * 应用调 `registerListener` 时的采样周期一路走到**原生**这一层才落地
+ * （Java 侧只是转发给 `ISensorEventConnection.enableDisable`），所以频率只能在
+ * 这里取。签名（由本机固件的 mini debug info 符号 `...enableDisableEiblli` 核对）：
+ *     (int handle, bool enabled, int64 samplingPeriodNs, int64 maxBatchReportLatencyNs,
+ *      int reservedFlags)
+ * 它是虚函数 ⇒ `.data.rel.ro` 里有对应的 vtable 槽 ⇒ 沿用与 poll 完全相同的
+ * "按值找槽、只改相等槽"改写方式，不引入 inline hook 那种风险类别。
+ *
+ * 调用时刻仍在 binder 线程里，因此可以直接问 `IPCThreadState::getCallingUid()`
+ * 拿到**发起请求的应用 uid**（不需要去读连接对象的私有字段——那些偏移才是真脆弱的东西）。
+ */
+typedef int (*ps_enable_fn)(void *self, int handle, int enabled, long long period_ns,
+                           long long batch_ns, int flags);
+
 #define MAX_SEGS 8
 #define MAX_TARGETS 4
+
+/* 采样率请求记录（环形，最近 EN_REQ_CAP 条；只读观测，不影响框架逻辑） */
+#define EN_REQ_CAP 32
+typedef struct {
+    int handle;
+    int enabled;
+    int uid;
+    long long period_ns;
+    long long batch_ns;
+    long long at_ns; /* CLOCK_BOOTTIME */
+} ps_en_req_t;
+
+static ps_en_req_t g_en_req[EN_REQ_CAP];
+static int g_en_req_head = 0;   /* 下一个写入位置 */
+static int g_en_req_count = 0;  /* 已记录条数（≤ EN_REQ_CAP） */
+static int g_en_req_total = 0;  /* 累计条数（诊断） */
+static ps_enable_fn g_en_orig = NULL;
+static int g_en_hooked = 0;
+static pthread_mutex_t g_en_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/**
+ * 打开 libbinder 拿 `IPCThreadState`（为了知道"谁"在请求采样率）。
+ *
+ * 为什么不能直接 `dlopen("libbinder.so")`：本模块的 .so 是 LSPosed 从模块 APK 的
+ * lib 目录 `System.load` 进来的，属于**受限链接器命名空间**，看不到 /system/lib64 ——
+ * 实测两条 `dlopen` 都失败（状态码留在 `uidapi=nodlopen` 里）。
+ * 因此用 `android_get_exported_namespace()` + `android_dlopen_ext()`（都从 libdl 里
+ * **dlsym**，不写进链接依赖，避免符号缺失时整个 .so 装不起来）从 default 命名空间打开。
+ */
+static int g_uid_api_state = 0; /* 1=ok 2=dlopen 全失败 3=dlsym 失败 4=命名空间失败 */
+static void *ps_dlopen_libbinder(void) {
+    void *h = dlopen("libbinder.so", RTLD_NOW);
+    if (h == NULL) h = dlopen("/system/lib64/libbinder.so", RTLD_NOW);
+    if (h != NULL) return h;
+
+    void *dl = dlopen("libdl.so", RTLD_NOW);
+    if (dl == NULL) return NULL;
+    void *(*get_ns)(const char *) = (void *(*)(const char *)) dlsym(
+            dl, "android_get_exported_namespace");
+    void *(*dlopen_ext)(const char *, int, const void *) = (void *(*)(const char *, int,
+                                                                      const void *)) dlsym(
+            dl, "android_dlopen_ext");
+    if (get_ns == NULL || dlopen_ext == NULL) {
+        g_uid_api_state = 4;
+        return NULL;
+    }
+    static const char *names[] = {"default", "system", "sphal", "vndk"};
+    for (int i = 0; i < 4; i++) {
+        void *ns = get_ns(names[i]);
+        if (ns == NULL) continue;
+        /* android_dlopen_ext_info 的首字段就是 library_namespace；给足余量并清零 */
+        struct {
+            const void *ns;
+            long long pad[8];
+        } info;
+        memset(&info, 0, sizeof(info));
+        info.ns = ns;
+        h = dlopen_ext("/system/lib64/libbinder.so", RTLD_NOW, &info);
+        if (h != NULL) return h;
+    }
+    return NULL;
+}
+
+/** 当前 binder 事务的调用方 uid（失败返回 -1） */
+static int ps_calling_uid(void) {
+    static void *(*self_fn)(void) = NULL;
+    static int (*uid_fn)(const void *) = NULL;
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        void *h = ps_dlopen_libbinder();
+        if (h == NULL) {
+            g_uid_api_state = 2;
+        } else {
+            self_fn = (void *(*)(void)) dlsym(h, "_ZN7android14IPCThreadState4selfEv");
+            uid_fn = (int (*)(const void *)) dlsym(
+                    h, "_ZNK7android14IPCThreadState13getCallingUidEv");
+            g_uid_api_state = (self_fn != NULL && uid_fn != NULL) ? 1 : 3;
+        }
+    }
+    if (self_fn == NULL || uid_fn == NULL) return -1;
+    void *st = self_fn();
+    return st == NULL ? -1 : uid_fn(st);
+}
+
+static void ps_record_enable(int handle, int enabled, long long period_ns, long long batch_ns) {
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    int uid = ps_calling_uid();
+    pthread_mutex_lock(&g_en_lock);
+    ps_en_req_t *r = &g_en_req[g_en_req_head];
+    r->handle = handle;
+    r->enabled = enabled;
+    r->uid = uid;
+    r->period_ns = period_ns;
+    r->batch_ns = batch_ns;
+    r->at_ns = now;
+    g_en_req_head = (g_en_req_head + 1) % EN_REQ_CAP;
+    if (g_en_req_count < EN_REQ_CAP) g_en_req_count++;
+    g_en_req_total++;
+    pthread_mutex_unlock(&g_en_lock);
+}
+
+static int hook_enable_disable(void *self, int handle, int enabled, long long period_ns,
+                               long long batch_ns, int flags) {
+    ps_record_enable(handle, enabled, period_ns, batch_ns);
+    if (g_en_orig != NULL) return g_en_orig(self, handle, enabled, period_ns, batch_ns, flags);
+    return 0;
+}
 
 /* 潜在入口：poll / pollFmq × AIDL / HIDL（本机 AIDL，但 HIDL 也一起覆盖） */
 typedef struct {
@@ -398,8 +526,11 @@ static int value_count_for_type(int type) {
 /* 安装                                                                */
 /* ------------------------------------------------------------------ */
 
-/** offsets = [relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl] */
-static int do_install(const jlong *o) {
+/**
+ * offsets = [relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl, enableDisable]
+ * （第 7 项可选：老版本 Kotlin 只传 6 项时不挂采样率观测，其余功能不受影响）
+ */
+static int do_install(const jlong *o, int olen) {
     if (g_installed) return 1;
     if (g_base == 0) {
         if (!dl_iterate_phdr(phdr_cb, (void *) "libsensorservice.so")) {
@@ -453,6 +584,34 @@ static int do_install(const jlong *o) {
     }
     g_installed = 1;
     LOGI("installed: %d vtable slot(s) patched", g_patched);
+
+    /*
+     * 采样率观测：`SensorEventConnection::enableDisable` 的 vtable 槽（见文件头说明）。
+     * 它**只读**——记录应用请求的采样周期/批量延迟 + 调用方 uid，然后原样放行。
+     *
+     * **默认停用**（`setprop debug.portalex.ratehook 1` 才挂）：实测一挂上这个槽，
+     * system_server 就会在启动后不久 / 取诊断状态时死掉（两次；dropbox 只有
+     * "can not get efficacious log"，拿不到有效堆栈），而同一份改动去掉它就稳。
+     * 这个功能不该拿系统进程去赌，所以开关留在这里、默认不生效；频率观测暂由
+     * **纯 Java 的 dump 路**（SensorRateProbe）承担——它零 hook、零原生改动。
+     */
+    char rhv[PROP_VALUE_MAX] = {0};
+    int ratehook = (__system_property_get("debug.portalex.ratehook", rhv) > 0 && rhv[0] == '1');
+    if (!ratehook) {
+        LOGI("sampling-rate observer: parked (debug.portalex.ratehook != 1)");
+    } else if (olen > MAX_TARGETS + 2 && o[MAX_TARGETS + 2] != 0) {
+        uintptr_t en_addr = g_base + (uintptr_t) o[MAX_TARGETS + 2];
+        if (!addr_is_executable(en_addr)) {
+            LOGE("enableDisable offset 0x%lx not executable - rejected",
+                 (unsigned long) o[MAX_TARGETS + 2]);
+        } else {
+            g_en_orig = (ps_enable_fn) en_addr;
+            int hits = hook_vtable_slot(relro_addr, relro_size, en_addr,
+                                        (uintptr_t) &hook_enable_disable, "enableDisable");
+            g_en_hooked = hits > 0 ? 1 : 0;
+            LOGI("sampling-rate observer: %s (%d slot)", g_en_hooked ? "on" : "off", hits);
+        }
+    }
     /*
      * 说明：这里**只**做 HAL 事件出口（poll/pollFmq）的接管。
      * "投递 100% 可控"的那条路（框架的运行时传感器）改由 **Java 层**实现——
@@ -486,9 +645,49 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_install(JNIEnv *env, jo
         LOGE("install: offsets array too short (%d)", (int) len);
         return JNI_FALSE;
     }
-    jlong vals[MAX_TARGETS + 2];
-    (*env)->GetLongArrayRegion(env, offsets, 0, MAX_TARGETS + 2, vals);
-    return do_install(vals) ? JNI_TRUE : JNI_FALSE;
+    /* 第 7 项（enableDisable）可选：老版本 Kotlin 只传 6 项 */
+    int want = (len >= MAX_TARGETS + 3) ? (MAX_TARGETS + 3) : (MAX_TARGETS + 2);
+    jlong vals[MAX_TARGETS + 3] = {0};
+    (*env)->GetLongArrayRegion(env, offsets, 0, want, vals);
+    return do_install(vals, want) ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
+ * 「应用期望频率」快照（诊断/展示用）。
+ *
+ * 内容：观测是否挂上 + 累计条数 + 最近若干条 `handle / uid / 采样周期 / 批量延迟 / 距今多久`。
+ * 语义提醒：拿到的 `period` 是应用的**原始请求**；框架随后会经 `capRates()`
+ * （无 HIGH_SAMPLING_RATE_SENSORS 的应用被压到 200Hz）与厂商扩展
+ * `ISensorEventConnectionExt::adjustSamplingPeriodBaseOverride` 调整成**采用值**。
+ * 若要"像"，应以框架采用值为准（框架 dump 里的 `selected`）。
+ */
+JNIEXPORT jstring JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_enableRequests(JNIEnv *env, jobject thiz) {
+    (void) thiz;
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    char buf[1024];
+    size_t used = 0;
+    pthread_mutex_lock(&g_en_lock);
+    int n = g_en_req_count;
+    used += (size_t) snprintf(buf + used, sizeof(buf) - used, "obs=%d total=%d n=%d uidapi=%s",
+                              g_en_hooked, g_en_req_total, n,
+                              g_uid_api_state == 1 ? "ok" :
+                              g_uid_api_state == 2 ? "nodlopen" :
+                              g_uid_api_state == 3 ? "nosym" : g_uid_api_state == 4 ? "nons" : "untried");
+    /* 从最新往回打印，最多 6 条（最近的在最前，便于一眼看到"谁刚要了多快"） */
+    for (int k = 0; k < n && k < 6 && used < sizeof(buf) - 96; k++) {
+        int idx = (g_en_req_head - 1 - k + EN_REQ_CAP * 2) % EN_REQ_CAP;
+        ps_en_req_t *r = &g_en_req[idx];
+        double age = (double) (now - r->at_ns) / 1e9;
+        used += (size_t) snprintf(buf + used, sizeof(buf) - used,
+                                  " [h=0x%x uid=%d %s req=%.1fms batch=%.1fms %.1fs]",
+                                  r->handle, r->uid, r->enabled ? "on" : "off",
+                                  r->period_ns / 1e6, r->batch_ns / 1e6, age);
+    }
+    pthread_mutex_unlock(&g_en_lock);
+    return (*env)->NewStringUTF(env, buf);
 }
 
 JNIEXPORT void JNICALL
