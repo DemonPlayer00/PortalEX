@@ -820,6 +820,27 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_stepCounterValue(JNIEnv
     return (jlong) vw_step_counter_value();
 }
 
+/**
+ * 「按应用期望出数据」：把框架观测到的采用速率与活跃状态灌进栅格通道。
+ * 语义与真机对齐（HAL 按最快请求出力、框架广播给所有人），详见 virtual_world.h。
+ */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
+        JNIEnv *env, jobject thiz, jint type, jlong period_ns, jboolean active) {
+    (void) env;
+    (void) thiz;
+    vw_set_channel_hint((int32_t) type, (long long) period_ns, active ? 1 : 0);
+}
+
+/** 先清空活跃标记（缺席的类型即静默），随后由 Kotlin 按 dump 灌入活跃者 */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_clearChannelHints(
+        JNIEnv *env, jobject thiz) {
+    (void) env;
+    (void) thiz;
+    vw_clear_channel_hints();
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(    JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
     jlong now_nanos) {
@@ -859,6 +880,11 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     obs_dump(priv, sizeof(priv));
     APPEND(" priv=[%s]", priv);
     APPEND(" gait=%s", vw_gait_describe());
+    {
+        char rates[256];
+        vw_dump_rates(rates, sizeof(rates));
+        APPEND(" rates=[%s]", rates);
+    }
     char handles[256];
     vw_dump_handles(handles, sizeof(handles));
     APPEND(" handles=[%s]", handles);

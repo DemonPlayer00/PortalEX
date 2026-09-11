@@ -41,6 +41,11 @@ object BinderSensorMock {
     @Volatile private var active = false
     @Volatile private var pumpThread: Thread? = null
 
+    /** 「按应用期望出数据」的推送节流（与 SensorRateProbe 的 dump 缓存同量级） */
+    private const val RATE_HINT_INTERVAL_NANOS = 2_000_000_000L
+    private var lastRateHintNanos = 0L
+    private var rateHintLogged = false
+
     /** 模拟步数真值（与 app 端 hook 同量级：随机起点，像"已经走了不少"） */
     /**
      * 步数计数器值（对外推送的"开机以来累计"）。
@@ -371,6 +376,20 @@ object BinderSensorMock {
         // 临时标记实验（见 markerOverride）：把计数器顶到标记值并继续单调 +1
         val mk = markerOverride()
         if (mk > 0L) steps = maxOf(steps + 1, mk)
+
+        /*
+         * 「按应用期望出数据」：周期性把框架观测到的**采用速率**与**活跃状态**灌给原生层。
+         * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播 ⇒ 我们照同一模型走；
+         * 没人订阅的类型随之静默。dump 有缓存（2s），这里的 2s 节流与它同量级。
+         */
+        if (now - lastRateHintNanos > RATE_HINT_INTERVAL_NANOS) {
+            lastRateHintNanos = now
+            val ok = runCatching { SensorRateProbe.pushHints() }.getOrDefault(false)
+            if (ok && !rateHintLogged) {
+                rateHintLogged = true
+                Logger.info("BinderSensorMock: 注入速率改由框架采用值驱动（见 rates=/hints）")
+            }
+        }
         BinderSensorNative.updateState(speed, FakeLoc.processedBearing(), moving, steps, now)
     }
 }

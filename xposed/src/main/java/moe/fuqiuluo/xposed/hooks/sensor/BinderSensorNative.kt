@@ -188,4 +188,18 @@ internal object BinderSensorNative {
      * 要"像"应以框架采用值为准（见 SensorRateProbe 里的 dump 解析，那一份带 `selected`）。
      */
     external fun enableRequests(): String
+
+    /**
+     * 「按应用期望出数据」：把框架观测到的**采用速率**与**活跃状态**灌进栅格通道。
+     *
+     * 真机模型：HAL 按所有请求里最快那个（框架 dump 的 `selected`）出力，框架把每条事件
+     * 原样广播给所有人。所以这里只需要"一个传感器一个速率"——`periodNs` = 采用值
+     * （纳秒；0 = 最快档/未指定 ⇒ 用内置默认栅格），`active` = 有没有人订阅。
+     * 没人订阅时该类型**静默**（真机 HAL 没被启用时同样一条都不出）。
+     * 只对栅格通道生效；步数两条流是 on-change，不受影响。
+     */
+    external fun setChannelHint(type: Int, periodNs: Long, active: Boolean)
+
+    /** 先把所有栅格通道标成不活跃，随后按 dump 灌活跃者（缺席即静默） */
+    external fun clearChannelHints()
 }

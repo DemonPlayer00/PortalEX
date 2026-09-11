@@ -26,6 +26,21 @@ typedef struct {
     int32_t handle;
     uint32_t flags;
     int known;
+    /*
+     * 「按应用期望出数据」——由框架侧观测驱动（见 portal_sensor.c 的 setChannelHint）：
+     * 真机 HAL 是按**所有请求里最快那个**（框架 dump 的 selected）出数据的，
+     * 然后框架把每条事件原样广播给所有订阅者。这里就照这个模型走：
+     *   · period_ns   = 框架采用值（0 = 未指定/最快档，用默认栅格）；
+     *   · active_hint = 框架 dump 里该 handle 是否有活跃订阅者；
+     *   · last_real_ns= 最近一次看到该类型的**真实**事件（= HAL 刚被启用，立刻恢复出力，
+     *                   避免"应用刚订阅却要等下一次 dump"的空窗）；
+     *   · hinted      = 还没收到过提示时保持原行为（默认栅格、恒出力）。
+     */
+    long long period_ns;
+    long long next_due_ns;
+    long long last_real_ns;
+    int active_hint;
+    int hinted;
 } vw_channel_t;
 
 static vw_channel_t g_chan[MAX_CHANNELS] = {
@@ -50,8 +65,7 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---- Java 推来的状态快照 ---- */
 static int g_active = 0;
-static double g_speed = 3.05;
-static double g_target_azimuth = 0.0;
+static double g_speed = 3.05;static double g_target_azimuth = 0.0;
 static int g_moving = 0;
 static long long g_steps = 0;
 static long long g_state_nanos = 0;
@@ -122,13 +136,27 @@ long long vw_step_counter_value(void) { return g_last_counter_value; }
 /** 最近观测到的真实 STEP_COUNTER 值（-1 = 未知）。模拟接管时用它做起点，保证连续。 */
 long long vw_real_step_counter(void) { return g_real_counter; }
 
-/** 记一条真实事件（目前只用来取真实计数器值做基线；见头文件里 int64 视图的说明） */
+/** 记一条真实事件（取真实计数器值做基线；同时标记"该类型正在被真实 HAL 出力"） */
 void vw_note_real_event(int32_t type, const float *data) {
     if (type == PS_TYPE_STEP_COUNTER) {
         long long v;
         memcpy(&v, data, sizeof(v));
         if (v >= 0 && v != g_real_counter) g_real_counter = v;
     }
+    /* 「按应用期望出数据」的即时恢复信号：见到真实事件 ⇒ 该类型刚被启用 */
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (g_chan[i].type == type) {
+            g_chan[i].last_real_ns = g_state_nanos > 0 ? g_state_nanos : g_chan[i].last_real_ns;
+            if (g_chan[i].last_real_ns == 0) {
+                struct timespec ts;
+                clock_gettime(CLOCK_BOOTTIME, &ts);
+                g_chan[i].last_real_ns = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
 }
 
 /** 近 5 秒实际发出的步事件 → 步/分 */
@@ -238,6 +266,80 @@ void vw_init(void) {
     LOGI("virtual world seeded: H=%.1fuT dip=%.2f", g_mag_h, g_mag_dip);
 }
 
+/* 真实事件后多久内仍认为"HAL 正在为某人出力"（应用刚订阅时的即时恢复窗口） */
+#define REAL_FRESH_NS 3000000000LL /* 3s */
+
+/**
+ * 「按应用期望出数据」：把框架侧观测到的采用速率与活跃状态灌进通道。
+ *
+ * @param period_ns 框架 dump 的 `selected`（毫秒转纳秒）；0 = 未指定/最快档 ⇒ 用默认栅格
+ * @param active    框架 dump 里该 handle 是否有活跃订阅者（active-count ≥ 1）
+ *
+ * 只对**栅格通道**生效：步数两条流是 on-change（由步事件队列驱动），不受速率影响。
+ */
+void vw_set_channel_hint(int32_t type, long long period_ns, int active) {
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (g_chan[i].type != type) continue;
+        if (g_chan[i].period_ticks > 0) {
+            int changed = !g_chan[i].hinted || g_chan[i].period_ns != period_ns ||
+                          g_chan[i].active_hint != (active ? 1 : 0);
+            g_chan[i].hinted = 1;
+            g_chan[i].period_ns = period_ns > 0 ? period_ns : 0;
+            g_chan[i].active_hint = active ? 1 : 0;
+            if (changed) {
+                g_chan[i].next_due_ns = 0; /* 速率/活跃变化：重新对齐，不补旧账 */
+                LOGI("rate hint: type=%d period=%.1fms active=%d", type, g_chan[i].period_ns / 1e6,
+                     g_chan[i].active_hint);
+            }
+        }
+        break;
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+/**
+ * 把所有栅格通道先标成"不活跃"（随后由 [vw_set_channel_hint] 按框架 dump 覆盖）。
+ *
+ * 用途：一次 dump 只列出**有订阅者**的传感器，所以"没被列到"就等于没人订 ⇒
+ * 先清空再灌，缺席的类型自然静默，调用方不需要在 Kotlin 侧复制一份类型清单。
+ */
+void vw_clear_channel_hints(void) {
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (g_chan[i].period_ticks <= 0) continue; /* 步数不在栅格上 */
+        g_chan[i].hinted = 1;
+        g_chan[i].active_hint = 0;
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+/** 该栅格通道此刻是否应该出数据（没人订就静默——真机 HAL 也是这样） */
+static int channel_live(const vw_channel_t *ch, long long now_ns) {
+    if (!ch->hinted) return 1;                 /* 还没收到提示：保持原行为 */
+    if (ch->active_hint) return 1;             /* 框架说有人订 */
+    return (now_ns - ch->last_real_ns) < REAL_FRESH_NS; /* 刚看到真实事件 ⇒ 立刻恢复 */
+}
+
+/** 各栅格通道的生效速率（诊断：Test 页/状态字符串） */
+int vw_dump_rates(char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) return 0;
+    size_t used = 0;
+    out[0] = '\0';
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (g_chan[i].period_ticks <= 0 || !g_chan[i].known) continue;
+        long long p = g_chan[i].period_ns > 0 ? g_chan[i].period_ns
+                                             : (long long) g_chan[i].period_ticks * TICK_NS;
+        used += (size_t) snprintf(out + used, out_size - used, "%s%d:%.0fms%s",
+                                  used ? " " : "", g_chan[i].type, p / 1e6,
+                                  g_chan[i].hinted && !g_chan[i].active_hint ? "(idle)" : "");
+        if (used >= out_size - 24) break;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return (int) used;
+}
+
 void vw_set_active(int active) {
     pthread_mutex_lock(&g_lock);
     if (active && !g_active) {
@@ -246,6 +348,7 @@ void vw_set_active(int active) {
         g_have_state = 0;
         memset(g_steps_q, 0, sizeof(g_steps_q));
         g_last_steps_seen = g_steps;
+        for (int i = 0; i < MAX_CHANNELS; i++) g_chan[i].next_due_ns = 0; /* 重新对齐栅格 */
     }
     g_active = active ? 1 : 0;
     pthread_mutex_unlock(&g_lock);
@@ -712,11 +815,32 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
         }
 
         advance_one_tick(t);
-        long long tick_index = t / TICK_NS;
         for (int c = 0; c < MAX_CHANNELS; c++) {
             if (!g_chan[c].known) continue;
             if (g_chan[c].period_ticks <= 0) continue; /* 步数传感器不参与栅格 */
-            if (tick_index % g_chan[c].period_ticks != 0) continue;
+            /*
+             * 没人订阅 ⇒ 静默（真机 HAL 不会被启用，自然一条事件都没有）。
+             * "有人订阅" 有两个来源：框架 dump 报活跃，或刚刚看到该类型的真实事件
+             * （应用刚 registerListener 时 HAL 立刻开始出数据，这条让我们**即时**恢复，
+             *   不必等下一次 dump）。
+             */
+            if (!channel_live(&g_chan[c], t)) continue;
+            long long period = g_chan[c].period_ns > 0
+                               ? g_chan[c].period_ns
+                               : (long long) g_chan[c].period_ticks * TICK_NS;
+            /*
+             * **按"下次应发时刻"累积，而不是 tick_index % period_ticks**：
+             * 应用的采用值常常不是 10ms 栅格的整数倍（实测 66.7ms、20ms…），
+             * 取模只能把它凑成 60/70ms 的整数倍；这里让相位自己累积，
+             * 平均速率就精确落在采用值上（66.7ms ⇒ 6/7 tick 交替）。
+             */
+            if (g_chan[c].next_due_ns == 0) {
+                g_chan[c].next_due_ns = t; /* 首次：当拍立即出，不补旧账 */
+            } else if (g_chan[c].next_due_ns < t - period * 4) {
+                g_chan[c].next_due_ns = t; /* 长时间没出（刚恢复）：对齐，别补一串 */
+            }
+            if (t < g_chan[c].next_due_ns) continue;
+            g_chan[c].next_due_ns += period;
             if (n >= cap) {
                 g_dropped++;
                 continue;
