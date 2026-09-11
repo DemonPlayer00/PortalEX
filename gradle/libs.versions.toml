@@ -31,6 +31,11 @@ androidx-navigation-ui-ktx = { group = "androidx.navigation", name = "navigation
 fastjson = { module = "com.alibaba.fastjson2:fastjson2-kotlin", version = "2.0.56" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version = "4.12.0" }
 geotools = {module = "net.sf.geographiclib:GeographicLib-Java", version = "2.0"}
+# 纯 Java 的 XZ 解压（公有领域）。用途：模块在 system_server 内解析平台库
+# libsensorservice.so 的 .gnu_debugdata（xz 压缩的 mini debug info）以取得
+# 隐藏符号地址。系统自带的 liblzma.so 是 7-Zip LZMA SDK，没有 xz-utils 的
+# 流式解码 API，故不能走原生解压。
+xz = { module = "org.tukaani:xz", version = "1.10" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

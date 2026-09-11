@@ -488,7 +488,7 @@
             </LinearLayout>
 
             <LinearLayout
-                android:id="@+id/sensor_mock_mode_layout"
+                android:id="@+id/binder_sensor_mock_layout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
@@ -505,23 +505,20 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="外周传感器模拟"
+                        android:text="@string/binder_sensor_mock"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textSize="11sp"
-                        android:text="使用模块作用域配置" />
+                        android:text="@string/binder_sensor_mock_desc" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/sensor_mock_enabled_switch"
+                    android:id="@+id/binder_sensor_mock_switch"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    android:checked="true"
-                    android:enabled="false"
-                    android:alpha="0.5"
                     app:useMaterialThemeColors="true"
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
