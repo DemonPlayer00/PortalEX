@@ -826,10 +826,11 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_stepCounterValue(JNIEnv
  */
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
-        JNIEnv *env, jobject thiz, jint type, jlong period_ns, jboolean active) {
+        JNIEnv *env, jobject thiz, jint type, jlong period_ns, jlong batch_ns, jboolean active) {
     (void) env;
     (void) thiz;
-    vw_set_channel_hint((int32_t) type, (long long) period_ns, active ? 1 : 0);
+    vw_set_channel_hint((int32_t) type, (long long) period_ns, (long long) batch_ns,
+                        active ? 1 : 0);
 }
 
 /** 先清空活跃标记（缺席的类型即静默），随后由 Kotlin 按 dump 灌入活跃者 */

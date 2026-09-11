@@ -139,7 +139,7 @@ void vw_note_real_event(int32_t type, const float *data);
  * 没人订阅（且近期也没有真实事件）时该类型**静默**——真机 HAL 没被启用时同样一条都不出。
  * 只对栅格通道生效；步数两条流是 on-change，不受影响。
  */
-void vw_set_channel_hint(int32_t type, long long period_ns, int active);
+void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, int active);
 
 /** 先把所有栅格通道标成不活跃，再按 dump 灌活跃者（缺席即静默，见实现注释） */
 void vw_clear_channel_hints(void);

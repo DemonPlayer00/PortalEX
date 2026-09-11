@@ -145,6 +145,8 @@ object BinderSensorMock {
         rely.putString("priv_sensors", SensorHandleMap.privateTypes() ?: "（读不到）")
         // 应用期望频率（框架采用值 + 客户端原始请求；见 SensorRateProbe）
         rely.putString("sensor_rates", SensorRateProbe.status())
+        // 握手门禁自检：只有模块自身应显示 ALLOW，其余 uid 一律 deny
+        rely.putString("portal_gate", moe.fuqiuluo.xposed.utils.BinderUtils.gateSelfTest())
         // 运动学权威值（system_server 侧）
         val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
         rely.putDouble("measured_speed", speed)

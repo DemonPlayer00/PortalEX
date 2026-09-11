@@ -81,8 +81,8 @@ internal object SensorRateProbe {
             BinderSensorNative.clearChannelHints()
             var pushed = 0
             for ((handle, type) in byHandle) {
-                val selectedNs = active[handle] ?: continue
-                BinderSensorNative.setChannelHint(type, selectedNs, true)
+                val (selectedNs, batchNs) = active[handle] ?: continue
+                BinderSensorNative.setChannelHint(type, selectedNs, batchNs, true)
                 pushed++
             }
             pushed > 0
@@ -93,13 +93,15 @@ internal object SensorRateProbe {
      * dump 第一段（`Sensor Device:`）**只列有订阅者的传感器** ⇒ key 集合就是活跃 handle，
      * value 是框架采用值（ns；0 = 最快档/未指定 ⇒ 原生侧用内置默认栅格）。
      */
-    private fun activeHandles(text: String): Map<Int, Long> {
-        val out = HashMap<Int, Long>()
+    private fun activeHandles(text: String): Map<Int, Pair<Long, Long>> {
+        val out = HashMap<Int, Pair<Long, Long>>()
         for (line in text.lineSequence()) {
             val g = lineRe.find(line.trim()) ?: continue
             val handle = g.groupValues[1].removePrefix("0x").removePrefix("0X").toInt(16)
-            val ms = g.groupValues[4].toDouble()
-            out[handle] = if (ms <= 0.0) 0L else (ms * 1_000_000.0).toLong()
+            val periodMs = g.groupValues[4].toDouble()
+            val batchMs = g.groupValues[6].toDoubleOrNull() ?: 0.0
+            out[handle] = (if (periodMs <= 0.0) 0L else (periodMs * 1_000_000.0).toLong()) to
+                    (if (batchMs <= 0.0) 0L else (batchMs * 1_000_000.0).toLong())
         }
         return out
     }
@@ -176,7 +178,7 @@ internal object SensorRateProbe {
      * selected = 66.67 ms; batching_period(ms) = {...}, selected = 0.00 ms`
      */
     private val lineRe = Regex(
-        """^(0x[0-9a-fA-F]+)\)\s+active-count = (\d+);\s+sampling_period\(ms\) = \{([^}]*)\},\s+selected = ([\d.]+) ms"""
+        """^(0x[0-9a-fA-F]+)\)\s+active-count = (\d+);\s+sampling_period\(ms\) = \{([^}]*)\},\s+selected = ([\d.]+) ms(?:;\s+batching_period\(ms\) = \{([^}]*)\},\s+selected = ([\d.]+) ms)?"""
     )
 
     private fun frameworkRates(text: String): String {
