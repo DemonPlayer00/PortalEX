@@ -6,6 +6,7 @@ project(portalsensor C)
 
 add_library(portalsensor SHARED
         portal_sensor.c
+        portal_runtime_sensor.c
         virtual_world.c)
 
 # 兜底防泄漏：源码绝对路径不进 DWARF / .comment。AGP 的 strip 任务一旦解析不到

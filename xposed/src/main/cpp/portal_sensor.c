@@ -57,6 +57,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "portal_runtime_sensor.h"
 #include "virtual_world.h"
 
 #define LOG_TAG "PortalSensor"
@@ -315,6 +316,16 @@ static int do_install(const jlong *o) {
     }
     g_installed = 1;
     LOGI("installed: %d vtable slot(s) patched", g_patched);
+    /*
+     * 运行时传感器路径（实例解析/校验）**暂时关闭**：
+     * 首版探针在真机上让 system_server SIGSEGV 两次（tombstone 指向 install→prs_probe）。
+     * 已定位一处确定缺陷（自建虚表 header 越界写，已修），但第二次仍在崩，
+     * 剩余可疑点是用 dlsym 猜名字调用的三个函数（AServiceManager_getService /
+     * AIBinder_toPlatformBinder / RefBase::RefBase）——猜错即崩溃。
+     * 在把这些地址也改成"由 Java 侧解析 .dynsym 精确给出"之前，这段代码不接入安装路径，
+     * 只保留实现与文档，避免把一个会崩系统进程的路径留在产品里。
+     * 详见 docs/binder-sensor-mock.md「运行时传感器（未启用）」。
+     */
     return 1;
 }
 
@@ -336,12 +347,12 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_install(JNIEnv *env, jo
     (void) thiz;
     if (offsets == NULL) return JNI_FALSE;
     jsize len = (*env)->GetArrayLength(env, offsets);
-    if (len < MAX_TARGETS + 2) {
+    if (len < MAX_TARGETS + 6) {
         LOGE("install: offsets array too short (%d)", (int) len);
         return JNI_FALSE;
     }
-    jlong vals[MAX_TARGETS + 2];
-    (*env)->GetLongArrayRegion(env, offsets, 0, MAX_TARGETS + 2, vals);
+    jlong vals[MAX_TARGETS + 6];
+    (*env)->GetLongArrayRegion(env, offsets, 0, MAX_TARGETS + 6, vals);
     return do_install(vals) ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -412,6 +423,9 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     char handles[256];
     vw_dump_handles(handles, sizeof(handles));
     APPEND(" handles=[%s]", handles);
+    char rt[320];
+    prs_describe(rt, sizeof(rt));
+    APPEND(" rt=[%s]", rt);
 #undef APPEND
     return (*env)->NewStringUTF(env, buf);
 }
