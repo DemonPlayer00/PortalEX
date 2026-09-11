@@ -82,7 +82,13 @@ abstract class BaseLocationHook: BaseDivineService() {
          * 让 bearing 保持有效，指针停在最后朝向。
          */
         if (FakeLoc.enable && location.speed < FakeLoc.speedFloor) {
-            location.speed = FakeLoc.speedFloor.toFloat()
+            /*
+             * 加抖动而不是给常数：真机静止时 GPS 报的速度是**噪声**（0.1~0.5 m/s 上下跳），
+             * 常数速度反而是个可被识破的指纹（"站着不动却精确 0.300 m/s"）。
+             * 0.6~1.4 倍随机 ⇒ 0.18~0.42 m/s，量级与真机静止噪声一致。
+             */
+            // 低通 + 慢随机游走（见 FakeLoc.speedFloorSample）：与真机静止噪声的时间相关性一致
+            location.speed = FakeLoc.speedFloorSample().toFloat()
         }
         }
 
