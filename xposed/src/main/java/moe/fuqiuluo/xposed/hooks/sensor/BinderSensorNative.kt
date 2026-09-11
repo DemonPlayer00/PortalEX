@@ -2,6 +2,7 @@ package moe.fuqiuluo.xposed.hooks.sensor
 
 import android.os.Build
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.ModulePrefs
 import java.io.File
 
@@ -120,6 +121,7 @@ internal object BinderSensorNative {
     /** 带契约校验的装载入口（调用方一律走这个，不要直接调 [install]） */
     fun installChecked(offsets: LongArray): Boolean {
         if (offsets.size != InstallOffsets.COUNT) {
+            PortalDiag.fail(PortalDiag.Area.NATIVE_INSTALL)
             Logger.error(
                 "BinderSensorNative: offsets 长度 ${offsets.size} != 契约 ${InstallOffsets.COUNT}，" +
                         "拒绝装载（见 InstallOffsets）"

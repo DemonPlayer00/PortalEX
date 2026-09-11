@@ -5,6 +5,7 @@ import android.hardware.Sensor
 import android.hardware.SensorManager
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 
 /**
  * 传感器类型 → handle 映射（**不依赖真实事件**）。
@@ -27,10 +28,12 @@ internal object SensorHandleMap {
     fun collect(): LongArray? {
         return try {
             val ctx = BinderUtils.getSystemContext() ?: run {
+                PortalDiag.fail(PortalDiag.Area.HANDLE_MAP)
                 Logger.warn("SensorHandleMap: no system context")
                 return null
             }
             val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: run {
+                PortalDiag.fail(PortalDiag.Area.HANDLE_MAP)
                 Logger.warn("SensorHandleMap: no SensorManager")
                 return null
             }
@@ -46,7 +49,8 @@ internal object SensorHandleMap {
             }
             if (out.isEmpty()) null else out.toLongArray()
         } catch (t: Throwable) {
-            Logger.error("SensorHandleMap: collect failed: ${t.message}", t)
+            PortalDiag.fail(PortalDiag.Area.HANDLE_MAP, t)
+                Logger.error("SensorHandleMap: collect failed: ${t.message}", t)
             null
         }
     }

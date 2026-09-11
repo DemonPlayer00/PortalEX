@@ -3,6 +3,7 @@ package moe.fuqiuluo.xposed.hooks.sensor
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 import java.lang.reflect.Field
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
@@ -110,6 +111,7 @@ internal object SystemRuntimeChannel {
             // 所以按候选列表逐个试，取第一个真能看见目标类的。
             val cl = loader ?: findLoader(hintLoader)
             if (cl == null) {
+                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
                 resolveError = "no ClassLoader can see $CLS_SERVICE"
                 phase = "unresolved"
                 nextAttemptNanos = System.nanoTime() + RESOLVE_RETRY_NANOS
@@ -162,6 +164,7 @@ internal object SystemRuntimeChannel {
                 mPtrField = ptrField
             }
             r.onFailure {
+                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL, it)
                 resolveError = "$step: ${it.javaClass.simpleName}: ${it.message}"
                 phase = "unresolved"
                 nextAttemptNanos = System.nanoTime() + RESOLVE_RETRY_NANOS
@@ -278,6 +281,7 @@ internal object SystemRuntimeChannel {
             val inst = refreshInstance()
             if (inst == null) {
                 failTicks = FAIL_BACKOFF_TICKS
+                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
                 phase = "no-instance"
                 lastError = "SensorService 实例未取到"
                 Logger.warn("SystemRuntimeChannel: 实例未取到，稍后重试")
@@ -291,6 +295,7 @@ internal object SystemRuntimeChannel {
             val cb = callbackProxy ?: buildCallback().also { callbackProxy = it }
             if (cb == null) {
                 failTicks = FAIL_BACKOFF_TICKS
+                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
                 phase = "no-callback"
                 return 0
             }
@@ -306,6 +311,7 @@ internal object SystemRuntimeChannel {
             }.getOrDefault(0)
             if (h <= 0) {
                 failTicks = FAIL_BACKOFF_TICKS
+                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
                 phase = "carrier-failed"
                 return 0
             }
@@ -415,6 +421,7 @@ internal object SystemRuntimeChannel {
         val n = runCatching { BinderSensorNative.runtimeFrame(nowNanos, frameMeta, frameValues) }
             .onFailure {
                 sendFails++
+                PortalDiag.fail(PortalDiag.Area.RT_SEND)
                 lastError = "frame: ${it.message}"
             }
             .getOrDefault(0)
@@ -431,6 +438,7 @@ internal object SystemRuntimeChannel {
             val values = scratchFor(count)
             System.arraycopy(frameValues, i * 16, values, 0, count)
             if (send(handle, type, ts, values)) sent++ else sendFails++
+                PortalDiag.fail(PortalDiag.Area.RT_SEND)
         }
         pumpEvents += sent
         return sent
