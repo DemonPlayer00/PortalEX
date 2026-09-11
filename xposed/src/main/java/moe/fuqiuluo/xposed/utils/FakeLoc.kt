@@ -428,16 +428,9 @@ object FakeLoc {
             }
         }
 
-    fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val radius = 6371000.0
-        val phi1 = Math.toRadians(lat1)
-        val phi2 = Math.toRadians(lat2)
-        val deltaPhi = Math.toRadians(lat2 - lat1)
-        val deltaLambda = Math.toRadians(lon2 - lon1)
-        val a = sin(deltaPhi / 2).pow(2) + cos(phi1) * cos(phi2) * sin(deltaLambda / 2).pow(2)
-        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return radius * c
-    }
+    /** 两点球面距离（米）。实现在 [WorldMath]（纯函数，可在 JVM 上单测）。 */
+    fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double =
+        WorldMath.haversine(lat1, lon1, lat2, lon2)
 
     // ---- 系统 GNSS extras 的卫星字段改写 ----
     /**
@@ -490,12 +483,8 @@ object FakeLoc {
      * 各家 NLP SDK 进程），快照对象无法跨进程共享；把生成做成「时间桶 → 固定随机序列」的
      * 纯函数后，**任何进程在同一秒内都得到同一份卫星数据**，与真机 1Hz 上报的物理事实一致。
      */
-    fun gnssSnapshotForBucket(bucketSec: Long): GnssSnapshot {
-        val rng = Random(bucketSec * 1_000_003L + minSatellites * 7919L + 0x5DEECE66DL)
-        val svCount = rng.nextInt(minSatellites, MAX_SATELLITES + 1)
-        val cn0s = DoubleArray(svCount) { 24.0 + rng.nextDouble() * 21.0 }   // 24~45 dB-Hz（真机量级）
-        return GnssSnapshot(svCount, cn0s)
-    }
+    fun gnssSnapshotForBucket(bucketSec: Long): GnssSnapshot =
+        WorldMath.gnssSnapshotForBucket(bucketSec, minSatellites, MAX_SATELLITES)
 
     /** 当前时间桶的卫星快照（桶 = 1 秒，与真机 GNSS 上报周期一致） */
     fun currentGnssSnapshot(): GnssSnapshot =
@@ -575,20 +564,7 @@ object FakeLoc {
 
 
 
-    fun calculateBearing(latA: Double, lonA: Double, latB: Double, lonB: Double): Double {
-        val lat1 = Math.toRadians(latA)
-        val lon1 = Math.toRadians(lonA)
-        val lat2 = Math.toRadians(latB)
-        val lon2 = Math.toRadians(lonB)
-
-        val deltaLon = lon2 - lon1
-
-        val y = sin(deltaLon) * cos(lat2)
-        val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(deltaLon)
-
-        var bearing = Math.toDegrees(atan2(y, x))
-        bearing = (bearing + 360) % 360  // 标准化到0-360度
-
-        return bearing
-    }
+    /** A → B 的初始方位角（度）。实现在 [WorldMath]。 */
+    fun calculateBearing(latA: Double, lonA: Double, latB: Double, lonB: Double): Double =
+        WorldMath.calculateBearing(latA, lonA, latB, lonB)
 }
