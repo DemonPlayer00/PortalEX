@@ -58,6 +58,23 @@ object FakeLoc {
     var sensorGridHz = 0
 
     /**
+     * 注入噪声档（Calibration 页）：[SensorNoise.COUNT] 个半宽，索引见 [SensorNoise]。
+     * 默认 = [SensorNoise.DEFAULTS]（与原生硬编码默认逐位一致）。
+     */
+    @Volatile
+    var noiseProfile: FloatArray = SensorNoise.DEFAULTS.copyOf()
+
+    /**
+     * 把噪声档下发给原生层（system_server 内才有效果；其它进程只是镜像值）。
+     * 单项失败不影响其它项 —— 逐项调用，原生层自己丢弃非法值。
+     */
+    fun applyNoiseProfile(native: (Int, Float) -> Unit) {
+        val values = SensorNoise.sanitize(noiseProfile)
+        noiseProfile = values
+        for (i in 0 until SensorNoise.COUNT) native(i, values[i])
+    }
+
+    /**
      * 原生注入层是否已成功装载（由 BinderSensorMock 在 system_server 内回填，只读诊断用）：
      * 装载失败时为 false，此时不改变任何既有行为。
      */

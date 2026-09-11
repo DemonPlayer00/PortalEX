@@ -141,6 +141,10 @@ object BinderSensorMock {
         rely.putString("native", runCatching { BinderSensorNative.status() }.getOrDefault("n/a"))
         // 运行时投递通道（"投递 100% 可控"那条路）的状态
         rely.putString("rt_channel", SystemRuntimeChannel.status())
+        // 注入噪声档的**系统侧回读**（Calibration 页用它证明下发真的落到了原生层，
+        // 而不只是写进了 App 的偏好）
+        rely.putString("noise_profile", runCatching { BinderSensorNative.noiseProfile() }
+            .getOrDefault("n/a"))
         // 厂商私有传感器清单（仅展示：它们也在同一个事件出口上，但不在接管集合内）
         rely.putString("priv_sensors", SensorHandleMap.privateTypes() ?: "（读不到）")
         // 应用期望频率（框架采用值 + 客户端原始请求；见 SensorRateProbe）

@@ -171,6 +171,39 @@ void vw_clear_channel_hints(void);
 /** 各栅格通道的生效速率（诊断字符串："1:20ms 2:40ms(idle) …"），返回写入长度 */
 int vw_dump_rates(char *out, size_t out_size);
 
+/*
+ * ---- 噪声档（Calibration 页可编辑） ----
+ *
+ * 逐轴建模：每个轴一个**标准差 σ**，逐事件按 **高斯分布** 生成动态值
+ * （σ 是"每样本"的量，采集时的采样率必须与注入栅格同量级）。
+ * 另外陀螺有**逐轴零偏 μ**（真机陀螺的零参考物理上就是 0，实测静止中位数就是它的零偏；
+ * PKG110 实测 z≈0.09 rad/s —— 此前我们完全没建模，注入的陀螺零偏恒为 0，可判定为伪造）。
+ *
+ * 加速度/重力/线性加速度/磁场的中位数**不注入**：那些中位数里混着手机姿态与环境地磁的
+ * 直流分量（平放时 accel z 的中位数就是 9.81），叠加会把模型打坏 —— 它们只作为统计参照
+ * 由 App 侧显示。索引与 Kotlin 侧 [SensorNoise] 的 profile 布局**逐项一致**。
+ */
+#define VW_NOISE_COUNT 20
+#define VW_NOISE_GYRO 0     /* 0..2  陀螺 σ (x,y,z)，rad/s */
+#define VW_NOISE_GYRO_BIAS 3 /* 3..5  陀螺零偏 μ (x,y,z)，rad/s —— **唯一被注入的中位数**，可为负 */
+#define VW_NOISE_ACCEL 6    /* 6..8  加速度计 σ (x,y,z)，m/s² */
+#define VW_NOISE_GRAVITY 9  /* 9..11 重力 σ (x,y,z)，m/s² */
+#define VW_NOISE_LINEAR 12  /* 12..14 线性加速度 σ (x,y,z)，m/s² */
+#define VW_NOISE_MAG 15     /* 15..17 磁场 σ (x,y,z)，µT */
+#define VW_NOISE_ORIENT 18  /* 方向角 σ，° */
+#define VW_NOISE_ROTVEC 19  /* 旋转矢量 σ */
+#define VW_NOISE_BIAS_BASE 3
+#define VW_NOISE_BIAS_END 5
+
+/** 设置噪声档第 [index] 项（σ 项钳到 ≥0；零偏项允许负值；|值| > 50 丢弃）。 */
+void vw_set_noise(int index, float amp);
+
+/** 读回噪声档（最多 [count] 个） */
+void vw_get_noise(float *out, int count);
+
+/** 噪声档短字符串（诊断/回显用），返回写入长度 */
+int vw_dump_noise(char *out, size_t out_size);
+
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);
 

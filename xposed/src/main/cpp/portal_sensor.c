@@ -658,7 +658,7 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_enableRequests(JNIEnv *
     struct timespec ts;
     clock_gettime(CLOCK_BOOTTIME, &ts);
     long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
-    char buf[1024];
+    char buf[768];
     size_t used = 0;
     pthread_mutex_lock(&g_en_lock);
     int n = g_en_req_count;
@@ -844,6 +844,27 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_clearChannelHints(
     vw_clear_channel_hints();
 }
 
+/**
+ * Calibration 页：按索引设置某一路注入噪声的半宽（均匀分布 [−A,A]）。
+ * 索引表见 virtual_world.h 的 VW_NOISE_*（Kotlin 侧 NoiseProfile 顺序必须一致）。
+ */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setNoise(JNIEnv *env, jobject thiz,
+                                                                 jint index, jfloat amp) {
+    (void) env;
+    (void) thiz;
+    vw_set_noise((int) index, (float) amp);
+}
+
+/** 噪声档回读（诊断/回显，格式见 vw_dump_noise） */
+JNIEXPORT jstring JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_noiseProfile(JNIEnv *env, jobject thiz) {
+    (void) thiz;
+    char buf[320];
+    vw_dump_noise(buf, sizeof(buf));
+    return (*env)->NewStringUTF(env, buf);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(    JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
     jlong now_nanos) {
@@ -857,7 +878,7 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     (void) thiz;
     long long emitted = 0, dropped = 0, suppressed = 0;
     vw_stats(&emitted, &dropped, &suppressed);
-    char buf[768];
+    char buf[1024];
     size_t used = 0;
 #define APPEND(...)                                                                     \
     do {                                                                                \

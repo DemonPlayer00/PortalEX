@@ -11,6 +11,7 @@ import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.SensorNoise
 import java.util.Collections
 import kotlin.random.Random
 
@@ -128,6 +129,8 @@ object RemoteCommandHandler {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
                 val enabled = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
                 FakeLoc.enableBinderSensorMock = enabled
+                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档随它一起恢复
+                applyNoiseProfile(rely)
                 if (!BinderSensorMock.onConfigChanged()) {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
                     return false
@@ -277,6 +280,8 @@ object RemoteCommandHandler {
                 val sensorGridHz = rely.getInt("sensor_grid_hz", FakeLoc.sensorGridHz)
                 // 步频倍率（微调步频↔速度）：读不到键时保持当前值
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
+                // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
+                val noiseProfile = rely.getFloatArray("noise_profile")?.let { SensorNoise.sanitize(it) }
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -299,6 +304,14 @@ object RemoteCommandHandler {
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
                 runCatching { BinderSensorNative.setGridHz(sensorGridHz) }
                     .onFailure { Logger.warn("栅格设置下发失败：${it.message}") }
+                if (noiseProfile != null) {
+                    FakeLoc.noiseProfile = noiseProfile
+                    runCatching {
+                        FakeLoc.applyNoiseProfile { index, amp ->
+                            BinderSensorNative.setNoise(index, amp)
+                        }
+                    }.onFailure { Logger.warn("噪声档下发失败：${it.message}") }
+                }
                 // 原生层挂不上就明确回报失败：App 侧据此提示"配置失败"，
                 // 而不是让用户以为开关生效了、实际什么都没发生。
                 if (!BinderSensorMock.onConfigChanged()) {
@@ -454,6 +467,20 @@ object RemoteCommandHandler {
             Logger.error("Invalid latitude or longitude: $newLat, $newLon")
             return false
         }
+    }
+
+    /**
+     * 下发注入噪声档（Calibration 页）。
+     *
+     * 读不到 `noise_profile` 键（旧版 App / 从未校准过）时**什么都不做** ——
+     * 原生层保持内置默认，输出与从前逐位一致。数据先经 [SensorNoise.sanitize]
+     * 规范化（补长/截断/钳位），所以长度不符也不会把原生档位写坏。
+     */
+    private fun applyNoiseProfile(rely: Bundle) {
+        val raw = rely.getFloatArray("noise_profile") ?: return
+        FakeLoc.noiseProfile = SensorNoise.sanitize(raw)
+        FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
+        Logger.info("Binder 外周传感器模拟：噪声档已下发 ${SensorNoise.encode(FakeLoc.noiseProfile)}")
     }
 }
 
