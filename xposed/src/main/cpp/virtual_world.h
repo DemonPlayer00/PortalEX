@@ -113,6 +113,18 @@ void vw_note_suppressed(long long n);
 /** 近 5 秒实际发出的步事件换算成步/分（诊断页用：与"意图步频"对照） */
 int vw_step_rate_per_min(long long now_nanos);
 
+/**
+ * 最近一次发给客户端的 STEP_COUNTER 值 —— 也就是应用按"间歇读系统开机总步数"算步频时
+ * 读到的那个数。诊断用（Test 页"开机总步数"一行），不参与任何生成逻辑。
+ */
+long long vw_step_counter_value(void);
+
+/** 最近观测到的**真实** STEP_COUNTER 值（-1 = 未知）：模拟接管时拿它做起点，避免跳变 */
+long long vw_real_step_counter(void);
+
+/** 记一条真实事件（当前只用于取真实计数器值） */
+void vw_note_real_event(int32_t type, float v0);
+
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);
 

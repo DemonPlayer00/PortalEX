@@ -230,6 +230,8 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
             g_seen_handle[type] = e->sensor;
             vw_set_handle(type, e->sensor, e->flags);
         }
+        /* 真实事件先喂给虚拟世界看一眼（取真实计数器值做接管基线） */
+        vw_note_real_event(type, e->data.f[0]);
         if (vw_owns_type(type)) {
             suppressed++;
             continue;
@@ -488,6 +490,30 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_runtimeFrame(JNIEnv *en
     return cap;
 }
 
+/**
+ * 客户端视角的"系统开机总步数"：最近一次发出的 STEP_COUNTER 值。
+ * 应用若用"间歇读总步数求差"的方式算步频，读到的就是它。
+ */
+/**
+ * 真实（HAL）STEP_COUNTER 的最近值 —— 模拟接管时的起点，用于保持"开机以来累计"连续。
+ * @return ≥0 = 已知；-1 = 还没见过真实计数器（无步数传感器 / 会话期间没收到过）
+ */
+JNIEXPORT jlong JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_realStepCounter(JNIEnv *env,
+                                                                        jobject thiz) {
+    (void) env;
+    (void) thiz;
+    return (jlong) vw_real_step_counter();
+}
+
+JNIEXPORT jlong JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_stepCounterValue(JNIEnv *env,
+                                                                        jobject thiz) {
+    (void) env;
+    (void) thiz;
+    return (jlong) vw_step_counter_value();
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(    JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
     jlong now_nanos) {
@@ -521,6 +547,8 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     APPEND(" emitted=%lld dropped=%lld suppressed=%lld", emitted, dropped, suppressed);
     APPEND(" steps=%lld step_rate=%d/min", vw_step_events_total(),
            vw_step_rate_per_min(now_ns));
+    APPEND(" steps_boot=%lld", vw_step_counter_value());
+    APPEND(" steps_base=%lld", vw_real_step_counter());
     APPEND(" gait=%s", vw_gait_describe());
     char handles[256];
     vw_dump_handles(handles, sizeof(handles));
