@@ -68,9 +68,11 @@ static int g_gyro_init = 0;
 /* 步态相位（走路时身体竖直方向做周期性加减速：每步两拍——脚跟着地 + 蹬地）。
  * 频率与步频严格同源（cadenceForSpeed），因此 IMU 的周期峰与步事件是对齐的。 */
 static double g_gait_phase = 0.0;
-/* 一个波形周期 = 多少步（校准量；默认 4 = "标准人一个波形走四步"）。
- * 可用 /data/local/tmp/portalex_gait.txt 里的整数在线校准（见 gait_load_calibration）。 */
-static int g_gait_steps = 4;
+/* 一个波形周期 = 多少步（校准量）。
+ * 原始波形是"一个周期 = 一步"，本版按用户要求取**波长 ×3**，即默认 3 步/周期。
+ * 可用 /data/local/tmp/portalex_gait.txt 里的整数在线校准（1~16，见 gait_load_calibration）；
+ * 该文件若存在会**覆盖**这里的默认值。 */
+static int g_gait_steps = 3;
 static int g_gait_step_index = 0;         /* 周期内的第几步，用于轮转 PLL 目标相位 */
 static long long g_gait_cal_last_ns = 0;  /* 校准文件的读取节流 */
 static void gait_load_calibration(long long now_nanos);
