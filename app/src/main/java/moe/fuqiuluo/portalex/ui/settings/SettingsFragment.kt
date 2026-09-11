@@ -22,6 +22,7 @@ import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
 import moe.fuqiuluo.portalex.ext.disableWifiScan
@@ -162,6 +163,16 @@ class SettingsFragment : Fragment() {
 
         // 「传感器模拟」开关已移除：传感器 hook 恒安装（仅由 LSPosed 作用域决定是否注入），
         // 偏好项从未被模块读取——留着就是一个骗人的开关。
+        //
+        // 「Binder 外周传感器模拟」（实验性，默认关）：打开后模拟改由 system_server 侧的
+        // 原生注入层在系统框架层完成——目标应用一个 hook 都不装，也不依赖底层传感器是
+        // 否在工作。开关下发到系统侧失败（原生层挂不上）时会明确提示，不做假成功。
+        binding.binderSensorMockSwitch.isChecked = requireContext().binderSensorMock
+        binding.binderSensorMockSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().binderSensorMock = isChecked
+            showToast(if (isChecked) "已开启外周传感器模拟（重启目标应用生效）" else "已关闭外周传感器模拟")
+            updateRemoteConfig()
+        }
 
         binding.reportDurationLayout.setOnClickListener {
             showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {

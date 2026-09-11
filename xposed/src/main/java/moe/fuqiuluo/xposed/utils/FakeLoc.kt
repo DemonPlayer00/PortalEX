@@ -46,6 +46,22 @@ object FakeLoc {
     var enableMockWifi = false
 
     /**
+     * Binder 外周传感器模拟（实验性，默认关）：
+     * 由 system_server 侧原生 hook（[moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock]）
+     * 在系统框架层接管外周传感器——**不向目标应用注入任何 hook**。
+     * 关闭（默认）时该路径完全不安装，行为与旧版本逐位一致。
+     */
+    @Volatile
+    var enableBinderSensorMock = false
+
+    /**
+     * 原生注入层是否已成功装载（由 BinderSensorMock 在 system_server 内回填，只读诊断用）：
+     * 装载失败时为 false，此时不改变任何既有行为。
+     */
+    @Volatile
+    var binderSensorNativeReady = false
+
+    /**
      * 如果TelephonyHook失效，可能需要打开此开关
      */
     var disableFusedLocation = true

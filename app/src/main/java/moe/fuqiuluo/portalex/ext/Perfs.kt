@@ -216,6 +216,18 @@ var Context.loopBroadcastlocation: Boolean
     }
 
 /**
+ * Binder 外周传感器模拟（实验性）。默认关闭：
+ * 关闭时模块只在应用进程做传感器改写（旧行为，逐位不变）；
+ * 打开后由 system_server 侧原生 hook 在系统框架层接管外周传感器
+ * （步频 / 加速度 / 角度 / 指南针），**不 hook 目标应用**。
+ */
+var Context.binderSensorMock: Boolean
+    get() = sharedPrefs.getBoolean("binderSensorMock", false)
+    set(value) = sharedPrefs.edit {
+        putBoolean("binderSensorMock", value)
+    }
+
+/**
  * 传感器模拟开关（默认开 = 客户端主动注入步数/朝向；关闭 = 禁用传感器模拟）
  */
 

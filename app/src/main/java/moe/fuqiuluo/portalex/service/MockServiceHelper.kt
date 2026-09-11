@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
 import moe.fuqiuluo.portalex.ext.enableAGPS
@@ -262,6 +263,8 @@ object MockServiceHelper {
         FakeLoc.enableNMEA = context.enableNMEA
         FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
         FakeLoc.disableGetFromLocation = !context.enableGetFromLocation
+        // 实验性：Binder 外周传感器模拟（系统框架层接管，默认关）
+        FakeLoc.enableBinderSensorMock = context.binderSensorMock
 
         val rely = Bundle()
         rely.putString("command_id", "put_config")
@@ -278,12 +281,30 @@ object MockServiceHelper {
         rely.putBoolean("enable_nmea", FakeLoc.enableNMEA)
         rely.putBoolean("disable_request_geofence", FakeLoc.disableRequestGeofence)
         rely.putBoolean("disable_get_from_location", FakeLoc.disableGetFromLocation)
+        rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
 
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
     fun isServiceInit(): Boolean {
         return ::randomKey.isInitialized
+    }
+
+    /**
+     * 下发实验性开关「Binder 外周传感器模拟」。
+     *
+     * 单独一条命令（而不是塞进 put_config）的目的：系统侧在原生注入层装载失败时
+     * 会让本命令返回 false，App 侧据此给出明确提示——**不做假成功**。
+     * 启动时（tryInitService 之后）也调一次，让开关跨重启自动恢复。
+     */
+    fun setBinderSensorMock(locationManager: LocationManager, enabled: Boolean): Boolean {
+        if (!::randomKey.isInitialized) {
+            return false
+        }
+        val rely = Bundle()
+        rely.putString("command_id", "set_sensor_mock")
+        rely.putBoolean("binder_sensor_mock", enabled)
+        return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
 

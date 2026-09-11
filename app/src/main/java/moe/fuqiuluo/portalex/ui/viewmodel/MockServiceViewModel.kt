@@ -10,8 +10,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.android.coro.CoroutineController
+import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -235,8 +237,12 @@ class MockServiceViewModel : ViewModel() {
     var locationManager: LocationManager? = null
         set(value) {
             field = value
-            if (value != null)
+            if (value != null) {
                 MockServiceHelper.tryInitService(value)
+                // 实验性开关跨重启恢复：服务握手成功后把当前偏好同步给系统侧。
+                // 关闭时同样要下发——系统侧进程重启后不该残留"开着"的状态。
+                MockServiceHelper.setBinderSensorMock(value, Portal.appContext.binderSensorMock)
+            }
         }
 
     var selectedLocation: HistoricalLocation? = null

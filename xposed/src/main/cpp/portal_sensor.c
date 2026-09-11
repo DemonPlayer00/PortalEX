@@ -1,0 +1,387 @@
+/*
+ * Binder 外周传感器模拟 —— system_server 侧原生注入层（实验性）。
+ *
+ * 目标：**只 hook 系统框架，不向目标应用注入任何东西**。
+ *
+ * 原理
+ * ----
+ * 应用拿到的传感器事件，最终都来自系统框架的 SensorService：它从 HAL 取事件
+ * （AIDL HAL 走 FMQ，见下），再按各客户端的注册情况分发到对应的 BitTube
+ * （binder 建立的事件通道）。我们不动 HAL、也不动应用，而是挂在
+ * **HAL 包装器的事件出口**上：
+ *
+ *     SensorService::threadLoop
+ *        → mSensorDevice.poll(buf, n)          [libsensorservice.so, 内联]
+ *        → mHalWrapper->supportsMessageQueues() [虚调用]
+ *        → mHalWrapper->pollFmq(buf, n)         [虚调用] ← 本机实际走这条
+ *          （或 mHalWrapper->poll(buf, n)，老式轮询 HAL 走这条）
+ *        → 我们的 hook：丢掉真实的"被接管类型"事件，追加自产事件
+ *        → 框架照常做路由/过滤/批处理/唤醒锁
+ *
+ * 于是：
+ *   1. 所有客户端（含不在 LSPosed 作用域内的应用、以及走 NDK ASensorEventQueue
+ *      的原生消费者）都拿到模拟数据——**目标应用零 hook**；
+ *   2. 注入的数据由我们自己生成，HAL 报什么、准不准、有没有在被别人用，都不影响
+ *      推送内容——**完全隔离**；
+ *   3. 真实传感器若在动（设备实际被拿起/晃动），其数据被丢弃，不会和虚拟世界
+ *      互相矛盾。
+ *
+ * 为什么 poll 和 pollFmq 都要挂：本机 AIDL HAL 的 `poll()` 是个 `return 0` 的空实现，
+ * 框架走的是 `pollFmq`（FMQ 阻塞读）。只挂 `poll` 等于挂在没人走的路上——实测如此。
+ *
+ * 为什么不是 ioctl / 不是直接改 HAL
+ * --------------------------------
+ * 本机（Android 16 + 高通/OPPO）的传感器 HAL 是**独立 vendor 进程**里的 AIDL 服务
+ * （vendor.oplusSensor-aidl-1），ioctl 发生在那个进程里，LSPosed 注入不到；
+ * 而框架内的这道事件出口是同一份数据的**上游唯一汇合点**，改这里等价于换掉整个
+ * HAL，却不需要内核/驱动层面的改动。因此这里刻意不走 ioctl。
+ *
+ * 符号从哪来
+ * ----------
+ * 目标函数是隐藏可见性（dlsym 拿不到），地址由 Java 侧读平台库的 mini debug info
+ * 解析后传进来（见 LibSymbols.kt）。**本文件不做任何地址猜测**：
+ *   · 每个偏移都必须落在模块的可执行段内，否则拒绝；
+ *   · 改写的唯一条件是该位置当前正好存着"那个函数的指针"（vtable 槽核对）。
+ * 对不上就什么都不做——解析错、ROM 不同、库被换过，都只是功能不生效，不会写坏
+ * 系统进程（这条铁律是踩过一次段错误换来的）。
+ */
+#include <dlfcn.h>
+#include <elf.h>
+#include <jni.h>
+#include <link.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "virtual_world.h"
+
+#define LOG_TAG "PortalSensor"
+#include <android/log.h>
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+
+typedef long (*ps_poll_fn)(void *self, portal_sensor_event_t *events, size_t count);
+
+#define MAX_SEGS 8
+#define MAX_TARGETS 4
+
+/* 潜在入口：poll / pollFmq × AIDL / HIDL（本机 AIDL，但 HIDL 也一起覆盖） */
+typedef struct {
+    const char *name;
+    uintptr_t off;        /* Java 传来的链接期偏移 */
+    ps_poll_fn orig;
+    ps_poll_fn hook;
+} ps_target_t;
+
+static uintptr_t g_base = 0; /* libsensorservice.so 加载基址 */
+static char g_path[256];
+static int g_patched = 0;
+static int g_installed = 0;
+static ps_target_t g_targets[MAX_TARGETS];
+static int g_target_count = 0;
+static int g_seen_handle[256]; /* 观测到的 type→handle（无锁快查，只做首见登记） */
+
+static struct {
+    uintptr_t start, end;
+} g_segs[MAX_SEGS];
+static int g_seg_count = 0;
+static uintptr_t g_exec_start[MAX_SEGS], g_exec_end[MAX_SEGS];
+static int g_exec_count = 0;
+
+/* ------------------------------------------------------------------ */
+/* 模块定位与地址合法性                                                */
+/* ------------------------------------------------------------------ */
+
+static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
+    (void) size;
+    const char *want = (const char *) data;
+    if (info->dlpi_name == NULL || info->dlpi_name[0] == '\0') return 0;
+    const char *slash = strrchr(info->dlpi_name, '/');
+    const char *name = slash ? slash + 1 : info->dlpi_name;
+    if (strcmp(name, want) != 0) return 0;
+    g_base = (uintptr_t) info->dlpi_addr;
+    snprintf(g_path, sizeof(g_path), "%s", info->dlpi_name);
+    g_seg_count = 0;
+    g_exec_count = 0;
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        if (ph->p_type != PT_LOAD) continue;
+        uintptr_t s = g_base + ph->p_vaddr;
+        uintptr_t e = s + ph->p_memsz;
+        if (g_seg_count < MAX_SEGS) {
+            g_segs[g_seg_count].start = s;
+            g_segs[g_seg_count].end = e;
+            g_seg_count++;
+        }
+        if ((ph->p_flags & PF_X) && g_exec_count < MAX_SEGS) {
+            g_exec_start[g_exec_count] = s;
+            g_exec_end[g_exec_count] = e;
+            g_exec_count++;
+        }
+    }
+    return 1; /* 停止遍历 */
+}
+
+static int addr_is_executable(uintptr_t addr) {
+    for (int i = 0; i < g_exec_count; i++) {
+        if (addr >= g_exec_start[i] && addr < g_exec_end[i]) return 1;
+    }
+    return 0;
+}
+
+/** [from, to) 是否完整落在一个已映射的 PT_LOAD 段内——扫描/改写前必须先过这一关，
+ *  否则一个算错的地址就是 system_server 的段错误（已踩过一次）。 */
+static int range_is_mapped(uintptr_t from, uintptr_t to) {
+    for (int i = 0; i < g_seg_count; i++) {
+        if (from >= g_segs[i].start && to <= g_segs[i].end) return 1;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* 指针改写（vtable 槽 = 数据改写，不改代码段）                          */
+/* ------------------------------------------------------------------ */
+
+static int patch_slot(uintptr_t where, uintptr_t expected, uintptr_t replacement) {
+    long page = sysconf(_SC_PAGESIZE);
+    uintptr_t start = where & ~(uintptr_t) (page - 1);
+    uintptr_t end = (where + sizeof(void *) + page - 1) & ~(uintptr_t) (page - 1);
+    if (mprotect((void *) start, end - start, PROT_READ | PROT_WRITE) != 0) {
+        LOGE("mprotect(RW) failed at 0x%lx", (unsigned long) start);
+        return -1;
+    }
+    int ok = 0;
+    uintptr_t *slot = (uintptr_t *) where;
+    if (*slot == expected) {
+        *slot = replacement;
+        ok = 1;
+    }
+    mprotect((void *) start, end - start, PROT_READ);
+    __builtin___clear_cache((char *) start, (char *) end);
+    return ok ? 0 : -1;
+}
+
+/*
+ * 在 .data.rel.ro 里找"正好指向 [target] 的函数指针"并换成 [replacement]。
+ * 虚函数表就在这个节里：按值核对比按结构体偏移猜测稳，也不依赖 vtable 符号
+ * （平台的 vtable 符号不在 mini debug info 里）。找不到就一个都不改。
+ */
+static int hook_vtable_slot(uintptr_t relro_addr, uintptr_t relro_size, uintptr_t target,
+                            uintptr_t replacement, const char *name) {
+    if (g_base == 0 || relro_size == 0 || target == 0) return 0;
+    /* relro_addr 是**链接期**地址（.data.rel.ro 的 sh_addr），必须加上模块基址 */
+    uintptr_t from = g_base + relro_addr;
+    uintptr_t to = from + relro_size;
+    if (!range_is_mapped(from, to)) {
+        LOGE("refusing to scan 0x%lx..0x%lx: not inside any mapped PT_LOAD of %s",
+             (unsigned long) from, (unsigned long) to, g_path);
+        return 0;
+    }
+    int hits = 0;
+    for (uintptr_t p = from; p + sizeof(void *) <= to; p += sizeof(void *)) {
+        if (*(uintptr_t *) p != target) continue;
+        if (patch_slot(p, target, replacement) == 0) {
+            hits++;
+            LOGI("hook %s: vtable slot @ libsensorservice.so+0x%lx -> %p", name,
+                 (unsigned long) (p - g_base), (void *) replacement);
+        }
+    }
+    if (hits == 0) {
+        LOGW("%s: no vtable slot holds 0x%lx (target moved?)", name,
+             (unsigned long) (target - g_base));
+    }
+    return hits;
+}
+
+/* ------------------------------------------------------------------ */
+/* 事件出口：压制真实事件 + 追加自产事件                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * type → handle 映射**只从真实事件里学**（首个事件到达即登记，随后该类型完全由本模块
+ * 接管）。刻意不用 HAL 的 getSensorsList()：它返回的是平台内部 `std::vector<Sensor>`
+ * （元素大小随版本变化，实测本机是 96+8=104 字节，而 sensor_t 是 96），按 sensor_t
+ * 结构去遍历会错位，读出垃圾 handle 并**覆盖掉正确的映射**——实测踩到过
+ * （garbage 0xb4000076 覆盖 0xb）。猜错的后果是把 A 传感器的数据写进 B 传感器，
+ * 比不注入更糟，所以宁可不猜：HAL 完全静默的传感器不会被凭空注入。
+ */
+
+static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
+    if (!vw_is_active()) return n;
+
+    long kept = 0;
+    long long suppressed = 0;
+    for (long i = 0; i < n; i++) {
+        portal_sensor_event_t *e = &buf[i];
+        int type = e->type;
+        if (type > 0 && type < 256 && g_seen_handle[type] == 0 && e->sensor != 0) {
+            /* 首见登记（无锁快查；同一类型只进来一次） */
+            g_seen_handle[type] = e->sensor;
+            vw_set_handle(type, e->sensor, e->flags);
+        }
+        if (vw_owns_type(type)) {
+            suppressed++;
+            continue;
+        }
+        if (kept != i) buf[kept] = *e;
+        kept++;
+    }
+    if (suppressed > 0) vw_note_suppressed(suppressed);
+
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts); /* 传感器事件时间基（= elapsedRealtimeNanos） */
+    long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
+
+    long room = (long) cap - kept;
+    if (room > 0) {
+        kept += vw_generate(buf + kept, (int) room, now);
+    }
+    return kept;
+}
+
+static long run_target(int idx, void *self, portal_sensor_event_t *events, size_t count) {
+    ps_target_t *t = &g_targets[idx];
+    long n = t->orig(self, events, count);
+    return post_process(events, n, count);
+}
+
+static long hook_target0(void *s, portal_sensor_event_t *e, size_t c) { return run_target(0, s, e, c); }
+static long hook_target1(void *s, portal_sensor_event_t *e, size_t c) { return run_target(1, s, e, c); }
+static long hook_target2(void *s, portal_sensor_event_t *e, size_t c) { return run_target(2, s, e, c); }
+static long hook_target3(void *s, portal_sensor_event_t *e, size_t c) { return run_target(3, s, e, c); }
+static ps_poll_fn HOOKS[MAX_TARGETS] = {&hook_target0, &hook_target1, &hook_target2, &hook_target3};
+
+/* ------------------------------------------------------------------ */
+/* 安装                                                                */
+/* ------------------------------------------------------------------ */
+
+/** offsets = [relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl] */
+static int do_install(const jlong *o) {
+    if (g_installed) return 1;
+    if (g_base == 0) {
+        if (!dl_iterate_phdr(phdr_cb, (void *) "libsensorservice.so")) {
+            LOGE("libsensorservice.so not loaded in this process");
+            return 0;
+        }
+    }
+    LOGI("libsensorservice.so base=0x%lx path=%s", (unsigned long) g_base, g_path);
+
+    uintptr_t relro_addr = (uintptr_t) o[0];
+    uintptr_t relro_size = (uintptr_t) o[1];
+    if (relro_addr == 0 || relro_size == 0) {
+        LOGE("no .data.rel.ro range given - feature stays inert");
+        return 0;
+    }
+
+    struct {
+        const char *name;
+        jlong off;
+    } spec[MAX_TARGETS] = {
+        {"poll(AIDL)", o[2]},
+        {"pollFmq(AIDL)", o[3]},
+        {"poll(HIDL)", o[4]},
+        {"pollFmq(HIDL)", o[5]},
+    };
+
+    g_target_count = 0;
+    for (int i = 0; i < MAX_TARGETS; i++) {
+        if (spec[i].off == 0) continue;
+        uintptr_t addr = g_base + (uintptr_t) spec[i].off;
+        if (!addr_is_executable(addr)) {
+            LOGE("%s offset 0x%lx not executable - rejected", spec[i].name,
+                 (unsigned long) spec[i].off);
+            continue;
+        }
+        ps_target_t *t = &g_targets[g_target_count];
+        t->name = spec[i].name;
+        t->off = (uintptr_t) spec[i].off;
+        t->orig = (ps_poll_fn) addr;
+        t->hook = HOOKS[g_target_count];
+        g_target_count++;
+    }
+
+    for (int i = 0; i < g_target_count; i++) {
+        g_patched += hook_vtable_slot(relro_addr, relro_size, (uintptr_t) g_targets[i].orig,
+                                      (uintptr_t) g_targets[i].hook, g_targets[i].name);
+    }
+    if (g_patched == 0) {
+        LOGE("no vtable slot patched - feature stays inert");
+        return 0;
+    }
+    g_installed = 1;
+    LOGI("installed: %d vtable slot(s) patched", g_patched);
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* JNI                                                                 */
+/* ------------------------------------------------------------------ */
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    (void) vm;
+    (void) reserved;
+    vw_init();
+    LOGI("native layer loaded (pid=%d)", getpid());
+    return JNI_VERSION_1_6;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_install(JNIEnv *env, jobject thiz,
+                                                                jlongArray offsets) {
+    (void) thiz;
+    if (offsets == NULL) return JNI_FALSE;
+    jsize len = (*env)->GetArrayLength(env, offsets);
+    if (len < MAX_TARGETS + 2) {
+        LOGE("install: offsets array too short (%d)", (int) len);
+        return JNI_FALSE;
+    }
+    jlong vals[MAX_TARGETS + 2];
+    (*env)->GetLongArrayRegion(env, offsets, 0, MAX_TARGETS + 2, vals);
+    return do_install(vals) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setActive(JNIEnv *env, jobject thiz,
+                                                                  jboolean active) {
+    (void) env;
+    (void) thiz;
+    vw_set_active(active ? 1 : 0);
+}
+
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(
+    JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
+    jlong now_nanos) {
+    (void) env;
+    (void) thiz;
+    vw_update_state(speed, azimuth, moving ? 1 : 0, (long long) steps, (long long) now_nanos);
+}
+
+JNIEXPORT jstring JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, jobject thiz) {
+    (void) thiz;
+    long long emitted = 0, dropped = 0, suppressed = 0;
+    vw_stats(&emitted, &dropped, &suppressed);
+    char buf[768];
+    size_t used = 0;
+#define APPEND(...)                                                                     \
+    do {                                                                                \
+        if (used < sizeof(buf)) {                                                       \
+            int w = snprintf(buf + used, sizeof(buf) - used, __VA_ARGS__);               \
+            if (w > 0) used += (size_t) w;                                               \
+        }                                                                                \
+    } while (0)
+    APPEND("installed=%d patched=%d targets=%d active=%d base=0x%lx", g_installed, g_patched,
+           g_target_count, vw_is_active(), (unsigned long) g_base);
+    for (int i = 0; i < g_target_count; i++) {
+        APPEND(" [%s=0x%lx]", g_targets[i].name, (unsigned long) g_targets[i].off);
+    }
+    APPEND(" emitted=%lld dropped=%lld suppressed=%lld", emitted, dropped, suppressed);
+#undef APPEND
+    return (*env)->NewStringUTF(env, buf);
+}
