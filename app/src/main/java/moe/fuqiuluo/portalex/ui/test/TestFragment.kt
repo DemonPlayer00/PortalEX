@@ -22,6 +22,7 @@ import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.portalex.service.StepProbe
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
 /**
@@ -56,6 +57,9 @@ class TestFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        // "普通应用视角"探针：真订阅步数传感器（进入本页即开始，离开即停）
+        runCatching { StepProbe.start(requireContext().applicationContext) }
+            .onFailure { android.util.Log.w("TestFragment", "StepProbe start failed", it) }
         if (refreshJob?.isActive == true) return
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
@@ -68,6 +72,8 @@ class TestFragment : Fragment() {
     override fun onPause() {
         refreshJob?.cancel()
         refreshJob = null
+        // 离开本页即停掉"普通应用视角"探针（真订阅，别在后台白耗）
+        runCatching { StepProbe.stop() }
         super.onPause()
     }
 
@@ -120,6 +126,9 @@ class TestFragment : Fragment() {
             appendLine()
             appendLine("── 运行时投递通道（投递 100% 可控那条路）──")
             appendLine(prettyNative(status.getString("rt_channel")))
+            appendLine()
+            appendLine("── 普通应用视角（本进程真订阅，每 5s 轮询一次总步数）──")
+            appendLine(StepProbe.status())
             appendLine()
             appendLine("── 位置模拟 ──")
             appendLine("坐标           ${"%.6f".format(status.getDouble("lat"))}, ${"%.6f".format(status.getDouble("lon"))}")
