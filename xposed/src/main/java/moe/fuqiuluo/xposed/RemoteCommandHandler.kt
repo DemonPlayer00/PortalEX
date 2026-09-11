@@ -133,6 +133,11 @@ object RemoteCommandHandler {
                 }
                 return true
             }
+            "get_sensor_status" -> {
+                // 诊断页数值总览：注入层/运动学/步频意图 vs 实际的原始数值
+                BinderSensorMock.fillStatus(rely)
+                return true
+            }
             "is_sensor_mock" -> {
                 rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
                 return true

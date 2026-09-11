@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -75,6 +76,44 @@ static long long g_sway_start = 0, g_sway_half = 500000000LL;
 static double g_micro_target = 0.0, g_micro_offset = 0.0;
 
 static long long g_emitted = 0, g_dropped = 0, g_suppressed = 0;
+
+/* 实际发出的步事件滚动窗口（1s 桶 × 8）：诊断页用它给出"有效步频"，
+ * 与设定速度算出的"意图步频"对照——两者对不上就是生成/投递环节的问题。 */
+#define STEP_BUCKETS 8
+static unsigned g_step_bucket[STEP_BUCKETS];
+static long long g_step_bucket_sec = -1;
+static long long g_step_emit_total = 0;
+
+static void step_bucket_tick(long long ts_nanos) {
+    long long sec = ts_nanos / 1000000000LL;
+    if (sec == g_step_bucket_sec) return;
+    if (g_step_bucket_sec < 0) {
+        memset(g_step_bucket, 0, sizeof(g_step_bucket));
+    } else {
+        for (long long s = g_step_bucket_sec + 1; s <= sec; s++) {
+            g_step_bucket[s % STEP_BUCKETS] = 0;
+        }
+    }
+    g_step_bucket_sec = sec;
+}
+
+static void step_emitted(long long ts_nanos) {
+    step_bucket_tick(ts_nanos);
+    if (g_step_bucket_sec >= 0) g_step_bucket[g_step_bucket_sec % STEP_BUCKETS]++;
+    g_step_emit_total++;
+}
+
+/** 近 5 秒实际发出的步事件 → 步/分 */
+int vw_step_rate_per_min(long long now_nanos) {
+    step_bucket_tick(now_nanos);
+    unsigned sum = 0;
+    for (int i = 0; i < 5; i++) {
+        long long s = g_step_bucket_sec - i;
+        if (s < 0) break;
+        sum += g_step_bucket[s % STEP_BUCKETS];
+    }
+    return (int) (sum * 12); /* 5 秒的计数 × 12 = 每分钟 */
+}
 
 /* 步事件队列：每一步一个时间戳 + 该步之后的累计值 */
 typedef struct {
@@ -253,6 +292,25 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
     g_last_step_push_nanos = now_nanos;
     g_state_nanos = now_nanos;
     pthread_mutex_unlock(&g_lock);
+}
+
+long long vw_step_events_total(void) { return g_step_emit_total; }
+
+/** 把已学到的 type→handle 映射写成 "1:0xb 2:0x15 ..."（诊断页展示） */
+int vw_dump_handles(char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) return 0;
+    size_t used = 0;
+    out[0] = '\0';
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (!g_chan[i].known) continue;
+        int w = snprintf(out + used, out_size - used, "%s%d:0x%x", used ? " " : "",
+                         g_chan[i].type, g_chan[i].handle);
+        if (w <= 0 || (size_t) w >= out_size - used) break;
+        used += (size_t) w;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return (int) used;
 }
 
 void vw_stats(long long *emitted, long long *dropped, long long *suppressed) {
@@ -597,6 +655,7 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
             }
             /* 这一步在 IMU 上也必须正好是一个峰（见 gait_note_step） */
             gait_note_step(ts);
+            step_emitted(ts);
         }
 
         advance_one_tick(t);
