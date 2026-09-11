@@ -262,7 +262,17 @@ static long long jitter_ts(long long base, long long span_ns, long long now_ns) 
     long long j = (long long) ((rng_unit() * 2.0 - 1.0) * (double) amp);
     long long ts = base + j;
     if (ts > now_ns) ts = now_ns;
-    if (ts <= g_last_emit_ts) ts = g_last_emit_ts + 1;
+    /*
+     * 单调性修正**不能越过 now**：真机上"时间戳在未来"会被严格客户端直接丢弃
+     * （同一个调用里事件数比时钟分辨率还密时，旧实现的 `g_last_emit_ts + 1` 会把
+     *  时间戳顶到 now+1 —— host 不变量测试抓到的就是它）。
+     * 挤不下时退回 now，允许与上一条相同：真机同一纳秒两条事件是常态，
+     * 而"未来时间戳"不是。
+     */
+    if (ts <= g_last_emit_ts) {
+        ts = g_last_emit_ts + 1;
+        if (ts > now_ns) ts = now_ns;
+    }
     g_last_emit_ts = ts;
     return ts;
 }
