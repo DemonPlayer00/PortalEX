@@ -129,8 +129,15 @@ object RemoteCommandHandler {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
                 val enabled = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
                 FakeLoc.enableBinderSensorMock = enabled
-                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档随它一起恢复
+                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档与注入栅格随它一起恢复
+                // （否则系统进程重启后栅格退回自动，噪声档也会退回内置默认）
                 applyNoiseProfile(rely)
+                val gridHz = rely.getInt("sensor_grid_hz", -1)
+                if (gridHz >= 0) {
+                    FakeLoc.sensorGridHz = gridHz
+                    runCatching { BinderSensorNative.setGridHz(gridHz) }
+                        .onFailure { Logger.warn("栅格恢复失败：${it.message}") }
+                }
                 if (!BinderSensorMock.onConfigChanged()) {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
                     return false

@@ -235,13 +235,13 @@ var Context.loopBroadcastlocation: Boolean
  */
 var Context.cadenceScale: Float
     get() = sharedPrefs.getFloat("cadenceScale", 1.0f)
-    set(value) = sharedPrefs.edit {
+    set(value) = sharedPrefs.edit(commit = true) {
         putFloat("cadenceScale", if (value <= 0f) 1.0f else value.coerceIn(0.2f, 3.0f))
     }
 
 var Context.sensorGridHz: Int
     get() = sharedPrefs.getInt("sensorGridHz", 0)
-    set(value) = sharedPrefs.edit {
+    set(value) = sharedPrefs.edit(commit = true) {
         putInt("sensorGridHz", if (value <= 0) 0 else value.coerceIn(20, 400))
     }
 
@@ -254,7 +254,9 @@ var Context.sensorGridHz: Int
  */
 var Context.sensorNoise: FloatArray
     get() = SensorNoise.decode(sharedPrefs.getString("sensorNoise", null))
-    set(value) = sharedPrefs.edit {
+    // commit=true：校准结果是"量出来的"，丢了就得重量一遍（apply 的异步落盘在
+    // 进程被强杀/重启时可能还没写完）。写入量极小，同步落盘可接受。
+    set(value) = sharedPrefs.edit(commit = true) {
         putString("sensorNoise", SensorNoise.encode(SensorNoise.sanitize(value)))
     }
 
@@ -266,7 +268,7 @@ var Context.sensorNoise: FloatArray
  */
 var Context.sensorNoiseReport: String
     get() = sharedPrefs.getString("sensorNoiseReport", "") ?: ""
-    set(value) = sharedPrefs.edit {
+    set(value) = sharedPrefs.edit(commit = true) {
         putString("sensorNoiseReport", value)
     }
 
