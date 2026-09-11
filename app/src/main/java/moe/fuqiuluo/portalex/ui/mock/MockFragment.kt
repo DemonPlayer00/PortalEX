@@ -106,8 +106,9 @@ class MockFragment : Fragment() {
                             Toast.makeText(requireContext(), "悬浮摇杆显示失败", Toast.LENGTH_SHORT).show()
                         }
                     } else {
+                        // 关窗 = 停一切推进：路线自动播放不经过暂停门，必须同时关 autoStatus
+                        stopMotionForFloatingHidden()
                         rocker.hide()
-                        rockerCoroutineController.pause()
                     }
                 }
             }
@@ -298,8 +299,9 @@ class MockFragment : Fragment() {
                     }
                 }
                 if (isClosed && mockServiceViewModel.rocker.isStart) {
+                    // 停止模拟也算关窗：停一切推进（含路线自动播放）
+                    mockServiceViewModel.stopMotionForFloatingHidden()
                     mockServiceViewModel.rocker.hide()
-                    mockServiceViewModel.rockerCoroutineController.pause()
                     // 视图可能已销毁（返回/切页后协程才回来）：binding 可空访问
                     _binding?.let {
                         it.rocker.isClickable = false
