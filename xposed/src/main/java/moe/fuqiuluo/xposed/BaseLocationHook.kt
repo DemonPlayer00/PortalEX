@@ -73,6 +73,17 @@ abstract class BaseLocationHook: BaseDivineService() {
             // 速度精度：真实设备量级 0.1~0.5 m/s。原实现借用该字段承载模拟速度
             // （值恒等于速度，异常且可被检测），改为独立随机小值。
             location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
+
+        /*
+         * 速度保底：静止定位在真机语义里**没有有效航向**（speed==0 ⇒ hasBearing 无意义），
+         * 应用会因此放弃航向、指针归 0——实测目标应用（步道乐跑）在 MI6 上就是这样
+         * （"停下 1 秒后指南针变 0、角度计不再变化"），而我们的位置数据本身是对的
+         * （停下后 vel=0.0 / bear=295° 稳定）。这里给模拟会话留一个极小的速度，
+         * 让 bearing 保持有效，指针停在最后朝向。
+         */
+        if (FakeLoc.enable && location.speed < FakeLoc.speedFloor) {
+            location.speed = FakeLoc.speedFloor.toFloat()
+        }
         }
 
         if (location.altitude == 0.0) {
