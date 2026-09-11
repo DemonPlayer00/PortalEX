@@ -122,6 +122,20 @@ object SystemSensorManagerHook {
 
     // 模拟步数真值（随机起点，模拟"已经走了不少"）+ 小数累加器
     private val globalSteps = AtomicInteger(kotlin.random.Random.nextInt(3000, 12000))
+
+    /**
+     * 最近一次"框架把步事件送到本进程"的时刻。
+     *
+     * 步数历来靠本 hook 主动推（位置回调驱动），因为设备不走路时真机计步器没有事件。
+     * 但**框架已经在送步事件时再推一遍，同一步就被报两次**：作用域内应用会同时收到
+     * 系统侧注入的步事件与本 hook 推的步事件，按事件计步的应用直接翻倍
+     * （实测反馈：理论 178 步/分被读成 290+ 并随两条通道时钟漂移而"缓慢增长"）。
+     * 因此到货即让位：框架在送，本进程只做数值改写，不再自己推。
+     */
+    @Volatile private var lastStepArrivalNanos = 0L
+    @Volatile private var lastArrivalCounter = -1
+    @Volatile private var stepPushYielded = false
+    private const val STEP_ARRIVAL_FRESH_NANOS = 2_000_000_000L
     private val stepLock = Any()
     private var stepFraction = 0.0
     @Volatile private var lastStepAdvanceNanos = 0L
@@ -580,12 +594,21 @@ object SystemSensorManagerHook {
         }
         if (type == TYPE_STEP_DETECTOR) {
             // 步检测器：每步一次，值恒为 1.0（检测语义），与步数计数器的推进严格同源
+            lastStepArrivalNanos = System.nanoTime()
             values[0] = 1.0f
             return
         }
         if (type != TYPE_STEP_COUNTER) return
 
-        // 步数计数器：真实事件（on-change，设备走路时才有）只改写为模拟真值
+        // 步数计数器：到货值只用来推进本进程计数（只采纳合理增量，跳变视为重新基线），
+        // 对外一律改写为自家计数——这样计数器在"让位"期间仍连续单调
+        val arrival = values[0].toInt()
+        if (lastArrivalCounter >= 0) {
+            val delta = arrival - lastArrivalCounter
+            if (delta in 1..20) globalSteps.addAndGet(delta)
+        }
+        lastArrivalCounter = arrival
+        lastStepArrivalNanos = System.nanoTime()
         values[0] = globalSteps.get().toFloat()
     }
 
@@ -625,6 +648,16 @@ object SystemSensorManagerHook {
         val dtSec = (now - last) / 1_000_000_000.0
         if (dtSec <= 0.0 || dtSec > 10.0) return
         if (!movingCache) return
+        // 框架正在送步事件（系统侧外周注入，或真机计步器）→ 本进程让位，不再自己推：
+        // 两条通道各报一次就是双倍步频，且两者时钟会缓慢漂移（表现为"还在增长"）
+        if (now - lastStepArrivalNanos < STEP_ARRIVAL_FRESH_NANOS) {
+            if (!stepPushYielded) {
+                stepPushYielded = true
+                Logger.info("步数推送让位：框架正在送步事件（避免同一步被两条通道各报一次）")
+            }
+            return
+        }
+        stepPushYielded = false
 
         val whole: Int
         synchronized(stepLock) {
