@@ -19,6 +19,7 @@ import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.ext.reportDuration
+import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.xposed.utils.FakeLoc
 
@@ -312,6 +313,8 @@ object MockServiceHelper {
         FakeLoc.enableBinderSensorMock = context.binderSensorMock
         FakeLoc.sensorGridHz = context.sensorGridHz
         FakeLoc.cadenceScale = context.cadenceScale.toDouble()
+        // Calibration 页的注入噪声档（半宽，见 SensorNoise）
+        FakeLoc.noiseProfile = context.sensorNoise
 
         val rely = Bundle()
         rely.putString("command_id", "put_config")
@@ -331,6 +334,8 @@ object MockServiceHelper {
         rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
         rely.putInt("sensor_grid_hz", FakeLoc.sensorGridHz)
         rely.putFloat("cadence_scale", FakeLoc.cadenceScale.toFloat())
+        // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
+        rely.putFloatArray("noise_profile", FakeLoc.noiseProfile)
 
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
@@ -366,6 +371,12 @@ object MockServiceHelper {
         val rely = Bundle()
         rely.putString("command_id", "set_sensor_mock")
         rely.putBoolean("binder_sensor_mock", enabled)
+        // 这条命令是 App 启动时唯一会走到的"系统侧传感器配置"载体：
+        // 噪声档随它一起恢复，否则系统进程重启后校准结果就丢了（退回硬编码默认）。
+        runCatching {
+            FakeLoc.noiseProfile = Portal.appContext.sensorNoise
+            rely.putFloatArray("noise_profile", FakeLoc.noiseProfile)
+        }.onFailure { Log.w("MockServiceHelper", "噪声档恢复失败：${it.message}") }
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
