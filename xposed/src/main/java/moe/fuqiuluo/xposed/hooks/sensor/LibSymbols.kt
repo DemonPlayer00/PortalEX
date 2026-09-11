@@ -33,15 +33,9 @@ internal object LibSymbols {
     private const val SYM_HIDL_POLL = "_ZN7android20HidlSensorHalWrapper4pollEP15sensors_event_tm"
     private const val SYM_HIDL_FMQ = "_ZN7android20HidlSensorHalWrapper7pollFmqEP15sensors_event_tm"
 
-    /* 运行时传感器 API：在 **.dynsym**（导出符号表）里，不在 mini debug info 里 */
-    private const val SYM_RT_REGISTER =
-        "_ZN7android13SensorService21registerRuntimeSensorERK8sensor_tiNS_2spINS0_21RuntimeSensorCallbackEEE"
-    private const val SYM_RT_SEND =
-        "_ZN7android13SensorService22sendRuntimeSensorEventERK15sensors_event_t"
-    private const val SYM_RT_UNREGISTER = "_ZN7android13SensorService23unregisterRuntimeSensorEi"
-    private const val SYM_RT_ISACTIVE = "_ZN7android13SensorService14isSensorActiveEi"
-
-    private const val SHT_DYNSYM_TYPE = 11 /* SHT_DYNSYM：导出符号表 */
+    /** SHT_DYNSYM：导出符号表。本路径用不到它（隐藏符号在 mini debug info 里），
+     *  能力保留给"需要读导出表"的场合。 */
+    private const val SHT_DYNSYM_TYPE = 11
 
     private const val SEC_DEBUGDATA = ".gnu_debugdata"
     private const val SEC_DATA_REL_RO = ".data.rel.ro"
@@ -61,14 +55,8 @@ internal object LibSymbols {
 
         /** 交给原生层的偏移数组（顺序与 BinderSensorNative.install 约定一致） */
         fun toOffsets(): LongArray = longArrayOf(
-            relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl,
-            rtRegister, rtSend, rtUnregister, rtIsActive
+            relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl
         )
-
-        var rtRegister: Long = 0L
-        var rtSend: Long = 0L
-        var rtUnregister: Long = 0L
-        var rtIsActive: Long = 0L
 
         override fun toString(): String =
             "pollA=0x${pollAidl.toString(16)} fmqA=0x${fmqAidl.toString(16)} " +
@@ -123,11 +111,6 @@ internal object LibSymbols {
             relroAddr = relro?.addr ?: 0L,
             relroSize = relro?.size ?: 0L
         )
-        // 运行时传感器 API 从 .dynsym 取（mini debug info 里没有它们）
-        resolved.rtRegister = elf.symbolValue(SYM_RT_REGISTER, SHT_DYNSYM_TYPE)
-        resolved.rtSend = elf.symbolValue(SYM_RT_SEND, SHT_DYNSYM_TYPE)
-        resolved.rtUnregister = elf.symbolValue(SYM_RT_UNREGISTER, SHT_DYNSYM_TYPE)
-        resolved.rtIsActive = elf.symbolValue(SYM_RT_ISACTIVE, SHT_DYNSYM_TYPE)
         return resolved
     }
 
