@@ -995,6 +995,15 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
         }
     }
     if (!g_active || !g_have_state || g_last_tick == 0) {
+        /*
+         * 未激活/无状态：**不能把上面已经从延迟队列取进 out 的事件发出去**
+         * （总开关关着，发出去就是凭空多一份数据），但也不能像旧实现那样直接 return 0 ——
+         * 那样事件既不发、也不计 dropped，账实不符。这里明确丢弃并记账。
+         */
+        if (n > 0) {
+            g_dropped += n;
+            n = 0;
+        }
         g_last_tick = now_nanos;
         pthread_mutex_unlock(&g_lock);
         return 0;
@@ -1018,16 +1027,25 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
         /* 步事件优先按时序插入（on-change，与栅格无关） */
         for (int i = 0; i < STEP_QUEUE_CAP; i++) {
             if (!g_steps_q[i].used || g_steps_q[i].ts > t) continue;
-            g_steps_q[i].used = 0;
-            if (n + 2 > cap) {
-                g_dropped += 2;
-                continue;
-            }
-            /* 步数两条流若归另一个消费者：整对留在队列里等它来取（别拆散计数器/检测器） */
+            /*
+             * 归属判定必须在**清 used 之前**（旧实现先清后判）：这两个消费者各有自己的调用
+             * 时机，不属于本次的那一对要**留在队列里**等对方来取；先清掉再 continue，
+             * 事件既不入 out 也不入延迟队列 —— 凭空消失，而且一条都不计。
+             * 默认配置（步数归运行时通道、poll 侧 want_poll=1，5ms 泵与之并发）下，
+             * 这正是"步频偏低/走 poll 只到 ~48 步/分"的形态。
+             * ⚠️ 光改这里不够：队尾还有一处"按 due 清扫"（见函数末尾），会把留下的那份吃掉。
+             */
             if (want_poll != 2 &&
                 ((want_poll == 1) != (vw_is_poll_type(PS_TYPE_STEP_COUNTER) != 0))) {
                 continue;
             }
+            if (n + 2 > cap) {
+                /* 容量不足：这次确实发不出去，丢弃并计数（连同入队标记一起清） */
+                g_steps_q[i].used = 0;
+                g_dropped += 2;
+                continue;
+            }
+            g_steps_q[i].used = 0;
             long long ts = jitter_ts(g_steps_q[i].ts, 300000000LL, now_nanos);
             long long cnt = g_steps_q[i].count;
             /* 计数器与检测器 = **同一次步事件、同一时间戳**：
@@ -1151,9 +1169,19 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
         }
     }
     g_last_tick = t;
-    /* 清掉已过期但没被捞出的步事件（容量不足时的兜底） */
+    /*
+     * 队尾清扫**不能**按"ts <= t 就清"：上面刻意把**属于另一个消费者**的步事件留在队列里
+     * 等对方来取（见本轮归属判定的注释），按 due 一律清掉等于把那批事件又丢一次，
+     * 而且一条都不计数 —— 两个消费者谁先跑到，谁就把对方那份吃掉。
+     * （这个 bug 是 host 回归测试抓出来的：只修归属判定那一处，事件照样消失。）
+     * 这里只清"早就过期到不可能再送达"的：保留 2s 窗口，与追赶上限 MAX_TICKS_PER_CALL 一致。
+     */
+    long long stale_before = now_nanos - (long long) MAX_TICKS_PER_CALL * g_tick_ns;
     for (int i = 0; i < STEP_QUEUE_CAP; i++) {
-        if (g_steps_q[i].used && g_steps_q[i].ts <= t) g_steps_q[i].used = 0;
+        if (g_steps_q[i].used && g_steps_q[i].ts < stale_before) {
+            g_steps_q[i].used = 0;
+            g_dropped += 2; /* 计数器 + 检测器 */
+        }
     }
     g_emitted += n;
     pthread_mutex_unlock(&g_lock);

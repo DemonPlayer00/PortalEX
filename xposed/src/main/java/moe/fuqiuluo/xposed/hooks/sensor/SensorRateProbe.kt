@@ -71,12 +71,23 @@ internal object SensorRateProbe {
      *
      * 语义与真机对齐：HAL 按最快请求出力 ⇒ 我们只要"一个传感器一个速率"；
      * 没人订阅的类型由 [BinderSensorNative.clearChannelHints] 统一标成静默。
-     * **拿不到 dump 时什么都不做** —— 绝不在信息不足时把通道关掉（那会让数据凭空消失）。
+     *
+     * **信息不足时什么都不做**（不是"先清了再说"）：clear 之后要靠 handle→type 表才能把
+     * 活跃者灌回去，表不可用就等于**把所有栅格通道标成"没人订"而静默**，可真实事件此时
+     * 仍在被压制（portal_sensor.c 的 post_process）⇒ 接管类型彻底没数据。
+     * 这是 fail-silent，比"这一轮不更新"坏得多 —— 实测过的事故形态就是"数据凭空消失、
+     * 而 Test 页一切正常"。
      */
     fun pushHints(): Boolean {
         val text = dumpCached() ?: return false
         val active = activeHandles(text)
         val byHandle = handleToType()
+        // 清空前必须先确认"灌得回去"：拿不到类型表就放弃本轮更新，保持现状
+        // （现状可能是"还没 hint 过"= 照旧出力，或上一轮的活跃集合 —— 都比全静默好）
+        if (byHandle.isEmpty()) {
+            Logger.debug("SensorRateProbe.pushHints: 传感器类型表不可用，跳过本轮（不清空通道）")
+            return false
+        }
         return runCatching {
             BinderSensorNative.clearChannelHints()
             var pushed = 0

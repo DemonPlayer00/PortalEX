@@ -11,6 +11,7 @@
 #ifndef PORTAL_VIRTUAL_WORLD_H
 #define PORTAL_VIRTUAL_WORLD_H
 
+#include <stddef.h> /* size_t：只含 stdint.h 时在 host（glibc）上编不过，Bionic 侥幸通过 */
 #include <stdint.h>
 
 #ifdef __cplusplus
