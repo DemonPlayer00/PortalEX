@@ -798,9 +798,12 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[0] = (float) (-g_mag_h * sin(theta));
             e->data.f[1] = (float) (g_mag_h * cos(theta));
             e->data.f[2] = (float) (-g_mag_h * g_mag_dip);
-            add_noise_i(e, 0, 0.3f);
-            add_noise_i(e, 1, 0.3f);
-            add_noise_i(e, 2, 0.3f);
+            /* 磁噪声按实测逐轴定标（PKG110 静止 19s 窗口：真机 σ = 0.21 / 0.12 / 0.32 µT）。
+             * 均匀分布 [−A,A] 的 σ = A/√3 ⇒ A = σ·√3 = 0.36 / 0.21 / 0.56。
+             * 此前三轴统一 0.3（σ≈0.17），z 轴比真机安静一倍。 */
+            add_noise_i(e, 0, 0.36f);
+            add_noise_i(e, 1, 0.21f);
+            add_noise_i(e, 2, 0.56f);
             break;
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
             e->data.f[0] = (float) (-g_mag_h * sin(theta) + g_mag_bias_x);
@@ -809,9 +812,12 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             e->data.f[3] = (float) g_mag_bias_x;
             e->data.f[4] = (float) g_mag_bias_y;
             e->data.f[5] = 0.0f;
-            add_noise_i(e, 0, 0.3f);
-            add_noise_i(e, 1, 0.3f);
-            add_noise_i(e, 2, 0.3f);
+            /* 磁噪声按实测逐轴定标（PKG110 静止 19s 窗口：真机 σ = 0.21 / 0.12 / 0.32 µT）。
+             * 均匀分布 [−A,A] 的 σ = A/√3 ⇒ A = σ·√3 = 0.36 / 0.21 / 0.56。
+             * 此前三轴统一 0.3（σ≈0.17），z 轴比真机安静一倍。 */
+            add_noise_i(e, 0, 0.36f);
+            add_noise_i(e, 1, 0.21f);
+            add_noise_i(e, 2, 0.56f);
             break;
         case PS_TYPE_GRAVITY:
             /* 重力只含恒定分量：走路的周期分量在 LINEAR_ACCELERATION 里，
