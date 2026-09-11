@@ -16,6 +16,12 @@
 /* 10ms 基准栅格：所有周期都是它的整数倍，事件天然按时间升序交织，
  * 应用侧按相邻事件时间戳算 dt 不会出现负值（真机 HAL 也是按时序交织的）。*/
 #define TICK_NS 10000000LL
+/* 实际栅格：默认 10ms；有通道要求更快（如 FASTEST=2.5ms）时自动调细，见 vw_set_channel_hint */
+static long long g_tick_ns = TICK_NS;
+#define MIN_TICK_NS 2500000LL
+
+/* 前向声明：vw_is_poll_type 用得到（定义在文件下方） */
+static int type_uses_accuracy(int32_t t);
 #define MAX_TICKS_PER_CALL 200 /* 单次最多追 2s，再长就丢旧数据 */
 #define STEP_QUEUE_CAP 64
 #define MAX_CHANNELS 14
@@ -313,6 +319,54 @@ void vw_init(void) {
  *
  * 只对**栅格通道**生效：步数两条流是 on-change（由步事件队列驱动），不受速率影响。
  */
+/*
+ * 哪些类型走 poll 路径投递（见 portal_sensor.c 的 post_process）
+ * ------------------------------------------------------------------
+ * 1. 步数两条流：可切换（历史开关，默认关）；
+ * 2. **3 值类型**（加速度/磁场/方向/陀螺/重力/线性加速度）：默认**走 poll** ——
+ *    框架的运行时传感器 JNI 对这几个类型**硬要求恰好 3 个值**（多传一个整条丢弃），
+ *    精度字段（data[3]）塞不进去；poll 路径我们自己造整个 sensors_event_t ⇒ 精度能落地。
+ *    代价：节拍由 HAL 轮询驱动 —— 有连续订阅者时 HAL 本就按仲裁速率轮询，速率不变；
+ *    没有订阅者时我们本来也不出数据（见 channel_live）。
+ */
+static int g_acc_via_poll = 1;
+static int g_steps_via_poll = 0;
+
+void vw_set_steps_via_poll(int on) { g_steps_via_poll = on ? 1 : 0; }
+
+void vw_set_acc_via_poll(int on) { g_acc_via_poll = on ? 1 : 0; }
+
+int vw_is_poll_type(int32_t type) {
+    if (type == PS_TYPE_STEP_COUNTER || type == PS_TYPE_STEP_DETECTOR) return g_steps_via_poll;
+    return g_acc_via_poll && type_uses_accuracy(type);
+}
+
+int vw_poll_types_enabled(void) {
+    return vw_is_poll_type(PS_TYPE_ACCELEROMETER) || vw_is_poll_type(PS_TYPE_STEP_COUNTER);
+}
+
+int vw_tick_ns_dbg(void) { return (int) g_tick_ns; }
+
+/** 依据当前活跃通道里最快的采用值调细栅格（2.5ms ~ 10ms） */
+static void refresh_tick_locked(void) {
+    long long fastest = 0;
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (g_chan[i].period_ticks <= 0) continue;
+        if (!g_chan[i].hinted || !g_chan[i].active_hint) continue;
+        long long p = g_chan[i].period_ns > 0 ? g_chan[i].period_ns
+                                             : (long long) g_chan[i].period_ticks * TICK_NS;
+        if (p <= 0) continue;
+        if (fastest == 0 || p < fastest) fastest = p;
+    }
+    long long want = fastest > 0 ? fastest : TICK_NS;
+    if (want < MIN_TICK_NS) want = MIN_TICK_NS;
+    if (want > TICK_NS) want = TICK_NS;
+    if (want != g_tick_ns) {
+        LOGI("tick -> %.2f ms (fastest adopted %.1f ms)", want / 1e6, fastest / 1e6);
+        g_tick_ns = want;
+    }
+}
+
 void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, int active) {
     pthread_mutex_lock(&g_lock);
     for (int i = 0; i < MAX_CHANNELS; i++) {
@@ -336,6 +390,7 @@ void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, 
         }
         break;
     }
+    refresh_tick_locked();
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -371,7 +426,7 @@ int vw_dump_rates(char *out, size_t out_size) {
     for (int i = 0; i < MAX_CHANNELS; i++) {
         if (g_chan[i].period_ticks <= 0 || !g_chan[i].known) continue;
         long long p = g_chan[i].period_ns > 0 ? g_chan[i].period_ns
-                                             : (long long) g_chan[i].period_ticks * TICK_NS;
+                                             : (long long) g_chan[i].period_ticks * g_tick_ns;
         used += (size_t) snprintf(out + used, out_size - used, "%s%d:%.0fms%s%s",
                                   used ? " " : "", g_chan[i].type, p / 1e6,
                                   g_chan[i].batch_ns > 0 ? "/batch" : "",
@@ -545,7 +600,7 @@ static double advance_sway(long long now) {
 
 /* 推进一个栅格：dt = TICK_NS */
 static void advance_one_tick(long long now) {
-    double dt = (double) TICK_NS / 1e9;
+    double dt = (double) g_tick_ns / 1e9;
     if (!g_azimuth_init) {
         g_azimuth = g_target_azimuth;
         g_azimuth_init = 1;
@@ -666,7 +721,7 @@ static double gyro_z(long long now) {
     double az = virtual_azimuth(now);
     double raw = 0.0;
     if (g_gyro_init) {
-        double dt = (double) TICK_NS / 1e9;
+        double dt = (double) g_tick_ns / 1e9;
         double d = shortest_delta(az, g_last_az_for_gyro);
         raw = (d * M_PI / 180.0) / dt;
     }
@@ -695,6 +750,19 @@ static void add_noise_i(portal_sensor_event_t *e, int index, float amp) {
 }
 
 /* 按类型填充 16 通道数据（与 SystemSensorManagerHook.sensorValuesFor 同口径） */
+/*
+ * AOSP 客户端对"3 值类型"的**精度**是从 `data[3]` 的**最低字节**读的
+ * （反汇编 libandroid_runtime 的 dispatchSensorEvent：`ldrb w23, [event+0x24]` = data[3] 首字节，
+ *  再 sxtb 作为 Java 的 accuracy 传入）。真机 HAL 也写这里；我们之前一直留 0
+ * ⇒ GPSTest 这类应用显示 "Magnetic Accuracy: Unreliable"。
+ */
+#define SENSOR_STATUS_ACCURACY_HIGH 3
+static int type_uses_accuracy(int32_t t) {
+    return t == PS_TYPE_ACCELEROMETER || t == PS_TYPE_MAGNETIC_FIELD ||
+           t == PS_TYPE_ORIENTATION || t == PS_TYPE_GYROSCOPE ||
+           t == PS_TYPE_GRAVITY || t == PS_TYPE_LINEAR_ACCELERATION;
+}
+
 static void fill_values(portal_sensor_event_t *e, long long now) {
     double az = virtual_azimuth(now);
     double theta = az * M_PI / 180.0;
@@ -786,13 +854,45 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             break;
         default:
             break;
+    }    if (type_uses_accuracy(e->type)) {
+        *((uint8_t *) &e->data.f[3]) = SENSOR_STATUS_ACCURACY_HIGH;
     }
 }
 
-int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
+/*
+ * 两个消费者（poll 出口 / 运行时泵）共用同一个生成器与同一条时间轴，而各自只该拿到自己那批类型
+ * —— 直接"生成后过滤"会把对方的丢掉（旧实现就是这么漏事件的：实测"步数改走 poll"只到 ~48 步/分）。
+ * 这里用一个**延迟队列**：不属于本次请求的事件先存起来，等对方来取时优先放出去（旧的在前，顺序天然正确）。
+ */
+#define DEFER_CAP 96
+static portal_sensor_event_t g_defer[DEFER_CAP];
+static int g_defer_n = 0;
+static long long g_defer_dropped = 0;
+
+int vw_defer_stats(int *pending, long long *dropped) {
+    pthread_mutex_lock(&g_lock);
+    if (pending) *pending = g_defer_n;
+    if (dropped) *dropped = g_defer_dropped;
+    pthread_mutex_unlock(&g_lock);
+    return g_defer_n;
+}
+
+/** @param want_poll 0=只要运行时通道那批（非 poll 类型） 1=只要 poll 类型 2=全都要 */
+int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int want_poll) {
     if (cap <= 0) return 0;
     int n = 0;
     pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < g_defer_n; ) {
+        int is_poll = vw_is_poll_type(g_defer[i].type);
+        if (want_poll == 2 || ((want_poll == 1) == (is_poll != 0))) {
+            if (n >= cap) break;
+            out[n++] = g_defer[i];
+            memmove(&g_defer[i], &g_defer[i + 1], sizeof(g_defer[0]) * (size_t) (g_defer_n - i - 1));
+            g_defer_n--;
+        } else {
+            i++;
+        }
+    }
     if (!g_active || !g_have_state || g_last_tick == 0) {
         g_last_tick = now_nanos;
         pthread_mutex_unlock(&g_lock);
@@ -800,11 +900,11 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
     }
 
     /* 积压过多（HAL 静默一段）→ 直接跳到窗口起点，只保留最近 2s */
-    long long earliest = now_nanos - (long long) MAX_TICKS_PER_CALL * TICK_NS;
+    long long earliest = now_nanos - (long long) MAX_TICKS_PER_CALL * g_tick_ns;
     if (g_last_tick < earliest) {
-        long long skipped = (earliest - g_last_tick) / TICK_NS;
+        long long skipped = (earliest - g_last_tick) / g_tick_ns;
         g_dropped += skipped;
-        g_last_tick += skipped * TICK_NS;
+        g_last_tick += skipped * g_tick_ns;
         /* 丢弃过期的步事件 */
         for (int i = 0; i < STEP_QUEUE_CAP; i++) {
             if (g_steps_q[i].used && g_steps_q[i].ts < g_last_tick) g_steps_q[i].used = 0;
@@ -812,14 +912,19 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
     }
 
     long long t = g_last_tick;
-    while (t + TICK_NS <= now_nanos) {
-        t += TICK_NS;
+    while (t + g_tick_ns <= now_nanos) {
+        t += g_tick_ns;
         /* 步事件优先按时序插入（on-change，与栅格无关） */
         for (int i = 0; i < STEP_QUEUE_CAP; i++) {
             if (!g_steps_q[i].used || g_steps_q[i].ts > t) continue;
             g_steps_q[i].used = 0;
             if (n + 2 > cap) {
                 g_dropped += 2;
+                continue;
+            }
+            /* 步数两条流若归另一个消费者：整对留在队列里等它来取（别拆散计数器/检测器） */
+            if (want_poll != 2 &&
+                ((want_poll == 1) != (vw_is_poll_type(PS_TYPE_STEP_COUNTER) != 0))) {
                 continue;
             }
             long long ts = jitter_ts(g_steps_q[i].ts, 300000000LL, now_nanos);
@@ -874,7 +979,7 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
             if (!channel_live(&g_chan[c], t)) continue;
             long long period = g_chan[c].period_ns > 0
                                ? g_chan[c].period_ns
-                               : (long long) g_chan[c].period_ticks * TICK_NS;
+                               : (long long) g_chan[c].period_ticks * g_tick_ns;
             /*
              * **按"下次应发时刻"累积，而不是 tick_index % period_ticks**：
              * 应用的采用值常常不是 10ms 栅格的整数倍（实测 66.7ms、20ms…），
@@ -892,6 +997,17 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
             fill_event(&ev, &g_chan[c], t);
             fill_values(&ev, t);
             ev.timestamp = jitter_ts(t, period, now_nanos); /* 去掉 10ms 栅格指纹 */
+            if (want_poll != 2 && ((want_poll == 1) != (vw_is_poll_type(ev.type) != 0))) {
+                /* 不属于本次请求的那批：留给另一个消费者（满了丢最旧，与 FIFO 溢出一致） */
+                if (g_defer_n >= DEFER_CAP) {
+                    memmove(&g_defer[0], &g_defer[1], sizeof(g_defer[0]) * (DEFER_CAP - 1));
+                    g_defer_n = DEFER_CAP - 1;
+                    g_defer_dropped++;
+                    g_dropped++;
+                }
+                g_defer[g_defer_n++] = ev;
+                continue;
+            }
             if (g_chan[c].batch_ns > 0) {
                 /*
                  * 批量上报：先攒在通道自己的小队列里，到批量边界一次性放出去

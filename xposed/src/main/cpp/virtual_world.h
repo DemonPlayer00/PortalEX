@@ -102,7 +102,28 @@ void vw_seed_handle(int32_t type, int32_t handle, uint32_t sensor_flags);
  * 积压超过容量时**丢弃最旧的**，保证最新数据的时间戳仍准确。
  * @return 写入条数
  */
-int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos);
+/**
+ * 生成截至 [now_nanos] 应发的事件。
+ * @param want_poll 0=只要运行时通道那批（非 poll 类型） 1=只要 poll 类型 2=全都要
+ *        —— 两个消费者共用同一条时间轴，各自只取自己那批；对方的那批进延迟队列等下次取走。
+ */
+int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int want_poll);
+
+/** 该类型是否走 poll 路径投递（3 值类型默认走 poll：运行时 JNI 塞不下精度字段 data[3]） */
+int vw_is_poll_type(int32_t type);
+
+/** 步数两条流是否改走 poll 路径（历史开关，默认关） */
+void vw_set_steps_via_poll(int on);
+
+/** 是否启用"3 值类型走 poll"（默认 1；debug.portalex.accviapoll=0 可关） */
+void vw_set_acc_via_poll(int on);
+
+/** 当前是否有任何类型走 poll 路径（决定 poll 出口要不要注入） */
+int vw_poll_types_enabled(void);
+
+/** 当前栅格（纳秒）与延迟队列统计（诊断） */
+int vw_tick_ns_dbg(void);
+int vw_defer_stats(int *pending, long long *dropped);
 
 /** 生成期间的统计（诊断用） */
 void vw_stats(long long *emitted, long long *dropped, long long *suppressed);
