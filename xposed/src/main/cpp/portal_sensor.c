@@ -441,36 +441,21 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
      * 绝不能再注入一份（同一条事件送两份 = 应用侧翻倍/抖动）。
      * 生成与栅格推进改由 Java 侧泵线程按时钟调用 vw_generate（见 runtimeFrame）。
      */
-    if (g_rt_clock && !g_steps_via_poll) return kept;
-    if (g_steps_via_poll) {
-        struct timespec ts2;
-        clock_gettime(CLOCK_BOOTTIME, &ts2);
-        long long now2 = (long long) ts2.tv_sec * 1000000000LL + ts2.tv_nsec;
-        portal_sensor_event_t tmp[64];
-        int n2 = vw_generate(tmp, 64, now2);
-        for (int i = 0; i < n2 && kept < (long) cap; i++) {
-            if (!is_step_type(tmp[i].type)) continue;
-            buf[kept++] = tmp[i];
-        }
-        return kept;
-    }
+    /*
+     * 运行时通道接管投递时，这里只剩"压制真实事件"——**但归 poll 路径的那些类型例外**
+     * （见 vw_is_poll_type：3 值类型的精度字段只能靠 poll 路径落地）。
+     * 两个消费者共用同一条时间轴，各自只取自己那批，对方的那批进延迟队列（不会丢）。
+     */
+    if (g_rt_clock && !vw_poll_types_enabled()) return kept;
 
     struct timespec ts;
     clock_gettime(CLOCK_BOOTTIME, &ts); /* 传感器事件时间基（= elapsedRealtimeNanos） */
     long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
 
     long room = (long) cap - kept;
-    if (g_steps_via_poll) {
-        /* 只把步数两条流放在 poll 路径上（其余类型由运行时通道投递） */
-        portal_sensor_event_t tmp[64];
-        int n2 = vw_generate(tmp, 64, now);
-        for (int i = 0; i < n2 && kept < (long) cap; i++) {
-            if (!is_step_type(tmp[i].type)) continue;
-            buf[kept++] = tmp[i];
-        }
-    } else {
-        if (room > 0) kept += vw_generate(buf + kept, (int) room, now);
-    }
+    if (room <= 0) return kept;
+    /* 运行时通道在跑 ⇒ 这里只要 poll 那批；否则 poll 是唯一出口 ⇒ 全都要 */
+    kept += vw_generate(buf + kept, (int) room, now, g_rt_clock ? 1 : 2);
     return kept;
 }
 
@@ -595,6 +580,12 @@ static int do_install(const jlong *o, int olen) {
      * 这个功能不该拿系统进程去赌，所以开关留在这里、默认不生效；频率观测暂由
      * **纯 Java 的 dump 路**（SensorRateProbe）承担——它零 hook、零原生改动。
      */
+    {
+        /* 3 值类型默认走 poll（为了精度字段）；debug.portalex.accviapoll=0 可关掉做 A/B */
+        char avh[PROP_VALUE_MAX] = {0};
+        int av = (__system_property_get("debug.portalex.accviapoll", avh) > 0 && avh[0] == '0');
+        vw_set_acc_via_poll(!av);
+    }
     char rhv[PROP_VALUE_MAX] = {0};
     int ratehook = (__system_property_get("debug.portalex.ratehook", rhv) > 0 && rhv[0] == '1');
     if (!ratehook) {
@@ -754,7 +745,7 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_runtimeFrame(JNIEnv *en
     if (!g_rt_clock || !vw_is_active() || meta == NULL || values == NULL) return 0;
     enum { MAX_FRAME = 32, META_STRIDE = 4, VALUE_STRIDE = 16 };
     portal_sensor_event_t buf[MAX_FRAME];
-    int n = vw_generate(buf, MAX_FRAME, (long long) now_nanos);
+    int n = vw_generate(buf, MAX_FRAME, (long long) now_nanos, 0 /*只要运行时那批*/);
     if (n <= 0) return 0;
 
     jsize mlen = (*env)->GetArrayLength(env, meta);
@@ -773,7 +764,6 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_runtimeFrame(JNIEnv *en
     }
     int out = 0;
     for (int i = 0; i < cap; i++) {
-        if (g_steps_via_poll && is_step_type(buf[i].type)) continue; /* 归 poll 路径 */
         m[out * META_STRIDE + 0] = buf[i].sensor;
         m[out * META_STRIDE + 1] = buf[i].type;
         m[out * META_STRIDE + 2] = buf[i].timestamp;
@@ -808,8 +798,8 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setStepsViaPoll(JNIEnv 
                                                                         jboolean on) {
     (void) env;
     (void) thiz;
-    g_steps_via_poll = on ? 1 : 0;
-    LOGI("steps via poll: %s", g_steps_via_poll ? "on" : "off");
+    vw_set_steps_via_poll(on ? 1 : 0);
+    LOGI("steps via poll: %s", on ? "on" : "off");
 }
 
 JNIEXPORT jlong JNICALL
@@ -881,6 +871,13 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     obs_dump(priv, sizeof(priv));
     APPEND(" priv=[%s]", priv);
     APPEND(" gait=%s", vw_gait_describe());
+    {
+        int pend = 0;
+        long long dropped = 0;
+        vw_defer_stats(&pend, &dropped);
+        APPEND(" tick=%.2fms polltypes=%d defer=%d/%lld", vw_tick_ns_dbg() / 1e6,
+               vw_poll_types_enabled(), pend, dropped);
+    }
     {
         char rates[256];
         vw_dump_rates(rates, sizeof(rates));

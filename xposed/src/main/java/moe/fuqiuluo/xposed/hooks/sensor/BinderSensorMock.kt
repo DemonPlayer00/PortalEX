@@ -34,7 +34,7 @@ object BinderSensorMock {
      * 运行时投递泵的周期。生成器自己按 20ms/40ms 的栅格决定谁该出事件
      * （加速度 50Hz、磁场 25Hz、步数按步事件），所以泵只要比最密的栅格更密即可。
      */
-    private const val PUMP_INTERVAL_MS = 10L
+    private const val PUMP_INTERVAL_MS = 5L
 
     @Volatile private var supervisorStarted = false
     @Volatile private var nativeReady = false
