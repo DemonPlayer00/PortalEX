@@ -104,7 +104,7 @@ internal object BinderSensorNative {
      * 装载注入层：把 Java 侧解析出的平台符号偏移交给原生层，由它核对 vtable 槽后改写。
      *
      * [offsets] 顺序（与 native 侧 `install` 约定一致，见 LibSymbols.Resolved.toOffsets）：
-     * `[relroAddr, relroSize, pollAidl, pollFmqAidl, pollHidl, pollFmqHidl]`
+     * `[relroAddr, relroSize, pollAidl, pollFmqAidl, pollHidl, pollFmqHidl, rtRegister, rtSend, rtUnregister, rtIsActive]`
      *
      * 为什么要 poll **和** pollFmq 两套：AIDL HAL 的 `poll()` 在本机是个
      * `return 0` 的空实现，框架走的是 FMQ 那条路（`SensorService::threadLoop`
