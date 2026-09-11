@@ -866,18 +866,29 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
         }
         case PS_TYPE_GYROSCOPE:
             e->data.f[2] = (float) gyro_z(now);
-            add_noise_i(e, 2, 0.005f);
+            add_noise_i(e, 2, 0.001f);
             break;
         case PS_TYPE_GYROSCOPE_UNCALIBRATED:
             e->data.f[2] = (float) (gyro_z(now) + g_gyro_drift_z);
             e->data.f[3] = (float) g_gyro_drift_x;
             e->data.f[4] = (float) g_gyro_drift_y;
             e->data.f[5] = (float) g_gyro_drift_z;
-            add_noise_i(e, 2, 0.005f);
+            add_noise_i(e, 2, 0.001f);
             break;
         default:
             break;
-    }    if (type_uses_accuracy(e->type)) {
+    }    /*
+     * 陀螺三轴噪声（实测驱动）：注入的陀螺 x/y 曾**恒为 0.000**，而真机（PKG110，
+     * 19s 探针窗口）三轴 σ = **0.001 rad/s** —— 钉死在 0 是可判定的伪造痕迹。
+     * 量级按实测取 1e-3（此前误取 5e-3，比真机大 5 倍）。z 的转弯角速度保持不变，只叠噪声。
+     */
+    if (e->type == PS_TYPE_GYROSCOPE || e->type == PS_TYPE_GYROSCOPE_UNCALIBRATED) {
+        add_noise_i(e, 0, 0.001f);
+        add_noise_i(e, 1, 0.001f);
+        add_noise_i(e, 2, 0.001f);
+    }
+
+    if (type_uses_accuracy(e->type)) {
         *((uint8_t *) &e->data.f[3]) = SENSOR_STATUS_ACCURACY_HIGH;
     }
 }
