@@ -142,4 +142,3 @@ Apache License 2.0 或 GNU General Public License v3.0（或更高版本）中�
 
 - 原 Apache License 2.0 副本保留在 `LICENSE.Apache-2.0` 文件中；
 - GPL v3.0 许可证副本见 `LICENSE` 文件；
-- 历史 README 保留于 `README.old.md`。
