@@ -4,6 +4,7 @@ import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 import java.io.FileInputStream
 
 /**
@@ -97,7 +98,10 @@ internal object SensorRateProbe {
                 pushed++
             }
             pushed > 0
-        }.onFailure { Logger.debug("SensorRateProbe.pushHints: ${it.message}") }.getOrDefault(false)
+        }.onFailure {
+            PortalDiag.fail(PortalDiag.Area.RATE_HINTS, it)
+            Logger.debug("SensorRateProbe.pushHints: ${it.message}")
+        }.getOrDefault(false)
     }
 
     /**
