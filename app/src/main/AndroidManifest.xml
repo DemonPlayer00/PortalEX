@@ -24,6 +24,9 @@
 
     <!-- 允许访问振动设备 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 普通计步类应用读 TYPE_STEP_COUNTER / STEP_DETECTOR 需要它（Android 10+ 运行时权限）；
+         Test 页的"普通应用视角"用真订阅来复现目标应用看到的东西 -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- 允许使用PowerManager的 WakeLocks保持进程在休眠时从屏幕消失 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 允许一个程序打开窗口使用 TYPE_SYSTEM_ALERT，显示在其他所有程序的顶层 -->
