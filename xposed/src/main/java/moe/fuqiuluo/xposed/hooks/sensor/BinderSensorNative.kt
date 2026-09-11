@@ -104,7 +104,8 @@ internal object BinderSensorNative {
      * 装载注入层：把 Java 侧解析出的平台符号偏移交给原生层，由它核对 vtable 槽后改写。
      *
      * [offsets] 顺序（与 native 侧 `install` 约定一致，见 LibSymbols.Resolved.toOffsets）：
-     * `[relroAddr, relroSize, pollAidl, pollFmqAidl, pollHidl, pollFmqHidl]`
+     * `[relroAddr, relroSize, pollAidl, pollFmqAidl, pollHidl, pollFmqHidl, enableDisable]`
+     * —— 共 **7** 项（enableDisable 为观测槽，默认停用，见 debug.portalex.ratehook）。
      *
      * 为什么要 poll **和** pollFmq 两套：AIDL HAL 的 `poll()` 在本机是个
      * `return 0` 的空实现，框架走的是 FMQ 那条路（`SensorService::threadLoop`
@@ -211,10 +212,10 @@ internal object BinderSensorNative {
     external fun clearChannelHints()
 
     /**
-     * Calibration 页：按索引设置某一路注入噪声的**半宽**（均匀分布 [−A, A]，等效 σ = A/√3）。
-     *
-     * 索引表与 [moe.fuqiuluo.xposed.utils.SensorNoise] / 原生 `VW_NOISE_*` 逐项一致。
-     * 只改幅度，不动任何运动学量；原生层会丢弃负值/NaN 并把上限钳到 50。
+     * Calibration 页：按索引设置某一路注入噪声的**标准差 σ**（逐事件按高斯 N(0, σ²) 生成动态值；
+     * 陀螺的 3..5 号槽是**零偏 μ**，可为负）。索引表与 [moe.fuqiuluo.xposed.utils.SensorNoise] /
+     * 原生 `VW_NOISE_*` 逐项一致。
+     * 只改幅度，不动任何运动学量；原生层丢弃 NaN、把 σ 槽的负值钳掉、上限钳到 50。
      */
     external fun setNoise(index: Int, amp: Float)
 
