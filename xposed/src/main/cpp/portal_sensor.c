@@ -296,7 +296,7 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
             vw_set_handle(type, e->sensor, e->flags);
         }
         /* 真实事件先喂给虚拟世界看一眼（取真实计数器值做接管基线） */
-        vw_note_real_event(type, e->data.f[0]);
+        vw_note_real_event(type, e->data.f);
         /* 未接管的类型只做观测（厂商私有传感器在同一个出口上） */
         if (!vw_owns_type(type)) obs_note(type, e->data.f[0], e->timestamp);
         if (vw_owns_type(type)) {
@@ -379,9 +379,16 @@ static int value_count_for_type(int type) {
         case PS_TYPE_GAME_ROTATION_VECTOR:
         case PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR:
             return 4;
-        case PS_TYPE_STEP_COUNTER:
         case PS_TYPE_STEP_DETECTOR:
             return 1;
+        case PS_TYPE_STEP_COUNTER:
+            /*
+             * 计数器是 **int64**（真机写在 `u64.step_counter`，客户端也按 int64 读），
+             * 而框架 JNI 的运行时入口只接受 `float[]`、按个数 memcpy 到 `data` —— 所以要
+             * 用**两个 float 槽**承载这 8 个字节（低 32 位在前）。type 19 不在 JNI 那两个
+             * "恰好 1/3 个"的掩码里，走通用分支，个数 2 是允许的。
+             */
+            return 2;
         default:
             return 3;
     }
