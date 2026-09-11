@@ -49,8 +49,63 @@ internal object SensorRateProbe {
         return cached
     }
 
+    // ------------------------------------------------------------------
+    // 「按应用期望出数据」：把活跃表与采用速率灌给原生注入层
+    // ------------------------------------------------------------------
+
+    @Volatile private var cachedText: String? = null
+    @Volatile private var cachedTextAtNanos = 0L
+
+    /** 带缓存的 dump 文本（[status] 与 [pushHints] 共用；拉取失败时沿用旧缓存） */
+    private fun dumpCached(): String? {
+        val now = System.nanoTime()
+        cachedText?.let { if (now - cachedTextAtNanos < CACHE_NANOS) return it }
+        val fresh = dumpSensorService() ?: return cachedText
+        cachedText = fresh
+        cachedTextAtNanos = now
+        return fresh
+    }
+
+    /**
+     * 把「哪些传感器有人在订、框架采用的速率是多少」灌给原生注入层。
+     *
+     * 语义与真机对齐：HAL 按最快请求出力 ⇒ 我们只要"一个传感器一个速率"；
+     * 没人订阅的类型由 [BinderSensorNative.clearChannelHints] 统一标成静默。
+     * **拿不到 dump 时什么都不做** —— 绝不在信息不足时把通道关掉（那会让数据凭空消失）。
+     */
+    fun pushHints(): Boolean {
+        val text = dumpCached() ?: return false
+        val active = activeHandles(text)
+        val byHandle = handleToType()
+        return runCatching {
+            BinderSensorNative.clearChannelHints()
+            var pushed = 0
+            for ((handle, type) in byHandle) {
+                val selectedNs = active[handle] ?: continue
+                BinderSensorNative.setChannelHint(type, selectedNs, true)
+                pushed++
+            }
+            pushed > 0
+        }.onFailure { Logger.debug("SensorRateProbe.pushHints: ${it.message}") }.getOrDefault(false)
+    }
+
+    /**
+     * dump 第一段（`Sensor Device:`）**只列有订阅者的传感器** ⇒ key 集合就是活跃 handle，
+     * value 是框架采用值（ns；0 = 最快档/未指定 ⇒ 原生侧用内置默认栅格）。
+     */
+    private fun activeHandles(text: String): Map<Int, Long> {
+        val out = HashMap<Int, Long>()
+        for (line in text.lineSequence()) {
+            val g = lineRe.find(line.trim()) ?: continue
+            val handle = g.groupValues[1].removePrefix("0x").removePrefix("0X").toInt(16)
+            val ms = g.groupValues[4].toDouble()
+            out[handle] = if (ms <= 0.0) 0L else (ms * 1_000_000.0).toLong()
+        }
+        return out
+    }
+
     private fun collect(): String {
-        val text = dumpSensorService()
+        val text = dumpCached()
         return if (text == null) {
             "框架: 不可用${if (lastError.isEmpty()) "" else "($lastError)"} | " +
                     clientRequests()
