@@ -75,6 +75,35 @@ object BinderSensorMock {
         }
     }
 
+    /**
+     * 把当前状态写进 Bundle（诊断页 / `get_sensor_status` 命令用）。
+     *
+     * 关键对照项：`cadence_intent`（按设定速度算出的**意图步频**）与原生层
+     * `status()` 里的 `step_rate`（**实际发出的步事件换算的步频**）——两者对不上
+     * 就说明问题在生成/投递环节，而不是应用侧的显示。
+     */
+    fun fillStatus(rely: android.os.Bundle) {
+        rely.putBoolean("flag", FakeLoc.enableBinderSensorMock)
+        rely.putBoolean("mock_running", FakeLoc.enable)
+        rely.putBoolean("native_ready", nativeReady)
+        rely.putBoolean("active", active)
+        rely.putString("native", runCatching { BinderSensorNative.status() }.getOrDefault("n/a"))
+        // 运动学权威值（system_server 侧）
+        val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
+        rely.putDouble("measured_speed", speed)
+        rely.putDouble("configured_speed", FakeLoc.speed)
+        rely.putBoolean("moving", moving)
+        rely.putDouble("bearing_target", FakeLoc.bearing)
+        rely.putDouble("bearing_frame", FakeLoc.processedBearing())
+        rely.putDouble("gait_speed", speed)
+        rely.putInt("cadence_intent", FakeLoc.cadenceForSpeed(speed))
+        rely.putLong("steps_total", steps)
+        rely.putDouble("lat", FakeLoc.latitude)
+        rely.putDouble("lon", FakeLoc.longitude)
+        rely.putDouble("altitude", FakeLoc.altitude)
+        rely.putBoolean("gnss_mock", FakeLoc.enableMockGnss)
+    }
+
     /** 诊断字符串（logcat / 排查用） */
     fun status(): String =
         if (!nativeReady) "native=unloaded active=$active"

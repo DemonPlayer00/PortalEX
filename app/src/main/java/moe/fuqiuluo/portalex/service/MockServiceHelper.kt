@@ -27,6 +27,46 @@ object MockServiceHelper {
     private var loopThread :Thread ?= null
     @Volatile private var isRunning = false
 
+    // ---- 传感器轮询心跳 ----
+    /**
+     * 模拟会话期间保持一个**低频连续型传感器**订阅。
+     *
+     * 这不是为了取数，而是为了让框架的传感器轮询转起来：SensorService 的取事件循环
+     * 由 HAL 的投递驱动，而 HAL 只为"当前被订阅的传感器"投递。若目标应用只订阅了
+     * on-change 类型的步数传感器（没有连续型），框架就长时间阻塞在等待里 ——
+     * **本模块在框架层注入的传感器事件于是只能零星到达**（实测：无连续订阅时
+     * 走动几分钟只发出 2 次步事件，注入计数 emitted/dropped ≈ 1:38）。
+     * 应用按到达时间估算步频时，这种"半天来一批"就会读出 277 这类离谱值。
+     * 挂一个 SENSOR_DELAY_UI 的加速度计（≈16Hz）即可把轮询撑到足够密，
+     * 让注入的事件平滑送达所有客户端（对目标应用同样有效）。
+     */
+    private var keepAliveListener: android.hardware.SensorEventListener? = null
+
+    fun startSensorPollKeepAlive(context: Context) {
+        if (keepAliveListener != null) return
+        val sm = context.getSystemService(Context.SENSOR_SERVICE)
+            as? android.hardware.SensorManager ?: return
+        val sensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) ?: return
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(event: android.hardware.SensorEvent?) {}
+            override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+        }
+        if (sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)) {
+            keepAliveListener = listener
+            Log.d("MockServiceHelper", "sensor poll keep-alive started")
+        }
+    }
+
+    fun stopSensorPollKeepAlive(context: Context) {
+        val listener = keepAliveListener ?: return
+        keepAliveListener = null
+        runCatching {
+            (context.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager)
+                ?.unregisterListener(listener)
+        }
+        Log.d("MockServiceHelper", "sensor poll keep-alive stopped")
+    }
+
     fun tryInitService(locationManager: LocationManager) {
         val rely = Bundle()
         Log.d("MockServiceHelper", "Try to init service")
@@ -118,6 +158,8 @@ object MockServiceHelper {
         // App 侧状态同步：putConfig 不再携带 enable，避免打开设置页/GNSS 页时把模拟误关
         FakeLoc.enable = true
         startLoopBroadcastLocation(locationManager)
+        // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
+        runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
         return if(locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
             isMockStart(locationManager)
         } else {
@@ -132,6 +174,7 @@ object MockServiceHelper {
         val rely = Bundle()
         rely.putString("command_id", "stop")
         stopLoopBroadcastLocation()
+        runCatching { Portal.appContext }.getOrNull()?.let { stopSensorPollKeepAlive(it) }
         FakeLoc.enable = false
         if (locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) {
             return !isMockStart(locationManager)
@@ -284,6 +327,19 @@ object MockServiceHelper {
         rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
 
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
+    }
+
+    /**
+     * 诊断页数据源：向系统侧要一份数值总览（注入层状态、运动学、意图步频 vs 实际步频）。
+     * 服务未握手时返回 null。
+     */
+    fun getSensorStatus(locationManager: LocationManager): Bundle? {
+        if (!::randomKey.isInitialized) {
+            return null
+        }
+        val rely = Bundle()
+        rely.putString("command_id", "get_sensor_status")
+        return if (locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)) rely else null
     }
 
     fun isServiceInit(): Boolean {

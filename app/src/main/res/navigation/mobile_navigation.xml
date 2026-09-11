@@ -36,6 +36,12 @@
         tools:layout="@layout/fragment_route_edit" />
 
     <fragment
+        android:id="@+id/nav_test"
+        android:name="moe.fuqiuluo.portalex.ui.test.TestFragment"
+        android:label="@string/menu_test"
+        tools:layout="@layout/fragment_test" />
+
+    <fragment
         android:id="@+id/nav_settings"
         android:name="moe.fuqiuluo.portalex.ui.settings.SettingsFragment"
         android:label="@string/menu_setting"
