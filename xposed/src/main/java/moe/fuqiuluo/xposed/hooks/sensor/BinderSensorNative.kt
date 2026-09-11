@@ -117,6 +117,24 @@ internal object BinderSensorNative {
     external fun setActive(active: Boolean)
 
     /**
+     * 投递节拍源：true = 运行时通道（Java 侧泵线程驱动生成），false = poll 路径（现状）。
+     *
+     * 两者**互斥**：打开后 poll 出口只压制真实事件、不再注入（否则同一条事件送两份）；
+     * 关闭后立刻回到 poll 驱动，投递不中断。默认 false。
+     */
+    external fun setRuntimeClock(active: Boolean)
+
+    /**
+     * 取一帧"截至 [nowNanos] 应发出的事件"（运行时通道专用）。
+     *
+     * [meta] 每事件 4 个 long：`handle / type / timestamp / values 个数`；
+     * [values] 每事件 16 个 float（与 `sensors_event_t.data` 同宽）。
+     * 值个数由原生层按类型给出（必须与框架 JNI 的 switch 一致）。
+     * @return 写入的事件条数
+     */
+    external fun runtimeFrame(nowNanos: Long, meta: LongArray, values: FloatArray): Int
+
+    /**
      * 用框架自己的传感器表播种 `type → handle`（三元组 `[type, handle, flags, ...]`）。
      * 这类映射不依赖真实事件，所以步数计数器这种"不走路就没有事件"的 on-change
      * 传感器也能拿到 handle；已知映射不会被它覆盖（真实事件携带的更可信）。

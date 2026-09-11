@@ -31,9 +31,16 @@ object BinderSensorMock {
     /** 失败后的重试间隔（内部 tick 数）：避免每 50ms 刷一次异常日志 */
     private const val FAIL_RETRY_TICKS = 100
 
+    /**
+     * 运行时投递泵的周期。生成器自己按 20ms/40ms 的栅格决定谁该出事件
+     * （加速度 50Hz、磁场 25Hz、步数按步事件），所以泵只要比最密的栅格更密即可。
+     */
+    private const val PUMP_INTERVAL_MS = 10L
+
     @Volatile private var supervisorStarted = false
     @Volatile private var nativeReady = false
     @Volatile private var active = false
+    @Volatile private var pumpThread: Thread? = null
 
     /** 模拟步数真值（与 app 端 hook 同量级：随机起点，像"已经走了不少"） */
     private var steps = Random.nextLong(3000, 12000)
@@ -116,7 +123,8 @@ object BinderSensorMock {
     /** 诊断字符串（logcat / 排查用） */
     fun status(): String =
         if (!nativeReady) "native=unloaded active=$active"
-        else "active=$active ${runCatching { BinderSensorNative.status() }.getOrDefault("n/a")}"
+        else "active=$active ${runCatching { BinderSensorNative.status() }.getOrDefault("n/a")} | " +
+                SystemRuntimeChannel.status()
 
     /** 同步装载原生层（幂等）。[force] = 用户显式改动开关时忽略退避，务必给出明确结果。 */
     private fun ensureNative(force: Boolean = false): Boolean {
@@ -168,6 +176,7 @@ object BinderSensorMock {
     }
 
     private fun deactivate() {
+        stopPump()
         if (!active) return
         active = false
         if (nativeReady) {
@@ -175,6 +184,55 @@ object BinderSensorMock {
                 .onFailure { Logger.error("BinderSensorMock: setActive(false) failed", it) }
         }
         Logger.info("BinderSensorMock: deactivated")
+    }
+
+    /**
+     * 运行时投递泵：每 [PUMP_INTERVAL_MS] 向原生层取一帧到期事件，逐条投递。
+     *
+     * 这是"投递 100% 可控"的落点：不再依赖 HAL 轮询（poll 只在被调用时才推进生成），
+     * 改为我们自己的时钟推进。启动顺序必须是 **先切节拍、再起泵**（[SystemRuntimeChannel.startDelivery]），
+     * 停止顺序相反，中间不留"两边都不发"的空窗。
+     */
+    private fun ensurePump() {
+        if (pumpThread != null) return
+        synchronized(this) {
+            if (pumpThread != null) return
+            if (!SystemRuntimeChannel.startDelivery()) return
+            pumpThread = Thread({ pumpLoop() }, "PortalSensorPump").apply {
+                isDaemon = true
+                start()
+            }
+            Logger.info("BinderSensorMock: 运行时投递泵已启动")
+        }
+    }
+
+    private fun stopPump() {
+        val t = pumpThread ?: run {
+            SystemRuntimeChannel.stopDelivery()
+            return
+        }
+        pumpThread = null
+        t.interrupt()
+        SystemRuntimeChannel.stopDelivery()
+    }
+
+    private fun pumpLoop() {
+        try {
+            while (!Thread.currentThread().isInterrupted) {
+                Thread.sleep(PUMP_INTERVAL_MS)
+                if (!FakeLoc.enableBinderSensorMock || !FakeLoc.enable || !nativeReady) return
+                SystemRuntimeChannel.pump(SystemClock.elapsedRealtimeNanos())
+            }
+        } catch (_: InterruptedException) {
+            // 正常停止路径（stopPump 会 interrupt）
+        } catch (t: Throwable) {
+            Logger.error("BinderSensorMock: 投递泵异常，交回 poll 路径", t)
+        } finally {
+            // 任何退出路径都要清掉引用并交回节拍：否则 native 侧会停在"只压制"，
+            // 而我们的泵已经不在了 —— 那是"两边都不发"的最坏状态。
+            if (pumpThread === Thread.currentThread()) pumpThread = null
+            SystemRuntimeChannel.stopDelivery()
+        }
     }
 
     private fun ensureSupervisor() {
@@ -238,6 +296,10 @@ object BinderSensorMock {
             }
             return
         }
+
+        // 投递路线：载体就绪 → 运行时通道（我们自己的时钟推进）；否则保持 poll 路径（现状）。
+        // ensurePump 内部会先切节拍再起泵，幂等；载体未就绪时它什么都不做。
+        ensurePump()
 
         val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
         if (moving && dt > 0.0 && dt < 5.0) {
