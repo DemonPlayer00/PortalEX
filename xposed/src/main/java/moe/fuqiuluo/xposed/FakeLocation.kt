@@ -12,6 +12,7 @@ import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
+import moe.fuqiuluo.xposed.hooks.sensor.SystemRuntimeChannel
 import moe.fuqiuluo.xposed.hooks.sensor.SystemSensorManagerHook
 import moe.fuqiuluo.xposed.hooks.telephony.TelephonyHook
 import moe.fuqiuluo.xposed.hooks.wlan.WlanHook
@@ -132,6 +133,12 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 // 实验性：Binder 外周传感器模拟。开关打开时（put_config 到达即触发）
                 // 才装载原生注入层并起调度线程；关闭时本调用不做任何事。
                 BinderSensorMock.onConfigChanged()
+
+                // 运行时投递通道：只解析框架的 JNI 入口并捕获 SensorService 实例（零副作用），
+                // 注册载体/投递由 BinderSensorMock 在开关打开后按需触发。
+                // 注意传的是 lpparam.classLoader（系统服务的类加载器）——实测
+                // ActivityThread 的 classLoader 在 system_server 里看不到 com.android.server.*
+                SystemRuntimeChannel.attach(lpparam.classLoader)
             }
             "com.android.location.fused" -> {
                 AndroidFusedLocationProviderHook(lpparam.classLoader)
