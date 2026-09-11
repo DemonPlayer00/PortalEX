@@ -140,7 +140,7 @@ class TestFragment : Fragment() {
             appendLine(prettyNative(status.getString("rt_channel")))
             appendLine()
             appendLine("── 普通应用视角（本进程真订阅，每 5s 轮询一次总步数）──")
-            appendLine(moe.fuqiuluo.xposed.hooks.sensor.SystemSensorManagerHook.stepTraceText())
+            appendLine(moe.fuqiuluo.xposed.hooks.sensor.frozen.SystemSensorManagerHook.stepTraceText())
             appendLine(StepProbe.status())
             appendLine()
             appendLine("── 位置模拟 ──")
