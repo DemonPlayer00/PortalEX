@@ -253,6 +253,34 @@ internal object LocationServiceHook: BaseLocationHook() {
     }
 
     fun onService(cILocationManager: Class<*>) {
+    /*
+     * ===================== onService 分段地图（589 行） =====================
+     *
+     * 这个函数把"位置服务出口上的全部 hook"按主题排成一串。读它的时候按段跳，
+     * 不要当成 589 行平铺代码：
+     *
+     *   段 1  取位（getLastLocation）            立即更新虚拟坐标/计步/路线推进
+     *   段 2  监听器注册家族                      requestLocationUpdates / removeUpdates /
+     *                                            (un)registerLocationListener
+     *   段 3  GNSS 批量回调（条件块）             addGnssBatchingCallback + onLocationBatch 注入
+     *   段 4  围栏 / 取址 / 测试 provider         requestGeofence、getFromLocation(Name)、
+     *                                            add/removeTestProvider、setTestProvider*
+     *   段 5  GNSS 状态与批处理                   registerGnssStatusCallback 入队 + 主动推送、
+     *                                            start/stopGnssBatch、requestListenerFlush
+     *   段 6  取位请求（getCurrentLocation）      允许并注入 + 登记一次性投递表
+     *   段 7  命令通道（sendExtraCommand）        portal provider + 厂商开关 + 指令分发
+     *   段 8  provider 可见性                     isProviderEnabled(ForUser)：含握手门禁
+     *   段 9  厂商/第三方 SDK 控制器包抑制         setExtraLocationControllerPackage*
+     *
+     * ⚠️ **顺序敏感**：同一方法上的多个回调按注册顺序执行（XposedBridge 语义），
+     * 所以段的先后不能重排。将来若要继续拆成 private fun，注意两点（我试过，都栽在这里）：
+     *   ① 段首必须取**构造的开头**（例如段 8 的真开头是 `if(`，注释行在它内部）——
+     *      按"向前吃注释"取边界会把 `if(` 留在上一段，切出语法错误；
+     *   ② 段函数必须放在 **object 内部**（它们用 oneShotCallbacks 等对象级成员；
+     *      放到文件级会变成 Unresolved reference），并且替换段体时**别丢掉 onService 的收尾 `}`**。
+     * =======================================================================
+     */
+
         // Got instance of ILocationManager.Stub here, you can hook it
         // Not directly Class.forName because of this thing, it can't be reflected, even if I'm system_server?!?!
 
@@ -271,6 +299,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 
         LocationNMEAHook(cILocationManager)
 
+        // ===== 段 1 · 取位（getLastLocation）：立即更新虚拟坐标/计步/路线推进 =====
         if(cILocationManager.hookAllMethods("getLastLocation", afterHook {
                 // android 7.0.0 ~ 10.0.0
                 // Location getLastLocation(in LocationRequest request, String packageName);
@@ -299,6 +328,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             Logger.error("hook getLastLocation failed")
         }
 
+        // ===== 段 2 · 监听器注册家族（requestLocationUpdates / (un)registerLocationListener）=====
         // android 12 and later remove `requestLocationUpdates`
         cILocationManager.hookAllMethods("requestLocationUpdates", beforeHook {
             // android 7.0.0
@@ -440,6 +470,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                 Logger.error("unregisterLocationListener: listener is null: $method")
                 return@afterHook
             }
+        // ===== 段 3 · GNSS 批量回调（条件块：onLocationBatch 注入）=====
             if(FakeLoc.enableDebugLog) {
                 Logger.debug("unregisterLocationListener: injected! $listener")
             }
@@ -485,6 +516,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             })
         }
 
+        // ===== 段 4 · 围栏 / 取址 / 测试 provider =====
         cILocationManager.hookAllMethods("requestGeofence", beforeHook {
             if (FakeLoc.enable && FakeLoc.disableRequestGeofence && !FakeLoc.enableAGPS) {
                 if(FakeLoc.enableDebugLog) {
@@ -550,6 +582,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         })
 
+        // ===== 段 5 · GNSS 状态与批处理（回调入队 + 主动推送 + flush）=====
         // ============ GNSS 状态注入（适配 SDK 36/ColorOS） ============
         // registerGnssStatusCallback：
         // 1) 回调对象入队（死亡自动移除），供主动推送使用；
@@ -693,6 +726,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 //            }
 //        })
 
+        // ===== 段 6 · 取位请求（getCurrentLocation）：允许并注入 + 一次性投递登记 =====
         cILocationManager.hookAllMethods("getCurrentLocation", beforeHook {
             // 不同 Android 版本参数位置不同：
             //  老版本: getCurrentLocation(LocationRequest, ILocationCallback, String packageName)
@@ -734,6 +768,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             oneShotCallbacks.add(OneShotCallback(callback, SystemClock.elapsedRealtimeNanos()))
         })
 
+        // ===== 段 7 · 命令通道（sendExtraCommand → portal provider 分发）=====
         cILocationManager.hookAllMethods("sendExtraCommand", beforeHook {
             if (args.size < 3) return@beforeHook
 
@@ -770,6 +805,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         })
 
+        // ===== 段 8 · provider 可见性（isProviderEnabled / ForUser，含握手门禁）=====
         if(
         // boolean isProviderEnabledForUser(String provider, int userId); from android 9.0.0
             XposedBridge.hookAllMethods(
@@ -820,6 +856,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
 
 
+        // ===== 段 9 · 厂商/第三方 SDK 的"额外定位控制器包"抑制 =====
         // F**k You! AMAP Service!
         XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
