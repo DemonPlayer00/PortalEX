@@ -33,6 +33,16 @@ internal object LibSymbols {
     private const val SYM_HIDL_POLL = "_ZN7android20HidlSensorHalWrapper4pollEP15sensors_event_tm"
     private const val SYM_HIDL_FMQ = "_ZN7android20HidlSensorHalWrapper7pollFmqEP15sensors_event_tm"
 
+    /* 运行时传感器 API：在 **.dynsym**（导出符号表）里，不在 mini debug info 里 */
+    private const val SYM_RT_REGISTER =
+        "_ZN7android13SensorService21registerRuntimeSensorERK8sensor_tiNS_2spINS0_21RuntimeSensorCallbackEEE"
+    private const val SYM_RT_SEND =
+        "_ZN7android13SensorService22sendRuntimeSensorEventERK15sensors_event_t"
+    private const val SYM_RT_UNREGISTER = "_ZN7android13SensorService23unregisterRuntimeSensorEi"
+    private const val SYM_RT_ISACTIVE = "_ZN7android13SensorService14isSensorActiveEi"
+
+    private const val SHT_DYNSYM_TYPE = 11 /* SHT_DYNSYM：导出符号表 */
+
     private const val SEC_DEBUGDATA = ".gnu_debugdata"
     private const val SEC_DATA_REL_RO = ".data.rel.ro"
 
@@ -50,8 +60,15 @@ internal object LibSymbols {
             get() = pollAidl != 0L || fmqAidl != 0L || pollHidl != 0L || fmqHidl != 0L
 
         /** 交给原生层的偏移数组（顺序与 BinderSensorNative.install 约定一致） */
-        fun toOffsets(): LongArray =
-            longArrayOf(relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl)
+        fun toOffsets(): LongArray = longArrayOf(
+            relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl,
+            rtRegister, rtSend, rtUnregister, rtIsActive
+        )
+
+        var rtRegister: Long = 0L
+        var rtSend: Long = 0L
+        var rtUnregister: Long = 0L
+        var rtIsActive: Long = 0L
 
         override fun toString(): String =
             "pollA=0x${pollAidl.toString(16)} fmqA=0x${fmqAidl.toString(16)} " +
@@ -97,7 +114,7 @@ internal object LibSymbols {
         val plain = XZInputStream(ByteArrayInputStream(elf.read(dd))).use { it.readBytes() }
         Logger.info("LibSymbols: mini debug info ${dd.size} -> ${plain.size} bytes")
         val syms = ElfFile.of(plain)
-        return Resolved(
+        val resolved = Resolved(
             libPath = path,
             pollAidl = syms.symbolValue(SYM_AIDL_POLL),
             fmqAidl = syms.symbolValue(SYM_AIDL_FMQ),
@@ -106,6 +123,12 @@ internal object LibSymbols {
             relroAddr = relro?.addr ?: 0L,
             relroSize = relro?.size ?: 0L
         )
+        // 运行时传感器 API 从 .dynsym 取（mini debug info 里没有它们）
+        resolved.rtRegister = elf.symbolValue(SYM_RT_REGISTER, SHT_DYNSYM_TYPE)
+        resolved.rtSend = elf.symbolValue(SYM_RT_SEND, SHT_DYNSYM_TYPE)
+        resolved.rtUnregister = elf.symbolValue(SYM_RT_UNREGISTER, SHT_DYNSYM_TYPE)
+        resolved.rtIsActive = elf.symbolValue(SYM_RT_ISACTIVE, SHT_DYNSYM_TYPE)
+        return resolved
     }
 
     /** 从 /proc/self/maps 找当前进程里 libsensorservice.so 的真实路径 */
@@ -146,8 +169,11 @@ internal object LibSymbols {
         }
 
         /** 在 SHT_SYMTAB 里按名字取 st_value（= 链接期地址偏移） */
-        fun symbolValue(mangled: String): Long {
-            val symtab = sections.firstOrNull { it.type == SHT_SYMTAB } ?: return 0L
+        fun symbolValue(mangled: String): Long = symbolValue(mangled, SHT_SYMTAB)
+
+        /** 按节类型查符号：SHT_SYMTAB(2) = mini debug info，SHT_DYNSYM(11) = 导出符号表 */
+        fun symbolValue(mangled: String, sectionType: Int): Long {
+            val symtab = sections.firstOrNull { it.type == sectionType } ?: return 0L
             val strtab = sections.getOrNull(symtab.link) ?: return 0L
             val names = read(strtab)
             val count = (symtab.size / SYM_ENT_SIZE).toInt()

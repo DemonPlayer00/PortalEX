@@ -151,6 +151,47 @@ SensorService::threadLoop
 * 注入计数：`emitted / dropped / suppressed / steps / step_rate` 与 `type→handle` 映射。
 * 设定值、实测速度、移动判定、步数累计、坐标/海拔/朝向、GNSS 开关。
 
+## 运行时传感器（架构翻新，**已实现但未接入**）
+
+目标：让投递 **100% 由我们掌握**，彻底摆脱上面那条"框架轮询节拍"的约束。
+
+框架内为"没有 HAL 背书的传感器"准备的正规机制就是运行时传感器：
+
+```
+SensorService::registerRuntimeSensor(sensor_t const&, int deviceId, sp<RuntimeSensorCallback>)
+SensorService::sendRuntimeSensorEvent(sensors_event_t const&)
+SensorService::unregisterRuntimeSensor(int)
+```
+
+事件由 `SensorService::RuntimeSensorHandler` **自己的线程**投递（反汇编确认其循环只调
+`sendRuntimeSensorEvent` 与 `Thread::exitPending`，完全不碰 HAL poll）——这正是我们要的。
+
+已核实的事实（反汇编/符号表，不是推测）：
+
+* 三个 API 都在 **`.dynsym`** 里（导出），`RuntimeSensorHandler` 有独立线程。
+* 回调**不能传空**：注册路径对空 `sp` 有 `cbz` 判空，但
+  `RuntimeSensor::activate` 里 `ldr x19,[x0,#0xa0]; ldr x8,[x19]; br [x8]` 直接解引用 ——
+  空回调一被客户端使能就段错误。
+* 回调对象的布局**由我们的虚表决定**（关键洞察）：服务构造 `sp` 时按 ABI 调整指针
+  （`ldur x9,[vptr,#-0x18]` 取 offset-to-top，再 `add x0,obj,x9` 调 `RefBase::incStrong`）——
+  RefBase 子对象位于 `obj + vtable[-3]`，而这个值写在**我们自己的虚表**里。
+  虚表布局也已从二进制读出：`onConfigurationChanged` 在地址点 [0]，析构在 [1]/[2]。
+
+**为什么现在没接进产品**：首版"只读探针"（取实例 + 校验 vptr + 调一个导出的无害查询）
+在真机上让 **system_server SIGSEGV 两次**，tombstone 明确指向 `install → prs_probe`。
+
+* 已定位并修掉一处确定缺陷：自建虚表结构体只给"地址点之前"留了 8 字节，而 header 要写
+  `[-3]`（24 字节）→ **越界写到只读段**。
+* 修后仍崩 → 剩余可疑点是三个用 `dlsym` **猜名字**调用的函数
+  （`AServiceManager_getService` / `AIBinder_toPlatformBinder` / `RefBase::RefBase`）——
+  猜错即崩溃；另外 `libsensorservice.so` 是 `RTLD_LOCAL` 加载的，`RTLD_DEFAULT` 也搜不到它的符号。
+* **因此这段代码不接入安装路径**（`portal_runtime_sensor.c` 保留实现与注释，`install()` 里
+  调用点已摘除），避免把一个会崩系统进程的路径留在产品里。
+
+继续做的前提（下一步）：把上面那三个函数地址也改成**由 Java 侧的 ELF 解析器从各库的
+`.dynsym` 精确给出**（现成的 `LibSymbols` 已支持 `.dynsym` 查询），彻底不猜名字；
+然后按"注册一个类型 → 探针订阅 → 验证 → 铺开"的顺序逐级验证，每级都能回退。
+
 ## 诚实的边界
 
 * **设备根本没有该传感器时：没有回调。** 它在框架的传感器表里就不存在，应用连
