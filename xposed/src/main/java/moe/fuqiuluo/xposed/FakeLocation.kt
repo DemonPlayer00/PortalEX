@@ -11,11 +11,13 @@ import moe.fuqiuluo.xposed.hooks.fused.AndroidFusedLocationProviderHook
 import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
+import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.SystemSensorManagerHook
 import moe.fuqiuluo.xposed.hooks.telephony.TelephonyHook
 import moe.fuqiuluo.xposed.hooks.wlan.WlanHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.ModulePrefs
 
 class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
     private lateinit var cServiceManager: Class<*> // android.os.ServiceManager
@@ -76,7 +78,18 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 lpparam.packageName == "com.xiaomi.location.fused" ||
                 lpparam.packageName == "com.oplus.location"
         if (!isSystemProcess) {
-            SystemSensorManagerHook(lpparam.classLoader)
+            // Binder 外周传感器模拟（实验性）开启时，**应用进程不再安装传感器 hook**：
+            // 该模式下模拟完全由系统框架侧的原生注入层完成（对目标应用零 hook，
+            // 且不依赖真实回调驱动）。开关读不到（旧版 LSPosed / prefs 不可读）时
+            // 一律按"未开启"处理 → 安装旧 hook，行为与从前完全一致。
+            if (ModulePrefs.binderSensorMockEnabled() == true) {
+                Logger.info(
+                    "Binder 外周传感器模拟已开启：${lpparam.packageName} 不安装应用侧传感 hook，" +
+                            "改由系统框架侧注入"
+                )
+            } else {
+                SystemSensorManagerHook(lpparam.classLoader)
+            }
             return
         }
 
@@ -115,6 +128,10 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 AndroidFusedLocationProviderHook(lpparam.classLoader)
 
                 ThirdPartyLocationHook(lpparam.classLoader)
+
+                // 实验性：Binder 外周传感器模拟。开关打开时（put_config 到达即触发）
+                // 才装载原生注入层并起调度线程；关闭时本调用不做任何事。
+                BinderSensorMock.onConfigChanged()
             }
             "com.android.location.fused" -> {
                 AndroidFusedLocationProviderHook(lpparam.classLoader)

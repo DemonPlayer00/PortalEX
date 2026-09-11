@@ -6,6 +6,7 @@ import android.os.IBinder
 import android.os.Parcel
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
+import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
@@ -78,6 +79,9 @@ object RemoteCommandHandler {
                     FakeLoc.bearing = kotlin.random.Random.nextDouble(0.0, 360.0)
                 }
 
+                // 实验性：Binder 外周传感器模拟随会话开始推流（开关关闭时无动作）
+                BinderSensorMock.onSimulationChanged()
+
                 // 启动拉回：设备在室内无真实 GPS 回调时，目标应用会停在原有位置，
                 // 需手动摇杆/路线播放一次才到预定位置——这里 0.5s 后单次推送当前位置
                 scheduleInitialPullback()
@@ -86,6 +90,7 @@ object RemoteCommandHandler {
             "stop" -> {
                 FakeLoc.enable = false
                 FakeLoc.hasBearings = false
+                BinderSensorMock.onSimulationChanged()
                 return true
             }
             "is_start" -> {
@@ -116,6 +121,20 @@ object RemoteCommandHandler {
             }
             "stop_wifi_mock" -> {
                 FakeLoc.enableMockWifi = false
+                return true
+            }
+            "set_sensor_mock" -> {
+                // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
+                val enabled = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
+                FakeLoc.enableBinderSensorMock = enabled
+                if (!BinderSensorMock.onConfigChanged()) {
+                    Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
+                    return false
+                }
+                return true
+            }
+            "is_sensor_mock" -> {
+                rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
                 return true
             }
             "get_location" -> {
@@ -242,6 +261,8 @@ object RemoteCommandHandler {
                 val disableRequestGeofence = rely.getBoolean("disable_request_geofence", FakeLoc.disableRequestGeofence)
                 val disableGetFromLocation = rely.getBoolean("disable_get_from_location", FakeLoc.disableGetFromLocation)
                 val loopBroadcastLocation = rely.getBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
+                // 实验性开关：读不到键时保持当前值（旧版 App 不下发该键 → 行为不变）
+                val binderSensorMock = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -256,6 +277,16 @@ object RemoteCommandHandler {
                 FakeLoc.disableRequestGeofence = disableRequestGeofence
                 FakeLoc.disableGetFromLocation = disableGetFromLocation
                 FakeLoc.loopBroadcastLocation = loopBroadcastLocation
+
+                // Binder 外周传感器模拟：仅在 system_server 内生效（装载/卸载原生注入层）。
+                // 非 system_server 进程只镜像开关值，不做任何安装。
+                FakeLoc.enableBinderSensorMock = binderSensorMock
+                // 原生层挂不上就明确回报失败：App 侧据此提示"配置失败"，
+                // 而不是让用户以为开关生效了、实际什么都没发生。
+                if (!BinderSensorMock.onConfigChanged()) {
+                    Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
+                    return false
+                }
                 return true
             }
             "sync_config" -> {
@@ -277,6 +308,7 @@ object RemoteCommandHandler {
                 rely.putBoolean("hook_wifi", FakeLoc.hookWifi)
                 rely.putBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
                 rely.putBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
+                rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
                 return true
             }
             "broadcast_location" -> {
