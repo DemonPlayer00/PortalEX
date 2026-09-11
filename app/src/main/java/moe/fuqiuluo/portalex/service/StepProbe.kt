@@ -54,6 +54,18 @@ object StepProbe {
     @Volatile private var detectorEvents = 0L
     @Volatile private var detectorHandle = -1
 
+    // ---- 回调视角（onSensorChanged 逐事件）----
+    /* 相邻两次**回调**之间计数器值的差分布：Δ=1 才是"一步一次回调"。
+     * Δ=0 → 同一个值被投递了两次（双份投递的签名）；Δ=2 → 一次回调跨了两步。 */
+    private val histDelta = IntArray(6)          // 索引 0..4 = Δ0..Δ4；索引 5 = Δ≥5
+    private val recentCb = ArrayDeque<LongArray>() // 每项 [Δ值, 间隔ms]，最多保留 8 条
+    @Volatile private var prevCbValue = -1L
+    @Volatile private var prevCbAtMs = 0L
+    @Volatile private var cbCount = 0L
+    @Volatile private var cbCadence = -1
+    @Volatile private var detectorEmaMs = 0.0
+    @Volatile private var detectorLastArrivalMs = 0L
+
     // ---- 轮询结果（普通应用真正用来算步频的量） ----
     @Volatile private var lastPollDelta = -1L
     @Volatile private var lastPollSpanMs = 0L
@@ -71,6 +83,27 @@ object StepProbe {
                     counterHandle = event.sensor.handleCompat()
                     counterEvents++
                     val now = SystemClock.elapsedRealtime()
+                    /* 回调视角：这一条回调相对上一条回调，值涨了几步、隔了多久 */
+                    if (prevCbValue >= 0) {
+                        val delta = v - prevCbValue
+                        val idx = when {
+                            delta <= 0L -> 0
+                            delta >= 5L -> 5
+                            else -> delta.toInt()
+                        }
+                        synchronized(histDelta) { histDelta[idx]++ }
+                        val span = (now - prevCbAtMs).coerceAtLeast(0L)
+                        synchronized(recentCb) {
+                            recentCb.addLast(longArrayOf(delta, span))
+                            while (recentCb.size > 8) recentCb.removeFirst()
+                        }
+                        if (span > 0) {
+                            cbCadence = (60_000.0 / span).toInt()
+                        }
+                    }
+                    prevCbValue = v
+                    prevCbAtMs = now
+                    cbCount++
                     if (counterLastArrivalMs != 0L) {
                         val dt = (now - counterLastArrivalMs).toDouble()
                         counterIntervalEmaMs =
@@ -82,6 +115,12 @@ object StepProbe {
                 Sensor.TYPE_STEP_DETECTOR -> {
                     detectorEvents++
                     detectorHandle = event.sensor.handleCompat()
+                    val now = SystemClock.elapsedRealtime()
+                    if (detectorLastArrivalMs != 0L) {
+                        val dt = (now - detectorLastArrivalMs).toDouble()
+                        detectorEmaMs = if (detectorEmaMs == 0.0) dt else detectorEmaMs * 0.8 + dt * 0.2
+                    }
+                    detectorLastArrivalMs = now
                 }
             }
         }
@@ -144,6 +183,14 @@ object StepProbe {
         counterLastArrivalMs = 0L
         counterIntervalEmaMs = 0.0
         detectorEvents = 0L
+        detectorEmaMs = 0.0
+        detectorLastArrivalMs = 0L
+        prevCbValue = -1L
+        prevCbAtMs = 0L
+        cbCount = 0L
+        cbCadence = -1
+        synchronized(histDelta) { histDelta.fill(0) }
+        synchronized(recentCb) { recentCb.clear() }
         lastPollDelta = -1L
         lastPollSpanMs = 0L
         lastPollCadence = -1
@@ -202,6 +249,27 @@ object StepProbe {
         sb.append("事件间隔        最近 ").append(
             if (counterLastArrivalMs == 0L) "?" else (SystemClock.elapsedRealtime() - counterLastArrivalMs).toString() + "ms 前"
         ).append(" / 均值 ").append("%.0f".format(counterIntervalEmaMs)).append("ms").append('\n')
+        // ---- 回调视角（逐事件）----
+        val hist = synchronized(histDelta) { histDelta.copyOf() }
+        val recent = synchronized(recentCb) { recentCb.toList() }
+        sb.append("── 回调视角（onSensorChanged 逐事件）──").append('\n')
+        sb.append("回调次数        ").append(cbCount).append(" 次")
+        if (cbCadence > 0) sb.append("（最近一次间隔折合 ").append(cbCadence).append(" 步/分）")
+        sb.append('\n')
+        sb.append("Δ值分布        Δ=0:").append(hist[0]).append("  Δ=1:").append(hist[1])
+            .append("  Δ=2:").append(hist[2]).append("  Δ=3:").append(hist[3])
+            .append("  Δ=4:").append(hist[4]).append("  Δ≥5:").append(hist[5]).append('\n')
+        sb.append("最近回调        ")
+        if (recent.isEmpty()) {
+            sb.append("（还没有第二条回调）")
+        } else {
+            sb.append(recent.joinToString("  ") { "+${it[0]}步/${it[1]}ms" })
+        }
+        sb.append('\n')
+        sb.append("检测器回调      ").append(detectorEvents).append(" 次")
+        if (detectorEmaMs > 0) sb.append("（间隔均值 ").append("%.0f".format(detectorEmaMs)).append("ms → ")
+            .append((60_000.0 / detectorEmaMs).toInt()).append(" 步/分）")
+        sb.append('\n')
         if (lastPollDelta >= 0) {
             sb.append("最近一次轮询    +").append(lastPollDelta).append(" 步 / ")
                 .append("%.1f".format(lastPollSpanMs / 1000.0)).append("s → 折合 ")
