@@ -161,6 +161,35 @@ object FakeLoc {
      */
     var speedFloor = 0.3
 
+    // ---- 保底速度的平滑器（低通 + 慢随机游走）----
+    // 真机静止时 GPS 报的速度是**时间相关**的噪声（慢随机游走），不是逐帧白噪声：
+    // 逐帧独立跳变在频谱上偏高，几次采样就能看出"每秒都在换一个完全无关的值"。
+    private var speedFloorSmoothed = 0.0
+    private var speedFloorTarget = 0.0
+    private var lastSpeedFloorNanos = 0L
+
+    private const val SPEED_FLOOR_RETARGET_TAU = 1.5 // 目标重选时间常数(s)：慢游走
+    private const val SPEED_FLOOR_SMOOTH_TAU = 0.5   // 一阶低通时间常数(s)
+
+    /** 取一次"静止保底速度"：慢随机游走目标 + 一阶低通（只在静止帧被调用） */
+    fun speedFloorSample(): Double {
+        val now = System.nanoTime()
+        val dt = if (lastSpeedFloorNanos == 0L) 0.0
+        else ((now - lastSpeedFloorNanos) / 1e9).coerceIn(0.0, 1.0)
+        lastSpeedFloorNanos = now
+        if (dt > 0.0) {
+            if (Random.nextDouble() < 1.0 - exp(-dt / SPEED_FLOOR_RETARGET_TAU)) {
+                speedFloorTarget = speedFloor * (0.6 + Random.nextDouble() * 0.8)
+            }
+            speedFloorSmoothed += (speedFloorTarget - speedFloorSmoothed) *
+                (1.0 - exp(-dt / SPEED_FLOOR_SMOOTH_TAU))
+        } else {
+            speedFloorTarget = speedFloor
+            speedFloorSmoothed = speedFloor
+        }
+        return speedFloorSmoothed
+    }
+
     fun cadenceForSpeed(speed: Double): Int {
         val base = ((60.0 + 30.0 * speed) * 1.15).toInt().coerceIn(60, 220)
         if (cadenceScale == 1.0) return base
