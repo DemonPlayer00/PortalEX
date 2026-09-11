@@ -10,6 +10,8 @@ import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
+import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
+import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
@@ -29,7 +31,7 @@ object RemoteCommandHandler {
     enum class Origin { PROVIDER, PROXY }
 
     private val proxyBinders by lazy { Collections.synchronizedList(arrayListOf<IBinder>()) }
-    private val needProxyCmd = arrayOf("start", "stop", "set_speed_amp", "set_altitude", "set_speed", "update_location", "set_bearing", "move", "put_config")
+    private val needProxyCmd = arrayOf(Cmd.START, Cmd.STOP, Cmd.SET_SPEED_AMP, Cmd.SET_ALTITUDE, Cmd.SET_SPEED, Cmd.UPDATE_LOCATION, Cmd.SET_BEARING, Cmd.MOVE, Cmd.PUT_CONFIG)
 
     /** 已被拒绝过的 uid：门禁告警只记一次，免得被别的应用刷日志（刷日志本身就是一种提示） */
     private val warnedDeniedUids = Collections.synchronizedSet(HashSet<Int>())
@@ -82,17 +84,17 @@ object RemoteCommandHandler {
         }
 
         // Exchange key -> returns a random key -> is used to verify that it is the PortalManager
-        if (command == "exchange_key") {
+        if (command == Cmd.EXCHANGE_KEY) {
             val userId = BinderUtils.getCallerUid()
             if (BinderUtils.isLocationProviderEnabled(userId)) {
-                rely.putString("key", randomKey)
+                rely.putString(Key.EXCHANGE_REPLY, randomKey)
                 return true
             }
             // 拿不到钥匙：既不回答，也**绝不继续分发**（旧实现少了这个 return）
             return false
         }
         if (command != randomKey) return false
-        val commandId = rely.getString("command_id") ?: return false
+        val commandId = rely.getString(Key.COMMAND_ID) ?: return false
 
         kotlin.runCatching {
             if (proxyBinders.isNotEmpty() && needProxyCmd.any { it == commandId }) {
@@ -115,17 +117,17 @@ object RemoteCommandHandler {
         }
 
         when (commandId) {
-            "set_proxy" -> {
-                Logger.info("SubProxyBinder: ${rely.getBinder("proxy")} from ${BinderUtils.getUidPackageNames()}!")
-                rely.getBinder("proxy")?.let {
+            Cmd.SET_PROXY -> {
+                Logger.info("SubProxyBinder: ${rely.getBinder(Key.PROXY_BINDER)} from ${BinderUtils.getUidPackageNames()}!")
+                rely.getBinder(Key.PROXY_BINDER)?.let {
                     proxyBinders.add(it)
                 }
                 return true
             }
-            "start" -> {
-                val speed = rely.getDouble("speed", FakeLoc.speed)
-                val altitude = rely.getDouble("altitude", FakeLoc.altitude)
-                val accuracy = rely.getFloat("accuracy", FakeLoc.accuracy)
+            Cmd.START -> {
+                val speed = rely.getDouble(Key.SPEED, FakeLoc.speed)
+                val altitude = rely.getDouble(Key.ALTITUDE, FakeLoc.altitude)
+                val accuracy = rely.getFloat(Key.ACCURACY, FakeLoc.accuracy)
 
                 FakeLoc.enable = true
 
@@ -146,50 +148,50 @@ object RemoteCommandHandler {
                 scheduleInitialPullback()
                 return true
             }
-            "stop" -> {
+            Cmd.STOP -> {
                 FakeLoc.enable = false
                 FakeLoc.hasBearings = false
                 BinderSensorMock.onSimulationChanged()
                 return true
             }
-            "is_start" -> {
-                rely.putBoolean("is_start", FakeLoc.enable)
+            Cmd.IS_START -> {
+                rely.putBoolean(Key.IS_START, FakeLoc.enable)
                 return true
             }
-            "start_gnss_mock" -> {
+            Cmd.START_GNSS_MOCK -> {
                 FakeLoc.enableMockGnss = true
                 // 立即主动推送一次模拟卫星数据：雷达无需等待系统 GNSS 引擎上报
                 LocationServiceHook.pushGnssStatus()
                 return true
             }
-            "stop_gnss_mock" -> {
+            Cmd.STOP_GNSS_MOCK -> {
                 FakeLoc.enableMockGnss = false
                 return true
             }
-            "is_gnss_start" -> {
-                rely.putBoolean("is_gnss_start", FakeLoc.enableMockGnss)
+            Cmd.IS_GNSS_START -> {
+                rely.putBoolean(Key.IS_GNSS_START, FakeLoc.enableMockGnss)
                 return true
             }
-            "is_wifi_mock_start" -> {
-                rely.putBoolean("is_wifi_mock_start", FakeLoc.enableMockWifi)
+            Cmd.IS_WIFI_MOCK_START -> {
+                rely.putBoolean(Key.IS_WIFI_MOCK_START, FakeLoc.enableMockWifi)
                 return true
             }
-            "start_wifi_mock" -> {
+            Cmd.START_WIFI_MOCK -> {
                 FakeLoc.enableMockWifi = true
                 return true
             }
-            "stop_wifi_mock" -> {
+            Cmd.STOP_WIFI_MOCK -> {
                 FakeLoc.enableMockWifi = false
                 return true
             }
-            "set_sensor_mock" -> {
+            Cmd.SET_SENSOR_MOCK -> {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
-                val enabled = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
+                val enabled = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 FakeLoc.enableBinderSensorMock = enabled
                 // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档与注入栅格随它一起恢复
                 // （否则系统进程重启后栅格退回自动，噪声档也会退回内置默认）
                 applyNoiseProfile(rely)
-                val gridHz = rely.getInt("sensor_grid_hz", -1)
+                val gridHz = rely.getInt(Key.SENSOR_GRID_HZ, -1)
                 if (gridHz >= 0) {
                     FakeLoc.sensorGridHz = gridHz
                     runCatching { BinderSensorNative.setGridHz(gridHz) }
@@ -201,52 +203,52 @@ object RemoteCommandHandler {
                 }
                 return true
             }
-            "get_sensor_status" -> {
+            Cmd.GET_SENSOR_STATUS -> {
                 // 诊断页数值总览：注入层/运动学/步频意图 vs 实际的原始数值
                 BinderSensorMock.fillStatus(rely)
                 return true
             }
-            "is_sensor_mock" -> {
-                rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
+            Cmd.IS_SENSOR_MOCK -> {
+                rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 return true
             }
-            "get_location" -> {
-                rely.putDouble("lat", FakeLoc.latitude)
-                rely.putDouble("lon", FakeLoc.longitude)
+            Cmd.GET_LOCATION -> {
+                rely.putDouble(Key.LAT, FakeLoc.latitude)
+                rely.putDouble(Key.LON, FakeLoc.longitude)
                 return true
             }
-            "get_listener_size" -> {
-                rely.putInt("size", LocationServiceHook.locationListeners.size)
+            Cmd.GET_LISTENER_SIZE -> {
+                rely.putInt(Key.LISTENER_SIZE, LocationServiceHook.locationListeners.size)
                 return true
             }
-            "get_speed" -> {
-                rely.putDouble("speed", FakeLoc.speed)
+            Cmd.GET_SPEED -> {
+                rely.putDouble(Key.SPEED, FakeLoc.speed)
                 return true
             }
-            "get_bearing" -> {
-                rely.putDouble("bearing", FakeLoc.bearing)
+            Cmd.GET_BEARING -> {
+                rely.putDouble(Key.BEARING, FakeLoc.bearing)
                 return true
             }
-            "get_altitude" -> {
-                rely.putDouble("altitude", FakeLoc.altitude)
+            Cmd.GET_ALTITUDE -> {
+                rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
                 return true
             }
-            "set_speed_amp" -> {
+            Cmd.SET_SPEED_AMP -> {
                 FakeLoc.speedAmplitude = rely.numberOr("speed_amplitude", FakeLoc.speedAmplitude)
                 return true
             }
-            "set_altitude" -> {
+            Cmd.SET_ALTITUDE -> {
                 FakeLoc.altitude = rely.numberOr("altitude", FakeLoc.altitude)
                 return true
             }
-            "set_speed" -> {
+            Cmd.SET_SPEED -> {
                 FakeLoc.speed = rely.numberOr("speed", FakeLoc.speed)
                 return true
             }
-            "set_bearing" -> {
+            Cmd.SET_BEARING -> {
                 // 键缺失 ⇒ 保持当前朝向（默认 0.0 会让"停下时发的无 bearing 命令"把朝向清成 0：
                 // 实测 MI6/LineageOS 上表现为"停止 1 秒后指南针归 0、角度计不再变化"）
-                val bearing = rely.getDouble("bearing", FakeLoc.bearing)
+                val bearing = rely.getDouble(Key.BEARING, FakeLoc.bearing)
                 FakeLoc.bearing = bearing
                 FakeLoc.hasBearings = true
                 // 朝向变了就立刻投一帧：摇杆只转向不位移时，若不投递，应用侧要等保活补帧
@@ -261,12 +263,12 @@ object RemoteCommandHandler {
                 }
                 return true
             }
-            "move" -> {
-                val distance = rely.getDouble("n", 0.0)
+            Cmd.MOVE -> {
+                val distance = rely.getDouble(Key.DISTANCE, 0.0)
                 if (distance == 0.0) return true
                 // 键缺失 ⇒ 保持当前朝向（默认 0.0 会让"停下时发的无 bearing 命令"把朝向清成 0：
                 // 实测 MI6/LineageOS 上表现为"停止 1 秒后指南针归 0、角度计不再变化"）
-                val bearing = rely.getDouble("bearing", FakeLoc.bearing)
+                val bearing = rely.getDouble(Key.BEARING, FakeLoc.bearing)
                 val newLoc = FakeLoc.moveLocation(
                     n = distance,
                     angle = bearing
@@ -281,10 +283,10 @@ object RemoteCommandHandler {
                     if (FakeLoc.isSystemServerProcess) LocationServiceHook.callOnLocationChanged(force = true)
                 }
             }
-            "update_location" -> {
-                val mode = rely.getString("mode")
-                var newLat = rely.getDouble("lat", 0.0)
-                var newLon = rely.getDouble("lon", 0.0)
+            Cmd.UPDATE_LOCATION -> {
+                val mode = rely.getString(Key.MODE)
+                var newLat = rely.getDouble(Key.LAT, 0.0)
+                var newLon = rely.getDouble(Key.LON, 0.0)
                 // 统一落点入口：写坐标后**立即投递一帧**。
                 // 旧回调架构下只有 move / broadcast_location 会投递，而**路线自动播放**走的是
                 // update_location——不在此投递就会出现「坐标在推进但应用收不到」：
@@ -311,41 +313,41 @@ object RemoteCommandHandler {
                         // 路线播放：方位随位置显式下发（路线切线）——弧长推进每 tick 位移
                         // 仅约 0.2m，达不到位移法 1m 门控，靠位移推算会导致朝向永不更新。
                         val explicitBearing =
-                            if (rely.containsKey("bearing")) rely.getDouble("bearing") else null
+                            if (rely.containsKey("bearing")) rely.getDouble(Key.BEARING) else null
                         return applyCoordinate(newLat, newLon, explicitBearing)
                     }
-                    "random" -> {
+                    Cmd.RANDOM -> {
                         return applyCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0))
                     }
                 }
                 return true
             }
-            "put_config" -> {
-                val enable = rely.getBoolean("enable", FakeLoc.enable)
+            Cmd.PUT_CONFIG -> {
+                val enable = rely.getBoolean(Key.ENABLE, FakeLoc.enable)
                 val speed = rely.numberOr("speed", FakeLoc.speed)
                 val altitude = rely.numberOr("altitude", FakeLoc.altitude)
                 val accuracy = rely.numberOr("accuracy", FakeLoc.accuracy.toDouble()).toFloat()
-                val enableDebugLog = rely.getBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-                val disableFusedLocation = rely.getBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
-                val needDowngradeToCdma = rely.getBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
-                var minSatellites = rely.getInt("min_satellites", 12)
+                val enableDebugLog = rely.getBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
+                val disableFusedLocation = rely.getBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
+                val needDowngradeToCdma = rely.getBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
+                var minSatellites = rely.getInt(Key.MIN_SATELLITES, 12)
                 if (minSatellites < 0) {
                     minSatellites = 12
                 }
 
-                val enableAGPS = rely.getBoolean("enable_agps", FakeLoc.enableAGPS)
-                val enableNMEA = rely.getBoolean("enable_nmea", FakeLoc.enableNMEA)
-                val disableRequestGeofence = rely.getBoolean("disable_request_geofence", FakeLoc.disableRequestGeofence)
-                val disableGetFromLocation = rely.getBoolean("disable_get_from_location", FakeLoc.disableGetFromLocation)
-                val loopBroadcastLocation = rely.getBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
+                val enableAGPS = rely.getBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
+                val enableNMEA = rely.getBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
+                val disableRequestGeofence = rely.getBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
+                val disableGetFromLocation = rely.getBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
+                val loopBroadcastLocation = rely.getBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
                 // 实验性开关：读不到键时保持当前值（旧版 App 不下发该键 → 行为不变）
-                val binderSensorMock = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
+                val binderSensorMock = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 // 注入栅格分辨率（Hz，0=自动）：读不到键时保持当前值（旧版 App 不下发）
-                val sensorGridHz = rely.getInt("sensor_grid_hz", FakeLoc.sensorGridHz)
+                val sensorGridHz = rely.getInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
                 // 步频倍率（微调步频↔速度）：读不到键时保持当前值
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
                 // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
-                val noiseProfile = rely.getFloatArray("noise_profile")?.let { SensorNoise.sanitize(it) }
+                val noiseProfile = rely.getFloatArray(Key.NOISE_PROFILE)?.let { SensorNoise.sanitize(it) }
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -384,29 +386,29 @@ object RemoteCommandHandler {
                 }
                 return true
             }
-            "sync_config" -> {
-                rely.putBoolean("enable", FakeLoc.enable)
-                rely.putDouble("latitude", FakeLoc.latitude)
-                rely.putDouble("longitude", FakeLoc.longitude)
-                rely.putDouble("altitude", FakeLoc.altitude)
-                rely.putDouble("speed", FakeLoc.speed)
-                rely.putDouble("speed_amplitude", FakeLoc.speedAmplitude)
-                rely.putBoolean("has_bearings", FakeLoc.hasBearings)
-                rely.putDouble("bearing", FakeLoc.bearing)
-                rely.putParcelable("last_location", FakeLoc.lastLocation)
-                rely.putBoolean("enable_log", FakeLoc.enableLog)
-                rely.putBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-                rely.putBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
-                rely.putBoolean("enable_agps", FakeLoc.enableAGPS)
-                rely.putBoolean("enable_nmea", FakeLoc.enableNMEA)
-                rely.putBoolean("hide_mock", FakeLoc.hideMock)
-                rely.putBoolean("hook_wifi", FakeLoc.hookWifi)
-                rely.putBoolean("need_downgrade_to_2g", FakeLoc.needDowngradeToCdma)
-                rely.putBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
-                rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
+            Cmd.SYNC_CONFIG -> {
+                rely.putBoolean(Key.ENABLE, FakeLoc.enable)
+                rely.putDouble(Key.LATITUDE, FakeLoc.latitude)
+                rely.putDouble(Key.LONGITUDE, FakeLoc.longitude)
+                rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
+                rely.putDouble(Key.SPEED, FakeLoc.speed)
+                rely.putDouble(Key.SPEED_AMPLITUDE, FakeLoc.speedAmplitude)
+                rely.putBoolean(Key.HAS_BEARINGS, FakeLoc.hasBearings)
+                rely.putDouble(Key.BEARING, FakeLoc.bearing)
+                rely.putParcelable(Key.LAST_LOCATION, FakeLoc.lastLocation)
+                rely.putBoolean(Key.ENABLE_LOG, FakeLoc.enableLog)
+                rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
+                rely.putBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
+                rely.putBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
+                rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
+                rely.putBoolean(Key.HIDE_MOCK, FakeLoc.hideMock)
+                rely.putBoolean(Key.HOOK_WIFI, FakeLoc.hookWifi)
+                rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
+                rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
+                rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 return true
             }
-            "broadcast_location" -> {
+            Cmd.BROADCAST_LOCATION -> {
                 // force：显式广播就是「现在推一帧」——反定位拉回线程靠反复强制推送压制真实位置
                 LocationServiceHook.callOnLocationChanged(force = true)
                 return true
@@ -541,7 +543,7 @@ object RemoteCommandHandler {
      * 规范化（补长/截断/钳位），所以长度不符也不会把原生档位写坏。
      */
     private fun applyNoiseProfile(rely: Bundle) {
-        val raw = rely.getFloatArray("noise_profile") ?: return
+        val raw = rely.getFloatArray(Key.NOISE_PROFILE) ?: return
         FakeLoc.noiseProfile = SensorNoise.sanitize(raw)
         FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
         Logger.info("Binder 外周传感器模拟：噪声档已下发 ${SensorNoise.encode(FakeLoc.noiseProfile)}")

@@ -63,9 +63,20 @@ internal object LibSymbols {
             get() = pollAidl != 0L || fmqAidl != 0L || pollHidl != 0L || fmqHidl != 0L
 
         /** 交给原生层的偏移数组（顺序与 BinderSensorNative.install 约定一致） */
-        fun toOffsets(): LongArray = longArrayOf(
-            relroAddr, relroSize, pollAidl, fmqAidl, pollHidl, fmqHidl, enableDisable
-        )
+        fun toOffsets(): LongArray {
+            // 按**索引契约**组装（见 InstallOffsets）：不要在别处平铺这个数组，
+            // 顺序错了 native 会读到别的字段（不崩，只是功能静默失效）。
+            val out = LongArray(InstallOffsets.COUNT)
+            out[InstallOffsets.RELRO_ADDR] = relroAddr
+            out[InstallOffsets.RELRO_SIZE] = relroSize
+            out[InstallOffsets.POLL_AIDL] = pollAidl
+            out[InstallOffsets.POLL_FMQ_AIDL] = fmqAidl
+            out[InstallOffsets.POLL_HIDL] = pollHidl
+            out[InstallOffsets.POLL_FMQ_HIDL] = fmqHidl
+            out[InstallOffsets.ENABLE_DISABLE] = enableDisable
+            check(out.size == InstallOffsets.COUNT) { "offsets 契约长度不符：${out.size}" }
+            return out
+        }
 
         override fun toString(): String =
             "pollA=0x${pollAidl.toString(16)} fmqA=0x${fmqAidl.toString(16)} " +

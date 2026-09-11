@@ -103,6 +103,9 @@ internal object BinderSensorNative {
     /**
      * 装载注入层：把 Java 侧解析出的平台符号偏移交给原生层，由它核对 vtable 槽后改写。
      *
+     * 入口**校验数组长度**（见 [InstallOffsets]）：长度/顺序不对时直接不装并明确报错 ——
+     * 把错序数组喂下去不会崩，只会"装到别的地方或不装"，那是最难查的静默失效。
+     *
      * [offsets] 顺序（与 native 侧 `install` 约定一致，见 LibSymbols.Resolved.toOffsets）：
      * `[relroAddr, relroSize, pollAidl, pollFmqAidl, pollHidl, pollFmqHidl, enableDisable]`
      * —— 共 **7** 项（enableDisable 为观测槽，默认停用，见 debug.portalex.ratehook）。
@@ -113,6 +116,18 @@ internal object BinderSensorNative {
      * 等于挂在一条没人走的路上——实测就是这个结果。两套都挂，两种 HAL 形态都覆盖。
      */
     external fun install(offsets: LongArray): Boolean
+
+    /** 带契约校验的装载入口（调用方一律走这个，不要直接调 [install]） */
+    fun installChecked(offsets: LongArray): Boolean {
+        if (offsets.size != InstallOffsets.COUNT) {
+            Logger.error(
+                "BinderSensorNative: offsets 长度 ${offsets.size} != 契约 ${InstallOffsets.COUNT}，" +
+                        "拒绝装载（见 InstallOffsets）"
+            )
+            return false
+        }
+        return install(offsets)
+    }
 
     /** 注入总开关（关 = 真实事件原样放行，不做任何压制/注入） */
     external fun setActive(active: Boolean)

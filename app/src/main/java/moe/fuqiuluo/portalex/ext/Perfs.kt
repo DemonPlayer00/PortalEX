@@ -7,10 +7,11 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.PortalProtocol
 import moe.fuqiuluo.xposed.utils.SensorNoise
 
 val Context.sharedPrefs
-    get() = getSharedPreferences(MockServiceHelper.PROVIDER_NAME, Context.MODE_PRIVATE)!!
+    get() = getSharedPreferences(PortalProtocol.PREFS_NAME, Context.MODE_PRIVATE)!!
 
 var Context.selectLocation: HistoricalLocation?
     get() {
@@ -273,9 +274,9 @@ var Context.sensorNoiseReport: String
     }
 
 var Context.binderSensorMock: Boolean
-    get() = sharedPrefs.getBoolean("binderSensorMock", false)
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, false)
     set(value) = sharedPrefs.edit {
-        putBoolean("binderSensorMock", value)
+        putBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, value)
     }
 
 /**
