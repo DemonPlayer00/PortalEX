@@ -90,8 +90,9 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
              * - 连排查用的探针都被污染 —— 六轮"Java 客户端恒定陈旧值"全是被它骗的。
              *
              * 现在模拟只由**系统框架侧**（Binder 外周传感器模拟 → 原生注入层 + 运行时投递通道）
-             * 完成，对目标应用零 hook。等开关传播通道定下来（自动让位 / 框架侧写系统属性）
-             * 再恢复"按开关安装"，见 docs 与今日备忘。
+             * 完成，对目标应用零 hook。完整原因、证据与恢复步骤见
+             * `hooks/sensor/SystemSensorManagerHook.kt` 顶部的 FREEZE 说明
+             * （该文件的应用侧实现已整体注释冻结，仅留 `stepTraceText()` 存根）。
              */
             Logger.info(
                 "应用侧传感 hook 已临时停用（模拟由系统框架侧接管）：${lpparam.packageName}"
