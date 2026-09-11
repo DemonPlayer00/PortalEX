@@ -58,28 +58,6 @@ object BinderSensorMock {
      */
     private var steps = 0L
 
-    /**
-     * 临时标记实验：`debug.portalex.marker=<值>` 时，把推送的计数器顶到该值并继续 +1。
-     * 用途：判定"我们推的计数器值是否真的到达 Java 客户端"——
-     * 若 Java 侧跟着出现这个值 ⇒ 值能到；若仍是那个陈旧恒定值 ⇒ 我们的值没落到 Java 连接上。
-     */
-    @Volatile private var markerCheckedNanos = 0L
-    @Volatile private var markerValue = 0L
-
-    private fun markerOverride(): Long {
-        val now = System.nanoTime()
-        if (now - markerCheckedNanos > 1_000_000_000L) {
-            markerCheckedNanos = now
-            markerValue = runCatching {
-                val v = Class.forName("android.os.SystemProperties")
-                    .getMethod("get", String::class.java, String::class.java)
-                    .invoke(null, "debug.portalex.marker", "0") as String
-                v.trim().toLongOrNull() ?: 0L
-            }.getOrDefault(0L)
-        }
-        return markerValue
-    }
-
     /** 本次会话的起点（诊断用：Test 页显示） */
     @Volatile private var stepsBase = 0L
     private var stepFraction = 0.0
@@ -391,10 +369,6 @@ object BinderSensorMock {
         }
 
         // S2：载体引导在上面的"开关打开"分支里已经做过（幂等），这里只推进状态
-        // 临时标记实验（见 markerOverride）：把计数器顶到标记值并继续单调 +1
-        val mk = markerOverride()
-        if (mk > 0L) steps = maxOf(steps + 1, mk)
-
         /*
          * 「按应用期望出数据」：周期性把框架观测到的**采用速率**与**活跃状态**灌给原生层。
          * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播 ⇒ 我们照同一模型走；

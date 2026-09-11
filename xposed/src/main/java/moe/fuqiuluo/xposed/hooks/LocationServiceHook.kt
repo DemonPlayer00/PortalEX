@@ -678,57 +678,6 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         })
 
-//        cILocationManager.hookAllMethods("getBestProvider", beforeHook {
-//            if (FakeLoc.enable) {
-//                result = "gps"
-//            }
-//        })
-//
-//        cILocationManager.hookAllMethods("getAllProviders", afterHook {
-//            if(FakeLoc.enable) {
-//                result = if (result is List<*>) {
-//                    listOf("gps", "passive")
-//                } else if (result is Array<*>) {
-//                    arrayOf("gps", "passive")
-//                } else {
-//                    Logger.error("getAllProviders: result is not List or Array")
-//                    return@afterHook
-//                }
-//            }
-//        })
-//
-//        cILocationManager.hookAllMethods("getProviders", afterHook {
-//            if(FakeLoc.enable) {
-//                result = if (result is List<*>) {
-//                    listOf("gps", "passive")
-//                } else if (result is Array<*>) {
-//                    arrayOf("gps", "passive")
-//                } else {
-//                    Logger.error("getProviders: result is not List or Array")
-//                    return@afterHook
-//                }
-//            }
-//        })
-//
-//        cILocationManager.hookAllMethods("hasProvider", beforeHook {
-//            if (FakeLoc.enableDebugLog) {
-//                Logger.debug("hasProvider: ${args[0]}")
-//            }
-//
-//            if(FakeLoc.enable) {
-//                if (args[0] == "gps") {
-//                    result = true
-//                } else if (args[0] == "network") {
-//                    result = false
-//                } else if (args[0] == "fused" && FakeLoc.disableFusedLocation) {
-//                    result = false
-//                }
-//            }
-//        })
-
-        // ===== 段 6 · 取位请求（getCurrentLocation）：允许并注入 + 一次性投递登记 =====
-        // 顺序敏感：同一方法的多个 hook 回调按**注册顺序**执行（XposedBridge 语义），
-        // 下面每段的调用顺序与历史注册顺序逐一对应 —— 拆小节时不要重排。
         hookCurrentLocation(cILocationManager)   // 取位请求（getCurrentLocation）：允许并注入，并登记一次性投递表
         hookExtraCommand(cILocationManager)   // 命令通道与 provider 开关的拦截（sendExtraCommand → portal 分发）
         hookProviderEnabled(cILocationManager)   // provider 可见性（isProviderEnabled / ForUser，含握手门禁）
