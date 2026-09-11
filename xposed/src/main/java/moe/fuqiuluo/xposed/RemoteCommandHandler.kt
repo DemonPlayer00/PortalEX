@@ -7,6 +7,7 @@ import android.os.Parcel
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
+import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
@@ -268,6 +269,8 @@ object RemoteCommandHandler {
                 val loopBroadcastLocation = rely.getBoolean("loop_broadcast_location", FakeLoc.loopBroadcastLocation)
                 // 实验性开关：读不到键时保持当前值（旧版 App 不下发该键 → 行为不变）
                 val binderSensorMock = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
+                // 注入栅格分辨率（Hz，0=自动）：读不到键时保持当前值（旧版 App 不下发）
+                val sensorGridHz = rely.getInt("sensor_grid_hz", FakeLoc.sensorGridHz)
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -286,6 +289,9 @@ object RemoteCommandHandler {
                 // Binder 外周传感器模拟：仅在 system_server 内生效（装载/卸载原生注入层）。
                 // 非 system_server 进程只镜像开关值，不做任何安装。
                 FakeLoc.enableBinderSensorMock = binderSensorMock
+                FakeLoc.sensorGridHz = sensorGridHz
+                runCatching { BinderSensorNative.setGridHz(sensorGridHz) }
+                    .onFailure { Logger.warn("栅格设置下发失败：${it.message}") }
                 // 原生层挂不上就明确回报失败：App 侧据此提示"配置失败"，
                 // 而不是让用户以为开关生效了、实际什么都没发生。
                 if (!BinderSensorMock.onConfigChanged()) {

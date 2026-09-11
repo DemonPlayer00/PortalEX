@@ -823,6 +823,18 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
                         active ? 1 : 0);
 }
 
+/** 设置页「注入栅格分辨率」：Hz → 纳秒（0 = 自动） */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setGridHz(
+        JNIEnv *env, jobject thiz, jint hz) {
+    (void) env;
+    (void) thiz;
+    long long ns = 0;
+    if (hz > 0) ns = 1000000000LL / (long long) hz;
+    vw_set_tick_override(ns);
+    LOGI("grid override -> %d Hz (%lld ns)", (int) hz, ns);
+}
+
 /** 先清空活跃标记（缺席的类型即静默），随后由 Kotlin 按 dump 灌入活跃者 */
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_clearChannelHints(

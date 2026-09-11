@@ -382,6 +382,44 @@
             </androidx.constraintlayout.widget.ConstraintLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/sensor_grid_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:padding="5dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="4dp">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/sensor_grid_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="注入栅格分辨率"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"/>
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/sensor_grid_desc"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="自动=跟随框架采用值；也可填 20~400(Hz)。栅格只决定能表现出来的最快速率"
+                    android:textSize="11sp"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/sensor_grid_title"/>
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/sensor_grid_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="自动"
+                    android:textSize="11sp"
+                    app:layout_constraintTop_toBottomOf="@id/sensor_grid_title"
+                    app:layout_constraintEnd_toEndOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+            <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/satellite_count_layout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

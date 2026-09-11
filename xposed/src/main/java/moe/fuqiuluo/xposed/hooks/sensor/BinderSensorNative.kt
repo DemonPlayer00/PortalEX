@@ -201,6 +201,12 @@ internal object BinderSensorNative {
      */
     external fun setChannelHint(type: Int, periodNs: Long, batchNs: Long, active: Boolean)
 
+    /**
+     * 固定注入栅格（Hz；0 = 自动跟随框架采用值）。栅格只决定"能表现出来的最快速率"，
+     * 调细不改变各传感器自己的采用速率。原生层会把 1e9/Hz 钳进 2.5~50ms。
+     */
+    external fun setGridHz(hz: Int)
+
     /** 先把所有栅格通道标成不活跃，随后按 dump 灌活跃者（缺席即静默） */
     external fun clearChannelHints()
 }

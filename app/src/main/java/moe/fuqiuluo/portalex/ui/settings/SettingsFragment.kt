@@ -30,6 +30,7 @@ import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
+import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.reportDuration
 
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
@@ -72,6 +73,7 @@ class SettingsFragment : Fragment() {
         binding.speedValue.text = "%.2f米/秒".format(context.speed)
         binding.accuracyValue.text = "%.2f米".format(context.accuracy)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
+        binding.sensorGridValue.text = context.sensorGridHz.let { if (it <= 0) "自动" else "${it}Hz" }
         binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
 
         binding.altitudeLayout.setOnClickListener {
@@ -172,6 +174,24 @@ class SettingsFragment : Fragment() {
             requireContext().binderSensorMock = isChecked
             showToast(if (isChecked) "已开启外周传感器模拟（重启目标应用生效）" else "已关闭外周传感器模拟")
             updateRemoteConfig()
+        }
+
+        // 「注入栅格分辨率」：0=自动（跟随框架采用值）；也可填任意 Hz（钳 20~400）
+        binding.sensorGridLayout.setOnClickListener {
+            val cur = context.sensorGridHz
+            showDialog("注入栅格分辨率（Hz，0=自动）", if (cur <= 0) "0" else cur.toString()) {
+                val v = it.trim().toIntOrNull()
+                if (v == null || v < 0) {
+                    Toast.makeText(context, "请输入 0 或 20~400 的整数", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                requireContext().sensorGridHz = v
+                binding.sensorGridValue.text = requireContext().sensorGridHz.let {
+                    if (it <= 0) "自动" else "${it}Hz"
+                }
+                showToast(if (v <= 0) "栅格：自动（跟随框架采用值）" else "栅格：${requireContext().sensorGridHz}Hz")
+                updateRemoteConfig()
+            }
         }
 
         binding.reportDurationLayout.setOnClickListener {

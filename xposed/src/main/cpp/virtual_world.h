@@ -121,6 +121,9 @@ void vw_set_acc_via_poll(int on);
 /** 当前是否有任何类型走 poll 路径（决定 poll 出口要不要注入） */
 int vw_poll_types_enabled(void);
 
+/** 固定注入栅格（纳秒；0 = 自动跟随采用值）。钳在 2.5ms~50ms */
+void vw_set_tick_override(long long ns);
+
 /** 当前栅格（纳秒）与延迟队列统计（诊断） */
 int vw_tick_ns_dbg(void);
 int vw_defer_stats(int *pending, long long *dropped);

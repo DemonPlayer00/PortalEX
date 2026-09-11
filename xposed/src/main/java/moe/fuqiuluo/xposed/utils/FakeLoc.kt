@@ -54,6 +54,9 @@ object FakeLoc {
     @Volatile
     var enableBinderSensorMock = false
 
+    /** 注入栅格分辨率（Hz）：0 = 自动跟随框架采用值；非 0 时固定为 1e9/该值（原生层钳 2.5~50ms） */
+    var sensorGridHz = 0
+
     /**
      * 原生注入层是否已成功装载（由 BinderSensorMock 在 system_server 内回填，只读诊断用）：
      * 装载失败时为 false，此时不改变任何既有行为。
