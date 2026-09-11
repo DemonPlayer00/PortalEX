@@ -59,6 +59,12 @@ object StepProbe {
      * Δ=0 → 同一个值被投递了两次（双份投递的签名）；Δ=2 → 一次回调跨了两步。 */
     private val histDelta = IntArray(6)          // 索引 0..4 = Δ0..Δ4；索引 5 = Δ≥5
     private val recentCb = ArrayDeque<LongArray>() // 每项 [Δ值, 间隔ms]，最多保留 8 条
+    /* 原始值观测：只记"客户端真收到的值"，用来区分"探针记账错"与"框架投递/缓存问题" */
+    private val rawValues = ArrayDeque<Long>()     // 最近 10 个原始值
+    @Volatile private var rawMin = Long.MAX_VALUE
+    @Volatile private var rawMax = Long.MIN_VALUE
+    @Volatile private var rawMinAtMs = 0L
+    @Volatile private var rawMaxAtMs = 0L
     @Volatile private var prevCbValue = -1L
     @Volatile private var prevCbAtMs = 0L
     @Volatile private var cbCount = 0L
@@ -84,6 +90,13 @@ object StepProbe {
                     counterEvents++
                     val now = SystemClock.elapsedRealtime()
                     /* 回调视角：这一条回调相对上一条回调，值涨了几步、隔了多久 */
+                    // 原始值观测（这一段不改动任何逻辑，只记录）
+                    if (v < rawMin) { rawMin = v; rawMinAtMs = now }
+                    if (v > rawMax) { rawMax = v; rawMaxAtMs = now }
+                    synchronized(rawValues) {
+                        rawValues.addLast(v)
+                        while (rawValues.size > 10) rawValues.removeFirst()
+                    }
                     if (prevCbValue >= 0) {
                         val delta = v - prevCbValue
                         val idx = when {
@@ -128,6 +141,24 @@ object StepProbe {
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     }
 
+    /** 对照 listener：只打日志（前若干条），用于判定"探针记错"还是"框架投递"。 */
+    private var logCount = 0
+    private val logListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (event.sensor.type != Sensor.TYPE_STEP_COUNTER) return
+            val n = ++logCount
+            if (n <= 12 || n % 20 == 0) {
+                android.util.Log.i(
+                    "StepProbe",
+                    "cb#$n type=${event.sensor.type} handle=${event.sensor.handleCompat()} " +
+                            "values=[${event.values.joinToString(",")}]"
+                )
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
     /** 幂等启动；失败原因写进 [unavailable]，由 Test 页原样展示。 */
     fun start(context: Context) {
         if (started) return
@@ -156,6 +187,10 @@ object StepProbe {
             reset()
             // 普通应用一般用 SENSOR_DELAY_NORMAL 或 UI；这里取 UI（≈16Hz）以便观察到达率
             sm.registerListener(listener, counter, SensorManager.SENSOR_DELAY_UI)
+            /* 对照用：**独立 listener 对象**订阅同一个传感器。
+             * 若它看到的值在涨而主 listener 恒定 ⇒ 主 listener/共享队列那边有问题；
+             * 若两者都恒定 ⇒ 问题在框架投递，不在探针。 */
+            sm.registerListener(logListener, counter, SensorManager.SENSOR_DELAY_UI)
             detectorSensor?.let { sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI) }
             started = true
             unavailable = null
@@ -171,6 +206,7 @@ object StepProbe {
             if (!started) return
             started = false
             runCatching { sensorManager?.unregisterListener(listener) }
+            runCatching { sensorManager?.unregisterListener(logListener) }
             poller?.interrupt()
             poller = null
         }
@@ -191,6 +227,11 @@ object StepProbe {
         cbCadence = -1
         synchronized(histDelta) { histDelta.fill(0) }
         synchronized(recentCb) { recentCb.clear() }
+        synchronized(rawValues) { rawValues.clear() }
+        rawMin = Long.MAX_VALUE
+        rawMax = Long.MIN_VALUE
+        rawMinAtMs = 0L
+        rawMaxAtMs = 0L
         lastPollDelta = -1L
         lastPollSpanMs = 0L
         lastPollCadence = -1
@@ -259,6 +300,9 @@ object StepProbe {
         sb.append("Δ值分布        Δ=0:").append(hist[0]).append("  Δ=1:").append(hist[1])
             .append("  Δ=2:").append(hist[2]).append("  Δ=3:").append(hist[3])
             .append("  Δ=4:").append(hist[4]).append("  Δ≥5:").append(hist[5]).append('\n')
+        val raws = synchronized(rawValues) { rawValues.toList() }
+        sb.append("原始值(最近)    ").append(if (raws.isEmpty()) "（无）" else raws.joinToString(" ")).append('\n')
+        sb.append("原始值 min/max  ").append(if (rawMax == Long.MIN_VALUE) "（无）" else "$rawMin / $rawMax").append('\n')
         sb.append("最近回调        ")
         if (recent.isEmpty()) {
             sb.append("（还没有第二条回调）")
