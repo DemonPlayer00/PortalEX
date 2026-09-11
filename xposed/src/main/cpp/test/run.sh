@@ -11,7 +11,7 @@ fail=0
 for t in test/vw_consumer_split_test.c test/vw_invariants_test.c; do
     name=$(basename "$t" .c)
     printf '== %s\n' "$name"
-    $CC -D_GNU_SOURCE -I test/stub -I . "$t" virtual_world.c -lpthread -lm -o "$OUT/$name" || {
+    $CC -D_GNU_SOURCE -I test/stub -I . "$t" virtual_world.c vw_rand.c vw_noise.c -lpthread -lm -o "$OUT/$name" || {
         echo "  编译失败"; fail=1; continue; }
     "$OUT/$name" || fail=1
 done

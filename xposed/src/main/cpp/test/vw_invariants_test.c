@@ -8,8 +8,9 @@
  *   3. 记账守恒：Σ(每次调用返回的 n) 必须等于 emitted 的增量（一条都不许凭空消失）；
  *   4. 容量压力：cap 不足时丢的是"最新"而不是崩，且必须计入 dropped；
  *   5. 噪声档：逐轴 σ 与陀螺零偏必须真的按配置生成。**只能按统计置信区间断言**：
- *      RNG 虽是固定种子的 xorshift（virtual_world.c:227），但本测试的时间基准取自真实时钟，
- *      每次运行"抽取次数"不同 ⇒ 跨运行不可复现（实测同一断言两次跑出 0.0125 / 0.0140）。
+ *      种子 = 编译期常量 ⊕ 进程启动时间 ⊕ pid（vw_rand.c 的 vw_rng_seed_process）⇒ 每个进程
+ *      一份不同序列、跨运行不可复现（实测同一条断言两次跑出 0.0125 / 0.0140）。
+ *      （我一度以为是"时间基准不同导致抽取次数不同"——查代码后纠正：是种子本身按进程混了时间。）
  *
  * 编译（在 xposed/src/main/cpp 下）：
  *   cc -D_GNU_SOURCE -I test/stub -I . test/vw_invariants_test.c virtual_world.c -lpthread -lm -o /tmp/vwinv
