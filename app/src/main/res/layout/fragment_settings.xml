@@ -153,7 +153,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="8dp"
-                    android:text="微调「步频 ↔ 速度」的关系；1=原公式，可填整数或小数（0.2~3.0）"
+                    android:text="微调「步频 ↔ 速度」的关系；1=不调整，可填整数或小数（0.2~3.0）"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toStartOf="@id/cadence_scale_value"
@@ -451,7 +451,7 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="一定程度解决位置拉回（测试）"
+                        android:text="阻止应用扫描 Wi-Fi 列表，缓解位置被拉回"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -484,7 +484,7 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="解决位置拉回问题 可能导致发热；无法播放路线可尝试打开"
+                        android:text="持续强力回推位置，缓解被拉回；开启后可能发热\n重启模拟生效"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
