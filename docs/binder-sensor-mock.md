@@ -106,7 +106,7 @@ SensorService::threadLoop
 * 静止时三项归零；`GRAVITY` 保持恒定 `(0,0,9.81)`，`ACCELEROMETER = GRAVITY + LINEAR_ACCELERATION`
   严格成立（真机的物理关系），周期分量的频率 = 步频 = 步事件率。
 
-实测（PKG110，手机静置桌面，按住悬浮摇杆让模拟行走）：
+实测（Android 16 + 高通/OPPO 机型，手机静置桌面，按住悬浮摇杆让模拟行走）：
 
 | 设定速度 | IMU 基频（加速度计） | 步检测器事件率 | 理论步频 `(60+30v)×1.15` |
 |:--|:--|:--|:--|
@@ -151,46 +151,183 @@ SensorService::threadLoop
 * 注入计数：`emitted / dropped / suppressed / steps / step_rate` 与 `type→handle` 映射。
 * 设定值、实测速度、移动判定、步数累计、坐标/海拔/朝向、GNSS 开关。
 
-## 运行时传感器（架构翻新，**已实现但未接入**）
+## 架构翻新：运行时投递通道（设计定稿）
 
-目标：让投递 **100% 由我们掌握**，彻底摆脱上面那条"框架轮询节拍"的约束。
+目标：投递 **100% 由我们掌握**，彻底摆脱上面那条"框架轮询节拍"的约束；仍然只 hook
+**系统框架**，一个目标应用都不碰。
 
-框架内为"没有 HAL 背书的传感器"准备的正规机制就是运行时传感器：
+结论先行：框架为"没有 HAL 背书的传感器"准备的**运行时传感器（runtime sensor）**机制
+就是我们要的东西，而且 —— 这是本轮翻新的关键发现 —— **它的入口在 system_server 的
+Java 层就是现成的**，整套方案因此**不需要任何原生代码，也不需要伪造对象、虚表或 RefBase**。
+
+### 事实 1：运行时传感器有 Java/JNI 入口，且本机 ROM 确认存在
+
+AOSP 的 `com.android.server.sensors.SensorService`（Java，系统服务）自身就带这几个
+**私有静态 JNI** 入口：
+
+```java
+private static native long    startSensorServiceNative(ProximityActiveListener listener);
+private static native int     registerRuntimeSensorNative(long ptr, int deviceId, int type,
+                              String name, String vendor, float maximumRange, float resolution,
+                              float power, int minDelay, int maxDelay, int flags,
+                              SensorManagerInternal.RuntimeSensorCallback callback);
+private static native void    unregisterRuntimeSensorNative(long ptr, int handle);
+private static native boolean sendRuntimeSensorEventNative(long ptr, int handle, int type,
+                              long timestampNanos, float[] values);
+```
+
+`SensorManagerInternal.RuntimeSensorCallback` 是**接口**（4 个方法：`onConfigurationChanged`
+`onDirectChannelCreated` `onDirectChannelDestroyed` `onDirectChannelConfigured`），
+所以回调可以直接用 `java.lang.reflect.Proxy` 实现 —— 不需要编译期依赖任何隐藏类。
+
+已在**本机固件**上核对（`/system/framework/services.jar` 内的 dex 字符串）：
+`com/android/server/sensors/SensorService`、`SensorService$LocalService`、
+`SensorManagerInternal$RuntimeSensorCallback`、`createRuntimeSensor`、
+`registerRuntimeSensorNative`、`sendRuntimeSensorEventNative` 全部存在；
+`libsensorservice.so` 在本机只被 **system_server 一个进程**映射
+（`grep -l libsensorservice /proc/*/maps` → 只有 system_server），
+即原生 `SensorService` 就活在我们注入的进程里。
+
+所需条件只有一个：拿到 `SensorService` 实例（读它的 `private long mPtr`）与
+`mPtr != 0`（它在构造时异步启动，见 `SystemServerInitThreadPool`）。
+实例有两条互为备份的获取路径：hook 它的构造函数、或
+`LocalServices.getService(SensorManagerInternal.class)`（返回 `LocalService`，
+再读其 `this$0` 合成字段）。
+
+### 事实 2：投递是"广播式"的 ⇒ 用真实 handle 就能送达应用
+
+`SensorService::processRuntimeSensorEvents()`（`RuntimeSensorHandler` 线程的循环体）做的是：
 
 ```
-SensorService::registerRuntimeSensor(sensor_t const&, int deviceId, sp<RuntimeSensorCallback>)
-SensorService::sendRuntimeSensorEvent(sensors_event_t const&)
-SensorService::unregisterRuntimeSensor(int)
+从队列取事件（最多 256 条，缓冲 = new sensors_event_t[256]）
+recordLastValueLocked() → sortEventBuffer()（按时间戳排序）
+对**每一个活跃连接**：connection->sendEvents(buffer, count, /*scratch=*/nullptr, nullptr)
 ```
 
-事件由 `SensorService::RuntimeSensorHandler` **自己的线程**投递（反汇编确认其循环只调
-`sendRuntimeSensorEvent` 与 `Thread::exitPending`，完全不碰 HAL poll）——这正是我们要的。
+而 `SensorEventConnection::sendEvents(buffer, n, scratch, map)` 在 `scratch == nullptr` 时
+走的是**不过滤**的分支（源码 + 反汇编一致）：
 
-已核实的事实（反汇编/符号表，不是推测）：
+```cpp
+} else {
+    if (hasSensorAccess()) { scratch = buffer; count = numEvents; }   // 整批照发
+    else { /* 只留 META_DATA */ }
+}
+...
+SensorEventQueue::write(mChannel, scratch, count);
+```
 
-* 三个 API 都在 **`.dynsym`** 里（导出），`RuntimeSensorHandler` 有独立线程。
-* 回调**不能传空**：注册路径对空 `sp` 有 `cbz` 判空，但
-  `RuntimeSensor::activate` 里 `ldr x19,[x0,#0xa0]; ldr x8,[x19]; br [x8]` 直接解引用 ——
-  空回调一被客户端使能就段错误。
-* 回调对象的布局**由我们的虚表决定**（关键洞察）：服务构造 `sp` 时按 ABI 调整指针
-  （`ldur x9,[vptr,#-0x18]` 取 offset-to-top，再 `add x0,obj,x9` 调 `RefBase::incStrong`）——
-  RefBase 子对象位于 `obj + vtable[-3]`，而这个值写在**我们自己的虚表**里。
-  虚表布局也已从二进制读出：`onConfigurationChanged` 在地址点 [0]，析构在 [1]/[2]。
+真正的"事件属于哪个传感器"的路由发生在**客户端进程**：`SystemSensorManager` 按事件里的
+`sensor`（handle）在自己的传感器表里查到 `Sensor`，再派发给为它注册的监听器；查不到就静默丢弃。
 
-**为什么现在没接进产品**：首版"只读探针"（取实例 + 校验 vptr + 调一个导出的无害查询）
-在真机上让 **system_server SIGSEGV 两次**，tombstone 明确指向 `install → prs_probe`。
+**推论（本方案的地基）**：事件里只要填**真实 HAL handle**，应用就会像收到真实事件一样收到它 ——
+不需要让应用改订阅对象，不需要伪造框架的传感器表，也不需要目标应用侧任何 hook。
+本模块自己的数据由我们自己填，所以内容 100% 可控。
 
-* 已定位并修掉一处确定缺陷：自建虚表结构体只给"地址点之前"留了 8 字节，而 header 要写
-  `[-3]`（24 字节）→ **越界写到只读段**。
-* 修后仍崩 → 剩余可疑点是三个用 `dlsym` **猜名字**调用的函数
-  （`AServiceManager_getService` / `AIBinder_toPlatformBinder` / `RefBase::RefBase`）——
-  猜错即崩溃；另外 `libsensorservice.so` 是 `RTLD_LOCAL` 加载的，`RTLD_DEFAULT` 也搜不到它的符号。
-* **因此这段代码不接入安装路径**（`portal_runtime_sensor.c` 保留实现与注释，`install()` 里
-  调用点已摘除），避免把一个会崩系统进程的路径留在产品里。
+代价（如实记录）：
 
-继续做的前提（下一步）：把上面那三个函数地址也改成**由 Java 侧的 ELF 解析器从各库的
-`.dynsym` 精确给出**（现成的 `LibSymbols` 已支持 `.dynsym` 查询），彻底不猜名字；
-然后按"注册一个类型 → 探针订阅 → 验证 → 铺开"的顺序逐级验证，每级都能回退。
+* 事件会写进**所有**有传感器连接的进程（未订阅者解不出 handle，静默丢弃），
+  比 HAL 路径多一份广播开销；速率越高越明显，属可接受量级，且开关默认关。
+* 这批事件不经 `noteOpIfRequired()`（AppOp 检查在过滤分支里）——但无权限的应用
+  既看不到该 `Sensor`，也没有 `mSensorsEvents` 条目，因此实际到达不了它的监听器。
+* 事件 `flags = 0`：不参与唤醒锁 / `NEEDS_ACK` 协议（不伪造唤醒事件）。
+
+### 事实 3：必须先注册一个"载体"传感器
+
+`mRuntimeSensorEventBuffer` 与 `RuntimeSensorHandler` 线程**只在第一次成功注册时创建**
+（`registerRuntimeSensor` 里）。不注册就推事件：队列无人消费（无限增长），
+且缓冲为空指针。所以启动时先注册**一个载体传感器**，它的数据我们根本不推。
+
+载体必须**对客户端不可见**：`SensorList::getUserSensors()`（`getSensorList` 的数据源）
+的过滤条件是 `!isForDebug && !isDynamicSensor() && deviceId == DEFAULT_DEVICE_ID`
+—— 已在本机 `libsensorservice.so` 的 `getUserSensors` 里逐条核对反汇编
+（`ldr w8,[entry+0x3c]; cbnz w8, skip`，entry 偏移：`si` @+0x28、`isForDebug` @+0x38、
+`deviceId` @+0x3c），且 `RuntimeSensor::DEFAULT_DEVICE_ID == 0`
+（`unregisterRuntimeSensor` 里 `str wzr,[sp]` 即为该初值）。
+
+于是载体取：`deviceId = 0x0FA0`（非 0，且不可能是真实虚拟设备号）、
+`type = SENSOR_TYPE_DEVICE_PRIVATE_BASE (0x10000)`、`flags = 0`（不能带 dynamic 位）、
+`minDelay/maxDelay = 0`。它只会出现在 `dumpsys sensorservice` 里，客户端列表里没有它。
+
+### 事实 4：绕过 Java 包装的 handle 白名单
+
+`SensorService$LocalService.sendSensorEvent()` 会检查 `mRuntimeSensorHandles.contains(handle)`
+—— 只允许推自己注册过的 handle，这与"用真实 handle 投递"冲突。
+原生 `SensorService::sendRuntimeSensorEvent` 本身**不检查**（源码与反汇编一致：push 队列 + 通知条件变量）。
+因此我们直接反射调用**私有静态 JNI** `sendRuntimeSensorEventNative(mPtr, handle, ...)`，
+绕过 `LocalService` 那一层。这是本方案唯一一处刻意越过框架封装的地方，理由与范围都明确：
+只用来推送数据，不改框架状态；`mRuntimeSensorHandles` 是 `LocalService` 自己的记账，
+不参与投递路径。
+
+### 为什么放弃"原生自建回调"那条路
+
+上一版尝试在原生侧自己取实例、造回调对象、调 `registerRuntimeSensor`。
+它崩了两次 `system_server`，现在原因已经查清（反汇编 + AOSP 源码）：
+
+* `AIBinder_toPlatformBinder` 的返回类型是 **`sp<IBinder>`（非平凡类型）**，
+  按 AArch64 ABI 通过 **x8 间接返回**。用 C 原型 `void *(*)(void *)` 调用它，
+  被调方会把 8 字节写向一个**未初始化的 x8** —— 这就是修掉虚表越界之后仍然崩的原因。
+  （同一轮里 `AServiceManager_getService` 在 ROM 里其实是 **extern "C" 未修饰名**，
+  签名里的 `_Z25...` 长度前缀也是错的 —— 靠"猜名字"叠上"猜 ABI"，两次都猜错。）
+* `registerRuntimeSensor` 的第三个参数是按值传递的 `sp<RuntimeSensorCallback>`，
+  其生命周期归属（谁 decStrong）依赖编译器实现细节；自建对象的引用计数必须
+  "自持"才能两种约定下都安全——这些都是可以做的，但已经没有必要做了。
+
+Java 路径把这些全部规避：所有参数都是 JNI 平凡类型 + 一个 `Proxy` 对象，
+最坏结果是抛异常/返回 false，**不存在内存写坏的可能**。
+
+### 分层设计
+
+```
+[设置项开 + 模拟会话启动]
+   │
+   ├─ L1 载体引导（一次性）：反射 registerRuntimeSensorNative(mPtr, 0x0FA0, 0x10000, …)
+   │     → 拿到载体 handle；副作用：分配 256×104 事件缓冲 + 启动 RuntimeSensorHandler 线程
+   │
+   ├─ L2 生成：原生虚拟世界/步态引擎（既有，单一事实源）
+   │     新增**独立时钟驱动**（不再由 HAL poll 驱动）→ JNI 取一帧"到期事件"
+   │
+   ├─ L3 投递：反射 sendRuntimeSensorEventNative(mPtr, 真实handle, type, ts, values)
+   │     → RuntimeSensorHandler 线程 → 广播 → 客户端按 handle 派发给应用监听器
+   │
+   └─ L4 隔离：既有 poll 路径**只压制不注入**（丢弃被接管类型的真实事件）
+         → 应用只会拿到我们的数据，不会真/假各一份
+```
+
+* **互斥规则**：运行时通道就绪 ⇒ poll 路径停注入、只压制；未就绪（ROM 不支持、
+  反射失败、`mPtr == 0`）⇒ 退回现状（poll 路径注入），功能不失效。
+  因此上面那条"应用侧 keep-alive 订阅"在运行时通道生效后只是兜底路径的补丁，
+  对主投递路径不再必要（保留不冲突）。
+* **生命周期**：关开关 / 结束模拟时先停 L3，再 `unregisterRuntimeSensorNative` 释放载体
+  （线程与缓冲留着复用，代价是一个阻塞在条件变量上的线程）。
+* **全链路 `runCatching`**：任何一步失败都只降级 + 日志，绝不抛出到 system_server 的调用栈。
+
+### 生成时钟与帧接口（L2 的落地形态）
+
+现状：原生虚拟世界/步态引擎的推进挂在 poll 回调上（一次 poll 顺带推进一拍），
+所以"生成节拍 = HAL 轮询节拍"。要摆脱它，推进必须由**我们自己的时钟**驱动：
+
+* 新增 `nativeTick(nowNanos) -> 帧`：按既有的 10 ms 栅格推进虚拟世界与步事件队列，
+  把本拍"到期"的事件写进一个固定大小的帧缓冲（不分配、不装箱）。
+* Java 侧用**独立 HandlerThread**（5 ms 周期）驱动 tick，然后逐条转发到
+  `sendRuntimeSensorEventNative`（或按当前模式交给 poll 路径）。
+* 帧用 JNI 平凡类型表达，四段平行数组：`int[] handles`、`int[] types`、
+  `long[] timestamps`、`float[] values`（每事件固定 5 个槽，按类型取前 N 个）。
+* **值布局必须与框架 JNI 的 switch 一致**（`com_android_server_sensor_SensorService.cpp`：
+  加速度/磁场/方向/陀螺仪/重力/线性加速度 → 3 floats 写进 `acceleration`；
+  步数计数器/检测器/接近/光/压力 → 1 float 写进 `data[0]`；
+  旋转矢量等其余类型 → 前 16 floats 原样 `memcpy` 进 `data`）。
+  写错槽位不会崩，但应用读到的是别的物理量 —— 这是"数值对不上"最容易的成因。
+* 时间戳取 `CLOCK_BOOTTIME`（框架口径，与 poll 路径同源），`flags = 0`。
+
+### 分阶段验证（每级独立可回退）
+
+| 级 | 动作 | 判据 | 风险 |
+|:--|:--|:--|:--|
+| S1 | 只做反射解析 + 读 `mPtr`，不注册不发送 | Test 页 `rt=` 显示 `resolved / ptr=0x…` | 无副作用 |
+| S2 | 注册载体，记下 handle | logcat `Registering runtime sensor handle 0x…`；`dumpsys sensorservice` 里有它；应用 `getSensorList` 里**没有** | 框架正规 API |
+| S3 | 向载体 handle 推一条事件，应用侧订阅它 | 应用收到该事件（证明整条投递链） | 只影响订阅者 |
+| S4 | 改用**真实 handle** 推加速度/步频，同时保持压制 | 步频随速度变化；无重复计数（也顺带定位"277 步/分"） | 与既有功能并存 |
+| S5 | 把运行时通道设为被接管类型的**主投递**，poll 路径转纯压制 + 兜底 | 关掉 keep-alive 后投递仍连续 | 可一键回退 |
 
 ## 诚实的边界
 
@@ -202,9 +339,11 @@ SensorService::unregisterRuntimeSensor(int)
   伪造步数传感器。
 * **传感器存在但暂时没有数据时：有回调** ✓ —— 已在真机实测：手机静置桌面（真机计步器
   全程不响），手持悬浮摇杆让模拟行走，`type=18` 4 秒内 12 个事件、`type=19` 计数持续增长。
-* **循环活性依赖框架的 poll 循环**：AIDL/HIDL 的 `pollFmq` 在 FMQ 上阻塞等待 HAL 唤醒。
-  HAL 彻底死掉且从不唤醒时，`threadLoop` 会卡在那次等待里，注入也就无从发生
-  （这种情况平台本身也拿不到任何数据）。
+* **循环活性依赖框架的 poll 循环**（**仅指当前的 poll 注入路径**）：AIDL/HIDL 的 `pollFmq`
+  在 FMQ 上阻塞等待 HAL 唤醒。HAL 彻底死掉且从不唤醒时，`threadLoop` 会卡在那次等待里，
+  注入也就无从发生（这种情况平台本身也拿不到任何数据）。
+  上面的**运行时投递通道正是为解除这条依赖而设计**的：它由我们自己的时钟驱动，
+  与 HAL 是否 poll、是否唤醒无关（该通道尚未接入，见"设计定稿"一节的分级验证）。
 * **框架的"最后值缓存"会漏一次**：为新订阅者补发该传感器最近一次值时，框架走的是
   连接缓存而非 HAL 出口，模块挂不到，因此每种传感器在**每次新订阅**时可能漏出
   1 条真实事件（实测：手机静置时步数计数器表现为 1 条真实的当日步数——它会在下一次
