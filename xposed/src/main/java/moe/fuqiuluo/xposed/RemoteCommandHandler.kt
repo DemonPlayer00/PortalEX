@@ -177,7 +177,9 @@ object RemoteCommandHandler {
                 return true
             }
             "set_bearing" -> {
-                val bearing = rely.getDouble("bearing", 0.0)
+                // 键缺失 ⇒ 保持当前朝向（默认 0.0 会让"停下时发的无 bearing 命令"把朝向清成 0：
+                // 实测 MI6/LineageOS 上表现为"停止 1 秒后指南针归 0、角度计不再变化"）
+                val bearing = rely.getDouble("bearing", FakeLoc.bearing)
                 FakeLoc.bearing = bearing
                 FakeLoc.hasBearings = true
                 // 朝向变了就立刻投一帧：摇杆只转向不位移时，若不投递，应用侧要等保活补帧
@@ -195,7 +197,9 @@ object RemoteCommandHandler {
             "move" -> {
                 val distance = rely.getDouble("n", 0.0)
                 if (distance == 0.0) return true
-                val bearing = rely.getDouble("bearing", 0.0)
+                // 键缺失 ⇒ 保持当前朝向（默认 0.0 会让"停下时发的无 bearing 命令"把朝向清成 0：
+                // 实测 MI6/LineageOS 上表现为"停止 1 秒后指南针归 0、角度计不再变化"）
+                val bearing = rely.getDouble("bearing", FakeLoc.bearing)
                 val newLoc = FakeLoc.moveLocation(
                     n = distance,
                     angle = bearing
