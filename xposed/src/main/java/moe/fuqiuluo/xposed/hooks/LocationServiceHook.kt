@@ -727,156 +727,12 @@ internal object LocationServiceHook: BaseLocationHook() {
 //        })
 
         // ===== 段 6 · 取位请求（getCurrentLocation）：允许并注入 + 一次性投递登记 =====
-        cILocationManager.hookAllMethods("getCurrentLocation", beforeHook {
-            // 不同 Android 版本参数位置不同：
-            //  老版本: getCurrentLocation(LocationRequest, ILocationCallback, String packageName)
-            //  新版本: getCurrentLocation(String provider, LocationRequest, ILocationCallback, String packageName, ...)
-            // 所以不能用固定索引 args[2]，改为按“存在 onLocation 回调方法”的特征查找。
-            val callback = args.firstOrNull { arg ->
-                arg != null && arg.javaClass.methods.any { it.name == "onLocation" }
-            } as? IInterface ?: return@beforeHook
-
-            if (FakeLoc.enableDebugLog) {
-                Logger.debug("getCurrentLocation: injected!")
-            }
-
-            // 允许并注入（语义已定）：**不再 result = null 吞掉调用**。
-            // 未开模拟 = 完全透传真实位置；模拟会话中：
-            //   ① 回调上改写——框架真投递时把位置换成模拟位置；
-            //   ② 登记进一次性投递表——无真实定位源（室内无星）时，由推送链
-            //      （callOnLocationChanged，与监听器同一节拍）补投一次模拟位置。
-            // 旧实现两条都不做：调用被吞 → 应用一个位置都拿不到，
-            // 且传感器模拟的取数链也跟着断（见 SystemSensorManagerHook）。
-            if (!FakeLoc.enable) return@beforeHook
-
-            val classCallback = callback.javaClass
-            classCallback.onceHookAllMethod("onLocation", beforeHook onLocation@ {
-                val location = args[0] as? Location ?: return@onLocation
-
-                // 框架已投递：从一次性投递表里摘下，避免同一回调被投两次
-                (thisObject as? IInterface)?.let { self ->
-                    oneShotCallbacks.removeIf { it.callback.asBinder() == self.asBinder() }
-                }
-
-                if (FakeLoc.enableDebugLog) {
-                    Logger.debug("onLocation(getCurrentLocation): injected!")
-                }
-
-                args[0] = injectLocation(location)
-            })
-            oneShotCallbacks.removeIf { it.callback.asBinder() == callback.asBinder() }
-            oneShotCallbacks.add(OneShotCallback(callback, SystemClock.elapsedRealtimeNanos()))
-        })
-
-        // ===== 段 7 · 命令通道（sendExtraCommand → portal provider 分发）=====
-        cILocationManager.hookAllMethods("sendExtraCommand", beforeHook {
-            if (args.size < 3) return@beforeHook
-
-            val provider = args[0] as String
-            val command = args[1] as String
-            val outResult = args[2] as? Bundle
-
-            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
-                result = false
-                return@beforeHook
-            }
-
-            // If the GPS provider is enabled, the GPS provider is disabled
-            if(provider == "gps" && FakeLoc.enable) {
-                result = false
-                return@beforeHook
-            }
-
-            if(provider == "LOCATION_BIG_DATA") {
-                result = false
-                return@beforeHook
-            }
-
-            // Not the provider of the portal, does not process
-            if (provider != "portal") {
-                if (FakeLoc.enableDebugLog)
-                    Logger.debug("sendExtraCommand provider: $provider, command: $command, result: $result")
-                return@beforeHook
-            }
-            if (outResult == null) return@beforeHook
-
-            if (handleInstruction(command, outResult)) {
-                result = true
-            }
-        })
-
-        // ===== 段 8 · provider 可见性（isProviderEnabled / ForUser，含握手门禁）=====
-        if(
-        // boolean isProviderEnabledForUser(String provider, int userId); from android 9.0.0
-            XposedBridge.hookAllMethods(
-                cILocationManager,
-                "isProviderEnabledForUser",
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam?) {
-                        if (param == null || param.args.size < 2 || param.args[0] == null) return
-                        val provider = param.args[0] as String
-                        var userId = param.args[1] as Int
-                        if (provider == "portal") {
-                            if (userId == 0) {
-                                userId = BinderUtils.getCallerUid()
-                            }
-                            param.result = BinderUtils.isLocationProviderEnabled(userId)
-                        } else if (FakeLoc.enable && provider == "network") {
-                            param.result = !FakeLoc.enable
-                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
-                            param.result = false
-                            return
-                        } else {
-                            if (FakeLoc.enableDebugLog) {
-                                 Logger.debug("isProviderEnabledForUser provider: $provider, userId: $userId")
-                            }
-                        }
-                    }
-                }).isEmpty()
-        ) {
-            // boolean isProviderEnabled(String provider);
-            XposedBridge.hookAllMethods(
-                cILocationManager,
-                "isProviderEnabled",
-                object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam?) {
-                        if (param == null || param.args.isEmpty() || param.args[0] == null) return
-                        val provider = param.args[0] as String
-                        val userId = BinderUtils.getCallerUid()
-                        if (provider == "portal" && BinderUtils.isLocationProviderEnabled(userId)) {
-                            param.result = true
-                        } else if (FakeLoc.enable && provider == "network") {
-                            param.result = !FakeLoc.enable
-                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
-                            param.result = false
-                            return
-                        }
-                    }
-                })
-        }
-
-
-        // ===== 段 9 · 厂商/第三方 SDK 的"额外定位控制器包"抑制 =====
-        // F**k You! AMAP Service!
-        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                if (FakeLoc.enable) {
-                    param.args[0] = false
-                }
-            }
-        })
-
-        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackage", object: XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                if (FakeLoc.enable) {
-                    param.result = null
-                }
-            }
-        })
-
-        startGnssStatusPusher()
-        startLocationKeepAlive()
-
+        // 顺序敏感：同一方法的多个 hook 回调按**注册顺序**执行（XposedBridge 语义），
+        // 下面每段的调用顺序与历史注册顺序逐一对应 —— 拆小节时不要重排。
+        hookCurrentLocation(cILocationManager)   // 取位请求（getCurrentLocation）：允许并注入，并登记一次性投递表
+        hookExtraCommand(cILocationManager)   // 命令通道与 provider 开关的拦截（sendExtraCommand → portal 分发）
+        hookProviderEnabled(cILocationManager)   // provider 可见性（isProviderEnabled / ForUser，含握手门禁）
+        hookVendorControllerPackage(cILocationManager)   // 厂商/第三方 SDK 的"额外定位控制器包"抑制（AMAP 等）
     }
 
     private fun hookILocationListener(listener: Any) {
@@ -1309,6 +1165,192 @@ internal object LocationServiceHook: BaseLocationHook() {
         return RemoteCommandHandler.handleInstruction(
             command, rely, RemoteCommandHandler.Origin.PROVIDER
         )
+    }
+
+    /**
+     * 取位请求（getCurrentLocation）：允许并注入，并登记一次性投递表
+     *
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（仅整体缩进对齐）。注册顺序必须与
+     * [onService] 里的调用顺序一致 —— 同一方法上的多个回调按注册顺序执行。
+     */
+    private fun hookCurrentLocation(cILocationManager: Class<*>) {
+        cILocationManager.hookAllMethods("getCurrentLocation", beforeHook {
+            // 不同 Android 版本参数位置不同：
+            //  老版本: getCurrentLocation(LocationRequest, ILocationCallback, String packageName)
+            //  新版本: getCurrentLocation(String provider, LocationRequest, ILocationCallback, String packageName, ...)
+            // 所以不能用固定索引 args[2]，改为按“存在 onLocation 回调方法”的特征查找。
+            val callback = args.firstOrNull { arg ->
+                arg != null && arg.javaClass.methods.any { it.name == "onLocation" }
+            } as? IInterface ?: return@beforeHook
+
+            if (FakeLoc.enableDebugLog) {
+                Logger.debug("getCurrentLocation: injected!")
+            }
+
+            // 允许并注入（语义已定）：**不再 result = null 吞掉调用**。
+            // 未开模拟 = 完全透传真实位置；模拟会话中：
+            //   ① 回调上改写——框架真投递时把位置换成模拟位置；
+            //   ② 登记进一次性投递表——无真实定位源（室内无星）时，由推送链
+            //      （callOnLocationChanged，与监听器同一节拍）补投一次模拟位置。
+            // 旧实现两条都不做：调用被吞 → 应用一个位置都拿不到，
+            // 且传感器模拟的取数链也跟着断（见 SystemSensorManagerHook）。
+            if (!FakeLoc.enable) return@beforeHook
+
+            val classCallback = callback.javaClass
+            classCallback.onceHookAllMethod("onLocation", beforeHook onLocation@ {
+                val location = args[0] as? Location ?: return@onLocation
+
+                // 框架已投递：从一次性投递表里摘下，避免同一回调被投两次
+                (thisObject as? IInterface)?.let { self ->
+                    oneShotCallbacks.removeIf { it.callback.asBinder() == self.asBinder() }
+                }
+
+                if (FakeLoc.enableDebugLog) {
+                    Logger.debug("onLocation(getCurrentLocation): injected!")
+                }
+
+                args[0] = injectLocation(location)
+            })
+            oneShotCallbacks.removeIf { it.callback.asBinder() == callback.asBinder() }
+            oneShotCallbacks.add(OneShotCallback(callback, SystemClock.elapsedRealtimeNanos()))
+        })
+
+        // ===== 段 7 · 命令通道（sendExtraCommand → portal provider 分发）=====
+    }
+
+    /**
+     * 命令通道与 provider 开关的拦截（sendExtraCommand → portal 分发）
+     *
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（仅整体缩进对齐）。注册顺序必须与
+     * [onService] 里的调用顺序一致 —— 同一方法上的多个回调按注册顺序执行。
+     */
+    private fun hookExtraCommand(cILocationManager: Class<*>) {
+        cILocationManager.hookAllMethods("sendExtraCommand", beforeHook {
+            if (args.size < 3) return@beforeHook
+
+            val provider = args[0] as String
+            val command = args[1] as String
+            val outResult = args[2] as? Bundle
+
+            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+                result = false
+                return@beforeHook
+            }
+
+            // If the GPS provider is enabled, the GPS provider is disabled
+            if(provider == "gps" && FakeLoc.enable) {
+                result = false
+                return@beforeHook
+            }
+
+            if(provider == "LOCATION_BIG_DATA") {
+                result = false
+                return@beforeHook
+            }
+
+            // Not the provider of the portal, does not process
+            if (provider != "portal") {
+                if (FakeLoc.enableDebugLog)
+                    Logger.debug("sendExtraCommand provider: $provider, command: $command, result: $result")
+                return@beforeHook
+            }
+            if (outResult == null) return@beforeHook
+
+            if (handleInstruction(command, outResult)) {
+                result = true
+            }
+        })
+
+        // ===== 段 8 · provider 可见性（isProviderEnabled / ForUser，含握手门禁）=====
+    }
+
+    /**
+     * provider 可见性（isProviderEnabled / ForUser，含握手门禁）
+     *
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（仅整体缩进对齐）。注册顺序必须与
+     * [onService] 里的调用顺序一致 —— 同一方法上的多个回调按注册顺序执行。
+     */
+    private fun hookProviderEnabled(cILocationManager: Class<*>) {
+        if(
+        // boolean isProviderEnabledForUser(String provider, int userId); from android 9.0.0
+            XposedBridge.hookAllMethods(
+                cILocationManager,
+                "isProviderEnabledForUser",
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam?) {
+                        if (param == null || param.args.size < 2 || param.args[0] == null) return
+                        val provider = param.args[0] as String
+                        var userId = param.args[1] as Int
+                        if (provider == "portal") {
+                            if (userId == 0) {
+                                userId = BinderUtils.getCallerUid()
+                            }
+                            param.result = BinderUtils.isLocationProviderEnabled(userId)
+                        } else if (FakeLoc.enable && provider == "network") {
+                            param.result = !FakeLoc.enable
+                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+                            param.result = false
+                            return
+                        } else {
+                            if (FakeLoc.enableDebugLog) {
+                                 Logger.debug("isProviderEnabledForUser provider: $provider, userId: $userId")
+                            }
+                        }
+                    }
+                }).isEmpty()
+        ) {
+            // boolean isProviderEnabled(String provider);
+            XposedBridge.hookAllMethods(
+                cILocationManager,
+                "isProviderEnabled",
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam?) {
+                        if (param == null || param.args.isEmpty() || param.args[0] == null) return
+                        val provider = param.args[0] as String
+                        val userId = BinderUtils.getCallerUid()
+                        if (provider == "portal" && BinderUtils.isLocationProviderEnabled(userId)) {
+                            param.result = true
+                        } else if (FakeLoc.enable && provider == "network") {
+                            param.result = !FakeLoc.enable
+                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+                            param.result = false
+                            return
+                        }
+                    }
+                })
+        }
+
+
+        // ===== 段 9 · 厂商/第三方 SDK 的"额外定位控制器包"抑制 =====
+    }
+
+    /**
+     * 厂商/第三方 SDK 的"额外定位控制器包"抑制（AMAP 等）
+     *
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（仅整体缩进对齐）。注册顺序必须与
+     * [onService] 里的调用顺序一致 —— 同一方法上的多个回调按注册顺序执行。
+     */
+    private fun hookVendorControllerPackage(cILocationManager: Class<*>) {
+        // F**k You! AMAP Service!
+        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: XC_MethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                if (FakeLoc.enable) {
+                    param.args[0] = false
+                }
+            }
+        })
+
+        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackage", object: XC_MethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                if (FakeLoc.enable) {
+                    param.result = null
+                }
+            }
+        })
+
+        startGnssStatusPusher()
+        startLocationKeepAlive()
+
     }
 }
 
