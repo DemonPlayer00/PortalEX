@@ -64,7 +64,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/altitude_title"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/altitude"
                     android:textColor="?attr/colorOnSurfaceVariant"
@@ -73,7 +73,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/altitude_desc"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/altitude_desc"
                     android:textSize="11sp"
@@ -102,7 +102,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/speed_title"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/rocker_speed"
                     android:textColor="?attr/colorOnSurfaceVariant"
@@ -111,7 +111,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/speed_desc"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/rocker_speed_desc"
                     android:textSize="11sp"
@@ -140,7 +140,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/accuracy_title"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/accuracy"
                     android:textColor="?attr/colorOnSurfaceVariant"
@@ -149,7 +149,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/accuracy_desc"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/accuracy_desc"
                     android:textSize="11sp"
@@ -197,80 +197,6 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/dgc_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:padding="5dp"
-                android:orientation="horizontal">
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center_vertical">
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/dgc"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/dgc_desc"
-                        android:textSize="11sp" />
-                </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/dgc_switch"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    android:checked="true"
-                    android:enabled="false"
-                    android:alpha="0.5"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/rll_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:padding="5dp"
-                android:orientation="horizontal">
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center_vertical">
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/rll"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/rll_desc"
-                        android:textSize="11sp" />
-                </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/rll_switch"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    android:checked="true"
-                    android:enabled="false"
-                    android:alpha="0.5"
                     app:useMaterialThemeColors="true"
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
@@ -354,7 +280,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/report_duration_title"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/item_report_duration_title"
                     android:textColor="?attr/colorOnSurfaceVariant"
@@ -363,7 +289,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/report_duration_desc"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="@string/item_report_duration_desc"
                     android:textSize="11sp"
@@ -437,7 +363,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/satellite_count_title"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="模拟最少卫星数量"
                     android:textColor="?attr/colorOnSurfaceVariant"
@@ -446,7 +372,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/satellite_count_desc"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:text="最少模拟的卫星数量（只支持北斗）"
                     android:textSize="11sp"
