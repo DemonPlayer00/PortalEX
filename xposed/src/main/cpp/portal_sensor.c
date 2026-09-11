@@ -82,6 +82,12 @@ static uintptr_t g_base = 0; /* libsensorservice.so 加载基址 */
 static char g_path[256];
 static int g_patched = 0;
 static int g_installed = 0;
+
+/*
+ * 投递节拍源：0 = poll 路径（HAL 轮询驱动，现状），1 = 运行时通道（Java 侧泵线程驱动）。
+ * 两者**互斥**——同时开会让同一条事件送两份。默认 0（开关关闭时行为逐位不变）。
+ */
+static int g_rt_clock = 0;
 static ps_target_t g_targets[MAX_TARGETS];
 static int g_target_count = 0;
 static int g_seen_handle[256]; /* 观测到的 type→handle（无锁快查，只做首见登记） */
@@ -233,6 +239,13 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
     }
     if (suppressed > 0) vw_note_suppressed(suppressed);
 
+    /*
+     * 投递互斥：运行时通道接管投递时，这里的角色只剩"压制真实事件"——
+     * 绝不能再注入一份（同一条事件送两份 = 应用侧翻倍/抖动）。
+     * 生成与栅格推进改由 Java 侧泵线程按时钟调用 vw_generate（见 runtimeFrame）。
+     */
+    if (g_rt_clock) return kept;
+
     struct timespec ts;
     clock_gettime(CLOCK_BOOTTIME, &ts); /* 传感器事件时间基（= elapsedRealtimeNanos） */
     long long now = (long long) ts.tv_sec * 1000000000LL + ts.tv_nsec;
@@ -255,6 +268,35 @@ static long hook_target1(void *s, portal_sensor_event_t *e, size_t c) { return r
 static long hook_target2(void *s, portal_sensor_event_t *e, size_t c) { return run_target(2, s, e, c); }
 static long hook_target3(void *s, portal_sensor_event_t *e, size_t c) { return run_target(3, s, e, c); }
 static ps_poll_fn HOOKS[MAX_TARGETS] = {&hook_target0, &hook_target1, &hook_target2, &hook_target3};
+
+/* ------------------------------------------------------------------ */
+/* 运行时投递通道的取值个数（必须与框架 JNI 的 switch 一致）             */
+/* ------------------------------------------------------------------ */
+
+static int value_count_for_type(int type) {
+    switch (type) {
+        case PS_TYPE_ACCELEROMETER:
+        case PS_TYPE_MAGNETIC_FIELD:
+        case PS_TYPE_ORIENTATION:
+        case PS_TYPE_GYROSCOPE:
+        case PS_TYPE_GRAVITY:
+        case PS_TYPE_LINEAR_ACCELERATION:
+            return 3;   /* 框架 JNI 明确要求恰好 3 个，否则丢弃 */
+        case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
+        case PS_TYPE_GYROSCOPE_UNCALIBRATED:
+        case PS_TYPE_ACCELEROMETER_UNCALIBRATED:
+            return 6;
+        case PS_TYPE_ROTATION_VECTOR:
+        case PS_TYPE_GAME_ROTATION_VECTOR:
+        case PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR:
+            return 4;
+        case PS_TYPE_STEP_COUNTER:
+        case PS_TYPE_STEP_DETECTOR:
+            return 1;
+        default:
+            return 3;
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* 安装                                                                */
@@ -383,9 +425,71 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setHandleMap(JNIEnv *en
     LOGI("seeded %d sensor handle(s) from framework list", mapped);
 }
 
+/**
+ * 投递节拍源开关（与 Java 侧的运行时通道泵线程一一对应）。
+ * 打开后 poll 出口只压制真实事件、不再注入；生成改由 [runtimeFrame] 驱动。
+ */
 JNIEXPORT void JNICALL
-Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(
-    JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock(JNIEnv *env, jobject thiz,
+                                                                        jboolean active) {
+    (void) env;
+    (void) thiz;
+    int v = active ? 1 : 0;
+    if (v == g_rt_clock) return;
+    g_rt_clock = v;
+    LOGI("delivery clock -> %s (poll path %s)", v ? "runtime" : "poll",
+         v ? "suppress-only" : "inject+suppress");
+}
+
+/**
+ * 取一帧"截至 now_nanos 应发出的事件"（运行时通道专用）。
+ *
+ * 每事件写 4 个 long（handle / type / timestamp / values 个数），值写进 [values]，
+ * 每事件占 16 个 float 槽（与 `sensors_event_t.data` 同宽）。**值个数必须与框架 JNI
+ * 的 switch 一致**：加速度/磁场/方向/陀螺仪/重力/线性加速度 恰好 3 个；
+ * 未校准三兄弟 6 个；旋转矢量三家 4 个；步数两兄弟 1 个。
+ * @return 写入的事件条数
+ */
+JNIEXPORT jint JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_runtimeFrame(JNIEnv *env, jobject thiz,
+                                                                    jlong now_nanos,
+                                                                    jlongArray meta,
+                                                                    jfloatArray values) {
+    (void) thiz;
+    if (!g_rt_clock || !vw_is_active() || meta == NULL || values == NULL) return 0;
+    enum { MAX_FRAME = 32, META_STRIDE = 4, VALUE_STRIDE = 16 };
+    portal_sensor_event_t buf[MAX_FRAME];
+    int n = vw_generate(buf, MAX_FRAME, (long long) now_nanos);
+    if (n <= 0) return 0;
+
+    jsize mlen = (*env)->GetArrayLength(env, meta);
+    jsize vlen = (*env)->GetArrayLength(env, values);
+    int cap = (int) (mlen / META_STRIDE);
+    if (cap > n) cap = (int) n;
+    if (cap > (int) (vlen / VALUE_STRIDE)) cap = (int) (vlen / VALUE_STRIDE);
+    if (cap <= 0) return 0;
+
+    jlong *m = (*env)->GetLongArrayElements(env, meta, NULL);
+    jfloat *v = (*env)->GetFloatArrayElements(env, values, NULL);
+    if (m == NULL || v == NULL) {
+        if (m != NULL) (*env)->ReleaseLongArrayElements(env, meta, m, JNI_ABORT);
+        if (v != NULL) (*env)->ReleaseFloatArrayElements(env, values, v, JNI_ABORT);
+        return 0;
+    }
+    for (int i = 0; i < cap; i++) {
+        m[i * META_STRIDE + 0] = buf[i].sensor;
+        m[i * META_STRIDE + 1] = buf[i].type;
+        m[i * META_STRIDE + 2] = buf[i].timestamp;
+        m[i * META_STRIDE + 3] = value_count_for_type(buf[i].type);
+        for (int k = 0; k < VALUE_STRIDE; k++) v[i * VALUE_STRIDE + k] = buf[i].data.f[k];
+    }
+    (*env)->ReleaseLongArrayElements(env, meta, m, 0);
+    (*env)->ReleaseFloatArrayElements(env, values, v, 0);
+    return cap;
+}
+
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(    JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
     jlong now_nanos) {
     (void) env;
     (void) thiz;

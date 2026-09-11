@@ -80,6 +80,7 @@ internal object SystemRuntimeChannel {
     @Volatile private var failTicks = 0
     @Volatile private var sentCount = 0L
     @Volatile private var configCalls = 0
+    @Volatile private var sendFails = 0L
 
     /** 是否已注册载体（后续阶段据此决定"投递走哪条路"） */
     val carrierReady: Boolean get() = carrierHandle != 0
@@ -351,8 +352,83 @@ internal object SystemRuntimeChannel {
     }
 
     // ------------------------------------------------------------------
-    // 投递（S3 起使用；本阶段只提供能力，不接线）
+    // 投递（S3 起使用）
     // ------------------------------------------------------------------
+
+    /** 单帧上限（与原生层一致）；缓冲复用，避免每帧分配 */
+    private const val MAX_FRAME = 32
+    private val frameMeta = LongArray(MAX_FRAME * 4)
+    private val frameValues = FloatArray(MAX_FRAME * 16)
+    private val valueScratch = HashMap<Int, FloatArray>()
+
+    @Volatile private var delivering = false
+    @Volatile private var pumpFrames = 0L
+    @Volatile private var pumpEvents = 0L
+
+    val isDelivering: Boolean get() = delivering
+
+    /**
+     * 开始投递：先把原生层的 poll 路径降级为"只压制"，之后由 [pump] 驱动生成与发送。
+     *
+     * **必须在泵线程起来之前调用**（否则会出现"两边都不发"的空窗）；失败返回 false，
+     * 调用方应保持 poll 路径不变（功能不降级）。
+     */
+    fun startDelivery(): Boolean {
+        if (delivering) return true
+        if (!carrierReady) return false
+        return runCatching {
+            BinderSensorNative.setRuntimeClock(true)
+            delivering = true
+            Logger.info("SystemRuntimeChannel: 投递已交给运行时通道（poll 路径转纯压制）")
+            true
+        }.onFailure {
+            lastError = "startDelivery: ${it.message}"
+            Logger.error("SystemRuntimeChannel: 切换投递节拍失败", it)
+        }.getOrDefault(false)
+    }
+
+    /** 停投递并**立刻**把节拍交回 poll 路径（顺序不能反：先停泵再切时钟）。 */
+    fun stopDelivery() {
+        if (!delivering) return
+        delivering = false
+        runCatching { BinderSensorNative.setRuntimeClock(false) }
+            .onFailure { Logger.warn("SystemRuntimeChannel: 交回 poll 节拍失败：${it.message}") }
+        Logger.info(
+            "SystemRuntimeChannel: 投递交回 poll 路径（frames=$pumpFrames sent=$sentCount errors=$sendFails）"
+        )
+    }
+
+    /**
+     * 一帧：取到期事件并逐条投递。[nowNanos] 必须是 `CLOCK_BOOTTIME`（与框架事件同基）。
+     * @return 实际投递成功的事件条数
+     */
+    fun pump(nowNanos: Long): Int {
+        if (!delivering || !carrierReady) return 0
+        val n = runCatching { BinderSensorNative.runtimeFrame(nowNanos, frameMeta, frameValues) }
+            .onFailure {
+                sendFails++
+                lastError = "frame: ${it.message}"
+            }
+            .getOrDefault(0)
+        if (n <= 0) return 0
+        pumpFrames++
+        var sent = 0
+        for (i in 0 until n) {
+            val handle = frameMeta[i * 4].toInt()
+            val type = frameMeta[i * 4 + 1].toInt()
+            val ts = frameMeta[i * 4 + 2]
+            val count = frameMeta[i * 4 + 3].toInt().coerceIn(1, 16)
+            // handle 还没学到就不送：宁可少一条，也不能把 A 传感器的数据写进 B 传感器
+            if (handle == 0) continue
+            val values = scratchFor(count)
+            System.arraycopy(frameValues, i * 16, values, 0, count)
+            if (send(handle, type, ts, values)) sent++ else sendFails++
+        }
+        pumpEvents += sent
+        return sent
+    }
+
+    private fun scratchFor(n: Int): FloatArray = valueScratch.getOrPut(n) { FloatArray(n) }
 
     /**
      * 推送一条事件（**handle 可以是真实 HAL handle** —— 原生入口不检查归属）。
@@ -373,6 +449,7 @@ internal object SystemRuntimeChannel {
 
     /** 释放载体（开关关闭时调用；线程与缓冲由框架保留复用）。 */
     fun releaseCarrier() {
+        stopDelivery()
         val h = carrierHandle
         if (h == 0 || ptr == 0L) return
         carrierHandle = 0
@@ -390,7 +467,9 @@ internal object SystemRuntimeChannel {
     fun status(): String {
         val err = if (lastError.isEmpty()) "" else " err=$lastError"
         return "rtch=$phase resolved=$resolved ptr=${hex(ptr)} " +
-                "carrier=${hex(carrierHandle.toLong())} cb=$configCalls sent=$sentCount$err"
+                "carrier=${hex(carrierHandle.toLong())} delivering=$delivering " +
+                "frames=$pumpFrames events=$pumpEvents sent=$sentCount fails=$sendFails " +
+                "cb=$configCalls$err"
     }
 
     private fun hex(v: Long): String = "0x" + java.lang.Long.toHexString(v)
