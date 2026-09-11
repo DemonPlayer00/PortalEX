@@ -70,12 +70,10 @@ static int g_gyro_init = 0;
 static double g_gait_phase = 0.0;
 /* 一个波形周期 = 多少步（校准量）。
  * 原始波形是"一个周期 = 一步"。用户按"波长 ×3"迭代了两次：3 → **9**（本轮默认 9 步/周期）。
- * 可用 /data/local/tmp/portalex_gait.txt 里的整数在线校准（1~16，见 gait_load_calibration）；
- * 该文件若存在会**覆盖**这里的默认值。 */
+ * 这是**编译期常量**：不再有任何运行时校准入口（曾有一个读 /data/local/tmp 的临时口子，
+ * 已按要求连同那个文件一起移除）。 */
 static int g_gait_steps = 9;
 static int g_gait_step_index = 0;         /* 周期内的第几步，用于轮转 PLL 目标相位 */
-static long long g_gait_cal_last_ns = 0;  /* 校准文件的读取节流 */
-static void gait_load_calibration(long long now_nanos);
 static long long g_gait_anchor_ns = 0;   /* 最近一步的时间戳 */
 static long long g_gait_interval_ns = 0; /* 平滑后的步间隔（相位推进的节拍来源） */
 
@@ -271,7 +269,6 @@ void vw_seed_handle(int32_t type, int32_t handle, uint32_t sensor_flags) {
 
 void vw_update_state(double speed, double azimuth_deg, int moving, long long steps,
                      long long now_nanos) {
-    gait_load_calibration(now_nanos);
     pthread_mutex_lock(&g_lock);
     g_speed = speed;
     g_target_azimuth = azimuth_deg;
@@ -311,27 +308,6 @@ const char *vw_gait_describe(void) {
     static char buf[48];
     snprintf(buf, sizeof(buf), "stride%d(pure-sin)", g_gait_steps);
     return buf;
-}
-
-/**
- * 在线校准：一个波形周期 = 多少步。
- *
- * 读 `/data/local/tmp/portalex_gait.txt`（一个整数，1~16）。文件不存在/内容非法就沿用当前值。
- * 只读、不写；节流 1s 一次（挂在 vw_update_state 上，状态每 50ms 来一次）。
- * 这是**临时校准口**：等常数定下来就该删掉，别留在产品里。
- */
-static void gait_load_calibration(long long now_nanos) {
-    if (g_gait_cal_last_ns != 0 && now_nanos - g_gait_cal_last_ns < 1000000000LL) return;
-    g_gait_cal_last_ns = now_nanos;
-    FILE *f = fopen("/data/local/tmp/portalex_gait.txt", "re");
-    if (f == NULL) return;
-    int v = 0;
-    int got = fscanf(f, "%d", &v);
-    fclose(f);
-    if (got == 1 && v >= 1 && v <= 16 && v != g_gait_steps) {
-        g_gait_steps = v;
-        g_gait_step_index = 0;
-    }
 }
 
 int vw_dump_handles(char *out, size_t out_size) {
