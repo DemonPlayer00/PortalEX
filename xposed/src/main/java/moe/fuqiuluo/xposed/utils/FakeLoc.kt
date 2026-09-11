@@ -150,6 +150,17 @@ object FakeLoc {
      */
     var cadenceScale = 1.0
 
+    /**
+     * 模拟会话期间的速度保底（m/s）。
+     *
+     * 为什么需要：真机语义下**静止定位没有有效航向**（speed==0 ⇒ `hasBearing()` 无意义），
+     * 应用会据此放弃航向——实测目标应用（步道乐跑）在 MI6 上表现为"停下即指针归 0、恒指北"，
+     * 而我们注入的位置本身是对的（`vel=0.0 bear=295°` 稳定）。保底一个极小速度，
+     * 让 `bearing` 保持"有效"，指针停在最后朝向而不是归零。
+     * 值要小到不像在走（0.3 m/s ≈ 1.08 km/h），但足以让 hasBearing 成立。
+     */
+    var speedFloor = 0.3
+
     fun cadenceForSpeed(speed: Double): Int {
         val base = ((60.0 + 30.0 * speed) * 1.15).toInt().coerceIn(60, 220)
         if (cadenceScale == 1.0) return base
