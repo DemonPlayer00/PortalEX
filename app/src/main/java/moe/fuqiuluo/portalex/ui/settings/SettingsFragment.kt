@@ -36,6 +36,7 @@ import moe.fuqiuluo.portalex.ext.reportDuration
 
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 import moe.fuqiuluo.portalex.ui.viewmodel.SettingsViewModel
@@ -296,11 +297,8 @@ class SettingsFragment : Fragment() {
                 showToast("定位服务加载异常，配置未同步")
                 return
             }
-            if(!MockServiceHelper.putConfig(lm, context)) {
-                showToast("更新远程配置失败")
-            } else {
-                showToast("同步配置成功")
-            }
+            // 三态结果：成功 / 没握手 / 系统侧拒绝 —— 后者绝不能说"成功"（那是假成功）
+            showToast(ConfigSync.push(context, lm).message(context))
         }
     }
 

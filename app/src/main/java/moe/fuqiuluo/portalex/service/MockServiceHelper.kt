@@ -297,49 +297,17 @@ object MockServiceHelper {
         return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
-    fun putConfig(locationManager: LocationManager, context: Context): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-
-        FakeLoc.altitude = context.altitude
-        FakeLoc.speed = context.speed
-        FakeLoc.enableDebugLog = context.debug
-        FakeLoc.disableFusedLocation = context.disableFusedProvider
-        FakeLoc.needDowngradeToCdma = context.needDowngradeToCdma
-        FakeLoc.minSatellites = context.minSatelliteCount
-        FakeLoc.enableAGPS = context.enableAGPS
-        FakeLoc.enableNMEA = context.enableNMEA
-        FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
-        FakeLoc.disableGetFromLocation = !context.enableGetFromLocation
-        // 实验性：Binder 外周传感器模拟（系统框架层接管，默认关）
-        FakeLoc.enableBinderSensorMock = context.binderSensorMock
-        FakeLoc.sensorGridHz = context.sensorGridHz
-        FakeLoc.cadenceScale = context.cadenceScale.toDouble()
-        // Calibration 页的注入噪声档（半宽，见 SensorNoise）
-        FakeLoc.noiseProfile = context.sensorNoise
-
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.PUT_CONFIG)
-        // 不再携带 enable：模拟启停只由 start/stop 命令控制（旧实现 App 侧 enable 恒 false，
-        // 打开设置页/GNSS 页触发的 put_config 会把系统侧模拟静默关闭）
-        rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
-        rely.putDouble(Key.SPEED, FakeLoc.speed)
-        rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
-        rely.putBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
-        rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
-        rely.putInt(Key.MIN_SATELLITES, FakeLoc.minSatellites)
-        rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, context.loopBroadcastlocation)
-        rely.putBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
-        rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
-        rely.putBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
-        rely.putBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
-        rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
-        rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
-        // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
-        rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
-
+    /**
+     * **纯传输**：把一条命令 Bundle 发给系统侧。
+     *
+     * 不碰偏好、不写镜像、不解释结果 —— "发什么/什么时候发/失败了意味着什么"
+     * 属于 [ConfigSync]（配置）或各自的调用点（会话命令）。
+     * 未握手时直接返回 false（调用方据此区分"没服务"与"被拒绝"）。
+     */
+    fun send(locationManager: LocationManager?, rely: Bundle): Boolean {
+        if (locationManager == null) return false
+        if (!::randomKey.isInitialized) return false
+        if (rely.getString(Key.COMMAND_ID) == null) return false
         return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
@@ -367,26 +335,6 @@ object MockServiceHelper {
      * 会让本命令返回 false，App 侧据此给出明确提示——**不做假成功**。
      * 启动时（tryInitService 之后）也调一次，让开关跨重启自动恢复。
      */
-    fun setBinderSensorMock(locationManager: LocationManager, enabled: Boolean): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.SET_SENSOR_MOCK)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, enabled)
-        // 这条命令是 App 启动时唯一会走到的"系统侧传感器配置"载体：
-        // 噪声档随它一起恢复，否则系统进程重启后校准结果就丢了（退回硬编码默认）。
-        runCatching {
-            val ctx = Portal.appContext
-            FakeLoc.noiseProfile = ctx.sensorNoise
-            FakeLoc.sensorGridHz = ctx.sensorGridHz
-            rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
-            rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
-        }.onFailure { Log.w("MockServiceHelper", "传感器侧配置恢复失败：${it.message}") }
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
-
-
     private fun startLoopBroadcastLocation(locationManager: LocationManager) {
         val appContext = Portal.appContext
         val delayTime = appContext.reportDuration.toLong()

@@ -16,6 +16,7 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
@@ -241,7 +242,8 @@ class MockServiceViewModel : ViewModel() {
                 MockServiceHelper.tryInitService(value)
                 // 实验性开关跨重启恢复：服务握手成功后把当前偏好同步给系统侧。
                 // 关闭时同样要下发——系统侧进程重启后不该残留"开着"的状态。
-                MockServiceHelper.setBinderSensorMock(value, Portal.appContext.binderSensorMock)
+                // 启动恢复：开关 + 栅格 + 噪声档一次下发（唯一出口，见 ConfigSync）
+                ConfigSync.restoreAfterHandshake(Portal.appContext, value)
             }
         }
 
@@ -269,9 +271,8 @@ class MockServiceViewModel : ViewModel() {
 
         ensureMotionLoop(activity)
 
-        FakeLoc.speed = activity.speed
-        FakeLoc.altitude = activity.altitude
-        FakeLoc.accuracy = activity.accuracy
+        // 只写本进程镜像（摇杆/运动循环读的是这份）；下发是另一件事，见 ConfigSync.push
+        ConfigSync.mirrorLocal(activity)
 
         return rocker
     }
