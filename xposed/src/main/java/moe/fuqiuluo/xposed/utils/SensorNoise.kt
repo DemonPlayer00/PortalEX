@@ -121,9 +121,15 @@ object SensorNoise {
         ITEMS.firstOrNull { i in it.start..it.end }?.digits ?: 4
     }
 
-    /** 单值显示（按该槽所属行的小数位） */
-    fun format(index: Int, value: Float): String =
-        String.format("%.${DIGITS[index.coerceIn(0, COUNT - 1)]}f", value)
+    /**
+     * 单值显示（按该槽所属行的小数位）。
+     *
+     * **显式 Locale.US**：`String.format` 默认跟随系统 Locale，在逗号小数点的区域
+     * （de_DE / fr_FR…）会显示成 `0,0010`，既难看又可能被用户照抄回输入框后再也解析不了。
+     */
+    fun format(index: Int, value: Float): String = String.format(
+        java.util.Locale.US, "%.${DIGITS[index.coerceIn(0, COUNT - 1)]}f", value
+    )
 
     /** 一行的显示串：三轴用 "/" 连接 */
     fun formatItem(item: Item, values: FloatArray): String =
@@ -155,10 +161,26 @@ object SensorNoise {
         return Result.success(filled)
     }
 
-    /** 把 [item] 行的新值写进 [values]（返回新数组，不改原数组） */
+    /**
+     * 把 [item] 行的新值写进 [values]（返回新数组，不改原数组）。
+     *
+     * [filled] 会被**校验并钳位**：长度不符直接拒绝（旧实现会 ArrayIndexOutOfBoundsException），
+     * NaN 退回该槽默认，越界值钳到该行上限 —— 不允许任何非法值绕过 [parseItem] 落进档里
+     * （旧实现只在"下一次 sanitize"时才纠正，中间那段时间已经按坏值注入了）。
+     */
     fun withItem(values: FloatArray, item: Item, filled: FloatArray): FloatArray {
+        require(filled.size == item.size) {
+            "${item.title} 需要 ${item.size} 个数值，收到 ${filled.size} 个"
+        }
         val out = sanitize(values)
-        for (i in 0 until item.size) out[item.start + i] = filled[i]
+        for (i in 0 until item.size) {
+            val v = filled[i]
+            out[item.start + i] = when {
+                v.isNaN() -> DEFAULTS[item.start + i]
+                item.isBias -> v.coerceIn(-item.max, item.max)
+                else -> v.coerceIn(0f, item.max)
+            }
+        }
         return out
     }
 
@@ -185,10 +207,22 @@ object SensorNoise {
     /** "a,b,c,…" 形式的持久化串（pref 用） */
     fun encode(values: FloatArray): String = values.joinToString(",")
 
-    /** 解析 [encode] 的产物；损坏/空串 ⇒ 全默认 */
+    /**
+     * 解析 [encode] 的产物。
+     *
+     * **坏 token 让整串作废**（回默认），而不是丢掉它继续：丢掉会让其后的值整体前移，
+     * 得到一个"每个数都合法、但槽位全错"的档 —— 那比回默认危险得多（噪声会按错误的
+     * 传感器注入，而页面上看不出异常）。短串照旧由 [sanitize] 补默认（前缀位置仍然正确），
+     * 超长串只取前 [COUNT] 个（同样前缀正确）。
+     */
     fun decode(text: String?): FloatArray {
         if (text.isNullOrBlank()) return DEFAULTS.copyOf()
-        val parsed = text.split(',').mapNotNull { it.trim().toFloatOrNull() }
-        return sanitize(parsed.toFloatArray())
+        val parts = text.split(',')
+        val n = minOf(parts.size, COUNT)
+        val parsed = FloatArray(n)
+        for (i in 0 until n) {
+            parsed[i] = parts[i].trim().toFloatOrNull() ?: return DEFAULTS.copyOf()
+        }
+        return sanitize(parsed)
     }
 }
