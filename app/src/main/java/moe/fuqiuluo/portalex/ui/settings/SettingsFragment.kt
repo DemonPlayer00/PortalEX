@@ -23,6 +23,7 @@ import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.disableFusedProvider
 import moe.fuqiuluo.portalex.ext.disableWifiScan
@@ -74,6 +75,7 @@ class SettingsFragment : Fragment() {
         binding.accuracyValue.text = "%.2f米".format(context.accuracy)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
         binding.sensorGridValue.text = context.sensorGridHz.let { if (it <= 0) "自动" else "${it}Hz" }
+        binding.cadenceScaleValue.text = "%.2f×".format(context.cadenceScale)
         binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
 
         binding.altitudeLayout.setOnClickListener {
@@ -174,6 +176,21 @@ class SettingsFragment : Fragment() {
             requireContext().binderSensorMock = isChecked
             showToast(if (isChecked) "已开启外周传感器模拟（重启目标应用生效）" else "已关闭外周传感器模拟")
             updateRemoteConfig()
+        }
+
+        // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
+        binding.cadenceScaleLayout.setOnClickListener {
+            showDialog("步频倍率（1=原公式）", "%.2f".format(context.cadenceScale)) {
+                val v = it.trim().toDoubleOrNull()
+                if (v == null || v <= 0.0 || v > 10.0) {
+                    Toast.makeText(context, "请输入 0.2 ~ 3.0 的数值", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                requireContext().cadenceScale = v.toFloat()
+                binding.cadenceScaleValue.text = "%.2f×".format(requireContext().cadenceScale)
+                showToast("步频倍率：%.2f×（同速度下步频×%.2f）".format(requireContext().cadenceScale, requireContext().cadenceScale))
+                updateRemoteConfig()
+            }
         }
 
         // 「注入栅格分辨率」：0=自动（跟随框架采用值）；也可填任意 Hz（钳 20~400）

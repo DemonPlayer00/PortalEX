@@ -142,8 +142,18 @@ object FakeLoc {
      * **唯一公式源**：传感器侧（步数推进/摆动）与位置侧（bearing 摇晃频率）都读它，
      * 两边频率才会严格一致。
      */
+    /**
+     * 步频倍率（设置页「步频倍率」）：默认 1.0 = 逐位保持原公式；非 1 时按倍率微调
+     * "步频 ↔ 速度"的关系（例如 1.1 = 同样速度下步频快 10%）。
+     * 作用在**基础值 clamp 之后**，并再钳进 30~300 的物理合理区间——
+     * 这样默认值下输出与改动前完全一致（不会因为换了钳位区间而改变既有行为）。
+     */
+    var cadenceScale = 1.0
+
     fun cadenceForSpeed(speed: Double): Int {
-        return ((60.0 + 30.0 * speed) * 1.15).toInt().coerceIn(60, 220)
+        val base = ((60.0 + 30.0 * speed) * 1.15).toInt().coerceIn(60, 220)
+        if (cadenceScale == 1.0) return base
+        return Math.round(base * cadenceScale).toInt().coerceIn(30, 300)
     }
 
     // ---- 朝向生成器（**唯一所有者 = 位置端**；app 端只跟随，不做任何加工）----

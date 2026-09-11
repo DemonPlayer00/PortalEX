@@ -5,6 +5,7 @@ import android.location.LocationManager
 import android.os.Bundle
 import android.util.Log
 import moe.fuqiuluo.portalex.Portal
+import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
@@ -310,6 +311,7 @@ object MockServiceHelper {
         // 实验性：Binder 外周传感器模拟（系统框架层接管，默认关）
         FakeLoc.enableBinderSensorMock = context.binderSensorMock
         FakeLoc.sensorGridHz = context.sensorGridHz
+        FakeLoc.cadenceScale = context.cadenceScale.toDouble()
 
         val rely = Bundle()
         rely.putString("command_id", "put_config")
@@ -328,6 +330,7 @@ object MockServiceHelper {
         rely.putBoolean("disable_get_from_location", FakeLoc.disableGetFromLocation)
         rely.putBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
         rely.putInt("sensor_grid_hz", FakeLoc.sensorGridHz)
+        rely.putFloat("cadence_scale", FakeLoc.cadenceScale.toFloat())
 
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
