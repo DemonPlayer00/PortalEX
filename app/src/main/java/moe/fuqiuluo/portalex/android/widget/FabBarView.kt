@@ -9,6 +9,7 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.animation.AccelerateInterpolator
@@ -156,15 +157,21 @@ class FabBarView @JvmOverloads constructor(
             .setDuration(200)
             .setInterpolator(DecelerateInterpolator())
             .start()
-        forEachAction {
-            it.visibility = View.VISIBLE
-            it.isEnabled = true
-        }
+        // 功能按钮保持 VISIBLE：可见性**一律由 outline 裁剪渲染管理**，不再做
+        // INVISIBLE 切换——INVISIBLE 会在裁剪窗口尚未展开到位时就让按钮消失，
+        // 展开/收起动画出现「先亮后裁」的割裂感。
+        forEachAction { it.isEnabled = true }
         animateClip(width, 220, DecelerateInterpolator())
         postDelayed({ expandButton.isClickable = true }, 240)
     }
 
-    /** 收起：主按钮旋转复位 + outline 向左收回；功能按钮 INVISIBLE（占位、点击透视） */
+    /**
+     * 收起：主按钮旋转复位 + outline 向左收回。
+     *
+     * 功能按钮保持 `VISIBLE`——视觉由 outline 裁剪隐藏，触摸由 [dispatchTouchEvent]
+     * 按同一裁剪宽度穿透；只关掉 [View.isEnabled]（裁剪边线仍压在按钮上的极小条带
+     * 不应响应点击）。
+     */
     fun close() {
         if (!mOpened) return
         mOpened = false
@@ -174,12 +181,22 @@ class FabBarView @JvmOverloads constructor(
             .setDuration(200)
             .setInterpolator(DecelerateInterpolator())
             .start()
-        forEachAction {
-            it.visibility = View.INVISIBLE
-            it.isEnabled = false
-        }
+        forEachAction { it.isEnabled = false }
         animateClip(collapsedWidth(), 200, AccelerateInterpolator())
         postDelayed({ expandButton.isClickable = true }, 220)
+    }
+
+    /**
+     * 触摸与裁剪同边界：`clipToOutline` 只裁**绘制**，不裁触摸——子 View 仍按 layout
+     * 矩形命中。若不做这一步，收起态被裁掉的功能按钮会照常吃掉点击（同时还会挡住
+     * 下层视图的点击）。裁剪窗口之外一律返回 false，让事件穿透给下层。
+     *
+     * 只在 `ACTION_DOWN` 判定：一次手势的归属在按下时决定，后续 MOVE/UP 若因窗口
+     * 动画变化而被判出界，会把已捕获的手势打断。
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN && ev.x > clipWidth) return false
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun toggle() {
@@ -194,10 +211,7 @@ class FabBarView @JvmOverloads constructor(
         expandButton.isClickable = true
         clipWidth = collapsedWidth()
         invalidateOutline()
-        forEachAction {
-            it.visibility = View.INVISIBLE
-            it.isEnabled = false
-        }
+        forEachAction { it.isEnabled = false }
     }
 
     private fun forEachAction(block: (View) -> Unit) {
