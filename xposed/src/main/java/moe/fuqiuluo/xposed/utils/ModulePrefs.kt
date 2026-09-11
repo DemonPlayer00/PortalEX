@@ -18,7 +18,7 @@ import java.io.File
  */
 internal object ModulePrefs {
 
-    private const val PREFS_NAME = "portal"
+    private const val PREFS_NAME = PortalProtocol.PREFS_NAME
 
     /** 诊断输出：这条通道每个被注入的应用进程都会走一遍，默认安静，只在调试模式下说话 */
     private inline fun dbg(msg: String) {
@@ -45,7 +45,7 @@ internal object ModulePrefs {
      */
     fun binderSensorMockEnabled(): Boolean? = cachedBinderSensorMock
 
-    private val cachedBinderSensorMock: Boolean? by lazy { readBoolean("binderSensorMock") }
+    private val cachedBinderSensorMock: Boolean? by lazy { readBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK) }
 
     private fun readBoolean(key: String): Boolean? {
         val prefs = open() ?: run {

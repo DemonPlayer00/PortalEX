@@ -198,7 +198,8 @@ object BinderSensorMock {
                 Logger.error("BinderSensorMock: ${BinderSensorNative.lastLoadError()}")
                 return false
             }
-            val ok = BinderSensorNative.install(syms.toOffsets())
+            // 走带契约校验的入口：长度/顺序不对就明确拒绝，而不是喂给 native 静默失效
+            val ok = BinderSensorNative.installChecked(syms.toOffsets())
             if (ok) {
                 nativeReady = true
                 seedHandleMap()
