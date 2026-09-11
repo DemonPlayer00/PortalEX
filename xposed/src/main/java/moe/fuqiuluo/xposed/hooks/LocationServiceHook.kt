@@ -302,35 +302,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 
         LocationNMEAHook(cILocationManager)
 
-        // ===== 段 1 · 取位（getLastLocation）：立即更新虚拟坐标/计步/路线推进 =====
-        if(cILocationManager.hookAllMethods("getLastLocation", afterHook {
-                // android 7.0.0 ~ 10.0.0
-                // Location getLastLocation(in LocationRequest request, String packageName);
-                // android 11.0.0
-                // Location getLastLocation(in LocationRequest request, String packageName, String featureId);
-                // android 12.0.0 ~ 15.0.0
-                // @nullable Location getLastLocation(String provider, in LastLocationRequest request, String packageName, @nullable String attributionTag);
-                // Why are there so... I'm really speechless
-
-                // Virtual Coordinate: Instantly update the latest virtual coordinates
-                // Roulette Move: Each request moves a certain distance
-                // Route Simulation: Move according to a preset route
-                //val uid = FqlUtils.getCallerUid()
-                // Determine whether it is an app that needs a hook
-                if (!FakeLoc.enable) return@afterHook
-
-                // It can't be null, because I'm judging in the previous step
-                val location = result as? Location ?: Location("gps")
-
-                result = injectLocation(location)
-
-                if(FakeLoc.enableDebugLog) {
-                    Logger.debug("getLastLocation: injected! $result")
-                }
-        }).isEmpty()) {
-            Logger.error("hook getLastLocation failed")
-        }
-
+        hookLastLocation(cILocationManager)   // 段 1：取位（getLastLocation）
         // ===== 段 2 · 监听器注册家族（requestLocationUpdates / (un)registerLocationListener）=====
         // android 12 and later remove `requestLocationUpdates`
         cILocationManager.hookAllMethods("requestLocationUpdates", beforeHook {
@@ -1125,6 +1097,44 @@ internal object LocationServiceHook: BaseLocationHook() {
      * 从 [onService] 拆出的具名小节：**内容逐字未改**（仅整体缩进对齐）。注册顺序必须与
      * [onService] 里的调用顺序一致 —— 同一方法上的多个回调按注册顺序执行。
      */
+
+    /**
+     * 取位（getLastLocation）：立即更新虚拟坐标/计步/路线推进。
+     *
+     * 从 [onService] 拆出的具名小节：**内容逐字未改**（含段首横幅、仅整体缩进对齐）。
+     * 注册顺序必须与 [onService] 里的调用顺序一致。
+     */
+    private fun hookLastLocation(cILocationManager: Class<*>) {
+        // ===== 段 1 · 取位（getLastLocation）：立即更新虚拟坐标/计步/路线推进 =====
+        if(cILocationManager.hookAllMethods("getLastLocation", afterHook {
+                // android 7.0.0 ~ 10.0.0
+                // Location getLastLocation(in LocationRequest request, String packageName);
+                // android 11.0.0
+                // Location getLastLocation(in LocationRequest request, String packageName, String featureId);
+                // android 12.0.0 ~ 15.0.0
+                // @nullable Location getLastLocation(String provider, in LastLocationRequest request, String packageName, @nullable String attributionTag);
+                // Why are there so... I'm really speechless
+
+                // Virtual Coordinate: Instantly update the latest virtual coordinates
+                // Roulette Move: Each request moves a certain distance
+                // Route Simulation: Move according to a preset route
+                //val uid = FqlUtils.getCallerUid()
+                // Determine whether it is an app that needs a hook
+                if (!FakeLoc.enable) return@afterHook
+
+                // It can't be null, because I'm judging in the previous step
+                val location = result as? Location ?: Location("gps")
+
+                result = injectLocation(location)
+
+                if(FakeLoc.enableDebugLog) {
+                    Logger.debug("getLastLocation: injected! $result")
+                }
+        }).isEmpty()) {
+            Logger.error("hook getLastLocation failed")
+        }
+
+    }
     private fun hookCurrentLocation(cILocationManager: Class<*>) {
         cILocationManager.hookAllMethods("getCurrentLocation", beforeHook {
             // 不同 Android 版本参数位置不同：
