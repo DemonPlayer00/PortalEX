@@ -88,6 +88,61 @@ static int g_installed = 0;
  * 两者**互斥**——同时开会让同一条事件送两份。默认 0（开关关闭时行为逐位不变）。
  */
 static int g_rt_clock = 0;
+
+/*
+ * 通用出口观测器：记录**我们没有接管**的类型的到达情况（类型 / 条数 / 最近值 / 最近时间）。
+ * 目的：厂商私有传感器（如 pedometer_minute 33171034、oplus_activity_recognition 33171037）
+ * 也在同一个出口上，应用可能从它们读步频/活动 —— 只监控、不改写，用于判断
+ * "公版在走、私版不动"这类不自洽。槽位少、无锁（诊断用途，允许竞态）。
+ */
+#define OBS_SLOTS 24
+typedef struct {
+    int32_t type;
+    long long count;
+    float last;
+    long long last_ts;
+    long long first_ts;
+} obs_slot_t;
+static obs_slot_t g_obs[OBS_SLOTS];
+
+static void obs_note(int32_t type, float v0, long long ts) {
+    if (type <= 0) return;
+    int free_slot = -1;
+    for (int i = 0; i < OBS_SLOTS; i++) {
+        if (g_obs[i].type == type) {
+            g_obs[i].count++;
+            g_obs[i].last = v0;
+            g_obs[i].last_ts = ts;
+            return;
+        }
+        if (free_slot < 0 && g_obs[i].type == 0) free_slot = i;
+    }
+    if (free_slot >= 0) {
+        g_obs[free_slot].type = type;
+        g_obs[free_slot].count = 1;
+        g_obs[free_slot].last = v0;
+        g_obs[free_slot].first_ts = ts;
+        g_obs[free_slot].last_ts = ts;
+    }
+}
+
+/** 把观测到的**私有类型**（type >= 0x10000）写成 "33171034:120/min:v=37 ..." */
+static void obs_dump(char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) return;
+    size_t used = 0;
+    out[0] = '\0';
+    for (int i = 0; i < OBS_SLOTS; i++) {
+        if (g_obs[i].type < 0x10000 || g_obs[i].count == 0) continue;
+        long long span = g_obs[i].last_ts - g_obs[i].first_ts;
+        long long per_min = 0;
+        if (span > 0) per_min = (long long) ((double) g_obs[i].count * 6e10 / (double) span);
+        int w = snprintf(out + used, out_size - used, "%s%d:%lld/min:v=%.3f",
+                         used ? " " : "", g_obs[i].type, per_min, (double) g_obs[i].last);
+        if (w > 0) used += (size_t) w;
+        if (used + 48 >= out_size) break;
+    }
+    if (used == 0) snprintf(out, out_size, "none");
+}
 static ps_target_t g_targets[MAX_TARGETS];
 static int g_target_count = 0;
 static int g_seen_handle[256]; /* 观测到的 type→handle（无锁快查，只做首见登记） */
@@ -232,6 +287,8 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
         }
         /* 真实事件先喂给虚拟世界看一眼（取真实计数器值做接管基线） */
         vw_note_real_event(type, e->data.f[0]);
+        /* 未接管的类型只做观测（厂商私有传感器在同一个出口上） */
+        if (!vw_owns_type(type)) obs_note(type, e->data.f[0], e->timestamp);
         if (vw_owns_type(type)) {
             suppressed++;
             continue;
@@ -549,6 +606,9 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
            vw_step_rate_per_min(now_ns));
     APPEND(" steps_boot=%lld", vw_step_counter_value());
     APPEND(" steps_base=%lld", vw_real_step_counter());
+    char priv[320];
+    obs_dump(priv, sizeof(priv));
+    APPEND(" priv=[%s]", priv);
     APPEND(" gait=%s", vw_gait_describe());
     char handles[256];
     vw_dump_handles(handles, sizeof(handles));

@@ -575,7 +575,103 @@ object SystemSensorManagerHook {
      * 朝向类覆盖为模拟 bearing 对应的旋转数据（不随真实转动变化）；
      * 步数只改写为模拟真值（真值由位置回调推进，避免双重计数）。
      */
+    // ==================================================================
+    // 临时探针（调试用；原因查清后整块删除）
+    //
+    // 目的：把"app 级外周传感器模拟"对**步频**做的每一步操作都记下来，并落盘到
+    // `files/steptrace.txt`（hook 与 Test 页在两个 classloader 里，静态量不互通，
+    // 文件是唯一可靠的共享通道）。
+    //
+    // 关键对照：**框架到货值（arrival）** vs **本进程自己维护的 globalSteps**。
+    // 两者若其中一个跑得更快（例如 2×），应用读到的计数器就会翻倍 —— "+8 步 vs +4 步"。
+    // ==================================================================
+
+    private val trLock = Any()
+    private var trArrivals = 0L        // 收到的框架计数器事件数
+    private var trAdoptedSteps = 0L    // 从到货值采纳的步数合计
+    private var trRewrites = 0L        // 改写投递给应用的次数
+    private var trPushes = 0L          // 本进程主动推的步数合计
+    private var trPushEvents = 0L      // 主动推的事件条数
+    private var trYields = 0L          // "让位"命中次数
+    private var trBlocked = 0L         // 被临时阻断开关挡下的次数
+    private var trLastArrival = -1     // 最近一次框架到货值
+    private var trLastGlobal = -1L     // 最近一次改写写出的 globalSteps
+    private var trLastWriteNanos = 0L
+
+    /**
+     * 临时阻断：`debug.portalex.appsensor=0|off|false` 时，app 级模拟整体不动作
+     * （不改写、不推步、不干预），用于把"系统侧"单独隔离出来测。
+     * 属性读取走隐藏 API，模块代码在 LSPosed 的豁免下可用；失败按"不阻断"处理。
+     */
+    @Volatile private var trBlockCache = false
+    @Volatile private var trBlockCheckedNanos = 0L
+
+    private fun appMockBlocked(): Boolean {
+        val now = System.nanoTime()
+        if (now - trBlockCheckedNanos > 500_000_000L) {
+            trBlockCheckedNanos = now
+            trBlockCache = runCatching {
+                val v = Class.forName("android.os.SystemProperties")
+                    .getMethod("get", String::class.java, String::class.java)
+                    .invoke(null, "debug.portalex.appsensor", "1") as String
+                v == "0" || v.equals("off", true) || v.equals("false", true)
+            }.getOrDefault(false)
+        }
+        return trBlockCache
+    }
+
+    /** 把轨迹写进 files/steptrace.txt（≤1 次/秒），Test 页读同一个文件显示。 */
+    private fun trFlush(force: Boolean = false) {
+        val now = System.nanoTime()
+        if (!force && now - trLastWriteNanos < 1_000_000_000L) return
+        trLastWriteNanos = now
+        runCatching {
+            val dir = android.app.AndroidAppHelper.currentApplication()?.filesDir ?: return
+            val f = java.io.File(dir, "steptrace.txt")
+            val text = synchronized(trLock) {
+                "blocked=${appMockBlocked()} arrival=${trLastArrival} global=${trLastGlobal}\n" +
+                        "events: arrivals=${trArrivals} adopted=${trAdoptedSteps} rewrites=${trRewrites} " +
+                        "pushEvents=${trPushEvents} pushedSteps=${trPushes} yields=${trYields} blocked=${trBlocked}"
+            }
+            f.writeText(text)
+            XposedBridge.log("[StepTrace] " + text.replace("\n", " | "))
+        }
+    }
+
+    /** 属性原值（诊断用） */
+    private fun propRaw(): String = runCatching {
+        Class.forName("android.os.SystemProperties")
+            .getMethod("get", String::class.java, String::class.java)
+            .invoke(null, "debug.portalex.appsensor", "1") as String
+    }.getOrDefault("?")
+
+    /*
+     * 安装即打一条：任何被注入的进程都能在 logcat 看到"app 级模拟是否被临时阻断"。
+     * 之所以要 logcat 这条通道：hook 与 app 主体在两个 classloader 里，静态量不互通，
+     * 文件通道只有在同一 UID 的进程内才可读；logcat 则无条件可见。
+     */
+    init {
+        runCatching {
+            XposedBridge.log(
+                "[StepTrace] app-side sensor mock installed (blocked=${appMockBlocked()}, " +
+                        "debug.portalex.appsensor=${propRaw()})"
+            )
+        }
+    }
+
+    /** Test 页用（同进程读文件；hook 在另一个 classloader 里，静态量读不到） */
+    fun stepTraceText(): String = runCatching {
+        val dir = android.app.AndroidAppHelper.currentApplication()?.filesDir
+            ?: return@runCatching "（拿不到 filesDir）"
+        java.io.File(dir, "steptrace.txt").takeIf { it.exists() }?.readText() ?: "（还没有轨迹）"
+    }.getOrDefault("（读失败）")
+
     private fun injectClientEvent(args: Array<Any?>) {
+        if (appMockBlocked()) {
+            synchronized(trLock) { trBlocked++ }
+            trFlush()
+            return
+        }
         if (args.size < 4) return
         val handle = args[0] as? Int ?: return
         val values = args[1] as? FloatArray ?: return
@@ -606,10 +702,19 @@ object SystemSensorManagerHook {
         if (lastArrivalCounter >= 0) {
             val delta = arrival - lastArrivalCounter
             if (delta in 1..20) globalSteps.addAndGet(delta)
+            synchronized(trLock) { trAdoptedSteps += delta.coerceIn(0, 20).toLong() }
         }
         lastArrivalCounter = arrival
         lastStepArrivalNanos = System.nanoTime()
-        values[0] = globalSteps.get().toFloat()
+        val g = globalSteps.get()
+        values[0] = g.toFloat()
+        synchronized(trLock) {
+            trArrivals++
+            trRewrites++
+            trLastArrival = arrival
+            trLastGlobal = g.toLong()
+        }
+        trFlush()
     }
 
     private fun addSampleNoise(type: Int, values: FloatArray) {
@@ -641,6 +746,11 @@ object SystemSensorManagerHook {
      * 按当前步频推进模拟步数并主动投递给已注册的步数 listener。
      */
     private fun advanceStepsFromLocation() {
+        if (appMockBlocked()) {
+            synchronized(trLock) { trBlocked++ }
+            trFlush()
+            return
+        }
         val now = System.nanoTime()
         val last = lastStepAdvanceNanos
         lastStepAdvanceNanos = now
@@ -651,6 +761,8 @@ object SystemSensorManagerHook {
         // 框架正在送步事件（系统侧外周注入，或真机计步器）→ 本进程让位，不再自己推：
         // 两条通道各报一次就是双倍步频，且两者时钟会缓慢漂移（表现为"还在增长"）
         if (now - lastStepArrivalNanos < STEP_ARRIVAL_FRESH_NANOS) {
+            synchronized(trLock) { trYields++ }
+            trFlush()
             if (!stepPushYielded) {
                 stepPushYielded = true
                 Logger.info("步数推送让位：框架正在送步事件（避免同一步被两条通道各报一次）")
@@ -671,6 +783,12 @@ object SystemSensorManagerHook {
         // 步数：真机 TYPE_STEP_COUNTER 是 on-change——每发生一步就发一次（步行时 ~1.5~3 Hz），
         // 与位置回调率无关。这里把本间隔累积的每一步**按步间隔分摊投递**：
         // 事件率回到真实步率，每步的时间戳落在各自步点（应用按事件时间算步频也准）。
+        synchronized(trLock) {
+            trPushEvents += whole
+            trPushes += whole
+            trLastGlobal = globalSteps.get().toLong()
+        }
+        trFlush()
         val perStepNanos = ((dtSec * 1_000_000_000.0) / whole).toLong().coerceAtLeast(1L)
         var timestamp = now - perStepNanos * whole
         for (step in 1..whole) {
