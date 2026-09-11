@@ -271,6 +271,8 @@ object RemoteCommandHandler {
                 val binderSensorMock = rely.getBoolean("binder_sensor_mock", FakeLoc.enableBinderSensorMock)
                 // 注入栅格分辨率（Hz，0=自动）：读不到键时保持当前值（旧版 App 不下发）
                 val sensorGridHz = rely.getInt("sensor_grid_hz", FakeLoc.sensorGridHz)
+                // 步频倍率（微调步频↔速度）：读不到键时保持当前值
+                val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -290,6 +292,7 @@ object RemoteCommandHandler {
                 // 非 system_server 进程只镜像开关值，不做任何安装。
                 FakeLoc.enableBinderSensorMock = binderSensorMock
                 FakeLoc.sensorGridHz = sensorGridHz
+                FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
                 runCatching { BinderSensorNative.setGridHz(sensorGridHz) }
                     .onFailure { Logger.warn("栅格设置下发失败：${it.message}") }
                 // 原生层挂不上就明确回报失败：App 侧据此提示"配置失败"，
