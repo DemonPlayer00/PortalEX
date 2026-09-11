@@ -67,6 +67,8 @@ static int g_gyro_init = 0;
 /* 步态相位（走路时身体竖直方向做周期性加减速：每步两拍——脚跟着地 + 蹬地）。
  * 频率与步频严格同源（cadenceForSpeed），因此 IMU 的周期峰与步事件是对齐的。 */
 static double g_gait_phase = 0.0;
+static long long g_gait_anchor_ns = 0;   /* 最近一步的时间戳 */
+static long long g_gait_interval_ns = 0; /* 平滑后的步间隔（相位推进的节拍来源） */
 
 static double g_sway_from = 0.0, g_sway_to = 0.0, g_sway_side = 1.0;
 static long long g_sway_start = 0, g_sway_half = 500000000LL;
@@ -96,9 +98,10 @@ static double g_gyro_drift_x = 0.0, g_gyro_drift_y = 0.0, g_gyro_drift_z = 0.0;
  * 3 m/s 时竖直约 ±1.05 m/s²，跑步更快时按速度增大到 2.2 封顶。
  * 静止时三项全为 0（真机静置也只有噪声底）。 */
 static const double GAIT_Z_PER_SPEED = 0.35;
-static const double GAIT_AMP_MAX = 2.2;
-static const double GAIT_AY_RATIO = 0.30;
-static const double GAIT_AX_RATIO = 0.18;
+static const double GAIT_Z_BASE = 0.55; /* 低速也留得住可检测幅度（1 m/s → 0.9 m/s²） */
+static const double GAIT_AMP_MAX = 3.0;
+static const double GAIT_AY_RATIO = 0.25;
+static const double GAIT_AX_RATIO = 0.12;
 
 /* 与 SystemSensorManagerHook 一致的常量 */
 static const double BEARING_APPROACH_ALPHA = 0.18; /* 每 50ms 靠近 18% → τ≈0.25s */
@@ -318,37 +321,85 @@ static void advance_one_tick(long long now) {
     }
     g_micro_offset += (g_micro_target - g_micro_offset) * (1.0 - exp(-dt / MICRO_JITTER_TAU));
 
-    /* 步态相位：频率 = 步频（与位置端 cadenceForSpeed 同式），只在移动时推进 */
+    /* 步态相位推进：优先用**实测步间隔**（与步事件同一节拍），没测到再退回步频公式 */
     if (g_moving && g_speed > 0.05) {
-        double cadence = 60.0 + 30.0 * g_speed;
-        cadence *= 1.15;
-        if (cadence < 60.0) cadence = 60.0;
-        if (cadence > 220.0) cadence = 220.0;
-        double step_hz = cadence / 60.0;
+        double step_hz;
+        if (g_gait_interval_ns > 0) {
+            step_hz = 1e9 / (double) g_gait_interval_ns;
+        } else {
+            double cadence = 60.0 + 30.0 * g_speed;
+            cadence *= 1.15;
+            if (cadence < 60.0) cadence = 60.0;
+            if (cadence > 220.0) cadence = 220.0;
+            step_hz = cadence / 60.0;
+        }
         g_gait_phase += 2.0 * M_PI * step_hz * dt;
-        if (g_gait_phase > 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
+        if (g_gait_phase >= 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
     }
     (void) now;
 }
 
 /**
+ * 步态相位改为**由步时间戳连续插值**（而不是自由积分 + 每步跳相）。
+ *
+ * 为什么：自由积分的相位与 Java 侧真正发步的时刻会缓慢漂移（实测 IMU 基频 184~193/分
+ * vs 步事件 180/分）——"IMU 峰"和"计步事件"本是同一个人的同一步，错开后，同时消费
+ * 两条通道的应用（IMU 检测 + 计步事件去重）会把同一步算成两步。
+ * 而直接用"上一步时间 + 平滑步间隔"算相位：峰值**精确落在步时间戳上**、波形连续
+ * （跳相会在波形里留下一道台阶，检测器照样多计——实测踩到过），频率恒等于步频。
+ */
+static void gait_note_step(long long ts) {
+    if (g_gait_anchor_ns > 0) {
+        long long iv = ts - g_gait_anchor_ns;
+        /* 只接受合理步间隔（0.2~3 步/秒），异常值不参与平滑 */
+        if (iv > 330000000LL && iv < 5000000000LL) {
+            g_gait_interval_ns = g_gait_interval_ns > 0
+                                         ? (g_gait_interval_ns * 3 + iv) / 4
+                                         : iv;
+        }
+    }
+    g_gait_anchor_ns = ts;
+
+    /* PLL 纠相：增益必须**极小**（0.02 rad ≈ 波形上 0.02 m/s²，低于噪声）。
+     * 0.35 那种量级会在每个步点留下一个肉眼可见的台阶，而台阶本身就是检测器的
+     * "额外一步"——实测 180 步/分被读成 202 步/分。小增益下几十步才纠完漂移，
+     * 波形始终光滑，频率仍由实测步间隔推进（= 步频）。 */
+    double err = M_PI / 2.0 - g_gait_phase;
+    while (err > M_PI) err -= 2.0 * M_PI;
+    while (err < -M_PI) err += 2.0 * M_PI;
+    g_gait_phase += 0.02 * err;
+    while (g_gait_phase >= 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
+    while (g_gait_phase < 0.0) g_gait_phase += 2.0 * M_PI;
+}
+
+/**
  * 当前步态加速度（设备坐标，m/s²）。静止时三项全 0。
  *
- * 竖直分量是**每步一个主峰 + 一个次峰**（脚跟着地为主、蹬地为次），不是两个等高的峰：
- * 基频必须等于**步频**。这条不是审美问题——用对称的 sin(2φ) 时，一切按频谱/过零
- * 估算步频的应用都会把结果读成 2× 步频（实测反馈里的"锁死在 480"正是这种量级：
- * 220 步/分 ×2 ≈ 440~480）。前后每个步一拍、左右每两步一拍（同侧摆动）。
+ * **一次步 = 一个可检测峰**，这是硬约束：真机上"走路"在 IMU 上就是每步一下，
+ * 应用（阈值/峰值/过零/FFT 各种做法）都据此计步。踩过两次坑：
+ *   1. 对称的 sin(2φ)（每步两个等高峰）→ 基频被读成 2× 步频；
+ *   2. 三个分量放在**不同相位**（前后 +0.6rad、左右半步频）→ 单分量都是单峰，
+ *      但**模长** sqrt(ax²+ay²+az²) 在一个步周期里出现额外过阈值，估计器多计
+ *      （实测 180 步/分的真实步事件被读成 214 步/分）。
+ * 所以三个分量同相（只留一点点相位差以不过分"塑料"），竖直分量占主导：
+ * 模长因此每步只有一个峰。
  */
-static void gait_accel(double *ax, double *ay, double *az) {
+static void gait_accel(long long t, double *ax, double *ay, double *az) {
+    (void) t;
     if (!g_moving || g_speed <= 0.05) {
         *ax = *ay = *az = 0.0;
         return;
     }
-    double amp = GAIT_Z_PER_SPEED * g_speed;
+    double amp = GAIT_Z_PER_SPEED * g_speed + GAIT_Z_BASE;
     if (amp > GAIT_AMP_MAX) amp = GAIT_AMP_MAX;
-    *az = amp * (0.72 * sin(g_gait_phase) + 0.28 * sin(2.0 * g_gait_phase + 0.9));
-    *ay = GAIT_AY_RATIO * amp * sin(g_gait_phase + 0.6);
-    *ax = GAIT_AX_RATIO * amp * sin(0.5 * g_gait_phase);
+    double ph = g_gait_phase;
+    /* 三个分量**几乎同相**（±0.05rad）：竖直占主导时，加速度**模长**
+     * sqrt(ax²+ay²+az²) 的形状才与 az 一致 —— 一份纯单峰。相位差一大（0.2~0.25rad），
+     * 模长就出现小双峰，阈值类检测器会多计一步（实测 172 步/分被读成 195）。
+     * 留 0.05rad 只是不让三分量严格成比例（那本身也是一种特征）。 */
+    *az = amp * sin(ph);
+    *ay = GAIT_AY_RATIO * amp * sin(ph + 0.05);
+    *ax = GAIT_AX_RATIO * amp * sin(ph - 0.05);
 }
 
 /** 当前注入方位：平滑中轴 + 摆动 + 微抖（归一化到 [0,360)） */
@@ -433,7 +484,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             /* 平放姿态 + 步态：平放避免真实倾角破坏 getRotationMatrix 投影，
              * 步态则让"在走路"这件事在 IMU 上真的看得见 */
             double gx, gy, gz;
-            gait_accel(&gx, &gy, &gz);
+            gait_accel(now, &gx, &gy, &gz);
             e->data.f[0] = (float) gx;
             e->data.f[1] = (float) gy;
             e->data.f[2] = (float) (9.81 + gz);
@@ -447,7 +498,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
         }
         case PS_TYPE_LINEAR_ACCELERATION: {
             double gx, gy, gz;
-            gait_accel(&gx, &gy, &gz);
+            gait_accel(now, &gx, &gy, &gz);
             e->data.f[0] = (float) gx;
             e->data.f[1] = (float) gy;
             e->data.f[2] = (float) gz;
@@ -544,6 +595,8 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
                     ed->flags = g_chan[c].flags;
                 }
             }
+            /* 这一步在 IMU 上也必须正好是一个峰（见 gait_note_step） */
+            gait_note_step(ts);
         }
 
         advance_one_tick(t);
