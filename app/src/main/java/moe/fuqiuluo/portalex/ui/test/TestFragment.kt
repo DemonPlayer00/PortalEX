@@ -113,6 +113,7 @@ class TestFragment : Fragment() {
             appendLine("实测速度       ${"%.2f".format(status.getDouble("measured_speed"))} m/s")
             appendLine("移动判定       ${yn(status.getBoolean("moving"))}")
             appendLine("步数累计       ${status.getLong("steps_total")}")
+            appendLine("开机总步数     ${status.getLong("steps_boot")}（我们推送的 STEP_COUNTER 值；本次会话起点 ${status.getLong("steps_base")}）")
             appendLine()
             appendLine("── 注入计数（原生层）──")
             appendLine(prettyNative(status.getString("native")))

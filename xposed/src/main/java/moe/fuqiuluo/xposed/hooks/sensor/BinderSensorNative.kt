@@ -150,6 +150,24 @@ internal object BinderSensorNative {
         nowNanos: Long
     )
 
+    /**
+     * 客户端视角的**开机总步数**（最近一次发出的 TYPE_STEP_COUNTER 值）。
+     *
+     * 应用若用"间歇读系统总步数、两次求差"的方式算步频（不少计步类应用的实现方式），
+     * 它读到的就是这个数 —— Test 页把它单独打一行，便于和应用的读数直接对。
+     */
+    external fun stepCounterValue(): Long
+
+    /**
+     * 真实（HAL）STEP_COUNTER 的最近值：**模拟接管时的起点**。
+     *
+     * 真机的计数器是"开机以来累计"，应用按 Δ步数/Δt 算步频时依赖它**连续**。
+     * 若模拟从一个凭空的值（例如随机 3000~12000）开始，第一帧就会是一次几千步的跳变，
+     * 这类应用会被这一步跳变长期拉高读数。取真实值做起点则天然连续。
+     * @return ≥0 = 已知；-1 = 未知（无步数传感器 / 还没收到过真实事件）
+     */
+    external fun realStepCounter(): Long
+
     /** 诊断字符串（已挂载/已改写槽位/已发事件数…） */
     external fun status(): String
 }

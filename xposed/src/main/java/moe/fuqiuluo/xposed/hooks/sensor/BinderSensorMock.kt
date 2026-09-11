@@ -3,7 +3,6 @@ package moe.fuqiuluo.xposed.hooks.sensor
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
-import kotlin.random.Random
 
 /**
  * Binder 外周传感器模拟（实验性，默认关）—— system_server 侧调度。
@@ -43,7 +42,18 @@ object BinderSensorMock {
     @Volatile private var pumpThread: Thread? = null
 
     /** 模拟步数真值（与 app 端 hook 同量级：随机起点，像"已经走了不少"） */
-    private var steps = Random.nextLong(3000, 12000)
+    /**
+     * 步数计数器值（对外推送的"开机以来累计"）。
+     *
+     * **不再从随机值起跳**：模拟接管时接在**真实**计数器后面（见 [realStepCounter]），
+     * 会话重启时取 `max(上次推送值, 真实值)`，保证单调不回退。
+     * 随机起点会让第一帧出现几千步的跳变 —— 按 Δ步数算步频的应用会被长期拉高读数
+     * （实测反馈：重启后 Test 页显示 0，一开始播放模拟就跳到 7000+）。
+     */
+    private var steps = 0L
+
+    /** 本次会话的起点（诊断用：Test 页显示） */
+    @Volatile private var stepsBase = 0L
     private var stepFraction = 0.0
     private var lastTickNanos = 0L
     private var failTicks = 0
@@ -114,6 +124,10 @@ object BinderSensorMock {
         rely.putDouble("gait_speed", speed)
         rely.putInt("cadence_intent", FakeLoc.cadenceForSpeed(speed))
         rely.putLong("steps_total", steps)
+        // 客户端视角的"开机总步数"（我们推送的 STEP_COUNTER 值）
+        rely.putLong("steps_boot", runCatching { BinderSensorNative.stepCounterValue() }
+            .getOrDefault(0L))
+        rely.putLong("steps_base", stepsBase)
         rely.putDouble("lat", FakeLoc.latitude)
         rely.putDouble("lon", FakeLoc.longitude)
         rely.putDouble("altitude", FakeLoc.altitude)
@@ -301,6 +315,22 @@ object BinderSensorMock {
         // ensurePump 内部会先切节拍再起泵，幂等；载体未就绪时它什么都不做。
         ensurePump()
 
+        if (!active) {
+            // 会话开始：把计数器锚到"真实值 / 上次推送值"的较大者（单调），避免跳变
+            val real = runCatching { BinderSensorNative.realStepCounter() }.getOrDefault(-1L)
+            steps = maxOf(steps, real, 0L)
+            stepsBase = steps
+            stepFraction = 0.0
+            active = true
+            // 每次激活都重播一次映射：传感器表可能因动态传感器增减而变化
+            seedHandleMap()
+            BinderSensorNative.setActive(true)
+            Logger.info(
+                "BinderSensorMock: activated base=$stepsBase (real=$real) " +
+                        "(${BinderSensorNative.status()})"
+            )
+        }
+
         val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
         if (moving && dt > 0.0 && dt < 5.0) {
             stepFraction += FakeLoc.cadenceForSpeed(speed) / 60.0 * dt
@@ -311,13 +341,6 @@ object BinderSensorMock {
             }
         }
 
-        if (!active) {
-            active = true
-            // 每次激活都重播一次映射：传感器表可能因动态传感器增减而变化
-            seedHandleMap()
-            BinderSensorNative.setActive(true)
-            Logger.info("BinderSensorMock: activated (${BinderSensorNative.status()})")
-        }
         // S2：载体引导在上面的"开关打开"分支里已经做过（幂等），这里只推进状态
         BinderSensorNative.updateState(speed, FakeLoc.processedBearing(), moving, steps, now)
     }

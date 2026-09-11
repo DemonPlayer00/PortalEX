@@ -103,10 +103,31 @@ static void step_bucket_tick(long long ts_nanos) {
     g_step_bucket_sec = sec;
 }
 
+static long long g_last_counter_value = 0; /* 最近一次发出的 STEP_COUNTER 值（诊断用） */
+/* 最近一次**观测到的真实** STEP_COUNTER 值（-1 = 还没见过）。
+ * 用途：模拟接管时把自家计数器**接在真实计数器后面**（真机是"开机以来累计"），
+ * 否则会出现"0 → 随机 3000~12000"的跳变 —— 按 Δ步数算步频的应用会被这一步跳变
+ * 长期拉高（7000 步摊到十几分钟就是几百步/分）。 */
+static long long g_real_counter = -1;
+
 static void step_emitted(long long ts_nanos) {
     step_bucket_tick(ts_nanos);
     if (g_step_bucket_sec >= 0) g_step_bucket[g_step_bucket_sec % STEP_BUCKETS]++;
     g_step_emit_total++;
+}
+
+/** 最近一次发给客户端的 TYPE_STEP_COUNTER 值（= "系统从开机到现在的总步数" 在客户端的样子） */
+long long vw_step_counter_value(void) { return g_last_counter_value; }
+
+/** 最近观测到的真实 STEP_COUNTER 值（-1 = 未知）。模拟接管时用它做起点，保证连续。 */
+long long vw_real_step_counter(void) { return g_real_counter; }
+
+/** 记一条真实事件（目前只用来取真实计数器值做基线） */
+void vw_note_real_event(int32_t type, float v0) {
+    if (type == PS_TYPE_STEP_COUNTER) {
+        long long v = (long long) v0;
+        if (v >= 0 && v != g_real_counter) g_real_counter = v;
+    }
 }
 
 /** 近 5 秒实际发出的步事件 → 步/分 */
@@ -660,6 +681,7 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
             ec->type = PS_TYPE_STEP_COUNTER;
             ec->timestamp = ts;
             ec->data.f[0] = (float) cnt; /* 与 asm/u64 视图同一段内存，真机 HAL 也写 float */
+            g_last_counter_value = cnt; /* 诊断：客户端看到的"开机总步数" */
             portal_sensor_event_t *ed = &out[n++];
             memset(ed, 0, sizeof(*ed));
             ed->version = (int32_t) sizeof(portal_sensor_event_t);
