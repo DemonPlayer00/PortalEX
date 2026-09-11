@@ -179,4 +179,13 @@ internal object BinderSensorNative {
 
     /** 诊断字符串（已挂载/已改写槽位/已发事件数…） */
     external fun status(): String
+
+    /**
+     * 「应用期望频率」观测快照：应用注册传感器时请求的采样周期/批量延迟 + 发起方 uid。
+     *
+     * 取自 `SensorEventConnection::enableDisable` 的 vtable 槽（**只记录、原样放行**）。
+     * 注意这是**原始请求值**；框架会用 `capRates()` 与厂商扩展再调整一次，
+     * 要"像"应以框架采用值为准（见 SensorRateProbe 里的 dump 解析，那一份带 `selected`）。
+     */
+    external fun enableRequests(): String
 }
