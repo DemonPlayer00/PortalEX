@@ -79,7 +79,11 @@ abstract class BaseDivineService {
                     if (FakeLoc.enableDebugLog) {
                         Logger.debug("ProxyBinder($from): $bundle")
                     }
-                    if(!RemoteCommandHandler.handleInstruction(randomKey, bundle)) {
+                    // 这是代理通道（调用者只可能是转发指令的 system_server），与
+                    // sendExtraCommand 那个"任何应用都能打"的入口不是一回事 ⇒ 显式区分来源
+                    if(!RemoteCommandHandler.handleInstruction(
+                            randomKey, bundle, RemoteCommandHandler.Origin.PROXY
+                        )) {
                         Logger.error("Failed to handle instruction in $from")
                     }
                     return true

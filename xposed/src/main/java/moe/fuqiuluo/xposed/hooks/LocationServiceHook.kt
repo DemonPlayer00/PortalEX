@@ -1268,7 +1268,10 @@ internal object LocationServiceHook: BaseLocationHook() {
     }
 
     private inline fun handleInstruction(command: String, rely: Bundle): Boolean {
-        return RemoteCommandHandler.handleInstruction(command, rely)
+        // provider 入口：任何应用都能调用 ⇒ 由 handleInstruction 内的调用者门禁把关
+        return RemoteCommandHandler.handleInstruction(
+            command, rely, RemoteCommandHandler.Origin.PROVIDER
+        )
     }
 }
 
