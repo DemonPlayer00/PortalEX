@@ -131,6 +131,22 @@ long long vw_real_step_counter(void);
  */
 void vw_note_real_event(int32_t type, const float *data);
 
+/**
+ * 「按应用期望出数据」：把框架观测到的采用速率与活跃状态灌进栅格通道。
+ *
+ * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播给所有人；这里照同一个模型走。
+ * `period_ns` = 框架 dump 的 `selected`（0 = 未指定 ⇒ 用默认栅格）；`active` = 是否有人订阅。
+ * 没人订阅（且近期也没有真实事件）时该类型**静默**——真机 HAL 没被启用时同样一条都不出。
+ * 只对栅格通道生效；步数两条流是 on-change，不受影响。
+ */
+void vw_set_channel_hint(int32_t type, long long period_ns, int active);
+
+/** 先把所有栅格通道标成不活跃，再按 dump 灌活跃者（缺席即静默，见实现注释） */
+void vw_clear_channel_hints(void);
+
+/** 各栅格通道的生效速率（诊断字符串："1:20ms 2:40ms(idle) …"），返回写入长度 */
+int vw_dump_rates(char *out, size_t out_size);
+
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);
 
