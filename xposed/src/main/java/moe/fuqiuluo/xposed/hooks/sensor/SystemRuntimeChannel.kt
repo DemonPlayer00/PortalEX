@@ -378,6 +378,13 @@ internal object SystemRuntimeChannel {
         if (!carrierReady) return false
         return runCatching {
             BinderSensorNative.setRuntimeClock(true)
+            /*
+             * 步数两条流"改走 poll 路径"的尝试**已实测否决**，默认不启用（保留开关备用）：
+             * 实测结果 —— poll 路径把步数节流到 ~48 步/分（意图 163/分），投递质量反而更差；
+             * 而且计数器在 Java 客户端**仍然是那个陈旧恒定值**（3169），说明"值被换掉"
+             * 与投递路径无关，两条路径都一样。详见 docs 与今日备忘。
+             */
+            // BinderSensorNative.setStepsViaPoll(true)
             delivering = true
             Logger.info("SystemRuntimeChannel: 投递已交给运行时通道（poll 路径转纯压制）")
             true
@@ -392,6 +399,7 @@ internal object SystemRuntimeChannel {
         if (!delivering) return
         delivering = false
         runCatching { BinderSensorNative.setRuntimeClock(false) }
+        runCatching { BinderSensorNative.setStepsViaPoll(false) }
             .onFailure { Logger.warn("SystemRuntimeChannel: 交回 poll 节拍失败：${it.message}") }
         Logger.info(
             "SystemRuntimeChannel: 投递交回 poll 路径（frames=$pumpFrames sent=$sentCount errors=$sendFails）"
