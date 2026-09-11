@@ -64,6 +64,10 @@ static double g_gyro_z = 0.0;          /* 低通后的角速度（rad/s） */
 static double g_last_az_for_gyro = 0.0;
 static int g_gyro_init = 0;
 
+/* 步态相位（走路时身体竖直方向做周期性加减速：每步两拍——脚跟着地 + 蹬地）。
+ * 频率与步频严格同源（cadenceForSpeed），因此 IMU 的周期峰与步事件是对齐的。 */
+static double g_gait_phase = 0.0;
+
 static double g_sway_from = 0.0, g_sway_to = 0.0, g_sway_side = 1.0;
 static long long g_sway_start = 0, g_sway_half = 500000000LL;
 static double g_micro_target = 0.0, g_micro_offset = 0.0;
@@ -85,6 +89,16 @@ static double g_mag_h = 35.0;
 static double g_mag_dip = 1.0;
 static double g_mag_bias_x = 0.0, g_mag_bias_y = 0.0;
 static double g_gyro_drift_x = 0.0, g_gyro_drift_y = 0.0, g_gyro_drift_z = 0.0;
+
+/* ---- 步态（IMU 里必须有走路的周期性信号，否则一切"从加速度/陀螺推算步频"的应用
+ *      只能看到一条直线，估计器会漂到一个荒谬值并锁死）----
+ * 量级取真机走路的典型值：竖直 ±(0.35×v) m/s²（每步两拍），前后 30%、左右 18%；
+ * 3 m/s 时竖直约 ±1.05 m/s²，跑步更快时按速度增大到 2.2 封顶。
+ * 静止时三项全为 0（真机静置也只有噪声底）。 */
+static const double GAIT_Z_PER_SPEED = 0.35;
+static const double GAIT_AMP_MAX = 2.2;
+static const double GAIT_AY_RATIO = 0.30;
+static const double GAIT_AX_RATIO = 0.18;
 
 /* 与 SystemSensorManagerHook 一致的常量 */
 static const double BEARING_APPROACH_ALPHA = 0.18; /* 每 50ms 靠近 18% → τ≈0.25s */
@@ -303,7 +317,38 @@ static void advance_one_tick(long long now) {
         g_micro_target = rng_range(-MICRO_JITTER_AMP, MICRO_JITTER_AMP);
     }
     g_micro_offset += (g_micro_target - g_micro_offset) * (1.0 - exp(-dt / MICRO_JITTER_TAU));
+
+    /* 步态相位：频率 = 步频（与位置端 cadenceForSpeed 同式），只在移动时推进 */
+    if (g_moving && g_speed > 0.05) {
+        double cadence = 60.0 + 30.0 * g_speed;
+        cadence *= 1.15;
+        if (cadence < 60.0) cadence = 60.0;
+        if (cadence > 220.0) cadence = 220.0;
+        double step_hz = cadence / 60.0;
+        g_gait_phase += 2.0 * M_PI * step_hz * dt;
+        if (g_gait_phase > 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
+    }
     (void) now;
+}
+
+/**
+ * 当前步态加速度（设备坐标，m/s²）。静止时三项全 0。
+ *
+ * 竖直分量是**每步一个主峰 + 一个次峰**（脚跟着地为主、蹬地为次），不是两个等高的峰：
+ * 基频必须等于**步频**。这条不是审美问题——用对称的 sin(2φ) 时，一切按频谱/过零
+ * 估算步频的应用都会把结果读成 2× 步频（实测反馈里的"锁死在 480"正是这种量级：
+ * 220 步/分 ×2 ≈ 440~480）。前后每个步一拍、左右每两步一拍（同侧摆动）。
+ */
+static void gait_accel(double *ax, double *ay, double *az) {
+    if (!g_moving || g_speed <= 0.05) {
+        *ax = *ay = *az = 0.0;
+        return;
+    }
+    double amp = GAIT_Z_PER_SPEED * g_speed;
+    if (amp > GAIT_AMP_MAX) amp = GAIT_AMP_MAX;
+    *az = amp * (0.72 * sin(g_gait_phase) + 0.28 * sin(2.0 * g_gait_phase + 0.9));
+    *ay = GAIT_AY_RATIO * amp * sin(g_gait_phase + 0.6);
+    *ax = GAIT_AX_RATIO * amp * sin(0.5 * g_gait_phase);
 }
 
 /** 当前注入方位：平滑中轴 + 摆动 + 微抖（归一化到 [0,360)） */
@@ -374,6 +419,8 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             add_noise_i(e, 2, 0.3f);
             break;
         case PS_TYPE_GRAVITY:
+            /* 重力只含恒定分量：走路的周期分量在 LINEAR_ACCELERATION 里，
+             * 两者相加正好等于 ACCELEROMETER（真机的物理关系） */
             e->data.f[0] = 0.0f;
             e->data.f[1] = 0.0f;
             e->data.f[2] = 9.81f;
@@ -382,11 +429,14 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             add_noise_i(e, 2, 0.01f);
             break;
         case PS_TYPE_ACCELEROMETER:
-        case PS_TYPE_ACCELEROMETER_UNCALIBRATED:
-            /* 平放姿态：与 GRAVITY 同源，避免真实倾角破坏 getRotationMatrix 投影 */
-            e->data.f[0] = 0.0f;
-            e->data.f[1] = 0.0f;
-            e->data.f[2] = 9.81f;
+        case PS_TYPE_ACCELEROMETER_UNCALIBRATED: {
+            /* 平放姿态 + 步态：平放避免真实倾角破坏 getRotationMatrix 投影，
+             * 步态则让"在走路"这件事在 IMU 上真的看得见 */
+            double gx, gy, gz;
+            gait_accel(&gx, &gy, &gz);
+            e->data.f[0] = (float) gx;
+            e->data.f[1] = (float) gy;
+            e->data.f[2] = (float) (9.81 + gz);
             e->data.f[3] = 0.0f;
             e->data.f[4] = 0.0f;
             e->data.f[5] = 0.0f;
@@ -394,11 +444,18 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             add_noise_i(e, 1, 0.01f);
             add_noise_i(e, 2, 0.01f);
             break;
-        case PS_TYPE_LINEAR_ACCELERATION:
+        }
+        case PS_TYPE_LINEAR_ACCELERATION: {
+            double gx, gy, gz;
+            gait_accel(&gx, &gy, &gz);
+            e->data.f[0] = (float) gx;
+            e->data.f[1] = (float) gy;
+            e->data.f[2] = (float) gz;
             add_noise_i(e, 0, 0.01f);
             add_noise_i(e, 1, 0.01f);
             add_noise_i(e, 2, 0.01f);
             break;
+        }
         case PS_TYPE_ROTATION_VECTOR:
         case PS_TYPE_GAME_ROTATION_VECTOR:
         case PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR: {
