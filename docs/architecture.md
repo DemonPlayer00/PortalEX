@@ -46,9 +46,9 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
 
 - hook 面铺在 `LocationServiceHook`（位置服务出口）与各厂商/第三方进程的 hook 上；
   核心手法是"在服务出口改写 + 主动定时回推"（`callOnLocationChanged`）。
-- `LocationServiceHook.onService()` 按主题分 9 段，函数开头有**分段地图**（段 1~9）；
-  段 6~9 已拆成 object 内 private fun。
-  ⚠️ 同一方法上的多个回调**按注册顺序执行**（XposedBridge 语义）⇒ 段序不可重排。
+- `LocationServiceHook.onService()` 已收成**一条 9 段的调用链**（60 行）：每段是 object 内一个
+  private fun（`hookLastLocation` … `hookVendorControllerPackage`），函数开头有**分段地图**。
+  ⚠️ 同一方法上的多个回调**按注册顺序执行**（XposedBridge 语义）⇒ 调用行的先后不可重排。
 - 语义基线：**允许并注入**（不再"吞掉注册/请求"）——"注册成功但永远没有回调"是真机上不存在的
   异常态，本身就是特征。
 
