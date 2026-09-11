@@ -374,9 +374,12 @@ object MockServiceHelper {
         // 这条命令是 App 启动时唯一会走到的"系统侧传感器配置"载体：
         // 噪声档随它一起恢复，否则系统进程重启后校准结果就丢了（退回硬编码默认）。
         runCatching {
-            FakeLoc.noiseProfile = Portal.appContext.sensorNoise
+            val ctx = Portal.appContext
+            FakeLoc.noiseProfile = ctx.sensorNoise
+            FakeLoc.sensorGridHz = ctx.sensorGridHz
             rely.putFloatArray("noise_profile", FakeLoc.noiseProfile)
-        }.onFailure { Log.w("MockServiceHelper", "噪声档恢复失败：${it.message}") }
+            rely.putInt("sensor_grid_hz", FakeLoc.sensorGridHz)
+        }.onFailure { Log.w("MockServiceHelper", "传感器侧配置恢复失败：${it.message}") }
         return locationManager.sendExtraCommand(PROVIDER_NAME, randomKey, rely)
     }
 
