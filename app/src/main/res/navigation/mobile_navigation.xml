@@ -36,6 +36,12 @@
         tools:layout="@layout/fragment_route_edit" />
 
     <fragment
+        android:id="@+id/nav_calibration"
+        android:name="moe.fuqiuluo.portalex.ui.calibration.CalibrationFragment"
+        android:label="@string/menu_calibration"
+        tools:layout="@layout/fragment_calibration" />
+
+    <fragment
         android:id="@+id/nav_test"
         android:name="moe.fuqiuluo.portalex.ui.test.TestFragment"
         android:label="@string/menu_test"
