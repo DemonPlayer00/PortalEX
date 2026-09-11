@@ -122,8 +122,14 @@ long long vw_step_counter_value(void);
 /** 最近观测到的**真实** STEP_COUNTER 值（-1 = 未知）：模拟接管时拿它做起点，避免跳变 */
 long long vw_real_step_counter(void);
 
-/** 记一条真实事件（当前只用于取真实计数器值） */
-void vw_note_real_event(int32_t type, float v0);
+/**
+ * 记一条真实事件（当前只用于取真实计数器值）。
+ *
+ * `data` 是**事件原始 16 个 float 槽的指针**，不是"第一个 float 值"：步数计数器在真机上
+ * 写的是 `sensors_event_t.u64.step_counter`（int64，占满 data[0..1]），按 float 读只能拿到
+ * 约 1e-41 的非规格化数（实测真机步数事件的 float 视图 = 0.000）。
+ */
+void vw_note_real_event(int32_t type, const float *data);
 
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);

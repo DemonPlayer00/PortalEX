@@ -122,10 +122,11 @@ long long vw_step_counter_value(void) { return g_last_counter_value; }
 /** 最近观测到的真实 STEP_COUNTER 值（-1 = 未知）。模拟接管时用它做起点，保证连续。 */
 long long vw_real_step_counter(void) { return g_real_counter; }
 
-/** 记一条真实事件（目前只用来取真实计数器值做基线） */
-void vw_note_real_event(int32_t type, float v0) {
+/** 记一条真实事件（目前只用来取真实计数器值做基线；见头文件里 int64 视图的说明） */
+void vw_note_real_event(int32_t type, const float *data) {
     if (type == PS_TYPE_STEP_COUNTER) {
-        long long v = (long long) v0;
+        long long v;
+        memcpy(&v, data, sizeof(v));
         if (v >= 0 && v != g_real_counter) g_real_counter = v;
     }
 }
@@ -680,7 +681,14 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
             ec->version = (int32_t) sizeof(portal_sensor_event_t);
             ec->type = PS_TYPE_STEP_COUNTER;
             ec->timestamp = ts;
-            ec->data.f[0] = (float) cnt; /* 与 asm/u64 视图同一段内存，真机 HAL 也写 float */
+            /*
+             * **int64 视图，不是 float**：真机 HAL 把步数写在
+             * `sensors_event_t.u64.step_counter`（占满 data[0..1]），框架与客户端 Java 侧
+             * 都按 int64 读。按 float 写会让客户端把 float 的**位模式**当成步数
+             * —— 实测把计数器顶到 700000 时，客户端读到 1227548160 = bits(700000.0f)。
+             * （真机步数事件的 float 视图实测为 0.000，正是"int64 小整数被当 float 读"的样子。）
+             */
+            ec->data.u64[0] = (uint64_t) cnt;
             g_last_counter_value = cnt; /* 诊断：客户端看到的"开机总步数" */
             portal_sensor_event_t *ed = &out[n++];
             memset(ed, 0, sizeof(*ed));
