@@ -51,6 +51,36 @@ internal object SensorHandleMap {
         }
     }
 
+    /**
+     * 厂商私有传感器（type >= `SENSOR_TYPE_DEVICE_PRIVATE_BASE` = 0x10000）清单。
+     *
+     * 为什么要单独看它们：应用拿步频/活动的路径不止公版 `TYPE_STEP_COUNTER`，
+     * 厂商还塞了一批私有类型（本机如 `pedometer_minute` 33171034、
+     * `oplus_activity_recognition` 33171037）。这些**也在同一个事件出口上**，
+     * 但不在本模块的接管集合里 —— 先监控，判断是否存在"公版在走、私版不动"的不自洽。
+     *
+     * @return "33171034:pedometer_minute:0x1f4 ..."；不可用时为 null
+     */
+    fun privateTypes(): String? {
+        return try {
+            val ctx = BinderUtils.getSystemContext() ?: return null
+            val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return null
+            val sensors = sm.getSensorList(Sensor.TYPE_ALL) ?: return null
+            val sb = StringBuilder()
+            for (s in sensors) {
+                if (s.type < 0x10000) continue
+                val handle = readInt(s, "getHandle", "mHandle") ?: continue
+                if (sb.isNotEmpty()) sb.append(' ')
+                sb.append(s.type).append(':').append(s.name?.trim()).append(":0x")
+                    .append(handle.toString(16))
+            }
+            if (sb.isEmpty()) null else sb.toString()
+        } catch (t: Throwable) {
+            Logger.error("SensorHandleMap: privateTypes failed: ${t.message}", t)
+            null
+        }
+    }
+
     /** 先试隐藏方法（@hide getHandle()），再试同名字段——绕过不同版本的差异 */
     private fun readInt(sensor: Sensor, method: String?, field: String): Int? {
         if (method != null) {
