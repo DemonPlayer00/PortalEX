@@ -31,7 +31,7 @@
  * ═══════════════════════════════════════════════════════════════════════════════
  */
 
-package moe.fuqiuluo.xposed.hooks.sensor
+package moe.fuqiuluo.xposed.hooks.sensor.frozen
 
 /**
  * 冻结态存根：只回答 Test 页的一句询问。
