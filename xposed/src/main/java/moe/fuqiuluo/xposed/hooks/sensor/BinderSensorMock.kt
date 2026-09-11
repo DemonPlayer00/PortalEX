@@ -114,6 +114,8 @@ object BinderSensorMock {
         rely.putString("native", runCatching { BinderSensorNative.status() }.getOrDefault("n/a"))
         // 运行时投递通道（"投递 100% 可控"那条路）的状态
         rely.putString("rt_channel", SystemRuntimeChannel.status())
+        // 厂商私有传感器清单（仅展示：它们也在同一个事件出口上，但不在接管集合内）
+        rely.putString("priv_sensors", SensorHandleMap.privateTypes() ?: "（读不到）")
         // 运动学权威值（system_server 侧）
         val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
         rely.putDouble("measured_speed", speed)
