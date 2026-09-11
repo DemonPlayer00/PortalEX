@@ -29,6 +29,7 @@ import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
+import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 class GnssMockFragment : Fragment() {
@@ -142,7 +143,7 @@ class GnssMockFragment : Fragment() {
         lifecycleScope.launch {
             button.isClickable = false
             try {
-                MockServiceHelper.putConfig(locationManager, requireContext())
+                ConfigSync.push(requireContext(), locationManager)
                 if (MockServiceHelper.startGnssMock(locationManager)) {
                     updateMockButtonState(button, "停止模拟", R.drawable.rounded_play_disabled_24)
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流

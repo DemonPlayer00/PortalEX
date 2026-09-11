@@ -21,6 +21,7 @@ import moe.fuqiuluo.portalex.databinding.FragmentCalibrationBinding
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
+import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.SensorNoiseCalibrator
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -196,8 +197,10 @@ class CalibrationFragment : Fragment() {
             showToast("定位服务加载异常，噪声档未下发（已存本地）")
             return
         }
-        if (!MockServiceHelper.putConfig(lm, requireContext())) {
-            showToast("下发失败：系统侧未接受（已存本地）")
+        val result = ConfigSync.push(requireContext(), lm)
+        if (!result.isOk) {
+            // 如实区分"没握手"和"系统侧拒绝"：两者都意味着**配置没生效**（本地已存）
+            showToast("${result.message(requireContext())}（已存本地）")
             return
         }
         // 系统侧是**单向下发**（proxy 用 transact 无应答），紧接着的状态回读很可能跑在配置前面
