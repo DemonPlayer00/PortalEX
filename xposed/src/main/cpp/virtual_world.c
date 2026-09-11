@@ -41,6 +41,15 @@ typedef struct {
     long long last_real_ns;
     int active_hint;
     int hinted;
+    /*
+     * 批量上报（真机语义：HAL 把事件攒在 FIFO 里，到批量边界一次性上报）。
+     * `batch_ns` 取框架 dump 的 `batching_period … selected`；0 = 不批量（默认、逐条上报）。
+     * 只有**所有**订阅者都要求批量时框架的 selected 才非 0，所以绝大多数情况这里是 0。
+     */
+    long long batch_ns;
+    long long batch_due_ns;
+    portal_sensor_event_t pend[8];
+    int pend_n;
 } vw_channel_t;
 
 static vw_channel_t g_chan[MAX_CHANNELS] = {
@@ -226,6 +235,33 @@ static double rng_range(double lo, double hi) { return lo + (hi - lo) * rng_unit
 
 static float rng_noise(float amp) { return (float) ((rng_unit() * 2.0 - 1.0) * amp); }
 
+/*
+ * 时间戳去网格化
+ * --------------
+ * 生成器按 10ms 栅格推进，原始时间戳全是 10ms 的整数倍（实测小数部分**一模一样**：
+ * ts=170.786569894 / 170.856569894 / …），而真机 HAL 的时间戳来自 SSC，抖得毫无规律
+ * —— "% 10ms == 0" 本身就是个可被判定的指纹。这里给每条事件的**时间戳**加一段抖动：
+ *   · 幅度取"该通道周期"的一小部分（≥200us、上限 4ms）⇒ 抹掉栅格指纹但不改变平均速率；
+ *   · 保证**严格单调**（同一批里后续事件永远在前一条之后）；
+ *   · 不允许跑到 now 之后（否则应用会看到"未来"的时间戳）。
+ * 数值本身仍是连续波形上的采样（只有时间轴抖），不会引入物理上说不通的数据。
+ */
+static long long g_last_emit_ts = 0;
+
+static long long jitter_ts(long long base, long long span_ns, long long now_ns) {
+    /* 幅度取周期的 ~5%（真机 SSC 时间戳的抖动就是几个百分点量级）：
+     * 足够让 "% 10ms == 0" 失效，又不会抖得比真机还"随机"。 */
+    long long amp = span_ns / 20;
+    if (amp < 150000) amp = 150000;    /* 至少 150us */
+    if (amp > 2000000) amp = 2000000;  /* 至多 2ms */
+    long long j = (long long) ((rng_unit() * 2.0 - 1.0) * (double) amp);
+    long long ts = base + j;
+    if (ts > now_ns) ts = now_ns;
+    if (ts <= g_last_emit_ts) ts = g_last_emit_ts + 1;
+    g_last_emit_ts = ts;
+    return ts;
+}
+
 int vw_owns_type(int32_t type) {
     switch (type) {
         case PS_TYPE_ACCELEROMETER:
@@ -277,20 +313,25 @@ void vw_init(void) {
  *
  * 只对**栅格通道**生效：步数两条流是 on-change（由步事件队列驱动），不受速率影响。
  */
-void vw_set_channel_hint(int32_t type, long long period_ns, int active) {
+void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, int active) {
     pthread_mutex_lock(&g_lock);
     for (int i = 0; i < MAX_CHANNELS; i++) {
         if (g_chan[i].type != type) continue;
         if (g_chan[i].period_ticks > 0) {
-            int changed = !g_chan[i].hinted || g_chan[i].period_ns != period_ns ||
-                          g_chan[i].active_hint != (active ? 1 : 0);
+            long long p = period_ns > 0 ? period_ns : 0;
+            long long b = batch_ns > 0 ? batch_ns : 0;
+            int changed = !g_chan[i].hinted || g_chan[i].period_ns != p ||
+                          g_chan[i].batch_ns != b || g_chan[i].active_hint != (active ? 1 : 0);
             g_chan[i].hinted = 1;
-            g_chan[i].period_ns = period_ns > 0 ? period_ns : 0;
+            g_chan[i].period_ns = p;
+            g_chan[i].batch_ns = b;
             g_chan[i].active_hint = active ? 1 : 0;
             if (changed) {
-                g_chan[i].next_due_ns = 0; /* 速率/活跃变化：重新对齐，不补旧账 */
-                LOGI("rate hint: type=%d period=%.1fms active=%d", type, g_chan[i].period_ns / 1e6,
-                     g_chan[i].active_hint);
+                g_chan[i].next_due_ns = 0; /* 速率/批量/活跃变化：重新对齐，不补旧账 */
+                g_chan[i].batch_due_ns = 0;
+                g_chan[i].pend_n = 0;
+                LOGI("rate hint: type=%d period=%.1fms batch=%.1fms active=%d", type, p / 1e6,
+                     b / 1e6, g_chan[i].active_hint);
             }
         }
         break;
@@ -331,8 +372,9 @@ int vw_dump_rates(char *out, size_t out_size) {
         if (g_chan[i].period_ticks <= 0 || !g_chan[i].known) continue;
         long long p = g_chan[i].period_ns > 0 ? g_chan[i].period_ns
                                              : (long long) g_chan[i].period_ticks * TICK_NS;
-        used += (size_t) snprintf(out + used, out_size - used, "%s%d:%.0fms%s",
+        used += (size_t) snprintf(out + used, out_size - used, "%s%d:%.0fms%s%s",
                                   used ? " " : "", g_chan[i].type, p / 1e6,
+                                  g_chan[i].batch_ns > 0 ? "/batch" : "",
                                   g_chan[i].hinted && !g_chan[i].active_hint ? "(idle)" : "");
         if (used >= out_size - 24) break;
     }
@@ -348,7 +390,12 @@ void vw_set_active(int active) {
         g_have_state = 0;
         memset(g_steps_q, 0, sizeof(g_steps_q));
         g_last_steps_seen = g_steps;
-        for (int i = 0; i < MAX_CHANNELS; i++) g_chan[i].next_due_ns = 0; /* 重新对齐栅格 */
+        g_last_emit_ts = 0;
+        for (int i = 0; i < MAX_CHANNELS; i++) {
+            g_chan[i].next_due_ns = 0; /* 重新对齐栅格 */
+            g_chan[i].batch_due_ns = 0;
+            g_chan[i].pend_n = 0;
+        }
     }
     g_active = active ? 1 : 0;
     pthread_mutex_unlock(&g_lock);
@@ -775,7 +822,7 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
                 g_dropped += 2;
                 continue;
             }
-            long long ts = g_steps_q[i].ts;
+            long long ts = jitter_ts(g_steps_q[i].ts, 300000000LL, now_nanos);
             long long cnt = g_steps_q[i].count;
             /* 计数器与检测器 = **同一次步事件、同一时间戳**：
              * 一个在涨而另一个不响，会被交叉比对看出来。 */
@@ -841,13 +888,49 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos) {
             }
             if (t < g_chan[c].next_due_ns) continue;
             g_chan[c].next_due_ns += period;
+            portal_sensor_event_t ev;
+            fill_event(&ev, &g_chan[c], t);
+            fill_values(&ev, t);
+            ev.timestamp = jitter_ts(t, period, now_nanos); /* 去掉 10ms 栅格指纹 */
+            if (g_chan[c].batch_ns > 0) {
+                /*
+                 * 批量上报：先攒在通道自己的小队列里，到批量边界一次性放出去
+                 * （真机是 HAL 在 FIFO 里攒够了再一次性上报）。队列满了丢**最旧**的，
+                 * 与 FIFO 溢出行为一致，并计入 g_dropped。
+                 */
+                int pcap = (int) (sizeof(g_chan[c].pend) / sizeof(g_chan[c].pend[0]));
+                if (g_chan[c].pend_n >= pcap) {
+                    memmove(&g_chan[c].pend[0], &g_chan[c].pend[1],
+                            sizeof(g_chan[c].pend[0]) * (size_t) (pcap - 1));
+                    g_chan[c].pend_n = pcap - 1;
+                    g_dropped++;
+                }
+                g_chan[c].pend[g_chan[c].pend_n++] = ev;
+                if (g_chan[c].batch_due_ns == 0) {
+                    g_chan[c].batch_due_ns = t + g_chan[c].batch_ns;
+                }
+                continue;
+            }
             if (n >= cap) {
                 g_dropped++;
                 continue;
             }
-            portal_sensor_event_t *e = &out[n++];
-            fill_event(e, &g_chan[c], t);
-            fill_values(e, t);
+            out[n++] = ev;
+        }
+
+        /* 批量边界到了：把攒下的一次性放出（各自保留自己的时间戳 = 一次上报多帧） */
+        for (int c = 0; c < MAX_CHANNELS; c++) {
+            if (g_chan[c].batch_ns <= 0 || g_chan[c].pend_n == 0) continue;
+            if (t < g_chan[c].batch_due_ns) continue;
+            for (int k = 0; k < g_chan[c].pend_n; k++) {
+                if (n >= cap) {
+                    g_dropped++;
+                    continue;
+                }
+                out[n++] = g_chan[c].pend[k];
+            }
+            g_chan[c].pend_n = 0;
+            g_chan[c].batch_due_ns = t + g_chan[c].batch_ns;
         }
     }
     g_last_tick = t;

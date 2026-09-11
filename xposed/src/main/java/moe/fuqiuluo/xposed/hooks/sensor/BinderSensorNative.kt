@@ -196,9 +196,10 @@ internal object BinderSensorNative {
      * 原样广播给所有人。所以这里只需要"一个传感器一个速率"——`periodNs` = 采用值
      * （纳秒；0 = 最快档/未指定 ⇒ 用内置默认栅格），`active` = 有没有人订阅。
      * 没人订阅时该类型**静默**（真机 HAL 没被启用时同样一条都不出）。
+     * `batchNs` = 框架 dump 的 `batching_period … selected`（0 = 逐条上报；非 0 时按批量边界成批放出）。
      * 只对栅格通道生效；步数两条流是 on-change，不受影响。
      */
-    external fun setChannelHint(type: Int, periodNs: Long, active: Boolean)
+    external fun setChannelHint(type: Int, periodNs: Long, batchNs: Long, active: Boolean)
 
     /** 先把所有栅格通道标成不活跃，随后按 dump 灌活跃者（缺席即静默） */
     external fun clearChannelHints()
