@@ -175,6 +175,24 @@ object StepProbe {
                 unavailable = "SENSOR_SERVICE 不可用"
                 return
             }
+            // 绑定核查：Java 侧到底把哪些"步数相关"条目摆在了表里、getDefaultSensor 选中的是哪个
+            runCatching {
+                val all = sm.getSensorList(Sensor.TYPE_ALL) ?: emptyList()
+                val dflt = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+                val dfltH = dflt?.let { runCatching { it.javaClass.getMethod("getHandle").invoke(it) as Int }.getOrDefault(-1) } ?: -1
+                android.util.Log.i("StepProbe", "default(TYPE_STEP_COUNTER) -> " +
+                        "handle=0x${dfltH.toString(16)} name=${dflt?.name} type=${dflt?.type}")
+                for (s2 in all) {
+                    val n = (s2.name ?: "").lowercase()
+                    val interesting = s2.type == 18 || s2.type == 19 ||
+                            s2.type >= 0x10000 && (n.contains("pedometer") || n.contains("step") ||
+                                    n.contains("activity") || n.contains("motion"))
+                    if (!interesting) continue
+                    val h = runCatching { s2.javaClass.getMethod("getHandle").invoke(s2) as Int }.getOrDefault(-1)
+                    android.util.Log.i("StepProbe", "sensor type=${s2.type} handle=0x${h.toString(16)} " +
+                            "name='${s2.name}' vendor='${s2.vendor}' flags=${runCatching { s2.javaClass.getDeclaredField("mFlags").also { it.isAccessible = true }.getInt(s2) }.getOrDefault(-1)}")
+                }
+            }.onFailure { android.util.Log.w("StepProbe", "binding dump failed", it) }
             val counter = sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
             if (counter == null) {
                 // 与目标应用同样的退化路径：没有步数传感器就只能回去算加速度
