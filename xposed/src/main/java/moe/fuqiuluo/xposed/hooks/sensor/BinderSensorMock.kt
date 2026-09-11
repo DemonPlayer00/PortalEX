@@ -103,6 +103,7 @@ object BinderSensorMock {
             val ok = BinderSensorNative.install(syms.toOffsets())
             if (ok) {
                 nativeReady = true
+                seedHandleMap()
                 Logger.info("BinderSensorMock: ${BinderSensorNative.status()}")
                 return true
             }
@@ -110,6 +111,22 @@ object BinderSensorMock {
             Logger.error("BinderSensorMock: native layer unavailable, feature inert")
             return false
         }
+    }
+
+    /**
+     * 把框架的 `type → handle` 表播种给原生层。
+     *
+     * 这一步是「完全隔离」的关键补丁：只靠真实事件学习时，**on-change 传感器
+     * （步数计数器 / 检测器）在手机不走路时永远学不到 handle**，"模拟走路"于是推不出步频。
+     * 框架自己的传感器表与 HAL 是否出数据无关，因此无条件可靠（拿不到就退回事件学习）。
+     */
+    private fun seedHandleMap() {
+        val triples = SensorHandleMap.collect() ?: run {
+            Logger.warn("BinderSensorMock: 传感器表不可用，改用真实事件学习 handle")
+            return
+        }
+        runCatching { BinderSensorNative.setHandleMap(triples) }
+            .onFailure { Logger.error("BinderSensorMock: setHandleMap failed", it) }
     }
 
     private fun deactivate() {
@@ -186,6 +203,8 @@ object BinderSensorMock {
 
         if (!active) {
             active = true
+            // 每次激活都重播一次映射：传感器表可能因动态传感器增减而变化
+            seedHandleMap()
             BinderSensorNative.setActive(true)
             Logger.info("BinderSensorMock: activated (${BinderSensorNative.status()})")
         }

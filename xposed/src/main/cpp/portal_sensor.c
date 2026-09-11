@@ -353,6 +353,28 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setActive(JNIEnv *env, 
     vw_set_active(active ? 1 : 0);
 }
 
+/**
+ * 用框架自己的传感器表播种 type → handle（三元组 [type, handle, flags, ...]）。
+ * 不依赖真实事件，所以"不走路就没有事件的"步数传感器也能拿到 handle。
+ */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setHandleMap(JNIEnv *env, jobject thiz,
+                                                                     jlongArray triples) {
+    (void) thiz;
+    if (triples == NULL) return;
+    jsize len = (*env)->GetArrayLength(env, triples);
+    if (len < 3) return;
+    jlong *vals = (*env)->GetLongArrayElements(env, triples, NULL);
+    if (vals == NULL) return;
+    int mapped = 0;
+    for (jsize i = 0; i + 2 < len; i += 3) {
+        vw_seed_handle((int32_t) vals[i], (int32_t) vals[i + 1], (uint32_t) vals[i + 2]);
+        mapped++;
+    }
+    (*env)->ReleaseLongArrayElements(env, triples, vals, JNI_ABORT);
+    LOGI("seeded %d sensor handle(s) from framework list", mapped);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_updateState(
     JNIEnv *env, jobject thiz, jdouble speed, jdouble azimuth, jboolean moving, jlong steps,
