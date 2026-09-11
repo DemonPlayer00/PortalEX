@@ -25,6 +25,9 @@ extern "C" {
  */
 extern pthread_mutex_t g_lock;
 
+/** 世界的基础时间栅格（10ms）：所有周期都是它的整数倍，事件天然按时间升序交织 */
+#define TICK_NS 10000000LL
+
 /* ---- PRNG（vw_rand.c） ---- */
 /** 进程级播种（常量种子 ⊕ 启动时间 ⊕ pid）：`vw_init` 调一次；不调也能跑，只是各进程同序列 */
 void vw_rng_seed_process(void);
@@ -37,6 +40,29 @@ double vw_gauss(void);
 /** 与 `virtual_world.c` 内调用点保持一致的短名（内联转发，不引入额外状态） */
 static inline double rng_unit(void) { return vw_rng_unit(); }
 static inline double rng_range(double lo, double hi) { return vw_rng_range(lo, hi); }
+
+/* ---- 步态与朝向（vw_gait.c） ---- */
+/*
+ * 世界状态里被运动学读取的那部分（定义仍在 virtual_world.c，因为它由 vw_update_state 写、
+ * 也被生成器读）：步态是"世界的函数"，所以这些量必须显式共享，而不是各自藏一份副本。
+ */
+extern int g_moving;
+extern double g_speed;
+extern long long g_tick_ns;
+extern double g_target_azimuth;
+
+
+/** 推进虚拟世界一拍（相位 PLL、摆动、微抖、方位平滑、角速度低通） */
+void vw_gait_init(void);
+void advance_one_tick(long long now);
+/** 记一次"这一步在 IMU 上也必须正好是一个峰" */
+void gait_note_step(long long ts);
+/** 当前步态加速度（设备坐标；静止时全 0） */
+void gait_accel(long long t, double *ax, double *ay, double *az);
+/** 当前注入方位（平滑中轴 + 摆动 + 微抖，归一化到 [0,360)） */
+double virtual_azimuth(long long now);
+/** z 轴角速度（低通后的转弯角速度，rad/s） */
+double gyro_z(long long now);
 
 /* ---- 噪声档（vw_noise.c） ---- */
 /**

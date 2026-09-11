@@ -8,7 +8,8 @@ add_library(portalsensor SHARED
         portal_sensor.c
         virtual_world.c
         vw_rand.c
-        vw_noise.c)
+        vw_noise.c
+        vw_gait.c)
 
 # 兜底防泄漏：源码绝对路径不进 DWARF / .comment。AGP 的 strip 任务一旦解析不到
 # strip 工具就会静默退化为原样拷贝，这条映射是那时候的最后一道闸。
