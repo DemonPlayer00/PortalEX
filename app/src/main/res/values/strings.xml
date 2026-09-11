@@ -58,6 +58,11 @@
     <string name="allow_landscape">允许横屏</string>
     <string name="allow_landscape_desc">可能有视觉问题</string>
     <string name="menu_test">Test</string>
+    <string name="menu_calibration">Calibration</string>
+    <string name="calibration_hint">这里存放注入到系统框架层的各路传感器噪声：逐轴标准差 σ（使用时按高斯分布逐事件生成动态值）与陀螺零偏 μ。可逐行手改，也可用「一键校准」按本机真实噪声自动填充。\n\n一键校准要把手机放在平稳的表面、保持静止 8 秒；采集期间检测到移动会作废重来。校准必须在「模拟未运行」时进行——模拟一跑，框架侧就在压制真实传感器，那时采到的只会是我们自己注入的数据。\n\n中位数只有陀螺那一行会被注入（陀螺的零参考物理上就是 0，实测中位数就是它的真实零偏）；加速度/重力/线性加速度/磁场的中位数里混着手机姿态与环境地磁的直流分量，会打坏模型，因此只作统计参照显示。</string>
+    <string name="calibration_run">一键校准</string>
+    <string name="calibration_reset">恢复默认</string>
+    <string name="calibration_footer">σ = 0 表示该轴完全不抖。默认 σ 与旧版硬编码口径的方差一致（旧版是均匀分布 [−A,A]，σ = A/√3），陀螺零偏默认 0。方向角与旋转矢量是融合量，不参与一键校准。</string>
     <string name="binder_sensor_mock">Binder 外周传感器模拟</string>
     <string name="binder_sensor_mock_desc">实验性：只在系统框架层伪造外周传感器，不注入目标应用；需重启目标应用生效</string>
     <string name="dfused">禁用融合定位</string>

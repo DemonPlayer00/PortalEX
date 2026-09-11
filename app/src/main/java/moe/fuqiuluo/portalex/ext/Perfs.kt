@@ -7,6 +7,7 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.SensorNoise
 
 val Context.sharedPrefs
     get() = getSharedPreferences(MockServiceHelper.PROVIDER_NAME, Context.MODE_PRIVATE)!!
@@ -242,6 +243,31 @@ var Context.sensorGridHz: Int
     get() = sharedPrefs.getInt("sensorGridHz", 0)
     set(value) = sharedPrefs.edit {
         putInt("sensorGridHz", if (value <= 0) 0 else value.coerceIn(20, 400))
+    }
+
+/**
+ * 注入噪声档（Calibration 页）：[SensorNoise.COUNT] 个槽（逐轴 σ + 陀螺零偏），见 SensorNoise。
+ *
+ * 存成 "a,b,c,…" 串（而不是 putFloatArray）：读取路径要能容错——长度不符/损坏/
+ * 旧版本留下的脏值都会经 [SensorNoise.sanitize] 归一，绝不把非法值送进原生层。
+ * 默认 = SensorNoise.DEFAULTS（σ 与旧硬编码口径的方差一致；陀螺零偏默认 0）。
+ */
+var Context.sensorNoise: FloatArray
+    get() = SensorNoise.decode(sharedPrefs.getString("sensorNoise", null))
+    set(value) = sharedPrefs.edit {
+        putString("sensorNoise", SensorNoise.encode(SensorNoise.sanitize(value)))
+    }
+
+/**
+ * 最近一次一键校准的统计明细（逐轴中位数 + σ）。
+ *
+ * 中位数在加速度/重力/线性加速度/磁场上**不注入**（含姿态与环境直流），但它是校准的原始
+ * 依据——留一份在这里，重开页面仍能看到上次到底量到了什么。
+ */
+var Context.sensorNoiseReport: String
+    get() = sharedPrefs.getString("sensorNoiseReport", "") ?: ""
+    set(value) = sharedPrefs.edit {
+        putString("sensorNoiseReport", value)
     }
 
 var Context.binderSensorMock: Boolean

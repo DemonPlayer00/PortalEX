@@ -21,6 +21,10 @@
             android:icon="@drawable/baseline_route_24"
             android:title="@string/menu_route_mock" />
         <item
+            android:id="@+id/nav_calibration"
+            android:icon="@drawable/baseline_adjust_24"
+            android:title="@string/menu_calibration" />
+        <item
             android:id="@+id/nav_test"
             android:icon="@drawable/baseline_info_outline_24"
             android:title="@string/menu_test" />
