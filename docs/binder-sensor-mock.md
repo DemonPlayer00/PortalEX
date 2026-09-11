@@ -321,13 +321,41 @@ Java 路径把这些全部规避：所有参数都是 JNI 平凡类型 + 一个 
 
 ### 分阶段验证（每级独立可回退）
 
-| 级 | 动作 | 判据 | 风险 |
+| 级 | 动作 | 判据 | 状态 |
 |:--|:--|:--|:--|
-| S1 | 只做反射解析 + 读 `mPtr`，不注册不发送 | Test 页 `rt=` 显示 `resolved / ptr=0x…` | 无副作用 |
-| S2 | 注册载体，记下 handle | logcat `Registering runtime sensor handle 0x…`；`dumpsys sensorservice` 里有它；应用 `getSensorList` 里**没有** | 框架正规 API |
-| S3 | 向载体 handle 推一条事件，应用侧订阅它 | 应用收到该事件（证明整条投递链） | 只影响订阅者 |
-| S4 | 改用**真实 handle** 推加速度/步频，同时保持压制 | 步频随速度变化；无重复计数（也顺带定位"277 步/分"） | 与既有功能并存 |
-| S5 | 把运行时通道设为被接管类型的**主投递**，poll 路径转纯压制 + 兜底 | 关掉 keep-alive 后投递仍连续 | 可一键回退 |
+| S1 | 只做反射解析 + 读 `mPtr`，不注册不发送 | `rtch=… resolved=true ptr=0x…` | ✅ 已装机验证 |
+| S2 | 注册载体，记下 handle | `dumpsys` 里有它；NDK 客户端传感器列表里**没有**它；框架出现 `RuntimeSensorHandler` 线程 | ✅ 已装机验证 |
+| S3 | 向载体 handle 推一条事件，应用侧订阅它 | 应用收到该事件（证明整条投递链） | 待做 |
+| S4 | 改用**真实 handle** 推加速度/步频，同时保持压制 | 步频随速度变化；无重复计数（也顺带定位"277 步/分"） | 待做 |
+| S5 | 把运行时通道设为被接管类型的**主投递**，poll 路径转纯压制 + 兜底 | 关掉 keep-alive 后投递仍连续 | 待做 |
+
+S1/S2 的实测结论（Android 16 + 高通/OPPO 机型，2026-09-11）：
+
+```
+[Portal] BinderSensorMock: rtch=carrier-ok resolved=true ptr=0xb400007ce988ea80 carrier=0x5f000000 cb=0 sent=0
+$ dumpsys sensorservice | grep portalex
+0x5f000000) portalex-runtime | portalex | ver: 104 | type: (65536) | perm: n/a | flags: 0x00000000
+$ cat /proc/<system_server>/task/*/comm | grep -i runtime
+RuntimeSensorHa            # 框架的 RuntimeSensorHandler 线程（注册载体时才创建）
+$ /data/local/tmp/sensorprobe 1 2500 | head
+=== sensor list (42) ===   # 42 条，**没有** portalex-runtime ⇒ 客户端看不见载体
+```
+
+三条附带确认：
+
+* 载体 handle 是 `0x5f000000` —— 与反汇编里 `registerRuntimeSensor` 的
+  `mov w26, #0x5fffffff`（`RUNTIME_SENSORS_HANDLE_END - 1` 之类）完全吻合，
+  说明这是一条真实的运行时 handle 区段，而不是我们"恰好蒙对"的路径。
+* `ver: 104` = `sizeof(sensor_t)`（框架 JNI 也是这么填的）；`flags: 0x0` 表示不是唤醒、
+  不是动态、不是 one-shot ⇒ 不会进动态传感器表。
+* 载体注册**只在实验开关打开时**发生（默认关时整条链一次都不跑）。
+
+**踩坑记录（值得记住的一条）**：`attach()` 一开始用的是
+`ActivityThread.currentActivityThread().classLoader`，在 system_server 里它是
+**BootClassLoader**，看不到 `services.jar` 里的 `com.android.server.*` ——
+报 `ClassNotFoundException`。要用 **LSPosed 传给 hook 的 `lpparam.classLoader`**
+（既有 hook 找 `com.android.server.*` 用的就是它）。现在按候选列表逐个试，失败会打印
+试过哪些加载器，并在 10s 后退避重试（失败原因也逐字保留在状态串里）。
 
 ## 诚实的边界
 
