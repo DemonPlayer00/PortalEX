@@ -68,6 +68,7 @@ static int g_gyro_init = 0;
 /* 步态相位（走路时身体竖直方向做周期性加减速：每步两拍——脚跟着地 + 蹬地）。
  * 频率与步频严格同源（cadenceForSpeed），因此 IMU 的周期峰与步事件是对齐的。 */
 static double g_gait_phase = 0.0;
+static int g_gait_parity = 0;            /* 当前这一步是步幅周期里的第几步（0/1） */
 static long long g_gait_anchor_ns = 0;   /* 最近一步的时间戳 */
 static long long g_gait_interval_ns = 0; /* 平滑后的步间隔（相位推进的节拍来源） */
 
@@ -141,6 +142,16 @@ static const double GAIT_Z_BASE = 0.55; /* 低速也留得住可检测幅度（1
 static const double GAIT_AMP_MAX = 3.0;
 static const double GAIT_AY_RATIO = 0.25;
 static const double GAIT_AX_RATIO = 0.12;
+/* 步态波形谐波配比：基频（1 周期 = 2 步，步幅频率）+ 二次谐波（1 周期 = 1 步，每步一峰）。
+ * 数值核对（扫过一个步幅周期取极值 + 频谱）：
+ *   0.72/0.28(φ=0.9) → 周期内**只有一个**极值 ⇒ 峰值/阈值类估计器会少计一半；
+ *   0.88/0.72(φ=1.2) → 归一化到主峰 = 1.0·amp（与旧波形同幅度，阈值行为不变），
+ *                      两个不等高极值 1.005 / 0.696（= 每步一峰），
+ *                      且频谱主峰仍是**基频**（步幅频率）⇒ 按"两步一周期"换算的估计器读数正确。
+ * 两个性质必须同时成立，所以取后者。 */
+static const double GAIT_H1 = 0.88;
+static const double GAIT_H2 = 0.72;
+static const double GAIT_H2_PHASE = 1.2;
 
 /* 与 SystemSensorManagerHook 一致的常量 */
 static const double BEARING_APPROACH_ALPHA = 0.18; /* 每 50ms 靠近 18% → τ≈0.25s */
@@ -297,6 +308,11 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
 long long vw_step_events_total(void) { return g_step_emit_total; }
 
 /** 把已学到的 type→handle 映射写成 "1:0xb 2:0x15 ..."（诊断页展示） */
+/** 步态波形口径（诊断用：Test 页据此确认跑的是哪一版波形） */
+const char *vw_gait_describe(void) {
+    return "stride2(h1=.88/h2=.72)";
+}
+
 int vw_dump_handles(char *out, size_t out_size) {
     if (out == NULL || out_size == 0) return 0;
     size_t used = 0;
@@ -379,7 +395,9 @@ static void advance_one_tick(long long now) {
     }
     g_micro_offset += (g_micro_target - g_micro_offset) * (1.0 - exp(-dt / MICRO_JITTER_TAU));
 
-    /* 步态相位推进：优先用**实测步间隔**（与步事件同一节拍），没测到再退回步频公式 */
+    /* 步态相位推进：优先用**实测步间隔**（与步事件同一节拍），没测到再退回步频公式。
+     * 相位是**步幅相位**：一个完整周期 = **两步**（真实步态的"步幅周期"），
+     * 所以每步只推进半个周期（M_PI）——见 gait_accel 的说明。 */
     if (g_moving && g_speed > 0.05) {
         double step_hz;
         if (g_gait_interval_ns > 0) {
@@ -391,7 +409,7 @@ static void advance_one_tick(long long now) {
             if (cadence > 220.0) cadence = 220.0;
             step_hz = cadence / 60.0;
         }
-        g_gait_phase += 2.0 * M_PI * step_hz * dt;
+        g_gait_phase += M_PI * step_hz * dt; /* 半步/步 ⇒ 一个周期两步 */
         if (g_gait_phase >= 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
     }
     (void) now;
@@ -421,26 +439,41 @@ static void gait_note_step(long long ts) {
     /* PLL 纠相：增益必须**极小**（0.02 rad ≈ 波形上 0.02 m/s²，低于噪声）。
      * 0.35 那种量级会在每个步点留下一个肉眼可见的台阶，而台阶本身就是检测器的
      * "额外一步"——实测 180 步/分被读成 202 步/分。小增益下几十步才纠完漂移，
-     * 波形始终光滑，频率仍由实测步间隔推进（= 步频）。 */
-    double err = M_PI / 2.0 - g_gait_phase;
+     * 波形始终光滑，频率仍由实测步间隔推进（= 步频）。
+     *
+     * 目标相位**逐步交替**：一个步幅周期里两个峰分别在 π/2 与 3π/2，
+     * 于是每一步都落在自己的那个峰上（而不是把相位硬拉回同一个点 —— 那会与
+     * "每步推进半个周期"打架，等于给频率加一个恒定偏置）。 */
+    double target = (g_gait_parity ? 1.5 : 0.5) * M_PI;
+    double err = target - g_gait_phase;
     while (err > M_PI) err -= 2.0 * M_PI;
     while (err < -M_PI) err += 2.0 * M_PI;
     g_gait_phase += 0.02 * err;
     while (g_gait_phase >= 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
     while (g_gait_phase < 0.0) g_gait_phase += 2.0 * M_PI;
+    g_gait_parity ^= 1;
 }
 
 /**
  * 当前步态加速度（设备坐标，m/s²）。静止时三项全 0。
  *
- * **一次步 = 一个可检测峰**，这是硬约束：真机上"走路"在 IMU 上就是每步一下，
- * 应用（阈值/峰值/过零/FFT 各种做法）都据此计步。踩过两次坑：
- *   1. 对称的 sin(2φ)（每步两个等高峰）→ 基频被读成 2× 步频；
- *   2. 三个分量放在**不同相位**（前后 +0.6rad、左右半步频）→ 单分量都是单峰，
- *      但**模长** sqrt(ax²+ay²+az²) 在一个步周期里出现额外过阈值，估计器多计
- *      （实测 180 步/分的真实步事件被读成 214 步/分）。
- * 所以三个分量同相（只留一点点相位差以不过分"塑料"），竖直分量占主导：
- * 模长因此每步只有一个峰。
+ * **一个波形周期 = 两步**（步幅周期），竖直分量 = 基频 + 二次谐波：
+ *
+ *   az = amp · ( H1·sin φ + H2·sin(2φ + 0.9) )
+ *
+ * 为什么这么配（两条都要满足，缺一条就有应用读错）：
+ *   1. **基频落在步幅频率**（= 步频 / 2）。真机走路时躯干竖直振荡的基频就是"两步一次"，
+ *      按"两步一周期"换算步频的估计器（FFT 取基频 ×2 那类）读到的才是真步频。
+ *      此前基频**等于**步频（1 周期 = 1 步），这类估计器会读成 **2× 步频**
+ *      ——用户实测 286 步/分（真值约 143）正是这个形态。
+ *   2. **每一步仍有一个可检测的（模长）峰**。二次谐波 1 周期 = 1 步，提供"每步一峰"；
+ *      两个峰不等高（0.72/0.28），与真机左右脚落地幅度不等一致。
+ *      若只把纯 sin 的波长拉长一倍而不补二次谐波，峰值/阈值类估计器会**少计一半**
+ *      （一步只有一个正峰 → 两秒一步），那是把一类错误换成另一类。
+ *
+ * 三分量仍**几乎同相**（±0.05rad）：加速度**模长** sqrt(ax²+ay²+az²) 的形状才与 az 一致。
+ * 踩过的坑：对称的 sin(2φ)（每步两个等高峰）→ 基频被读成 2× 步频；
+ * 三分量相位差过大（0.2~0.25rad）→ 模长出现小双峰，阈值类检测器多计一步。
  */
 static void gait_accel(long long t, double *ax, double *ay, double *az) {
     (void) t;
@@ -451,13 +484,12 @@ static void gait_accel(long long t, double *ax, double *ay, double *az) {
     double amp = GAIT_Z_PER_SPEED * g_speed + GAIT_Z_BASE;
     if (amp > GAIT_AMP_MAX) amp = GAIT_AMP_MAX;
     double ph = g_gait_phase;
-    /* 三个分量**几乎同相**（±0.05rad）：竖直占主导时，加速度**模长**
-     * sqrt(ax²+ay²+az²) 的形状才与 az 一致 —— 一份纯单峰。相位差一大（0.2~0.25rad），
-     * 模长就出现小双峰，阈值类检测器会多计一步（实测 172 步/分被读成 195）。
-     * 留 0.05rad 只是不让三分量严格成比例（那本身也是一种特征）。 */
-    *az = amp * sin(ph);
-    *ay = GAIT_AY_RATIO * amp * sin(ph + 0.05);
-    *ax = GAIT_AX_RATIO * amp * sin(ph - 0.05);
+    double w0 = GAIT_H1 * sin(ph) + GAIT_H2 * sin(2.0 * ph + GAIT_H2_PHASE);
+    double wp = GAIT_H1 * sin(ph + 0.05) + GAIT_H2 * sin(2.0 * (ph + 0.05) + GAIT_H2_PHASE);
+    double wm = GAIT_H1 * sin(ph - 0.05) + GAIT_H2 * sin(2.0 * (ph - 0.05) + GAIT_H2_PHASE);
+    *az = amp * w0;
+    *ay = GAIT_AY_RATIO * amp * wp;
+    *ax = GAIT_AX_RATIO * amp * wm;
 }
 
 /** 当前注入方位：平滑中轴 + 摆动 + 微抖（归一化到 [0,360)） */

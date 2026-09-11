@@ -521,6 +521,7 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     APPEND(" emitted=%lld dropped=%lld suppressed=%lld", emitted, dropped, suppressed);
     APPEND(" steps=%lld step_rate=%d/min", vw_step_events_total(),
            vw_step_rate_per_min(now_ns));
+    APPEND(" gait=%s", vw_gait_describe());
     char handles[256];
     vw_dump_handles(handles, sizeof(handles));
     APPEND(" handles=[%s]", handles);
