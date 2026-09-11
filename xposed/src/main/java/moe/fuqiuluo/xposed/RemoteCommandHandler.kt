@@ -15,6 +15,7 @@ import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.SensorNoise
 import java.util.Collections
 import kotlin.random.Random
@@ -68,6 +69,7 @@ object RemoteCommandHandler {
             Origin.PROVIDER -> {
                 val uid = BinderUtils.getCallerUid()
                 if (uid != BinderUtils.moduleOwnerUid()) {
+                    PortalDiag.fail(PortalDiag.Area.COMMAND_REJECT)
                     if (warnedDeniedUids.add(uid)) {
                         Logger.warn("拒绝来自 uid=$uid 的命令通道访问（该通道只对模块自身开放）")
                     }
@@ -413,7 +415,11 @@ object RemoteCommandHandler {
                 LocationServiceHook.callOnLocationChanged(force = true)
                 return true
             }
-            else -> return false
+            else -> {
+                // 未知命令：App 比模块新（版本不匹配）或有人在探测 —— 记一笔，别静默
+                PortalDiag.fail(PortalDiag.Area.COMMAND_REJECT)
+                return false
+            }
         }
     }
 

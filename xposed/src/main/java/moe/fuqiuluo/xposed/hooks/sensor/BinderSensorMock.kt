@@ -3,6 +3,7 @@ package moe.fuqiuluo.xposed.hooks.sensor
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 
 /**
  * Binder 外周传感器模拟（实验性，默认关）—— system_server 侧调度。
@@ -106,6 +107,7 @@ object BinderSensorMock {
             // S1 探针：只解析 + 读 mPtr，不注册任何东西（零副作用；解析可重试）
             Logger.info("BinderSensorMock: ${SystemRuntimeChannel.probe()}")
             SystemRuntimeChannel.resolveFailure?.let {
+                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
                 Logger.error("BinderSensorMock: 运行时通道解析失败：$it")
             }
             return ok
@@ -145,6 +147,8 @@ object BinderSensorMock {
         // 而不只是写进了 App 的偏好）
         rely.putString("noise_profile", runCatching { BinderSensorNative.noiseProfile() }
             .getOrDefault("n/a"))
+        // 静默失败记账：本次运行里"本该静默降级"的失败各发生了几次（全零 = none）
+        rely.putString("diag", moe.fuqiuluo.xposed.utils.PortalDiag.dump())
         // 厂商私有传感器清单（仅展示：它们也在同一个事件出口上，但不在接管集合内）
         rely.putString("priv_sensors", SensorHandleMap.privateTypes() ?: "（读不到）")
         // 应用期望频率（框架采用值 + 客户端原始请求；见 SensorRateProbe）
@@ -190,11 +194,13 @@ object BinderSensorMock {
             val syms = LibSymbols.resolve()
             if (syms == null) {
                 failTicks = FAIL_RETRY_TICKS
+                PortalDiag.fail(PortalDiag.Area.LIB_RESOLVE)
                 Logger.error("BinderSensorMock: 平台符号未解析到，功能不生效（未做任何猜测）")
                 return false
             }
             if (!BinderSensorNative.ensureLoaded()) {
                 failTicks = FAIL_RETRY_TICKS
+                PortalDiag.fail(PortalDiag.Area.NATIVE_LOAD)
                 Logger.error("BinderSensorMock: ${BinderSensorNative.lastLoadError()}")
                 return false
             }
@@ -207,6 +213,7 @@ object BinderSensorMock {
                 return true
             }
             failTicks = FAIL_RETRY_TICKS
+            PortalDiag.fail(PortalDiag.Area.NATIVE_INSTALL)
             Logger.error("BinderSensorMock: native layer unavailable, feature inert")
             return false
         }
@@ -221,11 +228,13 @@ object BinderSensorMock {
      */
     private fun seedHandleMap() {
         val triples = SensorHandleMap.collect() ?: run {
+            PortalDiag.fail(PortalDiag.Area.HANDLE_MAP)
             Logger.warn("BinderSensorMock: 传感器表不可用，改用真实事件学习 handle")
             return
         }
         runCatching { BinderSensorNative.setHandleMap(triples) }
-            .onFailure { Logger.error("BinderSensorMock: setHandleMap failed", it) }
+            .onFailure { PortalDiag.fail(PortalDiag.Area.HANDLE_MAP, it)
+                Logger.error("BinderSensorMock: setHandleMap failed", it) }
     }
 
     private fun deactivate() {

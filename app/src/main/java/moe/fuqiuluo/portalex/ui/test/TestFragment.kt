@@ -112,6 +112,9 @@ class TestFragment : Fragment() {
             appendLine("模拟会话       ${yn(status.getBoolean("mock_running"))}")
             appendLine("原生层装载     ${yn(status.getBoolean("native_ready"))}")
             appendLine("注入激活       ${yn(status.getBoolean("active"))}")
+            // 静默失败记账（模块侧）：非 none 说明注入层/投递链正在降级运行 —— 比"功能没了"
+            // 更难发现的那类故障，在这里必须一眼可见
+            appendLine("静默失败计数   ${status.getString("diag") ?: "（旧版模块无此字段）"}")
             appendLine()
             appendLine("── 步频：意图 vs 实际 ──")
             appendLine("意图步频       ${status.getInt("cadence_intent")} 步/分（按实测速度算）")

@@ -1,6 +1,7 @@
 package moe.fuqiuluo.xposed.hooks.sensor
 
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.PortalDiag
 import org.tukaani.xz.XZInputStream
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -100,6 +101,7 @@ internal object LibSymbols {
                 .getOrNull()
             if (r == null || !r.usable) {
                 failed = true
+                PortalDiag.fail(PortalDiag.Area.LIB_RESOLVE)
                 Logger.error("LibSymbols: cannot resolve sensor HAL wrapper symbols")
                 return null
             }
@@ -111,6 +113,7 @@ internal object LibSymbols {
 
     private fun doResolve(): Resolved? {
         val path = locateLibrary() ?: run {
+            PortalDiag.fail(PortalDiag.Area.LIB_RESOLVE)
             Logger.error("LibSymbols: libsensorservice.so not loaded in this process")
             return null
         }
