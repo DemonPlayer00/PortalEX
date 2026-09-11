@@ -13,7 +13,7 @@ import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.SystemRuntimeChannel
-import moe.fuqiuluo.xposed.hooks.sensor.SystemSensorManagerHook
+import moe.fuqiuluo.xposed.hooks.sensor.frozen.SystemSensorManagerHook
 import moe.fuqiuluo.xposed.hooks.telephony.TelephonyHook
 import moe.fuqiuluo.xposed.hooks.wlan.WlanHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -91,7 +91,7 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
              *
              * 现在模拟只由**系统框架侧**（Binder 外周传感器模拟 → 原生注入层 + 运行时投递通道）
              * 完成，对目标应用零 hook。完整原因、证据与恢复步骤见
-             * `hooks/sensor/SystemSensorManagerHook.kt` 顶部的 FREEZE 说明
+             * `hooks/sensor/frozen/SystemSensorManagerHook.kt` 顶部的 FREEZE 说明
              * （该文件的应用侧实现已整体注释冻结，仅留 `stepTraceText()` 存根）。
              */
             Logger.info(
