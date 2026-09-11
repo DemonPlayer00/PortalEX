@@ -79,18 +79,23 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 lpparam.packageName == "com.xiaomi.location.fused" ||
                 lpparam.packageName == "com.oplus.location"
         if (!isSystemProcess) {
-            // Binder 外周传感器模拟（实验性）开启时，**应用进程不再安装传感器 hook**：
-            // 该模式下模拟完全由系统框架侧的原生注入层完成（对目标应用零 hook，
-            // 且不依赖真实回调驱动）。开关读不到（旧版 LSPosed / prefs 不可读）时
-            // 一律按"未开启"处理 → 安装旧 hook，行为与从前完全一致。
-            if (ModulePrefs.binderSensorMockEnabled() == true) {
-                Logger.info(
-                    "Binder 外周传感器模拟已开启：${lpparam.packageName} 不安装应用侧传感 hook，" +
-                            "改由系统框架侧注入"
-                )
-            } else {
-                SystemSensorManagerHook(lpparam.classLoader)
-            }
+            /*
+             * 【临时停用 · 2026-09-11 裁决】应用侧传感器 hook **一律不安装**。
+             *
+             * 为什么必须停：本机 XSharedPreferences 不可用 ⇒ `ModulePrefs.binderSensorMockEnabled()`
+             * 恒为 null ⇒ 下面旧逻辑按"开关未开启"处理 ⇒ 应用侧 hook 在每个被注入的应用进程里
+             * 都装上，并把框架注入的步数**无条件改写**成本进程自己的 `globalSteps`
+             * （初值 `Random.nextInt(3000, 12000)`，不走路不涨）。后果：
+             * - 目标应用读到随机/冻结值（用户实测"点自动播放变 7000+"就是它）；
+             * - 连排查用的探针都被污染 —— 六轮"Java 客户端恒定陈旧值"全是被它骗的。
+             *
+             * 现在模拟只由**系统框架侧**（Binder 外周传感器模拟 → 原生注入层 + 运行时投递通道）
+             * 完成，对目标应用零 hook。等开关传播通道定下来（自动让位 / 框架侧写系统属性）
+             * 再恢复"按开关安装"，见 docs 与今日备忘。
+             */
+            Logger.info(
+                "应用侧传感 hook 已临时停用（模拟由系统框架侧接管）：${lpparam.packageName}"
+            )
             return
         }
 
