@@ -254,10 +254,10 @@ internal object LocationServiceHook: BaseLocationHook() {
 
     fun onService(cILocationManager: Class<*>) {
     /*
-     * ===================== onService 分段地图（589 行） =====================
+     * ===================== onService 分段地图（431 行） =====================
      *
      * 这个函数把"位置服务出口上的全部 hook"按主题排成一串。读它的时候按段跳，
-     * 不要当成 589 行平铺代码：
+     * 不要当成 431 行平铺代码；**段 6~9 已拆成 object 内 private fun**（段 1~5 仍平铺，见下）：
      *
      *   段 1  取位（getLastLocation）            立即更新虚拟坐标/计步/路线推进
      *   段 2  监听器注册家族                      requestLocationUpdates / removeUpdates /
@@ -271,6 +271,9 @@ internal object LocationServiceHook: BaseLocationHook() {
      *   段 7  命令通道（sendExtraCommand）        portal provider + 厂商开关 + 指令分发
      *   段 8  provider 可见性                     isProviderEnabled(ForUser)：含握手门禁
      *   段 9  厂商/第三方 SDK 控制器包抑制         setExtraLocationControllerPackage*
+     *
+     * 状态：段 6~9 = `hookCurrentLocation` / `hookExtraCommand` / `hookProviderEnabled` /
+     * `hookVendorControllerPackage`（见各自 KDoc）；段 1~5 仍是平铺代码（本函数内可分块跳读）。
      *
      * ⚠️ **顺序敏感**：同一方法上的多个回调按注册顺序执行（XposedBridge 语义），
      * 所以段的先后不能重排。将来若要继续拆成 private fun，注意两点（我试过，都栽在这里）：
