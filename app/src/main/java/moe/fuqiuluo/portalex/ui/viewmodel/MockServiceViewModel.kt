@@ -91,6 +91,21 @@ class MockServiceViewModel : ViewModel() {
     }
 
     /**
+     * 关闭悬浮摇杆窗口时的统一收尾：停下**全部**位置推进源。
+     *
+     * 运动循环有两条写位置的路径：摇杆步进（走暂停门 [CoroutineController.consume]）
+     * 与路线自动播放（`isAutoPlaying` 分支，**不经过暂停门**）。只 `pause()` 只能拦住
+     * 前者，关窗后路线仍会一路播到终点。因此必须同时关掉 `autoStatus`——它还会顺带
+     * 把摇杆自身的自走 `auto(false)` 停掉（即“摇杆移动”）。
+     */
+    fun stopMotionForFloatingHidden() {
+        if (::rocker.isInitialized) {
+            rocker.autoStatus = false
+        }
+        rockerCoroutineController.pause()
+    }
+
+    /**
      * 手动摇杆角度：自动播放中忽略——播放中方向由路线切线控制，
      * 否则两者互相抢占（表现出来就是「碰一下摇杆播放就乱了」）。
      */
@@ -263,6 +278,12 @@ class MockServiceViewModel : ViewModel() {
      */
     private fun ensureMotionLoop(activity: Activity) {
         if (::motionJob.isInitialized && motionJob.isActive) return
+        // 循环启动即处于「暂停」：摇杆未按住时不推进位置。
+        // 上游 `initRocker` 在启动循环前显式调用 `pause()`，重构时该行遗失——那时
+        // 运动循环一启动就每 tick 位移，用户看到「第一次启动模拟，位置就朝一个方向
+        // 漂移，手动移动一次才恢复」。此处恢复该语义；自动播放走 [advanceRoutePlayback]
+        // 分支，不经过暂停门，故不受影响。
+        rockerCoroutineController.pause()
         motionJob = viewModelScope.launch {
             while (isActive) {
                 // 间隔每次重新读：设置页改完立即生效，且钳制下限 1ms（避免 delay(0) 空转与除零）

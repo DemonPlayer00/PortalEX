@@ -4,7 +4,17 @@ import kotlinx.coroutines.channels.Channel
 
 class CoroutineController {
     private val controlChannel = Channel<ControlCommand>(Channel.UNLIMITED)
-    var isPaused = false
+
+    /**
+     * **初值必须为 true（默认「暂停 = 不推进」）**。
+     *
+     * 本控制器的语义是「摇杆被按住才推进」：按下摇杆 [resume]、松开 [pause]。
+     * 若初值为 false，运动推进器在「谁也没碰摇杆」时每 tick 都会位移一次——
+     * 表现为**一启动模拟，位置就朝 [FakeLoc.bearing] 的固定方向匀速漂移**，
+     * 直到用户操作一次摇杆（触发 [pause]）才停下。上游 `initRocker` 原本在启动
+     * 循环前显式调用 `pause()`，重构遗失后该语义只能由初值兜住。
+     */
+    var isPaused = true
 
     /**
      * 挂起式暂停门（旧用法，保留给「可以整条挂起」的独立循环）。
