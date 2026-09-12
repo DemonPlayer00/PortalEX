@@ -298,6 +298,16 @@ static int (*g_real_process_capture_request)(const struct camera3_device *,
 static int (*g_real_initialize)(const struct camera3_device *,
                                 const camera3_callback_ops_t *) = NULL;
 
+/*
+ * 是否启用"注入试探"（EGL/CPU 写帧）。
+ *
+ * **默认关闭，而且必须默认关闭**：实测把注入试探留在里面会**破坏相机预览**（应用看到黑屏）——
+ * 因为在 HAL 线程上创建/切换 EGL 上下文、以及对不可 CPU 映射的 buffer 反复试探，会干扰
+ * vendor HAL 自己的图形状态。这条路线本身也已被证明走不通（见 docs/camera-mock.md §5.2），
+ * 所以 camshim 的定位就应该是"纯接管 + 转发"的 M0：只证明我们在帧通路上，不改任何画面。
+ */
+#define PORTAL_CAMSHIM_ENABLE_INJECTION 0
+
 /* 注入相关状态 */
 static portal_gralloc_module_t *g_gralloc = NULL;
 static const camera3_callback_ops_t *g_framework_callbacks = NULL;
@@ -954,14 +964,16 @@ static void portal_process_capture_result(const camera3_callback_ops_t *ops,
                      sb->stream->usage, sb->stream->stream_type);
             }
         }
-        /* 不在这里判 gralloc：inject_into_buffer 自己会选路径（legacy lock_ycbcr 优先，
-         * 否则退到 libui 的 mapper）。之前这里多一道 load_gralloc() 门槛，导致兜底路径永不执行。 */
+        /* 注入默认关闭（见 PORTAL_CAMSHIM_ENABLE_INJECTION 的注释：开启会破坏预览） */
         bool wrote = false;
+#if PORTAL_CAMSHIM_ENABLE_INJECTION
+        (void)inject_into_buffer;
         for (uint32_t i = 0; i < result->num_output_buffers; i++) {
             if (inject_into_buffer(&result->output_buffers[i], result->frame_number)) {
                 wrote = true;
             }
         }
+#endif
         if (wrote) {
             unsigned long n = __atomic_add_fetch(&g_injected_frames, 1, __ATOMIC_RELAXED);
             if (n == 1 || n % 120 == 0) {
@@ -1073,28 +1085,12 @@ static int shim_open(const struct hw_module_t *module, const char *id,
                                          const camera3_callback_ops_t *))((void **)cam_dev->ops)[0];
         }
         patch_ops(cam_dev);
-        patch_initialize(cam_dev);
-        /* ops[1] = configure_streams（camera3_device_ops 的既定顺序：
-         * initialize, configure_streams, register_stream_buffers,
-         * construct_default_request_settings, process_capture_request, …） */
-        if (cam_dev->ops != NULL) {
-            void **table = (void **)cam_dev->ops;
-            g_real_configure_streams =
-                (int (*)(const struct camera3_device *, void *))table[1];
-            if (g_real_configure_streams != NULL) {
-                long ps = sysconf(_SC_PAGESIZE);
-                if (ps <= 0) ps = 4096;
-                int prot = page_protection(table);
-                if (mprotect((void *)((uintptr_t)table & ~(uintptr_t)(ps - 1)), (size_t)ps,
-                             PROT_READ | PROT_WRITE) == 0) {
-                    table[1] = (void *)portal_configure_streams;
-                    mprotect((void *)((uintptr_t)table & ~(uintptr_t)(ps - 1)), (size_t)ps,
-                             prot > 0 ? prot : (PROT_READ | PROT_WRITE));
-                    LOGI("已接管 configure_streams（ops[1]，补 SW 用途位=%s）",
-                         PORTAL_ENABLE_SW_USAGE_PATCH ? "开" : "关");
-                }
-            }
-        }
+        /*
+         * ⚠️ 这里**不再**接管 `initialize`（包框架回调）与 `configure_streams`：
+         * 实测加了这两处之后应用看到的是**黑屏**（即便注入代码被编译期关闭也一样）。
+         * 本层的定位是"纯接管 + 转发"的 M0：只把 process_capture_request 换掉做计数，
+         * 其余一切保持 vendor HAL 原样。注入相关代码保留但默认不参与。
+         */
     }
     return rc;
 }
