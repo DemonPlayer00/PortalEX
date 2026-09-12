@@ -1,3 +1,0 @@
--- Configuring done
--- Generating done
--- Build files have been written to: /var/www/PortalEX/camera-hal/.cxx/Debug/4r1u4l52/armeabi-v7a

@@ -1,3 +1,0 @@
-ninja: Entering directory `/var/www/PortalEX/camera-hal/.cxx/Debug/4r1u4l52/armeabi-v7a'
-[1/2] Building C object CMakeFiles/vcam.dir/src/vcam.c.o
-[2/2] Linking C shared library ../../../../build/intermediates/cxx/Debug/4r1u4l52/obj/armeabi-v7a/vcam.so
