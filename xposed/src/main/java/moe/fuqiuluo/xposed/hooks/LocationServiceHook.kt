@@ -22,6 +22,7 @@ import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.nmea.LocationNMEAHook
 import moe.fuqiuluo.xposed.hooks.provider.LocationProviderManagerHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
@@ -177,6 +178,17 @@ internal object LocationServiceHook: BaseLocationHook() {
         val lastDeliveryNanos = AtomicLong(0L)
     }
 
+    /**
+     * 装一个 hook 族：失败只记一笔账 + 一条日志，**不影响其它族与后续段**。
+     * "缺类"在 ROM 差异下是常态，所以它不算功能故障，只进 [PortalDiag] 与日志。
+     */
+    private inline fun hookFamily(name: String, block: () -> Unit) {
+        kotlin.runCatching(block).onFailure {
+            PortalDiag.fail(PortalDiag.Area.HOOK_INSTALL, it)
+            Logger.error("$name 安装失败（已跳过，其余 hook 继续）：${it.message}", it)
+        }
+    }
+
     /** 已注册的位置监听器（**旧架构**：统一由宿主心跳推送，无按应用间隔节流） */
     val locationListeners = LinkedBlockingQueue<ListenerRegistration>()
 
@@ -202,12 +214,24 @@ internal object LocationServiceHook: BaseLocationHook() {
 
     private val keepAliveStarted = AtomicBoolean(false)
 
-    /** 构造一帧模拟位置：注入链 + 当前时刻时间戳（模块自己生成的新帧，不是转发的旧帧） */
-    private fun buildFrame(): Location =
-        injectLocation(FakeLoc.lastLocation ?: Location("gps")).apply {
+    /**
+     * 构造一帧模拟位置：注入链 + 当前时刻时间戳（模块自己生成的新帧，不是转发的旧帧）。
+     *
+     * 返回 null = **当前没有任何可用的位置底子**（既没见过真实 fix 的载体，也没设过坐标）——
+     * 这时**不推**：凭空造一个 (0,0) 的 gps 帧毫无意义，还会让应用看到一次"零度定位"。
+     * 与融合路径同一条口径：只做「拦截-修改-转发」，不凭空生成。
+     */
+    private fun buildFrame(): Location? {
+        val origin = FakeLoc.lastLocation
+        if (origin == null && FakeLoc.latitude == 0.0 && FakeLoc.longitude == 0.0) return null
+        return injectLocation(origin ?: Location("gps")).apply {
             time = System.currentTimeMillis()
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
         }
+    }
+
+    /** 无位置底子时的提示只打一次，别刷日志（会话刚开始、还没设点时会走到） */
+    private val noOriginWarned = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** 向单个监听器投一帧；返回是否成功 */
     private fun deliverFrame(listener: IInterface, frame: Location): Boolean {
@@ -290,13 +314,21 @@ internal object LocationServiceHook: BaseLocationHook() {
             Logger.debug("ILocationManager.Stub: class = $cILocationManager")
         }
 
-        cILocationManager.classLoader!!.let {
-            BasicLocationHook(it)
-            GnssHook(it)
-            LocationProviderManagerHook(it)
-
-            MiuiBlurLocationProviderHook(it)
-            MiuiTelephonyManagerHook(it)
+        // 框架/厂商侧的 hook 族：**逐个兜底**。
+        //
+        // 为什么必须隔离：这些族里有大量"按 ROM 存在的类"（厂商融合、MIUI blur、厂商
+        // NLP…）。在 LineageOS 这类没有厂商融合/NLP 的系统上，缺类是**正常情况**，
+        // 必须静默跳过；旧实现让异常直接逃出 onService —— 表现是"模块看起来装了、
+        // 其实只剩一半 hook"，且没有任何一条日志说明为什么。
+        val loader = cILocationManager.classLoader
+        if (loader == null) {
+            Logger.error("ILocationManager.classLoader 为 null：跳过框架侧 hook 族（其余段继续）")
+        } else {
+            hookFamily("BasicLocationHook") { BasicLocationHook(loader) }
+            hookFamily("GnssHook") { GnssHook(loader) }
+            hookFamily("LocationProviderManagerHook") { LocationProviderManagerHook(loader) }
+            hookFamily("MiuiBlurLocationProviderHook") { MiuiBlurLocationProviderHook(loader) }
+            hookFamily("MiuiTelephonyManagerHook") { MiuiTelephonyManagerHook(loader) }
         }
 
         LocationNMEAHook(cILocationManager)
@@ -397,7 +429,12 @@ internal object LocationServiceHook: BaseLocationHook() {
 
         // 同一 tick（一次广播）= 同一帧：持续注册的监听器与一次性取位回调共用同一份注入对象。
         // 时间戳按当前时刻打：本函数产出的是模块自己生成的新帧。
-        val frame = buildFrame()
+        val frame = buildFrame() ?: run {
+            if (noOriginWarned.compareAndSet(false, true)) {
+                Logger.info("尚无位置底子（未设点/未见 fix），本次不推送——不凭空造帧")
+            }
+            return
+        }
         val nowNanos = SystemClock.elapsedRealtimeNanos()
 
         var delivered = 0
@@ -776,8 +813,12 @@ internal object LocationServiceHook: BaseLocationHook() {
                 // Determine whether it is an app that needs a hook
                 if (!FakeLoc.enable) return@afterHook
 
-                // It can't be null, because I'm judging in the previous step
-                val location = result as? Location ?: Location("gps")
+                // **不凭空生成**：框架说"没有上一次位置"（result == null）时保持 null。
+                // 旧实现在这里造一帧 Location("gps") 并当成 result 返回 —— 把"没有位置"
+                // 改成了"有一次定位"，既违背「拦截-修改-转发」的口径，也让应用拿到一个
+                // 它自己都没期待过的 fix。应用真要位置会走请求更新/getCurrentLocation，
+                // 那两条路径我们照常喂（见段 2 与段 6）。
+                val location = result as? Location ?: return@afterHook
 
                 result = injectLocation(location)
 

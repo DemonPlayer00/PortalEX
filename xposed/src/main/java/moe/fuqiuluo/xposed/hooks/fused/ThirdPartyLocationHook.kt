@@ -31,7 +31,7 @@ object ThirdPartyLocationHook: BaseLocationHook() {
     private fun hookAMapNetLocManager(classLoader: ClassLoader) {
         val cNetworkLocationManager = "com.amap.android.location.NetworkLocationManager".toClass(classLoader)
         if (cNetworkLocationManager == null) {
-            Logger.warn("Failed to find NetworkLocationManager (amap service)")
+            if (FakeLoc.enableDebugLog) Logger.debug("本机没有高德 NetworkLocationManager（无厂商融合时常态）")
             return
         }
 
@@ -78,7 +78,7 @@ object ThirdPartyLocationHook: BaseLocationHook() {
         run {
             val bdLocationClient = "com.baidu.location.LocationClient".toClass(classLoader)
             if (bdLocationClient == null) {
-                Logger.warn("Failed to find LocationClient (baidu service)")
+                if (FakeLoc.enableDebugLog) Logger.debug("本机没有百度 LocationClient（无厂商融合时常态）")
                 return@run
             }
 
@@ -104,7 +104,7 @@ object ThirdPartyLocationHook: BaseLocationHook() {
         run {
             val cTencentNLPManager = "com.tencent.geolocation.nlp.TencentNLPManager".toClass(classLoader)
             if (cTencentNLPManager == null) {
-                Logger.warn("Failed to find TencentNLPManager (tencent service)")
+                if (FakeLoc.enableDebugLog) Logger.debug("本机没有腾讯 TencentNLPManager（无厂商融合时常态）")
                 return@run
             }
 

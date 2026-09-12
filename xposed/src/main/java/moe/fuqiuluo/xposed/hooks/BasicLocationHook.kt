@@ -59,12 +59,12 @@ object BasicLocationHook: BaseLocationHook() {
                 // writeToParcel 是帧跨进程的必经关口，这里口径必须与推送链一致。
                 // **逐条注入并保留批次长度**：旧实现只取 first 再写回单元素 ArrayList，
                 // 批量位置（onLocationBatch / flush 批次）除首帧外全部丢失。
-                val injected = ArrayList<Location>(maxOf(1, mLocations.size))
+                // **不凭空生成**：空批次（LocationResult.empty()）原样保持为空——
+                // 旧实现在这里补一帧 Location("gps")，等于把"这次没有位置"改成"有一次定位"。
+                // 非 Location 元素原样保留，长度/顺序不变。
+                val injected = ArrayList<Any?>(mLocations.size)
                 mLocations.forEach { item ->
-                    (item as? Location)?.let { injected.add(injectLocation(it)) }
-                }
-                if (injected.isEmpty()) {
-                    injected.add(injectLocation(Location(LocationManager.GPS_PROVIDER)))
+                    injected.add(if (item is Location) injectLocation(item) else item)
                 }
                 mLocationsField.set(locationResult, injected)
             }

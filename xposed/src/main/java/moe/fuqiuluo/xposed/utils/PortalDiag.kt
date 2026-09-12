@@ -38,6 +38,8 @@ object PortalDiag {
         COMMAND_REJECT("命令拒绝"),
         /** 配置下发时系统侧报错（配置未生效） */
         CONFIG_APPLY("配置应用"),
+        /** 某个 hook 族安装失败（缺类/反射失败）⇒ 该族不生效，其余 hook 继续（ROM 差异是常态） */
+        HOOK_INSTALL("hook 安装"),
     }
 
     private val counters = ConcurrentHashMap<Area, AtomicLong>()

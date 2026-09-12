@@ -160,17 +160,41 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
         }
     }
 
+    /**
+     * 装框架侧 hook，**每一步各自兜底**。
+     *
+     * 为什么：这里任一环抛异常（缺类/反射差异/某个 ROM 的类被裁掉）都会连带后面全部不装，
+     * 表现是"模块看起来加载了、其实只剩一半 hook"且无日志。分成四步后，坏的那步单独记账，
+     * 其余照常安装 —— 在 LineageOS 这类裁剪过的系统上尤其重要。
+     */
     private fun startFakeLocHook(classLoader: ClassLoader) {
-        cServiceManager = XposedHelpers.findClass("android.os.ServiceManager", classLoader)
+        step("ServiceManager") {
+            cServiceManager = XposedHelpers.findClass("android.os.ServiceManager", classLoader)
+        }
 
-        XposedHelpers.findClassIfExists("com.android.server.TelephonyRegistry", classLoader)?.let {
-            TelephonyHook.hookTelephonyRegistry(it)
-        } // for MUMU emulator
+        step("TelephonyRegistry") {
+            XposedHelpers.findClassIfExists("com.android.server.TelephonyRegistry", classLoader)?.let {
+                TelephonyHook.hookTelephonyRegistry(it)
+            } // for MUMU emulator
+        }
 
-        val cLocationManager =
-            XposedHelpers.findClass("android.location.LocationManager", classLoader)
+        step("LocationServiceHook") {
+            LocationServiceHook(classLoader)
+        }
 
-        LocationServiceHook(classLoader)
-        LocationManagerHook(cLocationManager)  // intrusive hooks
+        // intrusive hooks：客户端侧 LocationManager
+        step("LocationManagerHook") {
+            val cLocationManager =
+                XposedHelpers.findClass("android.location.LocationManager", classLoader)
+            LocationManagerHook(cLocationManager)
+        }
+    }
+
+    /** 单个安装步骤：失败只记账 + 一条日志，不拖垮其它步骤 */
+    private inline fun step(name: String, block: () -> Unit) {
+        kotlin.runCatching(block).onFailure {
+            moe.fuqiuluo.xposed.utils.PortalDiag.fail(moe.fuqiuluo.xposed.utils.PortalDiag.Area.HOOK_INSTALL, it)
+            Logger.error("$name 安装失败（已跳过，其余继续）：${it.message}", it)
+        }
     }
 }
