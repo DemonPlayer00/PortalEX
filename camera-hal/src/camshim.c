@@ -211,9 +211,24 @@ struct portal_rect {
 
 /* 用 dlopen + dlsym 取这两个静态方法：libui 是平台私有库，NDK 没有它的 stub，
  * 直接按符号引用会在链接期报 undefined（实测）。运行时取地址则两边都干净。 */
-static int (*g_gbm_lock)(void *handle, uint32_t usage, const struct portal_rect *bounds,
-                         void **vaddr) = NULL;
-static int (*g_gbm_unlock)(void *handle, void *fence) = NULL;
+/*
+ * ⚠️ 这几个都是 **非静态成员函数**（mangled 名里没有 K/无 this 省略），调用时必须把
+ * 单例指针当 `this` 传第一个参数。踩过的坑：当成普通函数调，`this`/参数整体错位，
+ * 在函数入口第 2 个字节就段错误（tombstone: `getUsage+2`，fault addr 0x0000000c）。
+ *
+ * 单例指针从 libui 的导出全局 `Singleton<GraphicBufferMapper>::sInstance` 读出来 ——
+ * 这是唯一不用 C++ 头就能拿到它的途径（`GraphicBufferMapper::get()` 没有导出符号）。
+ */
+static void *g_gbm_self = NULL;
+static int (*g_gbm_lock)(void *self, void *handle, uint32_t usage,
+                         const struct portal_rect *bounds, void **vaddr) = NULL;
+static int (*g_gbm_unlock)(void *self, void *handle, void *fence) = NULL;
+/* 安全探测：buffer 的真实 usage（只查描述符，不锁不映射） */
+static int (*g_gbm_get_usage)(void *self, void *handle, uint64_t *outUsage) = NULL;
+/* 正经的 YUV 锁：直接给出 Y/Cb/Cr 三个平面指针与 stride */
+static int (*g_gbm_lock_ycbcr)(void *self, void *handle, uint32_t usage,
+                               const struct portal_rect *bounds,
+                               struct portal_android_ycbcr *out) = NULL;
 
 static bool load_libui_mapper(void) {
     static bool tried = false;
@@ -236,16 +251,31 @@ static bool load_libui_mapper(void) {
     } else {
         LOGE("libui 里没有 preloadHal，mapper 连接可能未初始化");
     }
-    g_gbm_lock = (int (*)(void *, uint32_t, const struct portal_rect *, void **))dlsym(
+    g_gbm_lock = (int (*)(void *, void *, uint32_t, const struct portal_rect *, void **))dlsym(
         h, "_ZN7android19GraphicBufferMapper4lockEPK13native_handlejRKNS_4RectEPPv");
-    g_gbm_unlock = (int (*)(void *, void *))dlsym(
+    g_gbm_unlock = (int (*)(void *, void *, void *))dlsym(
         h, "_ZN7android19GraphicBufferMapper6unlockEPK13native_handlePNS_4base14unique_fd_implINS4_13DefaultCloserEEE");
+    g_gbm_get_usage = (int (*)(void *, void *, uint64_t *))dlsym(
+        h, "_ZN7android19GraphicBufferMapper8getUsageEPK13native_handlePy");
+    g_gbm_lock_ycbcr = (int (*)(void *, void *, uint32_t, const struct portal_rect *,
+                                struct portal_android_ycbcr *))dlsym(
+        h, "_ZN7android19GraphicBufferMapper9lockYCbCrEPK13native_handlejRKNS_4RectEP13android_ycbcr");
+
+    /* 单例：libui 导出的全局 sInstance（4 字节指针） */
+    void **slot = (void **)dlsym(h, "_ZN7android9SingletonINS_19GraphicBufferMapperEE9sInstanceE");
+    g_gbm_self = (slot != NULL) ? *slot : NULL;
+    if (g_gbm_self == NULL) {
+        LOGE("GraphicBufferMapper 单例尚未创建（sInstance=NULL）：本流不注入（相机行为不变）");
+        return false;
+    }
     if (g_gbm_lock == NULL || g_gbm_unlock == NULL) {
         LOGE("libui 里没找到 GraphicBufferMapper::lock/unlock（lock=%p unlock=%p），本流不注入",
              (void *)g_gbm_lock, (void *)g_gbm_unlock);
         return false;
     }
-    LOGI("libui 的 GraphicBufferMapper::lock 已就绪（走这条兜底路径）");
+    LOGI("libui mapper 就绪：self=%p lock=%p unlock=%p getUsage=%p lockYCbCr=%p", g_gbm_self,
+         (void *)g_gbm_lock, (void *)g_gbm_unlock, (void *)g_gbm_get_usage,
+         (void *)g_gbm_lock_ycbcr);
     return true;
 }
 
@@ -512,26 +542,73 @@ static inline uint8_t portal_pattern(int x, int y, int w, int h, uint32_t frame)
 
 static bool inject_via_libui(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
     if (!load_libui_mapper()) return false;
-    struct portal_rect bounds = {0, 0, (int32_t)w, (int32_t)h};
-    void *vaddr = NULL;
-    uint32_t usage = PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
-    if (g_gbm_lock(handle, usage, &bounds, &vaddr) != 0 || vaddr == NULL) {
+
+    /*
+     * **安全探测**：先问 buffer 自己的 usage，再决定要不要上锁。
+     *
+     * 这一步是本轮的关键：`GraphicBufferMapper::lock/lockYCbCr` 对"不可 CPU 映射"的 buffer
+     * 是 **abort** 而不是返回错误（实测把 provider 打死两次），所以绝不能用"试着锁一下"来探测。
+     * 而 `getUsage` 只是查描述符，失败也只是返回错误码 —— 拿它当门，才能安全地
+     * "等框架按我们补的 SW 用途位重新分配 buffer，等到了再写"。
+     */
+    if (g_gbm_get_usage == NULL) return false;
+    uint64_t usage = 0;
+    int grc = g_gbm_get_usage(g_gbm_self, handle, &usage);
+    if (grc != 0) {
+        /* 描述符查询失败的常见原因：legacy 分配路径的 buffer 没有 mapper 描述符 */
         static unsigned long n = 0;
-        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) LOGE("mapper lock 失败（%ux%u）", w, h);
+        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
+            LOGE("getUsage 失败 rc=%d（该 buffer 可能没有 mapper 描述符）→ 不注入", grc);
+        }
+        return false;
+    }
+    if ((usage & (uint64_t)PORTAL_GRALLOC_USAGE_SW_WRITE_MASK) == 0) {
+        static unsigned long n = 0;
+        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
+            LOGI("buffer 实际 usage=0x%llx 仍无 SW 写位：等框架按新 usage 重分配（本帧不注入）",
+                 (unsigned long long)usage);
+        }
         return false;
     }
 
+    uint32_t lock_usage =
+        PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
+    struct portal_rect bounds = {0, 0, (int32_t)w, (int32_t)h};
+
+    /* 首选 lockYCbCr：能拿到 Y 平面指针**与 stride**，可以写整幅 */
+    if (g_gbm_lock_ycbcr != NULL) {
+        struct portal_android_ycbcr yc;
+        memset(&yc, 0, sizeof(yc));
+        if (g_gbm_lock_ycbcr(g_gbm_self, handle, lock_usage, &bounds, &yc) != 0) {
+            static unsigned long n = 0;
+            if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) LOGE("lockYCbCr 失败");
+            return false;
+        }
+        uint8_t *base = (uint8_t *)yc.y;
+        if (base != NULL && yc.ystride > 0) {
+            for (uint32_t y = 0; y < h; y++) {
+                uint8_t *row = base + (size_t)y * yc.ystride;
+                for (uint32_t x = 0; x < w; x++) {
+                    row[x] = portal_pattern((int)x, (int)y, (int)w, (int)h, frame);
+                }
+            }
+        }
+        int fence = -1; /* unique_fd 在 ABI 上就是一个 int */
+        g_gbm_unlock(g_gbm_self, handle, &fence);
+        return base != NULL;
+    }
+
+    /* 退路：只有 lock（无 stride）时，只写开头一小块条纹，边界锁死 */
+    void *vaddr = NULL;
+    if (g_gbm_lock(g_gbm_self, handle, lock_usage, &bounds, &vaddr) != 0 || vaddr == NULL) {
+        return false;
+    }
     uint8_t *base = (uint8_t *)vaddr;
-    /* 写多少：行数 × 宽度，但整体不超过 PORTAL_SAFE_BYTES（防越界的第一道保险；
-     * 第二道是调用前的 CPU 可写判定） */
     size_t bytes = (size_t)w * (size_t)(h < PORTAL_SAFE_ROWS ? h : PORTAL_SAFE_ROWS);
     if (bytes > PORTAL_SAFE_BYTES) bytes = PORTAL_SAFE_BYTES;
-    for (size_t i = 0; i < bytes; i++) {
-        /* 按 64 字节一段做亮暗条纹：足够显眼，又不依赖 stride/行宽 */
-        base[i] = ((i / 64) % 2) ? 235 : 16;
-    }
-    int fence = -1; /* unique_fd 在 ABI 上就是一个 int；传 -1 = 无 fence */
-    g_gbm_unlock(handle, &fence);
+    for (size_t i = 0; i < bytes; i++) base[i] = ((i / 64) % 2) ? 235 : 16;
+    int fence = -1;
+    g_gbm_unlock(g_gbm_self, handle, &fence);
     return true;
 }
 
