@@ -30,7 +30,13 @@ android {
         minSdk = 24
         ndk {
             abiFilters.clear()
+            /* 两个都要：
+             *  · armeabi-v7a —— MI6（msm8998）的 camera provider 是 32 位进程；
+             *  · arm64-v8a   —— 一加 ACE5（pineapple / ColorOS 16）的 provider 是 64 位
+             *    （`/vendor/bin/hw/vendor.qti.camera.provider-service_64`）。
+             * 产出物按设备取用，不随 APK 分发。 */
             abiFilters.add("armeabi-v7a")
+            abiFilters.add("arm64-v8a")
         }
         externalNativeBuild {
             cmake {

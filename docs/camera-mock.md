@@ -720,3 +720,97 @@ PortalCamShim: 拍照请求：已通知 app 编码 2592x1944（req_seq=5） → 
 - 照片区双槽轮换（§15.11）；
 - 写帧性能的 GL 路线（§15.10 末段）；
 - 若将来要覆盖录像，需要把帧写成 **UBWC 布局**（编码器硬件的读法），目前没有可行手段。
+
+
+---
+
+# 18. 兼容性测试：一加 ACE5（PKG110 / ColorOS 16 / Android 16 / SD8Gen3）
+
+> 2026-09-12，换到第二台设备做兼容性测试。**结论先说**：app 侧基本可用（两处待办），
+> **模块侧在这台机器上走不通** —— 不是"配置改一改"，而是底层栈换了三样东西（root 方案、provider 类型、
+> 内核挂载能力），已定位到四个具体障碍，逐条记录在下面。测试后设备已回滚到可用状态。
+
+## 18.1 两台机器的差异（实测）
+
+| | MI6（已打通） | 一加 ACE5 |
+|---|---|---|
+| 系统 | LineageOS 22.2 / Android 15 | ColorOS 16 / **Android 16** |
+| SoC | msm8998 | **pineapple**（SD8Gen3，arm64） |
+| root 方案 | **Magisk**（有 `magiskpolicy`） | **KernelSU Next**（`ksud sepolicy`；root 域是 `ksu` 不是 `magisk`） |
+| camera provider | HIDL `camera.provider@2.4-service`（**32 位**） | **AIDL** `vendor.qti.camera.provider-service_64`（**64 位**） |
+| vendor HAL | `/vendor/lib/hw/camera.msm8998.so`（32 位） | `/vendor/lib64/hw/camera.qcom.so`（**64 位**，36 MB） |
+| `HMI` 大小 | 176 字节 | **376 字节** |
+| HAL 导出符号 | 有 `QCamera3HardwareInterface::*` | **只有 `HMI`**（不能 dlsym，只能按 ops 索引取指针） |
+| HAL 域 | `hal_camera_default` | `hal_camera_default`（**同名，规则可复用**） |
+| app 域 | `untrusted_app` | `untrusted_app`（同名 ✓） |
+
+## 18.2 app 侧（PortalEX）：基本可用
+
+| 项 | 结果 |
+|---|---|
+| 安装/启动（arm64 构建） | ✅ 正常（`targetSdk=35` 在 Android 16 上可装可跑） |
+| 摄像头模拟页 | ✅ 渲染正常（状态卡 / 标签筛选 / 列表 / 地图开关） |
+| **百度地图** | ✅ 卫星图正常渲染并定位（SDK 在 Android 16 上可用） |
+| 录制页（Camera2 + MediaRecorder） | ✅ 授权 CAMERA 后预览正常；**注意：这台机器上该权限默认没给**（`granted=false`），首次使用需授权 |
+| LSPosed 模块加载 | ⚠️ 我们的模块被注入 `system`，但日志里出现 `Reject hook registration ... already registered 64 times`（定位回调被重复注册，撞上 LSPosed 的 64 次上限）——**待查**（大概率是某个 hook 在 classLoader/重试路径上反复注册） |
+| provider 通道（清单/位置/fd） | 本轮未验证（该机素材库为空、HAL 路线未成型；通道是 app 内部实现，预期无碍） |
+
+## 18.3 模块侧：四个障碍（每个都有实测出处）
+
+**障碍 1：`ksud module install` 被 `set -e` 毒化。**
+安装器是 **source** `customize.sh` 的：脚本里写了 `set -e`，这个 shell 选项会**泄漏进安装器自己的
+shell**，于是它后续步骤（"Handle partition /vendor"）里任何一次非零返回都会让整包装失败 ——
+现象是"脚本正常打印完 → `Error: Failed to install module script` → 整包回滚"，
+而且换布局、换载荷大小都照旧失败，极难定位。**已修**：去掉 `set -e`，改成显式判错。
+
+**障碍 2：`system/vendor/**` 布局过不了安装器。**
+`system/vendor/…` 会在 "Handle partition /vendor" 失败；改成**顶层 `vendor/…`** 才装得上。
+（二分实验：同样的载荷，只改布局 → 前者失败、后者成功。）
+
+**障碍 3：KernelSU 在这台 ROM 上"只跑脚本、不挂模块文件"。**
+`mount | grep -c adb/modules` = **0**；`WorkSettingPro` 用的是 `system/product/app` 也照样没挂上。
+而我们的 `post-fs-data.sh` **确实被执行**（它创建的 16 MiB 共享帧文件在）。
+⇒ "把 shim 放进模块的 system/vendor 目录就会生效"这条 MI6 上成立的路，在这台机器上不成立。
+
+**障碍 4：真件 HAL 进不了 /vendor，而 Vendor 命名空间不许从别处 dlopen。**
+链接器明确拒绝（实测）：
+```
+library "/data/local/tmp/camera.qcom.real.so" is not accessible for the namespace "(default)"
+permitted_paths="/odm:/vendor:/system/vendor"
+```
+- 单文件 bind 到 `/vendor/lib64/hw/camera.qcom.so` **可行**（我们的 shim 96 KB 成功顶上去）；
+- 但 **overlayfs 在这台 ROM 上被拒**（`mount -t overlay … /vendor/lib64/hw` 失败）⇒
+  无法在只读 /vendor 上"新增"一个真件副本；
+- 退路（把真件 bind 到一个**没人用的既有** vendor 文件上，实测 `android.hardware.renderscript@1.0-impl.so`
+  与 `audio@2.0-impl.so` 都没有任何进程映射）→ provider **SIGSEGV 崩溃循环**，
+  且**我们的 shim 连一行日志都没打印**（崩在更早的环节，尚未定位）。
+
+## 18.4 已经做出来的移植件（留在仓库，可继续）
+
+- shim 增加三个运行期开关：`real_hal=`（真件路径）、`real_hmi_bytes=`（176/376）、`ops_index=1`
+  （**按 AOSP ops 索引**从表里取真实函数指针，取前做"落在可执行映射里"的校验 —— 因为 ACE5 不导出符号）；
+  开关文件支持三级回落（`/vendor/lib64/hw` → `/vendor/lib/hw` → `/data/local/tmp`）；
+- 构建同时出 **arm64-v8a**（`camera-hal/build.gradle.kts`）；
+- 模块改成**按设备出包**（`scripts/build-camera-hal-module.sh pineapple|msm8998`）：
+  载荷/占位/开关全部预置在包里，安装期**不动 vendor 树**；
+- 模块脚本同时支持 Magisk 与 KernelSU（自动挑 `magiskpolicy` / `ksud sepolicy`，root 域 `magisk`/`ksu` 都打）；
+- `post-fs-data.sh` 会自己挂载（overlay 优先、单文件 bind 兜底），因为模块文件挂载在本机不可用。
+
+## 18.5 下一步（两条路，需要用户裁决）
+
+**A. 继续攻 ACE5 的 HAL 路线**。最近的下一步是把"provider 为什么在我们 shim 之前就崩"查清：
+用 tombstone 的寄存器/调用栈定位是哪个 NULL（很可能是 ODM 层 `camera.oemlayer.so` 在读某个被我们
+顶替的文件/属性），再换一个更安全的宿主文件；或改用本机允许的挂载方式（如 tmpfs+逐文件 bind：
+先把 HAL 目录内容快照出来，再 tmpfs 覆盖该目录并把快照 bind 回去）。
+
+**B. 改用模块侧 app hook（LSPosed 路线）**。这台机器 `zygisk_lsposed` 已装、我们的模块已被注入，
+仓库里那条"Camera2 换面 + GL 喂帧"的实现是**唯一在 MI6 上被证明能真正替换画面**的路径，
+代价是目标应用要进 LSPosed 作用域 —— 与"系统侧、应用 0 注入"的裁决冲突，所以必须由用户定。
+
+## 18.6 测试后的设备状态（已确认）
+
+- `/vendor/lib64/hw/camera.qcom.so` 与 `…renderscript@1.0-impl.so` 均已还原（36 MB / 72 KB）；
+- `vendor.camera-provider` **running**，相机预览正常（PortalEX 录制页实时画面）；
+- 模块已 `touch /data/adb/modules/portalex-camera-hal/disable`（KernelSU 会跳过它），
+  载荷与真件副本仍留在模块目录里备查；
+- 临时文件（`/data/local/tmp/{camshim64.so,cq.so,sm.so,camera.qcom.real.so,modtest*,md_*,mt*.zip,pch*.zip}`）待清理。
