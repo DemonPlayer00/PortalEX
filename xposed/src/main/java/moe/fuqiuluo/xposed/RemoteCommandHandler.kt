@@ -8,6 +8,7 @@ import android.os.Parcel
 import android.os.Process
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
+import moe.fuqiuluo.xposed.hooks.RouteDriver
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
@@ -153,6 +154,8 @@ object RemoteCommandHandler {
             Cmd.STOP -> {
                 FakeLoc.enable = false
                 FakeLoc.hasBearings = false
+                // 会话结束 ⇒ 路线推进必须一起停（否则会留下"没有会话但位置自己在走"的幽灵推进）
+                RouteDriver.stop()
                 BinderSensorMock.onSimulationChanged()
                 return true
             }
@@ -267,6 +270,12 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.MOVE -> {
+                // 路线推进期间由 system_server 独占坐标：外部逐 tick 推送一律忽略，
+                // 否则两条入边互相抢占（表现为位置来回跳）。App 在路线模式下不会再发它。
+                if (RouteDriver.isRunning) {
+                    warnOnceWhileRouting("move")
+                    return true
+                }
                 val distance = rely.getDouble(Key.DISTANCE, 0.0)
                 if (distance == 0.0) return true
                 // 键缺失 ⇒ 保持当前朝向（默认 0.0 会让"停下时发的无 bearing 命令"把朝向清成 0：
@@ -287,6 +296,10 @@ object RemoteCommandHandler {
                 }
             }
             Cmd.UPDATE_LOCATION -> {
+                if (RouteDriver.isRunning) {
+                    warnOnceWhileRouting("update_location")
+                    return true
+                }
                 val mode = rely.getString(Key.MODE)
                 var newLat = rely.getDouble(Key.LAT, 0.0)
                 var newLon = rely.getDouble(Key.LON, 0.0)
@@ -323,6 +336,26 @@ object RemoteCommandHandler {
                         return applyCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0))
                     }
                 }
+                return true
+            }
+            Cmd.SET_ROUTE -> {
+                // 整条折线一次性交付：App 之后不再逐 tick 推送（见 RouteDriver 的 KDoc）
+                val latArr = rely.getDoubleArray(Key.ROUTE_LAT)
+                val lonArr = rely.getDoubleArray(Key.ROUTE_LON)
+                val tickMs = rely.getLong(Key.ROUTE_TICK_MS, 100L)
+                val ok = RouteDriver.setRoute(latArr, lonArr, tickMs)
+                if (!ok) PortalDiag.fail(PortalDiag.Area.COMMAND_REJECT)
+                return ok
+            }
+            Cmd.ROUTE_START -> {
+                return RouteDriver.start()
+            }
+            Cmd.ROUTE_STOP -> {
+                RouteDriver.stop()
+                return true
+            }
+            Cmd.ROUTE_STATE -> {
+                RouteDriver.fillState(rely)
                 return true
             }
             Cmd.PUT_CONFIG -> {
@@ -477,6 +510,29 @@ object RemoteCommandHandler {
      */
     fun applySyncedCoordinate(lat: Double, lon: Double) {
         updateCoordinate(lat, lon)
+    }
+
+    /**
+     * 路线推进入口（供 [moe.fuqiuluo.xposed.hooks.RouteDriver] 每个 tick 调用）：
+     * 写坐标 + **显式切线朝向** + 立刻投递一帧。
+     *
+     * 与 App 推送路线时走的是**同一条落点路径**（[updateCoordinate] + 强制投递），
+     * 只是发起方从 App 换成了 system_server —— 落点唯一，才不会出现"两条入边各写一套"。
+     */
+    internal fun applyRouteCoordinate(lat: Double, lon: Double, bearing: Double): Boolean {
+        val ok = updateCoordinate(lat, lon, updateBearing = true, explicitBearing = bearing)
+        if (ok && FakeLoc.isSystemServerProcess) {
+            LocationServiceHook.callOnLocationChanged(force = true)
+        }
+        return ok
+    }
+
+    /** 路线推进期间收到外部坐标推送：只提示一次（App 不该发，发了说明两侧版本不一致） */
+    private val routingConflictWarned = java.util.concurrent.atomic.AtomicBoolean(false)
+    private fun warnOnceWhileRouting(what: String) {
+        if (routingConflictWarned.compareAndSet(false, true)) {
+            Logger.warn("RemoteCommandHandler: 路线推进期间忽略 $what（坐标由 system_server 独占）")
+        }
     }
 
     /** 朝向变化推流的最小间隔：摇杆拖动事件很密，限到 ~12Hz 足够平滑且不异常 */
