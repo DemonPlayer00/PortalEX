@@ -17,10 +17,12 @@ import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.service.MockKeepAliveService
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ui.mock.Rocker
+import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import net.sf.geographiclib.Geodesic
 import kotlin.math.abs
@@ -60,6 +62,19 @@ class MockServiceViewModel : ViewModel() {
 
     /** 上一次运动推进的时刻（nanoTime）。0 = 无锚点（循环刚起 / 刚重置），首个 tick 用名义间隔 */
     private var lastMotionNanos = 0L
+
+    /**
+     * 摇杆**是否有手指按着**。
+     *
+     * 用来区分两种"摇杆在走"：
+     *  · 手指按着（true）—— 屏幕必然亮、进程必然在收触摸事件，不需要任何强保活；
+     *  · **锁定后松手继续走**（false 但暂停门开着）—— 无人值守，和自动播放一样需要
+     *    把进程钉住，否则会被系统冻结、位置停住。
+     */
+    private var joystickTouched = false
+
+    /** 后台保活服务的当前状态（避免每个 tick 都发一次 start/stopService） */
+    private var keepAliveOn = false
 
     companion object {
         /**
@@ -121,6 +136,7 @@ class MockServiceViewModel : ViewModel() {
             rocker.autoStatus = false
         }
         rockerCoroutineController.pause()
+        joystickTouched = false
     }
 
     /**
@@ -340,6 +356,12 @@ class MockServiceViewModel : ViewModel() {
                 } else {
                     advanceRockerMove(advanceMs)
                 }
+                // ★ 保活只服务"无人值守的推进"：
+                //   · 自动播放（路线自己走，可能灭屏/后台）；
+                //   · 摇杆锁定后松手继续走（touched=false 但暂停门开着）。
+                // 手指按着摇杆时不占前台、不持锁（屏幕亮着、进程在收触摸事件）；
+                // 空闲（既没自动播放也没在走）时立刻撤掉 —— 遵循系统省电策略。
+                syncBackgroundKeepAlive(activity)
             }
         }
     }
@@ -352,6 +374,36 @@ class MockServiceViewModel : ViewModel() {
      * 路线播放永远推进不了（就停在原地）。旧实现是两个独立协程，路线播放不受摇杆暂停影响，
      * 合并后必须保住这一点。
      */
+    /** 摇杆按下（触摸开始）：开门推进 + 标记"手指在" */
+    fun onRockerStarted() {
+        joystickTouched = true
+        rockerCoroutineController.resume()
+    }
+
+    /**
+     * 摇杆松开：[locked] = 锁定开关开着 ⇒ 继续走（无人值守，需要保活）；
+     * 未锁定 ⇒ 关门停下（空闲，保活随即撤掉）。
+     */
+    fun onRockerFinished(locked: Boolean) {
+        joystickTouched = false
+        if (!locked) rockerCoroutineController.pause()
+    }
+
+    /**
+     * 后台保活同步（每个 tick 调一次，内部只在状态变化时动作）。
+     *
+     * 需要强保活的只有**无人值守仍在推进**的情况：自动播放、或摇杆锁定后松手继续走。
+     * 其余情况（手指按着摇杆、会话开着但没动、关掉设置项）都不占前台、不持锁。
+     */
+    private fun syncBackgroundKeepAlive(ctx: android.content.Context) {
+        val unattendedMoving = isAutoPlaying ||
+                (!rockerCoroutineController.isPaused && !joystickTouched)
+        val want = unattendedMoving && ctx.keepAliveInBackground
+        if (want == keepAliveOn) return
+        keepAliveOn = want
+        if (want) MockKeepAliveService.start(ctx) else MockKeepAliveService.stop(ctx)
+    }
+
     private fun advanceRockerMove(advanceMs: Double) {
         if (rockerCoroutineController.consume()) return
         val lm = locationManager ?: return   // 定位服务未就绪：本 tick 跳过，下次自动重试
