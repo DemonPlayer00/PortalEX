@@ -486,6 +486,20 @@ static char g_opt_mock_file[192] = {0};
  *  为什么需要：预览/录像是不同尺寸的流（实测预览 4,038,656、录像 3,194,880），
  *  一个模板套不了两张画面 —— 图片与视频必须各给一份。 */
 static char g_opt_mock_map[512] = {0};
+/** `raw_dump=<尺寸>:<路径>`：把**现场那一帧**（该尺寸的第一块 dmabuf）原样落到文件。
+ *  用途：照片链路的输入是 RAW（实测：注 RAW 会改照片，注预览 YUV 不会），
+ *  而"逆 ISP 合成一张自然颜色的 RAW"不是一朝一夕的事 —— 那就反过来：
+ *  **先把真帧取下来，改一处，再喂回去**。人眼看到的仍是自然照片，改动处就是我们的。 */
+static char g_opt_raw_dump[256] = {0};
+/** `req_watch=1`：以 2 毫秒周期盯住请求快照，**只要"输出流集合"变了就打印**。
+ *  为什么需要：快照只保留"最近一次请求"，而静止/快照请求只占几十次预览请求里的少数，
+ *  按秒级周期去读基本永远读不到它。2 毫秒轮询才可能抓到。 */
+static int g_opt_req_watch = 0;
+/** `jpeg_probe=1`：在所有 dmabuf 里找 **JPEG 码流**（`FF D8 FF`）。
+ *  思路：静止/快照不走我们挂钩的 HAL3 入口（实测），那就换个方向找它 ——
+ *  不去找"哪个函数被调用"，而是找"编好的 JPEG 最后落在哪块缓冲里"。
+ *  找到那块缓冲，照片模拟就退化成"把我们自己的 JPEG 写进去"。 */
+static int g_opt_jpeg_probe = 0;
 /** `stride_probe=1`：用"行间相关性"实测目标缓冲的**行 stride**（不猜布局） */
 static int g_opt_stride_probe = 0;
 /** `bufmap=1`：按段打印目标缓冲的内容分布（先知道数据在哪，再谈布局） */
@@ -695,6 +709,12 @@ static void load_options(void) {
             snprintf(g_opt_mock_file, sizeof(g_opt_mock_file), "%s", val);
         } else if (strcmp(key, "stride_probe") == 0) {
             g_opt_stride_probe = atoi(val);
+        } else if (strcmp(key, "jpeg_probe") == 0) {
+            g_opt_jpeg_probe = atoi(val);
+        } else if (strcmp(key, "req_watch") == 0) {
+            g_opt_req_watch = atoi(val);
+        } else if (strcmp(key, "raw_dump") == 0) {
+            snprintf(g_opt_raw_dump, sizeof(g_opt_raw_dump), "%s", val);
         } else if (strcmp(key, "bufmap") == 0) {
             g_opt_bufmap = atoi(val);
         } else if (strcmp(key, "probe_size") == 0) {
@@ -3435,6 +3455,45 @@ static void portal_bufmap(void) {
     }
 }
 
+/**
+ * JPEG 码流探针：扫所有 dmabuf 的前 4KB，找 `FF D8 FF`（JPEG SOI/APPn）。
+ * 每 300 毫秒跑一次 —— JPEG 只在快门后短暂存在，2 秒的周期很可能整段错过。
+ */
+static void portal_jpeg_probe(void) {
+    if (!g_opt_jpeg_probe) return;
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) return;
+    struct dirent *e;
+    int hits = 0;
+    while ((e = readdir(d)) != NULL) {
+        int fd = atoi(e->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(path, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0 || st.st_size < 262144) continue;
+        unsigned char *m = (unsigned char *)mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0);
+        if (m == MAP_FAILED) continue;
+        for (int off = 0; off < 4096 - 3; off++) {
+            if (m[off] == 0xFF && m[off + 1] == 0xD8 && m[off + 2] == 0xFF) {
+                LOGI("JPEG 命中：fd=%d size=%ld 偏移 %d，名前 8 字节 %02x %02x %02x %02x %02x %02x "
+                     "%02x %02x（%s）", fd, (long)st.st_size, off, m[off], m[off + 1], m[off + 2],
+                     m[off + 3], m[off + 4], m[off + 5], m[off + 6], m[off + 7], link);
+                hits++;
+                break;
+            }
+        }
+        munmap(m, 4096);
+    }
+    closedir(d);
+    if (hits == 0) LOGI("JPEG 探针：本轮没有 JPEG 码流");
+}
+
 /** 进程自己持有的 dmabuf 清单 —— 相机输出缓冲就在里面（先看清再动手） */
 static void portal_dmabuf_report(void) {
     DIR *d = opendir("/proc/self/fd");
@@ -3482,6 +3541,7 @@ static void portal_dmabuf_report(void) {
 
 typedef struct {
     unsigned long size;
+    char name[48];   /* 可选：dmabuf 名字里必须含这段（`<尺寸>@<子串>:<路径>`） */
     char path[176];
     unsigned char *tpl;
     size_t tlen;
@@ -3500,6 +3560,11 @@ static void portal_mock_parse(void) {
         char *colon = strchr(tok, ':');
         if (colon == NULL) continue;
         *colon = '\0';
+        char *at = strchr(tok, '@');
+        if (at != NULL) {
+            *at = '\0';
+            snprintf(g_mock[g_mock_n].name, sizeof(g_mock[g_mock_n].name), "%s", at + 1);
+        }
         unsigned long sz = strtoul(tok, NULL, 0);
         if (sz == 0) continue;
         g_mock[g_mock_n].size = sz;
@@ -3523,8 +3588,8 @@ static void portal_mock_load(void) {
             if (t != NULL && read(fd, t, (size_t)st.st_size) == st.st_size) {
                 g_mock[i].tpl = t;
                 g_mock[i].tlen = (size_t)st.st_size;
-                LOGI("注入：模板[%lu] ← %s（%zu 字节）", g_mock[i].size, g_mock[i].path,
-                     g_mock[i].tlen);
+                LOGI("注入：模板[%lu%s%s] ← %s（%zu 字节）", g_mock[i].size,
+                     g_mock[i].name[0] ? "@" : "", g_mock[i].name, g_mock[i].path, g_mock[i].tlen);
             } else {
                 free(t);
                 LOGE("注入：读模板失败 %s", g_mock[i].path);
@@ -3570,11 +3635,11 @@ static int portal_build_targets(portal_target t[], int cap) {
         const unsigned char *tpl = NULL;
         size_t tlen = 0;
         for (int i = 0; i < g_mock_n; i++) {
-            if (g_mock[i].size == sz && g_mock[i].tpl != NULL) {
-                tpl = g_mock[i].tpl;
-                tlen = g_mock[i].tlen;
-                break;
-            }
+            if (g_mock[i].size != sz || g_mock[i].tpl == NULL) continue;
+            if (g_mock[i].name[0] != '\0' && strstr(link, g_mock[i].name) == NULL) continue;
+            tpl = g_mock[i].tpl;
+            tlen = g_mock[i].tlen;
+            break;
         }
         if (tpl == NULL) {
             if (g_mock_n != 0) continue;                 /* 有映射表时：没模板的尺寸不动 */
@@ -3686,6 +3751,109 @@ static void portal_req_report(void) {
     if (g_opt_req_probe) portal_dmabuf_report();
     portal_stride_probe();
     portal_bufmap();
+}
+
+/**
+ * 请求观察线程：2 毫秒一轮，只在"输出流集合"变化时打印，并顺手把每路流的几何解出来。
+ * 目的是回答一个是非题：**静止/快照请求到底会不会出现在 HAL3 请求路径上**，
+ * 以及它带的是哪几路流（BLOB？另一路 YUV？）。
+ */
+static void *portal_req_watch_thread(void *arg) {
+    (void)arg;
+    unsigned long last_frame = 0, last_nout = 0, last_stream = 0;
+    int logged = 0;
+    for (;;) {
+        usleep(2000);
+        unsigned long f = __atomic_load_n(&g_req_snap.q[0], __ATOMIC_RELAXED);
+        unsigned long nout = __atomic_load_n(&g_req_snap.q[3], __ATOMIC_RELAXED) & 0xFFFFFFFFul;
+        unsigned long ob = __atomic_load_n(&g_req_snap.q[4], __ATOMIC_RELAXED);
+        if (f == last_frame) continue;
+        unsigned long s0 = 0;
+        if (portal_untag((const void *)ob) >= 0x1000) portal_peek(ob, &s0, sizeof(s0));
+        if (nout != last_nout || s0 != last_stream) {
+            last_nout = nout;
+            last_stream = s0;
+            if (logged < 40) {
+                LOGI("请求流集合变化：帧号=%lu 输出路数=%lu 数组=%p 首流=%p", f, nout, (void *)ob,
+                     (void *)s0);
+                unsigned long arr[16] = {0};
+                if (nout > 0 && nout <= 3 && portal_untag((const void *)ob) >= 0x1000 &&
+                    portal_peek(ob, arr, sizeof(arr)) == 0) {
+                    for (unsigned i = 0; i < nout; i++) {
+                        unsigned int st[12] = {0};
+                        if (portal_peek(arr[i * 5], st, sizeof(st)) == 0) {
+                            LOGI("   流[%u] %ux%u format=%d usage=0x%x", i, st[1], st[2], (int)st[3],
+                                 st[4]);
+                        }
+                    }
+                }
+                logged++;
+            }
+        }
+        last_frame = f;
+    }
+    return NULL;
+}
+
+/** 现场帧落盘：睡一会儿等预览跑起来，然后把该尺寸的第一块缓冲整块写到文件 */
+static void *portal_raw_dump_thread(void *arg) {
+    (void)arg;
+    char spec[sizeof(g_opt_raw_dump)];
+    snprintf(spec, sizeof(spec), "%s", g_opt_raw_dump);
+    char *colon = strchr(spec, ':');
+    if (colon == NULL) return NULL;
+    *colon = '\0';
+    unsigned long want = strtoul(spec, NULL, 0);
+    const char *path = colon + 1;
+    sleep(8);   /* 等预览把 RAW 帧写起来 */
+    for (int attempt = 0; attempt < 20; attempt++) {
+        DIR *d = opendir("/proc/self/fd");
+        if (d == NULL) break;
+        struct dirent *e;
+        int done = 0;
+        while ((e = readdir(d)) != NULL && !done) {
+            int fd = atoi(e->d_name);
+            if (fd < 3) continue;
+            char p2[64];
+            char link[192] = {0};
+            snprintf(p2, sizeof(p2), "/proc/self/fd/%d", fd);
+            ssize_t r = readlink(p2, link, sizeof(link) - 1);
+            if (r <= 0) continue;
+            link[r] = '\0';
+            if (strstr(link, "dmabuf") == NULL) continue;
+            struct stat st;
+            if (fstat(fd, &st) != 0 || (unsigned long)st.st_size != want) continue;
+            unsigned char *m = (unsigned char *)mmap(NULL, (size_t)st.st_size, PROT_READ,
+                                                     MAP_SHARED, fd, 0);
+            if (m == MAP_FAILED) continue;
+            int of = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (of >= 0) {
+                ssize_t wr = write(of, m, (size_t)st.st_size);
+                close(of);
+                LOGI("现场帧落盘：fd=%d size=%ld → %s（写入 %zd 字节）", fd, (long)st.st_size, path,
+                     wr);
+                done = 1;
+            } else {
+                LOGE("现场帧落盘：打不开 %s（errno=%d）", path, errno);
+                done = 1;
+            }
+            munmap(m, (size_t)st.st_size);
+        }
+        closedir(d);
+        if (done) break;
+        sleep(2);
+    }
+    return NULL;
+}
+
+/** JPEG 探针线程：300ms 一轮（快门后的码流只存在很短时间） */
+static void *portal_jpeg_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        portal_jpeg_probe();
+        usleep(300000);
+    }
+    return NULL;
 }
 
 /** 周期汇报线程：不碰 vendor 的任何锁，只读我们自己的 .bss 并写日志 */
@@ -4089,6 +4257,9 @@ static void portal_req_report(void) {}
 static void portal_dmabuf_report(void) {}
 static void portal_stride_probe(void) {}
 static void portal_bufmap(void) {}
+static void *portal_jpeg_thread(void *arg) { (void)arg; return NULL; }
+static void *portal_req_watch_thread(void *arg) { (void)arg; return NULL; }
+static void *portal_raw_dump_thread(void *arg) { (void)arg; return NULL; }
 static void *portal_inject_thread(void *arg) { (void)arg; return NULL; }
 #endif
 
@@ -4523,6 +4694,18 @@ __attribute__((constructor)) static void on_load(void) {
         } else {
             LOGE("注入线程创建失败");
         }
+    }
+    if (g_opt_raw_dump[0] != '\0') {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_raw_dump_thread, NULL) == 0) pthread_detach(th);
+    }
+    if (g_opt_req_watch) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_req_watch_thread, NULL) == 0) pthread_detach(th);
+    }
+    if (g_opt_jpeg_probe) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_jpeg_thread, NULL) == 0) pthread_detach(th);
     }
     if (g_opt_report_period > 0 || g_opt_req_vaddrs[0] != '\0') {
         pthread_t th;
