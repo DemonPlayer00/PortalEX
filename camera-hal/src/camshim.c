@@ -1045,6 +1045,10 @@ static int (*g_real_configure_streams)(const struct camera3_device *, void *) = 
 /* 映射缓存整表清空（定义在下方写帧段；新会话必须失效，见 portal_configure_streams） */
 static void portal_invalidate_maps(void);
 
+/* 帧文件侧的两个前向声明（定义在下方外源帧段；configure_streams 要提前问"产帧端活着吗"） */
+static bool portal_fsrc_open(void);
+static bool portal_fsrc_alive(void);
+
 static void portal_scrub_streams(void *stream_list) {
     /* camera3_stream_configuration_t { uint32_t num_streams; camera3_stream_t **streams;
      *                                   uint32_t operation_mode; … } */
@@ -1069,6 +1073,22 @@ static void portal_scrub_streams(void *stream_list) {
     }
 }
 
+/**
+ * 产帧端现在活着吗（`enabled=1` 且心跳新鲜）。
+ *
+ * **为什么 configure_streams 要看它**：清 UBWC 位是"让 buffer 能被 CPU 正确写入"的前提，
+ * 但它同时**破坏真实相机的落图路径** —— ISP 仍按 UBWC 平铺写进线性 buffer，读出来就是一片
+ * 绿噪声（实测：app 被杀后预览变成规则噪声，而不是真实场景）。
+ * 所以补位必须**按会话判定**：只有产帧端在跑时才改分配，否则保持厂商原始行为，
+ * 这样"关掉模拟/产帧端挂了"留下的仍是一台**能正常拍照**的手机。
+ *
+ * 图案模式（没配 src_file）是研究/演示路径，一直补位。
+ */
+static bool portal_should_patch_usage(void) {
+    if (g_opt_src_file[0] == '\0') return true; /* 图案模式：一直补位（研究/演示路径） */
+    return portal_fsrc_alive();
+}
+
 static int portal_configure_streams(const struct camera3_device *dev, void *stream_list) {
     if (g_real_configure_streams == NULL) return -1;
     /* 先让真 HAL 把它的位（UBWC / HW_CAMERA_WRITE）加完，再改我们那几位 */
@@ -1076,7 +1096,11 @@ static int portal_configure_streams(const struct camera3_device *dev, void *stre
     /* 新会话 ⇒ 新 buffer ⇒ 映射缓存整表失效 */
     portal_invalidate_maps();
     if (rc == 0 && stream_list != NULL && g_opt_usage_patch && portal_cam_selected()) {
-        portal_scrub_streams(stream_list);
+        if (portal_should_patch_usage()) {
+            portal_scrub_streams(stream_list);
+        } else {
+            LOGI("产帧端未在运行 ⇒ 本次不改用途位（真实相机走厂商原始分配路径）");
+        }
     }
     return rc;
 }
@@ -1243,6 +1267,8 @@ struct portal_frame_hdr {
     uint32_t magic, version, width, height, y_stride, uv_stride, format, slot_bytes;
     uint32_t slots, enabled, seq, write_idx, flags, reserved;
     uint64_t timestamp_ns;
+    /* 以下字段由**消费端（HAL）**回写：app 据此把解码器缩放到相机流真实的几何 */
+    uint32_t consumer_w, consumer_h, producer_state, reserved2;
 };
 
 static int g_fsrc_fd = -1;
@@ -1252,6 +1278,8 @@ static const uint8_t *g_fsrc_cur = NULL; /* 当前使用的槽位（没新帧就
 static uint32_t g_fsrc_sw = 0, g_fsrc_sh = 0, g_fsrc_sy = 0, g_fsrc_suv = 0;
 static uint32_t g_fsrc_seq = 0;
 static uint32_t g_fsrc_cycle = 0;
+/** 共享映射是否可写（只读时就不回写 consumer 尺寸） */
+static bool g_fsrc_writable = false;
 
 static bool portal_fsrc_open(void) {
     if (g_fsrc_map != NULL) return true;
@@ -1267,12 +1295,19 @@ static bool portal_fsrc_open(void) {
         close(fd);
         return false;
     }
-    void *m = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    /* 先试读写映射（要回写 consumer 尺寸）；SELinux 不给写权限时退回只读 */
+    void *m = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    bool writable = true;
+    if (m == MAP_FAILED) {
+        writable = false;
+        m = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    }
     if (m == MAP_FAILED) {
         PORTAL_LOG_ONCE(LOGE, "帧文件 mmap 失败（errno=%d）", errno);
         close(fd);
         return false;
     }
+    g_fsrc_writable = writable;
     const struct portal_frame_hdr *h = (const struct portal_frame_hdr *)m;
     if (h->magic != PORTAL_FRAME_MAGIC || h->version != 1) {
         PORTAL_LOG_ONCE(LOGE, "帧文件魔数/版本不对（0x%08x v%u）→ 不接管", h->magic, h->version);
@@ -1283,10 +1318,32 @@ static bool portal_fsrc_open(void) {
     g_fsrc_fd = fd;
     g_fsrc_map = (uint8_t *)m;
     g_fsrc_len = (size_t)st.st_size;
-    LOGI("帧文件已挂上：%s（%ux%u stride=%u/%u 槽=%u 槽字节=%u 总长=%zu flags=%u）",
+    LOGI("帧文件已挂上：%s（%ux%u stride=%u/%u 槽=%u 槽字节=%u 总长=%zu flags=%u %s）",
          g_opt_src_file, h->width, h->height, h->y_stride, h->uv_stride, h->slots, h->slot_bytes,
-         g_fsrc_len, h->flags);
+         g_fsrc_len, h->flags, writable ? "RW" : "RO");
     return true;
+}
+
+/**
+ * 产帧端现在活着吗（`enabled=1` 且心跳新鲜）。
+ *
+ * **configure_streams 为什么要问它**：清 UBWC 位是"让 buffer 能被 CPU 正确写入"的前提，
+ * 但它同时**破坏真实相机的落图路径** —— ISP 仍按 UBWC 平铺写进线性 buffer，读出来就是一片
+ * 绿噪声（实测：app 被杀后预览变规则噪声，而不是真实场景）。所以补位必须**按会话判定**：
+ * 只有产帧端在跑时才改分配；否则保持厂商原始行为，让"关掉模拟/产帧端挂了"之后
+ * 留下的仍是一台能正常拍照的手机。
+ */
+static bool portal_fsrc_alive(void) {
+    if (!portal_fsrc_open()) return false;
+    const struct portal_frame_hdr *h = (const struct portal_frame_hdr *)g_fsrc_map;
+    if (h->magic != PORTAL_FRAME_MAGIC || h->version != 1) return false;
+    if (h->enabled == 0) return false;
+    uint64_t ts = h->timestamp_ns;
+    if (ts == 0) return false;
+    struct timespec nw;
+    clock_gettime(CLOCK_MONOTONIC, &nw);
+    uint64_t now_ns = (uint64_t)nw.tv_sec * 1000000000ull + (uint64_t)nw.tv_nsec;
+    return !(now_ns > ts && now_ns - ts > 5000000000ull);
 }
 
 /** 取当前该用的源槽；没有可用帧返回 NULL */
@@ -1297,6 +1354,20 @@ static const uint8_t *portal_fsrc_pick(void) {
     uint32_t slots = h->slots, slot_bytes = h->slot_bytes;
     if (slots == 0 || slots > 256 || slot_bytes < 4096) return NULL;
     if (PORTAL_FRAME_HDR_BYTES + (size_t)slots * slot_bytes > g_fsrc_len) return NULL;
+
+    /*
+     * **生产者心跳**：非轮转模式下，生产者每发布一帧都会写 timestamp_ns（CLOCK_MONOTONIC）。
+     * 5 秒没动静就当作"生产者没了"（app 被杀、被系统回收、用户退出）——
+     * 否则 HAL 会一直重发最后一帧，应用看到一张**冻结的假画面**，比不接管更糟。
+     */
+    if (!(h->flags & PORTAL_FRAME_FLAG_CYCLE)) {
+        uint64_t ts = h->timestamp_ns;
+        if (ts == 0) return NULL;
+        struct timespec nw;
+        clock_gettime(CLOCK_MONOTONIC, &nw);
+        uint64_t now_ns = (uint64_t)nw.tv_sec * 1000000000ull + (uint64_t)nw.tv_nsec;
+        if (now_ns > ts && now_ns - ts > 5000000000ull) return NULL;
+    }
 
     uint32_t idx;
     if (h->flags & PORTAL_FRAME_FLAG_CYCLE) {
@@ -1321,6 +1392,76 @@ static const uint8_t *portal_fsrc_pick(void) {
     return g_fsrc_cur;
 }
 
+/* ------------------------------------------------------------------ *
+ * 缩放映射（源几何 ≠ 流几何时用）
+ *
+ * 为什么缩放落在 HAL 而不是 app：**MediaCodec 会把 Surface 的 buffer 尺寸设回视频自身尺寸**，
+ * 所以"把 ImageReader 建成相机流尺寸、让解码器顺手缩放"行不通（实测图像仍是 1920x1080）。
+ * 与其在 app 侧再搭一套 GL 管线，不如在这里做逐行查表的最近邻缩放：目标是"每行一次
+ * 连续访存"，而不是逐像素的分支计算。
+ *
+ * 取景方式：**等比缩放后居中裁剪**（cover）—— 相机会话里出现黑边比裁掉边缘更违和，
+ * 与模块侧 `CameraVideoPlayer` 的 fit-center 一致。
+ * ------------------------------------------------------------------ */
+
+static uint32_t *g_map_rows = NULL; /* 目标行 → 源行 */
+static uint32_t *g_map_cols = NULL; /* 目标列 → 源列 */
+static uint32_t g_map_sw = 0, g_map_sh = 0, g_map_dw = 0, g_map_dh = 0;
+
+static bool portal_build_maps(uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh) {
+    if (g_map_rows != NULL && g_map_sw == sw && g_map_sh == sh && g_map_dw == dw &&
+        g_map_dh == dh) {
+        return true;
+    }
+    free(g_map_rows);
+    free(g_map_cols);
+    g_map_rows = NULL;
+    g_map_cols = NULL;
+    if (sw == 0 || sh == 0 || dw == 0 || dh == 0) return false;
+
+    uint32_t *rows = (uint32_t *)malloc(sizeof(uint32_t) * dh);
+    uint32_t *cols = (uint32_t *)malloc(sizeof(uint32_t) * dw);
+    if (rows == NULL || cols == NULL) {
+        free(rows);
+        free(cols);
+        return false;
+    }
+    /* cover：取较大的放大倍率（宽主导 / 高主导），另一维居中裁剪 */
+    if ((uint64_t)dw * sh >= (uint64_t)dh * sw) {
+        for (uint32_t dx = 0; dx < dw; dx++) {
+            uint32_t sx = (uint32_t)((uint64_t)dx * sw / dw);
+            cols[dx] = (sx < sw) ? sx : sw - 1;
+        }
+        uint32_t visible = (uint32_t)((uint64_t)dh * sw / dw);
+        if (visible == 0) visible = 1;
+        uint32_t y0 = (sh > visible) ? (sh - visible) / 2 : 0;
+        for (uint32_t dy = 0; dy < dh; dy++) {
+            uint32_t sy = y0 + (uint32_t)((uint64_t)dy * sw / dw);
+            rows[dy] = (sy < sh) ? sy : sh - 1;
+        }
+    } else {
+        for (uint32_t dy = 0; dy < dh; dy++) {
+            uint32_t sy = (uint32_t)((uint64_t)dy * sh / dh);
+            rows[dy] = (sy < sh) ? sy : sh - 1;
+        }
+        uint32_t visible = (uint32_t)((uint64_t)dw * sh / dh);
+        if (visible == 0) visible = 1;
+        uint32_t x0 = (sw > visible) ? (sw - visible) / 2 : 0;
+        for (uint32_t dx = 0; dx < dw; dx++) {
+            uint32_t sx = x0 + (uint32_t)((uint64_t)dx * sh / dh);
+            cols[dx] = (sx < sw) ? sx : sw - 1;
+        }
+    }
+    g_map_rows = rows;
+    g_map_cols = cols;
+    g_map_sw = sw;
+    g_map_sh = sh;
+    g_map_dw = dw;
+    g_map_dh = dh;
+    LOGI("缩放映射已建立：%ux%u → %ux%u（cover + 居中裁剪）", sw, sh, dw, dh);
+    return true;
+}
+
 /**
  * 把外源帧拷进目标平面。几何/布局不一致时**只拷重叠区**（左上对齐）并记一条，
  * 不做缩放 —— 缩放应该由 app 侧的解码器在 Surface 上完成（那是免费的 GPU 缩放）。
@@ -1328,41 +1469,63 @@ static const uint8_t *portal_fsrc_pick(void) {
 static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uint8_t *dcr,
                                  size_t dcstride, size_t dstep, uint32_t w, uint32_t h) {
     const uint8_t *src = portal_fsrc_pick();
-    const struct portal_frame_hdr *hdr = (const struct portal_frame_hdr *)g_fsrc_map;
+    struct portal_frame_hdr *hdr = (struct portal_frame_hdr *)g_fsrc_map;
     if (src == NULL || hdr == NULL) return false;
     uint32_t sw = hdr->width, sh = hdr->height, sy = hdr->y_stride, suv = hdr->uv_stride;
     if (sw == 0 || sh == 0 || sy < sw) return false;
     if (sw != w || sh != h) {
-        PORTAL_LOG_ONCE(LOGI, "源帧 %ux%u 与流 %ux%u 不同：只拷重叠区（不做缩放）", sw, sh, w, h);
+        PORTAL_LOG_ONCE(LOGI, "源帧 %ux%u 与流 %ux%u 不同：在 HAL 内做 cover 缩放", sw, sh, w, h);
     }
-    uint32_t cw = (sw < w) ? sw : w;
-    uint32_t ch = (sh < h) ? sh : h;
-    for (uint32_t r = 0; r < ch; r++) {
-        memcpy(dy + (size_t)r * dystride, src + (size_t)r * sy, cw);
+    /* 回写消费端（HAL 自己的流）尺寸：app 侧可据此做提示/自适应（缩放由这里负责） */
+    if (g_fsrc_writable && (hdr->consumer_w != w || hdr->consumer_h != h)) {
+        hdr->consumer_w = w;
+        hdr->consumer_h = h;
     }
-    /* 色度：目标若是 NV12/NV21（cb/cr 相邻、step=2），整行原样搬即可 */
-    if (dcb == NULL || dcstride == 0 || suv == 0) return true;
+
+    /* 色度布局先判：目标必须是 NV12/NV21 交织（cb/cr 相邻、step=2） */
     bool interleaved = (dstep == 2 && (dcr == dcb + 1 || dcb == dcr + 1));
+    const uint8_t *suvp = src + (size_t)sy * sh;
+
+    if (sw == w && sh == h) {
+        /* 几何一致：最快路径，整行 memcpy */
+        for (uint32_t r = 0; r < h; r++) {
+            memcpy(dy + (size_t)r * dystride, src + (size_t)r * sy, w);
+        }
+        if (dcb == NULL || dcstride == 0 || suv == 0 || !interleaved) return true;
+        for (uint32_t r = 0; r < (h + 1) / 2; r++) {
+            memcpy(dcb + (size_t)r * dcstride, suvp + (size_t)r * suv, w);
+        }
+        return true;
+    }
+
+    if (!portal_build_maps(sw, sh, w, h)) return false;
+    /* 亮度：逐行按列映射取源字节（查表，无分支计算） */
+    for (uint32_t r = 0; r < h; r++) {
+        const uint8_t *srow = src + (size_t)g_map_rows[r] * sy;
+        uint8_t *drow = dy + (size_t)r * dystride;
+        for (uint32_t x = 0; x < w; x++) drow[x] = srow[g_map_cols[x]];
+    }
+    if (dcb == NULL || dcstride == 0 || suv == 0) return true;
     if (!interleaved) {
         PORTAL_LOG_ONCE(LOGE, "目标色度不是 NV12/NV21 交织布局（step=%zu cb=%p cr=%p）→ 只写亮度",
                         dstep, dcb, dcr);
         return true;
     }
-    const uint8_t *suvp = src + (size_t)sy * sh;
-    /*
-     * U/V 顺序：源（ffmpeg/MediaCodec 的 NV12）是 U 在前；目标若是 NV21（V 在前）会红蓝互换。
-     * 由 `swap_uv=1` 开关决定 —— 这种错**只有看图才认得出**，所以做成运行期开关而不是赌。
-     */
-    for (uint32_t r = 0; r < (ch + 1) / 2; r++) {
+    /* 色度：半分辨率，每元素 2 字节（U,V）一起搬，省一半访存 */
+    uint32_t cw = w / 2, ch = h / 2;
+    if (!portal_build_maps(sw / 2, sh / 2, cw, ch)) return true;
+    for (uint32_t r = 0; r < ch; r++) {
+        const uint8_t *srow = suvp + (size_t)g_map_rows[r] * suv;
         uint8_t *drow = dcb + (size_t)r * dcstride;
-        const uint8_t *srow = suvp + (size_t)r * suv;
-        if (g_opt_swap_uv) {
-            for (uint32_t x = 0; x + 1 < cw; x += 2) {
-                drow[x] = srow[x + 1];
-                drow[x + 1] = srow[x];
+        for (uint32_t x = 0; x < cw; x++) {
+            const uint8_t *sp = srow + (size_t)g_map_cols[x] * 2;
+            if (g_opt_swap_uv) {
+                drow[x * 2] = sp[1];
+                drow[x * 2 + 1] = sp[0];
+            } else {
+                drow[x * 2] = sp[0];
+                drow[x * 2 + 1] = sp[1];
             }
-        } else {
-            memcpy(drow, srow, cw);
         }
     }
     return true;
@@ -1372,9 +1535,11 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
 static void portal_fill_frame(uint8_t *y, size_t ystride, uint8_t *cb, uint8_t *cr, size_t cstride,
                               size_t chroma_step, uint32_t w, uint32_t h, uint32_t frame) {
     if (y == NULL || ystride < w) return;
-    /* 有外源帧就用外源帧（真实视频）；没有才退回合成图案 */
-    if (g_opt_src_file[0] != '\0' &&
-        portal_copy_external(y, ystride, cb, cr, cstride, chroma_step, w, h)) {
+    /* 配了外源帧就**只认外源帧**：取不到（生产者没起来/已冻结/文件坏了）时**什么都不写**，
+     * 让应用看到真实相机 —— 退回合成图案会让"模拟没在跑"看起来像"模拟在跑但坏了"。 */
+    if (g_opt_src_file[0] != '\0') {
+        if (portal_copy_external(y, ystride, cb, cr, cstride, chroma_step, w, h)) return;
+        PORTAL_LOG_ONCE(LOGI, "外源帧暂不可用 → 本帧不改画面（露出真实相机）");
         return;
     }
     const uint8_t *tpl = portal_template(w, h, frame);
@@ -1477,7 +1642,6 @@ static struct portal_map *portal_get_map(void *handle, uint32_t w, uint32_t h) {
     free_slot->used = true;
     return free_slot;
 }
-
 /** 真的把图案写进去；返回是否成功（阶梯见上方注释） */
 static bool portal_write_frame(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
     struct timespec t0;

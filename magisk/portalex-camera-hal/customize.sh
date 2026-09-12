@@ -11,4 +11,7 @@ if [ ! -s "$ORIG" ]; then
     ui_print "- 已保存原始 HAL 到 $ORIG"
 fi
 chmod 644 "$ORIG"
-ui_print "- PortalEX Camera HAL Shim 安装完成（M0：只接管并转发）"
+ui_print "- 默认开关：/vendor/lib/hw/portal.cfg（usage_patch=2 / init_wrap=1 / inject=1）"
+ui_print "- 共享帧文件由 post-fs-data.sh 在 /data/local/tmp/portalex 预建并打标签"
+ui_print "- 安装后需重启一次（Magisk 只在开机时挂载模块文件）"
+ui_print "- PortalEX Camera HAL Shim 安装完成"
