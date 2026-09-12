@@ -1914,3 +1914,93 @@ configure_streams 里后加的 UBWC 位**，`usage_patch=2` 能把它清掉、�
    MP4 帧一致的画面 —— 若能，则同时拿到"是哪一块"与"怎么排"。
 3. 不要再去动 12,591,104 那一类当"录像面"（它只是中间面，注它只会污染）；
    也不要清编码器流的 UBWC 位（记录在 §15.8，已复现过）。
+
+## 30. 录像这一路的竞态与"带宽"都被量出来了；屏幕上那一半解释了之前的困惑（2026-09-13，第 10 轮）
+
+### 30.1 结论先行
+
+1. **写入时机只有两种结局**（在 12,591,104 这一类上实测）：
+   - `inject_sync=1`（头部一变就写一轮）→ 我们的数据**只在顶部约 13~15% 存活**（下面被 ISP 后续的写入盖掉）；
+   - `inject_sync=2`（等整块"静止"再写）→ **一帧都留不下**，录像与零注入基线逐像素同级。
+   ⇒ **编码器是在 ISP 写完的瞬间就读**的：想靠"等 ISP 写完再写"取胜是不可能的。
+2. **盲目连续写才是"赢下这一帧"的手段**（这正是轮 5~8 里"注 3,194,880 / 12,591,104 能改到画面"的原因），
+   代价是**内存带宽**：本轮实测，对着 3,194,880 这一类（~20 块、每轮 64MB）全速盲写时，
+   录出来的 4K 视频**整帧全黑**（均值 3.0/0.19/4.0）—— ISP 被挤掉了。
+   ⇒ §26.3 当时"排掉带宽"排早了：带宽**确实**是一个独立的失效模式，只是与瓦片布局是两回事。
+3. **4K 录像的画面不来自 3,194,880 那一类**（= 预览面）。对照很干净：同一次录制里，
+   预览上**能看到我们的测试卡**（顶部色带条 + 棋盘格），而落盘的 4K 视频与零注入基线**逐像素同级**
+   （160.8/102.9/87.2 vs 160.3/103.4/90.0）。
+4. **4K 录像的画面确实来自 12,591,104 那一类**（注它就出现在录像里，虽然只是一条带）。
+   ⇒ 这一轮把"是哪一块"钉住了：**12,591,104 `MAP_UNKNOWN`（34 块）就是 4K 录像面的候选**，
+   剩下的问题纯粹是"**用正确的排布把内容写进去**"。
+
+### 30.2 一个必须写下来的操作教训（本轮被它浪费了一次实验）
+
+相机模式条的**位置随当前模式平移**，所以"固定坐标点视频"是不可靠的：
+实测过一次把 `视频` 点成了 `专业`（随后两次"录制"点成了拍照），还遇到过闪光灯菜单吞掉点击。
+**规矩：切模式前后都要 `uiautomator dump` 核对 `内容描述` 里的"…模式"字样，
+坐标要按当前模式现算（照片居中时视频在左一格，专业居中时视频在右一格）。**
+
+### 30.3 UBWC 解码尝试：移植了 Mesa 的布局数学，仍然解不出图
+
+按 Mesa `fd6_tiled_memcpy.cc`（fdl6）逐条移植了布局数学：块内像素 swizzle（`get_pixel_offset`）、
+块尺寸（cpp=1 ⇒ 32×8；cpp=2 且 r8g8 ⇒ 16×8）、宏瓦片 = 块×4、宏瓦片行距 = `macrotile_stride*4096`、
+以及 bank swizzle 的异或掩码（模式 4/8 通道 × highest_bank_bit × bank_swizzle_levels）。
+在**活的**12,591,104 现场帧上搜索了 几何 × pitch × 模式 × hbb × levels 共数百组参数，
+**没有一组能解出像一张图的画面**（最优评分与次优几乎无差别）。
+
+⇒ 判读：这些面是 **UBWC 压缩**的（像素数据不在固定的瓦片偏移上，要按元数据平面里的
+per-tile 压缩模式去解码）。所以"把内容写对"需要的不是瓦片坐标，而是**元数据语义**。
+
+### 30.4 下一轮的两条路（按期望值排序）
+
+1. **用 GPU 写这一帧**（首选）：把相机那一侧 dmabuf 用 `EGLImage`（`EGL_LINUX_DMA_BUF_EXT`）导进来，
+   用 GL 把我们的合成画面 **blit** 进去 —— UBWC 的排布与元数据由 GPU 自己写对，
+   不必我们去实现压缩器/元数据；而且 GPU 写 4K 一帧是毫秒级，对"抢在 ISP 之后"也有帮助。
+   要试的只是 modifier（`DRM_FORMAT_MOD_QCOM_COMPRESSED` 一类）与格式/plane 组合。
+2. **移植 UBWC 元数据语义**：把 per-tile 元数据写成"未压缩/透传"模式 + 瓦片像素，
+   让硬件按原样读。需要找到元数据布局的权威描述（Mesa 里若有 UBWC meta 编码器就直接移植）。
+
+两条路都必须配一个**受控的写入节奏**：不是盲写到底（会饿死 ISP），也不是等静止（会全输），
+而是"贴着 ISP 的写入速率持续覆盖"——本轮已经把这三种节奏的**可观测后果**都测出来了，
+下一轮可以据此调参。
+
+## 31. 下一轮的具体方案：用 GPU 把这一帧写对（可行性已实测，2026-09-13）
+
+### 31.1 可行性不是猜的（本轮实测量）
+
+在 **provider 进程内部**（不是宿主、不是相机 App）实测：
+
+| 事实 | 实测值 |
+| --- | --- |
+| GPU 设备节点 | `/dev/dri/renderD128`（`crw-rw-rw-`，`graphics_device`）、`/dev/kgsl-3d0`（`crw-rw-rw-`，`gpu_device`）⇒ **全局可读写** |
+| provider 进程已加载的库 | `libEGL.so`、`libEGL_adreno.so`、`libGLESv2.so`、`libGLESv2_adreno.so`、`libOpenCL.so`、`libgsl.so` |
+| 相机自己的 GPU 资产 | `/data/vendor/camera/ChiNodeGPU.cl.bin` ⇒ **相机 HAL 本来就在用 GPU/OpenCL** |
+
+⇒ 我们的 shim 不需要新增链接依赖：**EGL/GLES 的入口在进程里已经解析得到**
+（`dlopen(NULL)` + `dlsym`，或 `dlsym(RTLD_DEFAULT, …)`）。
+
+### 31.2 实施步骤（写进下一轮的 TODO）
+
+1. `eglGetPlatformDisplay(EGL_PLATFORM_ANDROID_KHR)` → `eglInitialize` → `eglBindAPI(EGL_OPENGL_ES_API)`
+   → 选 `EGL_PBUFFER_BIT` + `EGL_SURFACE_TYPE` 的 config → `eglCreateContext`（ES 3.x）。
+2. 把相机那一侧的 dmabuf **导入成 EGLImage**：`eglCreateImageKHR(dpy, EGL_NO_CONTEXT,
+   EGL_LINUX_DMA_BUF_EXT, NULL, attr)`，attr 里给 `EGL_DMA_BUF_PLANE0_{FD,OFFSET,PITCH,MODIFIER_LO,HI}`
+   ——**modifier 是唯一的不确定项**，先试 `DRM_FORMAT_MOD_QCOM_COMPRESSED` 一族，
+   配 `DRM_FORMAT_NV12`（必要时 10bit 的 P010）逐个试，记下哪个能建出来。
+3. `glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, img)` → 用 `glBlitFramebuffer`
+   或把我们的合成帧先上传到一张普通纹理再 blit 过去；`glFinish()` 之后写放行。
+4. 计时与账目：GPU 写 4K 一帧应在毫秒级；把"建 image / blit / finish"三段耗时打进日志，
+   和 ISP 的节拍对一下。**写入节奏仍按 §30.3 的三种可观测后果来调**（盲写会饿死 ISP、等静止会全输、
+   贴着 ISP 速率持续覆盖才可能赢）。
+5. 备选（若 EGL 路线卡在 modifier 上）：相机 HAL 自带的 OpenCL ——
+   用 `cl_qcom_compressed_image` 一族扩展在 UBWC 缓冲上建 image，由驱动负责排布/压缩。
+
+### 31.3 为什么这条路比"自己实现 UBWC 压缩器"好
+
+- UBWC 的**压缩元数据语义没有权威公开文档**（§30.3 里把 Mesa 的瓦片数学全移植过来也解不出图，
+  说明差的是元数据语义，不是瓦片坐标）；
+- 而 GPU 是**这套格式的原生生产者**：它会同时写对像素、元数据、bank swizzle 与 pitch 对齐，
+  我们不需要知道任何一个细节；
+- 而且它顺带解决**速度**问题（CPU 逐块拼 4K 一帧要几十毫秒，GPU 是毫秒级），
+  对"抢在编码器读之前把这一帧覆盖掉"是决定性的。
