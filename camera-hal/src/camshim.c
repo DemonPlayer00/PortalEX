@@ -224,6 +224,18 @@ static bool load_libui_mapper(void) {
         LOGE("dlopen libui.so 失败：%s", dlerror());
         return false;
     }
+    /*
+     * 必须先 preloadHal()：GraphicBufferMapper 内部持有一个到 mapper 服务的连接，
+     * 在**第一次使用前**建立。provider 进程自己（camera HAL）不走 libui 的 mapper，
+     * 所以这个连接一直是空的 —— 直接 lock 会在 mapper 内部空指针解引用
+     * （实测 tombstone: lock+66，fault addr 0x0000000c）。
+     */
+    void (*preload)(void) = (void (*)(void))dlsym(h, "_ZN7android19GraphicBufferMapper10preloadHalEv");
+    if (preload != NULL) {
+        preload();
+    } else {
+        LOGE("libui 里没有 preloadHal，mapper 连接可能未初始化");
+    }
     g_gbm_lock = (int (*)(void *, uint32_t, const struct portal_rect *, void **))dlsym(
         h, "_ZN7android19GraphicBufferMapper4lockEPK13native_handlejRKNS_4RectEPPv");
     g_gbm_unlock = (int (*)(void *, void *))dlsym(
@@ -495,6 +507,8 @@ static inline uint8_t portal_pattern(int x, int y, int w, int h, uint32_t frame)
  * stride 更大时画面会有轻微斜切，但我们只要"看得见的证明"，安全性优先。
  */
 #define PORTAL_SAFE_ROWS 32
+/** 单次注入最多写多少字节：4KB 远小于任何相机平面的头部区域，绝不会越界 */
+#define PORTAL_SAFE_BYTES (4u * 1024u)
 
 static bool inject_via_libui(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
     if (!load_libui_mapper()) return false;
@@ -508,12 +522,13 @@ static bool inject_via_libui(void *handle, uint32_t w, uint32_t h, uint32_t fram
     }
 
     uint8_t *base = (uint8_t *)vaddr;
-    uint32_t rows = h < PORTAL_SAFE_ROWS ? h : PORTAL_SAFE_ROWS;
-    for (uint32_t y = 0; y < rows; y++) {
-        uint8_t *row = base + (size_t)y * (size_t)w;
-        for (uint32_t x = 0; x < w; x++) {
-            row[x] = portal_pattern((int)x, (int)y, (int)w, (int)h, frame);
-        }
+    /* 写多少：行数 × 宽度，但整体不超过 PORTAL_SAFE_BYTES（防越界的第一道保险；
+     * 第二道是调用前的 CPU 可写判定） */
+    size_t bytes = (size_t)w * (size_t)(h < PORTAL_SAFE_ROWS ? h : PORTAL_SAFE_ROWS);
+    if (bytes > PORTAL_SAFE_BYTES) bytes = PORTAL_SAFE_BYTES;
+    for (size_t i = 0; i < bytes; i++) {
+        /* 按 64 字节一段做亮暗条纹：足够显眼，又不依赖 stride/行宽 */
+        base[i] = ((i / 64) % 2) ? 235 : 16;
     }
     int fence = -1; /* unique_fd 在 ABI 上就是一个 int；传 -1 = 无 fence */
     g_gbm_unlock(handle, &fence);
