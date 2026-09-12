@@ -16,6 +16,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
@@ -25,7 +26,7 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.debug
-import moe.fuqiuluo.portalex.ext.disableFusedProvider
+import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
@@ -40,6 +41,8 @@ import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockKeepAliveService
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.xposed.utils.FusedMode
+import moe.fuqiuluo.xposed.utils.PortalProtocol
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
 class SettingsFragment : Fragment() {
@@ -49,9 +52,51 @@ class SettingsFragment : Fragment() {
     private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
 
     @SuppressLint("SetTextI18n")
+    /**
+     * 查询系统侧的融合定位状态，并据此**启用/禁用**三态滑块。
+     *
+     * · 没有融合定位的机型（少见）⇒ 整块禁用 + 明确说明，不做"看着能点其实没用"的假设置；
+     * · 有融合定位 ⇒ 可用；调试模式打开时把 hook 状态单行诊断显示出来（否则只显示当前模式）。
+     */
+    private fun refreshFusedState() {
+        val ctx = context ?: return
+        val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
+            as? android.location.LocationManager
+        if (lm == null) {
+            binding.dfusedSlider.isEnabled = false
+            binding.dfusedState.text = "定位服务不可用"
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val state = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { MockServiceHelper.getFusedState(lm) }.getOrNull()
+            }
+            val b = _binding ?: return@launch
+            if (state == null) {
+                // 系统侧没应答（模块未生效/未重启）：保持可用但如实说明
+                b.dfusedSlider.isEnabled = true
+                b.dfusedState.text = "系统侧未应答（模块需重启生效）· 当前：${FusedMode.label(ctx.fusedMode)}"
+                return@launch
+            }
+            val available = state.getBoolean(PortalProtocol.Key.FUSED_AVAILABLE, false)
+            b.dfusedSlider.isEnabled = available
+            b.dfusedState.text = if (!available) {
+                "本机无融合定位，此项不适用"
+            } else if (ctx.debug) {
+                // 调试模式：把系统侧的 hook 状态原样显示（同时系统侧也会打一条 debug 日志）
+                state.getString(PortalProtocol.Key.FUSED_STATUS) ?: FusedMode.label(ctx.fusedMode)
+            } else {
+                "已检测到融合定位 · 当前：${FusedMode.label(ctx.fusedMode)}"
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
-        if (_binding != null) refreshBatteryOptimizationState()
+        if (_binding != null) {
+            refreshBatteryOptimizationState()
+            refreshFusedState()
+        }
     }
 
     /** 电池优化白名单状态：文案如实反映，不做假成功 */
@@ -157,17 +202,20 @@ class SettingsFragment : Fragment() {
         // 允许注册位置监听器：语义已定为「允许并注入」——持续拒绝回调在真机上不存在，
         // 本身就是特征；开关保留在设置页仅作说明（布局里 checked=true / enabled=false）。
 
-        binding.dfusedSwitch.isChecked = context.disableFusedProvider
-        binding.dfusedSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
-            override fun onCheckedChanged(
-                buttonView: CompoundButton,
-                isChecked: Boolean
-            ) {
-                context.disableFusedProvider = isChecked
-                showToast(if (isChecked) "已禁用FusedProvider" else "已启用FusedProvider")
-                updateRemoteConfig()
-            }
-        })
+        // 「融合定位处置」：三态互斥滑块（0=拒绝 1=放行（不推荐） 2=伪装）。
+        // 默认伪装；本机没有融合定位时整块禁用（由 refreshFusedState 查询系统侧决定）。
+        binding.dfusedSlider.value = context.fusedMode.toFloat()
+        binding.dfusedSlider.addOnChangeListener { _, value, fromUser ->
+            if (!fromUser) return@addOnChangeListener
+            val mode = FusedMode.sanitize(value.toInt())
+            context.fusedMode = mode
+            showToast("融合定位处置：${FusedMode.label(mode)}")
+            updateRemoteConfig()
+            refreshFusedState()
+        }
+        refreshFusedState()
+
+        binding.cdmaSwitch.isChecked = context.needDowngradeToCdma
 
         binding.cdmaSwitch.isChecked = context.needDowngradeToCdma
         binding.cdmaSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {

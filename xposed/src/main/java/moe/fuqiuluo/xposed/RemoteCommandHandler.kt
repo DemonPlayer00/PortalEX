@@ -13,6 +13,8 @@ import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.FusedMode
+import moe.fuqiuluo.xposed.utils.FusedStatus
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
@@ -206,6 +208,14 @@ object RemoteCommandHandler {
                 }
                 return true
             }
+            Cmd.GET_FUSED_STATE -> {
+                rely.putBoolean(Key.FUSED_AVAILABLE, FusedStatus.available)
+                rely.putInt(Key.FUSED_MODE, FakeLoc.fusedMode)
+                rely.putString(Key.FUSED_STATUS, FusedStatus.statusLine())
+                // 设置页打开/切换调试模式时也刷一条状态日志（调试模式关着就完全安静）
+                FusedStatus.logIfDebug()
+                return true
+            }
             Cmd.GET_SENSOR_STATUS -> {
                 // 诊断页数值总览：注入层/运动学/步频意图 vs 实际的原始数值
                 BinderSensorMock.fillStatus(rely)
@@ -331,7 +341,13 @@ object RemoteCommandHandler {
                 val altitude = rely.numberOr("altitude", FakeLoc.altitude)
                 val accuracy = rely.numberOr("accuracy", FakeLoc.accuracy.toDouble()).toFloat()
                 val enableDebugLog = rely.getBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
-                val disableFusedLocation = rely.getBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
+                // 融合处置三态：新键优先；旧 App 只发布尔键 ⇒ 兜底映射（true=拒绝 / false=伪装）
+                val fusedMode = run {
+                    val m = rely.getInt(Key.FUSED_MODE, -1)
+                    if (m >= 0) FusedMode.sanitize(m)
+                    else if (rely.getBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.rejectFused)) FusedMode.REJECT
+                    else FusedMode.DISGUISE
+                }
                 val needDowngradeToCdma = rely.getBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
                 var minSatellites = rely.getInt(Key.MIN_SATELLITES, 12)
                 if (minSatellites < 0) {
@@ -357,7 +373,9 @@ object RemoteCommandHandler {
                 FakeLoc.altitude = altitude
                 FakeLoc.accuracy = accuracy
                 FakeLoc.enableDebugLog = enableDebugLog
-                FakeLoc.disableFusedLocation = disableFusedLocation
+                FakeLoc.fusedMode = fusedMode
+                // 调试模式打开时把融合 hook 状态打一条（用户点名要的那条日志）
+                FusedStatus.logIfDebug()
                 FakeLoc.needDowngradeToCdma = needDowngradeToCdma
                 FakeLoc.minSatellites = minSatellites
                 FakeLoc.enableAGPS = enableAGPS
@@ -404,7 +422,8 @@ object RemoteCommandHandler {
                 rely.putParcelable(Key.LAST_LOCATION, FakeLoc.lastLocation)
                 rely.putBoolean(Key.ENABLE_LOG, FakeLoc.enableLog)
                 rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
-                rely.putBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
+                rely.putBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.rejectFused)   // 兼容旧口径
+                rely.putInt(Key.FUSED_MODE, FakeLoc.fusedMode)
                 rely.putBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
                 rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
                 rely.putBoolean(Key.HIDE_MOCK, FakeLoc.hideMock)

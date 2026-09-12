@@ -26,6 +26,7 @@ object PortalProtocol {
         const val BROADCAST_LOCATION = "broadcast_location"
         const val GET_ALTITUDE       = "get_altitude"
         const val GET_BEARING        = "get_bearing"
+        const val GET_FUSED_STATE    = "get_fused_state"
         const val GET_LISTENER_SIZE  = "get_listener_size"
         const val GET_LOCATION       = "get_location"
         const val GET_SENSOR_STATUS  = "get_sensor_status"
@@ -77,6 +78,12 @@ object PortalProtocol {
         const val IS_START                  = "is_start"
         const val IS_WIFI_MOCK_START        = "is_wifi_mock_start"
         const val EXCHANGE_REPLY            = "key"
+        // 融合定位（fused provider）三态处置：0=拒绝 1=放行 2=伪装
+        const val FUSED_MODE                = "fused_mode"
+        // 本机是否存在融合定位（App 据此决定设置项可用性与默认值）
+        const val FUSED_AVAILABLE           = "fused_available"
+        // 融合 hook 状态单行诊断（调试模式才打日志，回包始终带）
+        const val FUSED_STATUS              = "fused_status"
         const val LAST_LOCATION             = "last_location"
         const val LAT                       = "lat"
         const val LATITUDE                  = "latitude"

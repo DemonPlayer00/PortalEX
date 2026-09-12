@@ -58,6 +58,24 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
 - 语义基线：**允许并注入**（不再"吞掉注册/请求"）——"注册成功但永远没有回调"是真机上不存在的
   异常态，本身就是特征。
 
+### 3.0 融合定位（fused）的处置：三态互斥
+
+`FusedMode`（`utils/FusedMode.kt`）三态，设置页是互斥滑块；默认 **伪装**：
+
+| 模式 | 行为 | 说明 |
+|---|---|---|
+| 拒绝(0) | 报 `isProviderEnabled("fused")==false` + 拦它的 `sendExtraCommand`/批量注册 | 把系统能力报成不可用，本身是一种可观察差异 |
+| 放行(1) | **完全不碰融合结果** | 不推荐：融合用真实 WiFi/基站算出的位置会原样交给应用（"被拉回"） |
+| 伪装(2) | 让融合照常跑，结果在出口被改写成模拟位置 | 即「拦截-修改-转发」，见 `BaseLocationHook.injectLocation` |
+
+- 三态只在**一个**地方判：所有改写路径（provider 层 / `LocationResult` 容器 / 融合进程内
+  `chooseBestLocation` / `BlindHook`）最终都汇到 `injectLocation`，"放行"在那里按
+  `provider == "fused"` 直通即可。
+- **无融合定位的机型**：设置项整块禁用（App 用 `get_fused_state` 查询系统侧的
+  `FusedStatus.available`）；各族 hook 缺类一律静默跳过（见 3.2）。
+- 调试模式打开时，模块会打一条 `融合定位 hook 状态：available=… chooseBest=… child=… blindMethods=… mode=…`
+  （`FusedStatus.logIfDebug`），设置页同一行也显示这条状态。
+
 ## 4. 传感器模拟：两条投递路径
 
 ```

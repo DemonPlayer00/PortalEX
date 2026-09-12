@@ -89,9 +89,14 @@ internal object LocConfig {
     var binderSensorNativeReady = false
 
     /**
-     * 如果TelephonyHook失效，可能需要打开此开关
+     * 融合定位（fused provider）处置方式：见 [FusedMode]（0=拒绝 1=放行 2=伪装）。
+     *
+     * 取代原来的布尔 `disableFusedLocation`：那个开关只能表达"拒绝/不拒绝"，
+     * 说不出"放行但不干预"与"让它跑、结果换成我们的"这两种完全不同的语义。
+     * 默认 [FusedMode.DISGUISE]（在检测到融合定位的设备上由 App 初始化为伪装）。
      */
-    var disableFusedLocation = true
+    @Volatile
+    var fusedMode: Int = FusedMode.DEFAULT
     var disableNetworkLocation = true
 
     var disableRequestGeofence = false

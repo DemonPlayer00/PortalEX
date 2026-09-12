@@ -155,11 +155,17 @@ var Context.debug: Boolean
         putBoolean("debug", value)
     }
 
-var Context.disableFusedProvider: Boolean
-    get() = sharedPrefs.getBoolean("disableFusedProvider", FakeLoc.disableFusedLocation)
+/**
+ * 融合定位处置（三态互斥，见 [moe.fuqiuluo.xposed.utils.FusedMode]）：
+ * **默认伪装** —— 在检测到融合定位的设备上，让融合照常跑、但把它交给应用的结果改写成
+ * 模拟位置；"拒绝"是把系统能力报成不可用，"放行"则不做任何干预（不推荐）。
+ */
+var Context.fusedMode: Int
+    get() = sharedPrefs.getInt("fusedMode", moe.fuqiuluo.xposed.utils.FusedMode.DEFAULT)
     set(value) = sharedPrefs.edit {
-        putBoolean("disableFusedProvider", value)
-        FakeLoc.disableFusedLocation = value
+        val mode = moe.fuqiuluo.xposed.utils.FusedMode.sanitize(value)
+        putInt("fusedMode", mode)
+        FakeLoc.fusedMode = mode
     }
 
 /**

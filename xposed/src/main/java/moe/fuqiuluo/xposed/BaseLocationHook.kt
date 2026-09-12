@@ -35,6 +35,16 @@ abstract class BaseLocationHook: BaseDivineService() {
         if (!FakeLoc.enable)
             return originLocation
 
+        // 「放行」模式（不推荐）：融合定位自己算出来的结果**原样交给应用**，不改写。
+        // 为什么这样实现：所有改写路径（provider 层 / LocationResult 容器 / 融合进程内
+        // chooseBestLocation / BlindHook）最终都汇到这一个函数，所以在这里按来源判一次就够，
+        // 不必在每个 hook 里各写一遍。真位置被融合算出来并交给应用 —— 就是历史上的"被拉回"。
+        if (FakeLoc.allowFusedResult &&
+            originLocation.provider == android.location.LocationManager.FUSED_PROVIDER
+        ) {
+            return originLocation
+        }
+
         // 已注入判定：按字段严格比较（旧实现比较经纬度**之和**——不同坐标和值相同会误命中，
         // 命中即整体跳过改写，包括 extras 清洗）。默认坐标 (0,0) 不参与判定，避免真实 (0,0) fix 误命中。
         if (FakeLoc.latitude != 0.0 || FakeLoc.longitude != 0.0) {
