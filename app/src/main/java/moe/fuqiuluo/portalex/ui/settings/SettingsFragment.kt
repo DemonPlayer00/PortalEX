@@ -228,19 +228,23 @@ class SettingsFragment : Fragment() {
             val modes = intArrayOf(FusedMode.REJECT, FusedMode.ALLOW, FusedMode.DISGUISE)
             val labels = modes.map { FusedMode.label(it) }.toTypedArray()
             val checked = modes.indexOf(requireContext().fusedMode).coerceAtLeast(0)
-            MaterialAlertDialogBuilder(requireContext())
+            val dialog = MaterialAlertDialogBuilder(requireContext())
                 .setTitle("融合定位处置")
-                .setSingleChoiceItems(labels, checked) { dialog, which ->
+                .setSingleChoiceItems(labels, checked) { d, which ->
                     val mode = modes[which]
                     requireContext().fusedMode = mode
                     binding.dfusedValue.text = FusedMode.label(mode)
                     showToast("融合定位处置：${FusedMode.label(mode)}")
                     updateRemoteConfig()
                     refreshFusedState()
-                    dialog.dismiss()
+                    d.dismiss()
                 }
                 .setNegativeButton("取消", null)
-                .show()
+                .create()
+            // **点空白处不关闭**：这是"改设置"的对话框，误触空白关掉会让人以为没生效/白操作一次。
+            // 退出路径保持明确：选中某一档，或按「取消」/返回键。
+            dialog.setCanceledOnTouchOutside(false)
+            dialog.show()
         }
         refreshFusedState()
 
