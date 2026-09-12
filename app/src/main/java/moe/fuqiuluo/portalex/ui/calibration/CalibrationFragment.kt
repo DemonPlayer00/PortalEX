@@ -219,11 +219,20 @@ class CalibrationFragment : Fragment() {
             SensorTraceChart.Series(trace.gyroTime(), gyro),
             SensorNoiseCalibrator.DURATION_MS.toFloat(),
         )
-        caption.text = "加速度模长 σ=%.4f（静止阈值 %.2f）\n陀螺模长 σ=%.4f（判定用单轴 σ≤%.2f，此处为参考）".format(
-            sigmaOf(accel), SensorNoiseCalibrator.MAX_ACCEL_NORM_SIGMA,
-            sigmaOf(gyro), SensorNoiseCalibrator.MAX_GYRO_SIGMA,
+        // 量程（min~max）与 σ 一起放在图下：图内只有线条（高度 75dp，图内文字会压住曲线）
+        // 注意括号：不括起来的话 `.format` 只作用于后一段字符串（第一段的占位符会原样显示）
+        caption.text = ("加速度模长 σ=%.4f 范围 %.4f~%.4f（静止阈值 %.2f）\n" +
+            "陀螺模长 σ=%.4f 范围 %.4f~%.4f（判定用单轴 σ≤%.2f，此处为参考）").format(
+            sigmaOf(accel), rangeOf(accel).first, rangeOf(accel).second,
+            SensorNoiseCalibrator.MAX_ACCEL_NORM_SIGMA,
+            sigmaOf(gyro), rangeOf(gyro).first, rangeOf(gyro).second,
+            SensorNoiseCalibrator.MAX_GYRO_SIGMA,
         )
     }
+
+    /** 模长序列的区间（min, max；空序列给 0） */
+    private fun rangeOf(data: FloatArray): Pair<Float, Float> =
+        Pair(data.minOrNull() ?: 0f, data.maxOrNull() ?: 0f)
 
     /** 模长序列的标准差（n<2 时给 0） */
     private fun sigmaOf(data: FloatArray): Double {
