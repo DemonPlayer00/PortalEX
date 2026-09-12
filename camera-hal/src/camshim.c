@@ -570,6 +570,16 @@ static void portal_dump_handle(uint32_t idx, const void *handle) {
     LOGI("%s", buf);
 }
 
+/** 这批输出里有没有 JPEG/BLOB（0x21）—— 拍照走的就是它，需要单独打点 */
+static bool portal_layout_has_blob(const struct portal_layout *L) {
+    if (L == NULL || L->sbs == NULL) return false;
+    for (uint32_t i = 0; i < L->num; i++) {
+        const camera3_stream_t *st = L->sbs[i].stream;
+        if (st != NULL && st->format == 0x21) return true;
+    }
+    return false;
+}
+
 /** 打印一次请求的真实字段与每个输出流/句柄的参数（只读；dump 开关打开时才走） */
 static void portal_dump_request(const void *raw, unsigned long n) {
     struct portal_layout L;
@@ -646,8 +656,13 @@ static int shim_process_capture_request(const struct camera3_device *dev,
     if (n == 1 || n % 240 == 0) {
         LOGI("process_capture_request 已接管：#%lu（相机 %s）", n, g_cur_cam[0] ? g_cur_cam : "?");
     }
-    if (request != NULL && g_opt_dump && portal_cam_selected() && (n <= 3 || n % 240 == 0)) {
-        portal_dump_request(request, n);
+    if (request != NULL && g_opt_dump && portal_cam_selected()) {
+        bool want = (n <= 3 || n % 240 == 0);
+        if (!want) {
+            struct portal_layout L;
+            want = portal_parse_request(request, &L) && portal_layout_has_blob(&L);
+        }
+        if (want) portal_dump_request(request, n);
     }
     /* freeze：真 HAL 不参与（只有我们能自己产出并投递结果时才能开，否则应用等不到帧） */
     if (g_opt_freeze) return 0;
@@ -1063,10 +1078,15 @@ static void portal_scrub_streams(void *stream_list) {
         /* JPEG/BLOB（0x21）与 RAW（0x20/0x25）不动：它们的 buffer 由硬件/编码器写，
          * 补 SW 位不但没用，还会改掉分配路径把一次拍照弄坏。 */
         int f = st->format;
-        if (f == 0x21 || f == 0x20 || f == 0x25) continue;
+        /* RAW（0x20/0x25）不动：模拟 RAW 没有意义，改它的分配只会把拍照弄坏 */
+        if (f == 0x20 || f == 0x25) continue;
         uint32_t before = st->usage;
         st->usage |= PORTAL_ADD_SW_USAGE;
-        if (g_opt_usage_patch >= 2) st->usage &= ~PORTAL_GRALLOC_USAGE_PRIVATE_0;
+        /* BLOB（0x21）是线性字节块，没有平铺问题 ⇒ 只补写位、不动 UBWC；
+         * 补写位是"照片也要吃虚拟帧"的前提（否则 CPU 写 BLOB buffer 会被拒） */
+        if (f != 0x21 && g_opt_usage_patch >= 2) {
+            st->usage &= ~PORTAL_GRALLOC_USAGE_PRIVATE_0;
+        }
         LOGI("改用途位[%u]：format=0x%x %ux%u usage 0x%x → 0x%x（UBWC %s）", i, st->format,
              st->width, st->height, before, st->usage,
              (g_opt_usage_patch >= 2) ? "已清" : "保留");
@@ -1269,6 +1289,13 @@ struct portal_frame_hdr {
     uint64_t timestamp_ns;
     /* 以下字段由**消费端（HAL）**回写：app 据此把解码器缩放到相机流真实的几何 */
     uint32_t consumer_w, consumer_h, producer_state, reserved2;
+    /*
+     * 照片区（拍照 = JPEG/BLOB 流，2592×1944 实测）：由 **app 编码**、HAL 只搬运。
+     * 为什么不在这层编码：libjpeg 的 `jpeg_compress_struct` 是版本相关的 ABI，
+     * 在 HAL 里自带头文件等于赌版本；而 app 侧 `YuvImage.compressToJpeg` 是现成的。
+     * 负载位置 = HDR + slots*slot_bytes（紧接亮度槽位之后），长度 photo_bytes。
+     */
+    uint32_t photo_w, photo_h, photo_bytes, photo_seq;
 };
 
 static int g_fsrc_fd = -1;
@@ -1666,6 +1693,52 @@ static bool portal_write_frame(void *handle, uint32_t w, uint32_t h, uint32_t fr
     return true;
 }
 
+/** 照片区大小上限（保守：实测 BLOB buffer 约 7.6 MB，4 MB 一定放得下） */
+#define PORTAL_PHOTO_MAX (4u * 1024u * 1024u)
+
+/**
+ * 把共享帧文件里的 JPEG 搬进拍照输出 buffer（BLOB / format 0x21）。
+ *
+ * 为什么可行：BLOB buffer 是**线性**分配的，没有平铺/UBWC 问题，所以不需要防平铺那套；
+ * 只需要在 configure_streams 时给它补上 SW 写位（见 portal_scrub_streams），否则 CPU 写会被拒。
+ *
+ * **尾部要清**：真 HAL 已经先把**真实照片**写进去了（实测 919,710 字节），我们的 JPEG 更短，
+ * 所以要把自己长度之后的一段清零 —— 否则文件尾部会留着真实画面的残片（既是坏数据也是信息泄漏）。
+ */
+static bool portal_write_photo(const camera3_stream_buffer_t *sb) {
+    if (sb == NULL || sb->stream == NULL || sb->buffer == NULL) return false;
+    if (!portal_fsrc_open() || g_fsrc_map == NULL) return false;
+    struct portal_frame_hdr *h = (struct portal_frame_hdr *)g_fsrc_map;
+    uint32_t n = h->photo_bytes;
+    if (n == 0 || n > PORTAL_PHOTO_MAX) return false;
+    if (h->slots == 0 || h->slot_bytes == 0) return false;
+    size_t off = PORTAL_FRAME_HDR_BYTES + (size_t)h->slots * h->slot_bytes;
+    if (off + n > g_fsrc_len) {
+        PORTAL_LOG_ONCE(LOGE, "照片区越界：off=%zu n=%u len=%zu", off, n, g_fsrc_len);
+        return false;
+    }
+    if (!load_libui_mapper()) return false;
+
+    void *handle = *sb->buffer;
+    if ((uintptr_t)handle < 0x1000u) return false;
+    uint32_t lock_usage =
+        PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
+    struct portal_rect bounds = {0, 0, (int32_t)sb->stream->width, (int32_t)sb->stream->height};
+    void *vaddr = NULL;
+    int rc = g_gbm_lock(g_gbm_self, handle, lock_usage, &bounds, &vaddr);
+    if (rc != 0 || vaddr == NULL) {
+        PORTAL_LOG_ONCE(LOGE, "照片 buffer lock 失败 rc=%d（SW 写位没补上？）→ 保留真实照片", rc);
+        return false;
+    }
+    memcpy(vaddr, g_fsrc_map + off, n);
+    size_t wipe = PORTAL_PHOTO_MAX;
+    if (wipe > n) memset((uint8_t *)vaddr + n, 0, wipe - n);
+    int fence = -1;
+    g_gbm_unlock(g_gbm_self, handle, &fence);
+    LOGI("照片已替换：%u 字节（来自共享帧文件的照片区）", n);
+    return true;
+}
+
 /** 往一个输出 buffer 的 Y 平面写图案；成功返回 true */
 static bool inject_into_buffer(const camera3_stream_buffer_t *sb, uint32_t frame) {
     if (sb == NULL || sb->stream == NULL || sb->buffer == NULL) return false;
@@ -1705,7 +1778,12 @@ static void portal_process_capture_result(const camera3_callback_ops_t *ops,
     if (result != NULL && g_opt_dump && portal_cam_selected()) {
         static unsigned long rn = 0;
         unsigned long n = __atomic_add_fetch(&rn, 1, __ATOMIC_RELAXED);
-        if (n == 1 || n % 240 == 0) {
+        bool want = (n == 1 || n % 240 == 0);
+        if (!want) {
+            struct portal_layout LB;
+            want = portal_parse_result((const void *)result, &LB) && portal_layout_has_blob(&LB);
+        }
+        if (want) {
             struct portal_layout L;
             bool ok = portal_parse_result((const void *)result, &L);
             const char *raw = (const char *)result;
@@ -1731,7 +1809,13 @@ static void portal_process_capture_result(const camera3_callback_ops_t *ops,
         if (portal_parse_result((const void *)result, &L)) {
             bool wrote = false;
             for (uint32_t i = 0; i < L.num; i++) {
-                if (inject_into_buffer(&L.sbs[i], *(const uint32_t *)result)) wrote = true;
+                const camera3_stream_buffer_t *sb = &L.sbs[i];
+                if (sb->stream != NULL && sb->stream->format == 0x21 /* BLOB/JPEG */) {
+                    /* 拍照：不是"写 Y 平面"，而是整块换成我们的 JPEG */
+                    if (sb->status == 0 && portal_write_photo(sb)) wrote = true;
+                    continue;
+                }
+                if (inject_into_buffer(sb, *(const uint32_t *)result)) wrote = true;
             }
             if (wrote) {
                 unsigned long n = __atomic_add_fetch(&g_injected_frames, 1, __ATOMIC_RELAXED);

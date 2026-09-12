@@ -1,6 +1,10 @@
 package moe.fuqiuluo.portalex.ui.camera
 
 import android.content.Context
+import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
+import android.media.Image
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -42,6 +46,16 @@ object CameraMockVideoSource {
     /** 位置变化判据（米）：小于它不重选，避免定位抖动导致频繁换片 */
     private const val RESELECT_METERS = 1.0
 
+    /**
+     * 照片帧（JPEG）的重编码间隔。
+     *
+     * 为什么不等"拍照请求"到来再编码：HAL 是在 `process_capture_result` 里把照片 buffer 换掉的，
+     * 那一刻必须**已经有**可搬的 JPEG（同步等 app 编码会把 HAL 的结果线程堵住）。
+     * 所以这里维持一张"当前帧的 JPEG"，按固定节拍刷新 —— 照片最多比预览旧 1.5 秒，
+     * 对"模拟"完全够用（视频内容本来就在慢慢走）。
+     */
+    private const val PHOTO_INTERVAL_MS = 1500L
+
     private val lock = Any()
     private var thread: Thread? = null
 
@@ -56,6 +70,12 @@ object CameraMockVideoSource {
     /** 发布失败的累计次数（诊断用） */
     @Volatile
     private var failedPublish = 0L
+
+    /** 照片帧（JPEG）相关状态 */
+    private var lastPhotoMs = 0L
+    private var photoCount = 0L
+    private var nv21: ByteArray = ByteArray(0)
+    private var photoRow: ByteArray = ByteArray(0)
 
     /** 供 [stop] 撤保活用（[start] 时记下 application context） */
     @Volatile
@@ -216,6 +236,69 @@ object CameraMockVideoSource {
     }
 
     /**
+     * 把当前解码帧编码成 JPEG 放进共享文件的**照片区**（拍照时由 HAL 搬进 BLOB buffer）。
+     *
+     * `YuvImage` 只吃 **NV21**（Y 平面 + VU 交织），而解码器给的是 NV12（UV 交织，U 在前）
+     * ⇒ 色度成对交换。节流见 [PHOTO_INTERVAL_MS]。
+     */
+    private fun maybePublishPhoto(image: Image) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPhotoMs < PHOTO_INTERVAL_MS) return
+        lastPhotoMs = now
+
+        val w = CameraFrameSink.width
+        val h = CameraFrameSink.height
+        if (w <= 0 || h <= 0 || image.width < w || image.height < h) return
+        val need = w * h * 3 / 2
+        if (nv21.size < need) nv21 = ByteArray(need)
+        if (photoRow.size < w) photoRow = ByteArray(w)
+        val out = nv21
+
+        /* Y：逐行拷（源可能有行填充，目标按 w 紧凑排） */
+        val y = image.planes[0]
+        var p = 0
+        for (r in 0 until h) {
+            val off = r * y.rowStride
+            if (off + w > y.buffer.limit()) break
+            y.buffer.position(off)
+            y.buffer.get(out, p, w)
+            p += w
+        }
+        /* 色度：NV12(U 在前) → NV21(V 在前)，成对交换 */
+        val u = image.planes[1]
+        for (r in 0 until h / 2) {
+            val off = r * u.rowStride
+            if (off + w > u.buffer.limit()) break
+            u.buffer.position(off)
+            u.buffer.get(photoRow, 0, w)
+            var i = 0
+            while (i + 1 < w) {
+                out[p + i] = photoRow[i + 1]
+                out[p + i + 1] = photoRow[i]
+                i += 2
+            }
+            p += w
+        }
+
+        val baos = java.io.ByteArrayOutputStream(256 * 1024)
+        val encoded = runCatching {
+            YuvImage(out, ImageFormat.NV21, w, h, null)
+                .compressToJpeg(Rect(0, 0, w, h), 85, baos)
+        }.isSuccess
+        if (!encoded) {
+            Log.w(TAG, "JPEG 编码失败（照片仍会是真实画面）")
+            return
+        }
+        val bytes = baos.toByteArray()
+        if (CameraFrameSink.publishPhoto(bytes, w, h)) {
+            photoCount++
+            if (photoCount == 1L || photoCount % 20L == 0L) {
+                Log.i(TAG, "照片帧已更新：${bytes.size} 字节（${w}x$h），第 $photoCount 次")
+            }
+        }
+    }
+
+    /**
      * 解码一段（到 EOS 为止）并把每帧发布进共享文件；返回 true = 正常播到结尾。
      *
      * 节流在**输入侧**：输出侧一帧解码出来就立刻拷走并归还，解码速度由喂样本的速度决定。
@@ -264,6 +347,7 @@ object CameraMockVideoSource {
                     }
                 } else {
                     image.use {
+                        maybePublishPhoto(it)
                         val ok = CameraFrameSink.publish(it)
                         if (ok) {
                             published++
