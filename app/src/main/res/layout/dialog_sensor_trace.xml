@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  校准采集 dialog 的内容：实时波形 + 静止自检读数。
+  图表本身只画曲线与量程，文字全部走 M3 文本外观（跟随主题明暗/动态取色）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="4dp">
+
+    <moe.fuqiuluo.portalex.android.widget.SensorTraceChart
+        android:id="@+id/trace_chart"
+        android:layout_width="match_parent"
+        android:layout_height="150dp"
+        android:layout_marginTop="4dp" />
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/trace_caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textSize="11sp"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:text="—" />
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/trace_progress"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:text="—" />
+
+</LinearLayout>

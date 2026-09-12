@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     tools:showIn="navigation_view">
 
+    <!-- 常用页：模拟相关的入口 -->
     <group android:checkableBehavior="single">
         <item
             android:id="@+id/nav_home"
@@ -21,6 +22,20 @@
             android:icon="@drawable/baseline_route_24"
             android:title="@string/menu_route_mock" />
         <item
+            android:id="@+id/nav_settings"
+            android:icon="@drawable/baseline_settings_24"
+            android:title="@string/menu_setting" />
+    </group>
+
+    <!--
+      校准与诊断放到底部并隔开：这两项是"偶尔用一次"的工具页，
+      与上面的日常入口混在一起时容易误点（无 id 的 item = NavigationView 的 subheader，
+      自带分隔线与上下留白）。
+    -->
+    <item android:title="" />
+
+    <group android:checkableBehavior="single">
+        <item
             android:id="@+id/nav_calibration"
             android:icon="@drawable/baseline_adjust_24"
             android:title="@string/menu_calibration" />
@@ -28,9 +43,5 @@
             android:id="@+id/nav_test"
             android:icon="@drawable/baseline_info_outline_24"
             android:title="@string/menu_test" />
-        <item
-            android:id="@+id/nav_settings"
-            android:icon="@drawable/baseline_settings_24"
-            android:title="@string/menu_setting" />
     </group>
 </menu>

@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.android.widget.SensorTraceChart
 import moe.fuqiuluo.portalex.databinding.FragmentCalibrationBinding
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
@@ -141,23 +142,40 @@ class CalibrationFragment : Fragment() {
         }
 
         val token = ++runToken
+        // 采集 dialog：**实时波形** + 静止自检读数（图上那条线就是判定用的量）
+        val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_sensor_trace, null)
+        val chart = dialogView.findViewById<SensorTraceChart>(R.id.trace_chart)
+        val caption = dialogView.findViewById<TextView>(R.id.trace_caption)
+        val progressText = dialogView.findViewById<TextView>(R.id.trace_progress)
+        val trace = SensorNoiseCalibrator.Trace()
+        progressText.text = progressText(0)
+
         val progress = MaterialAlertDialogBuilder(ctx)
             .setTitle("正在采集真实噪声")
-            .setMessage(progressText(0))
+            .setView(dialogView)
             .setCancelable(false)
             .setNegativeButton("取消") { _, _ -> runToken++ }
             .create()
+        // 与其它"改设置/采集"的对话框一致：点空白不关闭（避免误触把采集废掉）
+        progress.setCanceledOnTouchOutside(false)
         progress.show()
 
         val base = ctx.sensorNoise
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    SensorNoiseCalibrator.collect(ctx, base) { ms ->
-                        activity?.runOnUiThread {
-                            if (token == runToken && progress.isShowing) progress.setMessage(progressText(ms))
-                        }
-                    }
+                    SensorNoiseCalibrator.collect(
+                        ctx, base,
+                        onProgress = { ms ->
+                            activity?.runOnUiThread {
+                                if (token == runToken && progress.isShowing) {
+                                    progressText.text = progressText(ms)
+                                    renderTrace(chart, caption, trace)
+                                }
+                            }
+                        },
+                        trace = trace,
+                    )
                 }.getOrElse {
                     SensorNoiseCalibrator.Result(base, "", false, "采集异常：${it.message}")
                 }
@@ -180,6 +198,35 @@ class CalibrationFragment : Fragment() {
             showToast(result.message)
             pushConfig()
         }
+    }
+
+    /**
+     * 把实时波形与"σ / 阈值"读数刷到 dialog 上。
+     *
+     * 读数口径与最终判定一致：加速度看**模长 σ**（判定用的就是它）；陀螺判定用的是**单轴 σ**
+     * 而图上只有模长，所以这一项标注为参考值——不把不同的量写成同一个名字。
+     */
+    private fun renderTrace(
+        chart: SensorTraceChart,
+        caption: TextView,
+        trace: SensorNoiseCalibrator.Trace,
+    ) {
+        val accel = trace.accel()
+        val gyro = trace.gyro()
+        chart.submit(accel, gyro)
+        caption.text = "加速度模长 σ=%.4f（静止阈值 %.2f）\n陀螺模长 σ=%.4f（判定用单轴 σ≤%.2f，此处为参考）".format(
+            sigmaOf(accel), SensorNoiseCalibrator.MAX_ACCEL_NORM_SIGMA,
+            sigmaOf(gyro), SensorNoiseCalibrator.MAX_GYRO_SIGMA,
+        )
+    }
+
+    /** 模长序列的标准差（n<2 时给 0） */
+    private fun sigmaOf(data: FloatArray): Double {
+        if (data.size < 2) return 0.0
+        val mean = data.sumOf { it.toDouble() } / data.size
+        var acc = 0.0
+        data.forEach { val d = it - mean; acc += d * d }
+        return kotlin.math.sqrt(acc / data.size)
     }
 
     private fun progressText(elapsedMs: Long): String =

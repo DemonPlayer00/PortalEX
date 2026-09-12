@@ -37,9 +37,9 @@ object SensorNoiseCalibrator {
     private const val SAMPLING_US = 20_000
 
     /** 静止判定：加速度模长的 σ（m/s²）。静止真机 ≈0.008，走起来 >1 */
-    private const val MAX_ACCEL_NORM_SIGMA = 0.25
+    const val MAX_ACCEL_NORM_SIGMA = 0.25
     /** 静止判定：陀螺单轴 σ（rad/s）。静止真机 ≈0.001，转动 >0.05 */
-    private const val MAX_GYRO_SIGMA = 0.05
+    const val MAX_GYRO_SIGMA = 0.05
     /** 每个传感器至少要有的样本数（50Hz × 7.4s ≈ 370） */
     private const val MIN_SAMPLES = 60
     /** 单轴样本缓冲上限（8s@50Hz=400；给更快的采样留余量） */
@@ -60,6 +60,39 @@ object SensorNoiseCalibrator {
         val ok: Boolean,
         val message: String,
     )
+
+    /**
+     * 采集期间的**实时波形**：只留各传感器的**模长**序列，供 UI 画图。
+     *
+     * 为什么只留模长：模长正是静止判定用的量（`normSigma()`），图上看到的就是决定成败的
+     * 那条线；逐轴原样留三倍数据对"看波动"没有额外信息。容量按 50Hz × 10s 给足，
+     * 8s 的采集窗口不会绕回（绕回会让曲线看起来"跳变"，那是画图的错不是传感器的错）。
+     */
+    class Trace(private val capacity: Int = 512) {
+        private val accel = FloatArray(capacity)
+        private var accelCount = 0
+        private val gyro = FloatArray(capacity)
+        private var gyroCount = 0
+
+        /** 采集回调（主线程 handler）调用 */
+        @Synchronized
+        fun push(type: Int, values: FloatArray) {
+            if (values.size < 3) return
+            val mag = sqrt(
+                (values[0] * values[0] + values[1] * values[1] + values[2] * values[2]).toDouble()
+            ).toFloat()
+            when (type) {
+                Sensor.TYPE_ACCELEROMETER -> if (accelCount < capacity) accel[accelCount++] = mag
+                Sensor.TYPE_GYROSCOPE -> if (gyroCount < capacity) gyro[gyroCount++] = mag
+            }
+        }
+
+        @Synchronized
+        fun accel(): FloatArray = accel.copyOf(accelCount)
+
+        @Synchronized
+        fun gyro(): FloatArray = gyro.copyOf(gyroCount)
+    }
 
     /** 原始样本缓冲（回调线程写、采集线程读，自带同步） */
     private class Buf {
@@ -123,8 +156,14 @@ object SensorNoiseCalibrator {
      *
      * @param base 当前注入档（未测项沿用它的值）
      * @param onProgress 进度回调（参数为已采集毫秒数；在采集线程上调用，UI 更新请自行 post）
+     * @param trace 可选的实时波形容器（校准 dialog 画图用；不传则不采集，零开销）
      */
-    fun collect(context: Context, base: FloatArray, onProgress: (Long) -> Unit = {}): Result {
+    fun collect(
+        context: Context,
+        base: FloatArray,
+        onProgress: (Long) -> Unit = {},
+        trace: Trace? = null,
+    ): Result {
         val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
             ?: return Result(base, "", false, "取不到 SensorManager")
         val main = Handler(Looper.getMainLooper())
@@ -148,6 +187,7 @@ object SensorNoiseCalibrator {
                 // 建立期样本丢弃：注册瞬间常带上一帧的陈旧值
                 if (System.currentTimeMillis() < warmupEnd) return
                 bufs[e.sensor.type]?.add(e.values)
+                trace?.push(e.sensor.type, e.values)
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
