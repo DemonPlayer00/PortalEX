@@ -36,7 +36,7 @@ pack_one() {
     OUT="camera-hal/build/portalex-camera-hal-$PLATFORM.zip"
     rm -rf "$STAGE"
     mkdir -p "$STAGE/$DIR" "$STAGE/orig"
-    for f in module.prop customize.sh post-fs-data.sh sepolicy.rule README.md; do
+    for f in module.prop customize.sh post-fs-data.sh service.sh sepolicy.rule README.md; do
         [ -f "$SRC/$f" ] && cp "$SRC/$f" "$STAGE/$f"
     done
     chmod 755 "$STAGE/customize.sh" "$STAGE/post-fs-data.sh"
