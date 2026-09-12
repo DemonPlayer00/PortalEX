@@ -15,14 +15,17 @@
         android:layout_height="match_parent" />
 
     <!--
-      抽屉 = 两个 NavigationView：
-        · 上面是日常入口（含 header）；
-        · 下面是工具页（校准/诊断），与上面隔开 **1/4 个按钮高度**。
-      为什么不用一个菜单里的 subheader 占位：subheader 的行高被 Material 固定成
-      ?attr/listPreferredItemHeightSmall（本机 48dp）——那正好是"一个按钮"的高度，
-      改它又会连带把 menu item 的 minHeight 一起改掉。分成两个视图后间距就是 margin，
-      精确可控。容器背景取 M3 抽屉容器色（?attr/colorSurfaceContainerLow），
-      让那 12dp 缝隙看起来仍是同一块抽屉面。
+      抽屉：**一个** NavigationView / **一个**菜单（列表只能有一个，否则会变成两个各自滚动的列表）。
+      工具页（校准/诊断）排在菜单最后，两组之间的细分隔线由 `DrawerGroupDivider`（ItemDecoration）
+      画在指定菜单项的上方 —— 菜单 XML 没有"组间距"这种属性。
+    -->
+    <!--
+      抽屉 = **固定的标题区** + **一个**可滚动菜单列表：
+      · 标题区（nav_header_main）不放进列表里 ⇒ 列表滚动时它不动（放进 `app:headerLayout`
+        会成为列表的第一项，跟着一起滚）；
+      · 列表只有一个 ⇒ 不会出现"两个各自滚动的列表"；
+      · 列表用 `0dp + weight=1` 吃掉剩余高度并在内部滚动。
+      两组菜单之间的细分隔线（含上下 margin）由 `DrawerGroupDivider` 画在指定菜单项上方。
     -->
     <LinearLayout
         android:id="@+id/drawer_container"
@@ -32,29 +35,14 @@
         android:orientation="vertical"
         android:background="?attr/colorSurfaceContainerLow">
 
+        <include layout="@layout/nav_header_main" />
+
         <com.google.android.material.navigation.NavigationView
             android:id="@+id/nav_view"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:headerLayout="@layout/nav_header_main"
-            app:itemVerticalPadding="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             app:menu="@menu/activity_main_drawer" />
-
-        <!--
-          两组菜单之间：**细分隔线**（1dp，M3 缩进 28dp 与颜色）。
-          画在工具页的 `foreground` 上，不塞独立的 View —— 容器宽度是 wrap_content：
-          · match_parent 的 View 会把抽屉撑到满屏宽；
-          · 0dp+weight 在**纵向** LinearLayout 里分配的是高度（实测把工具组推到了屏幕底部）。
-          线下方不再额外留白：紧贴线的就是工具组第一项（Calibration）；线上方保留 4dp margin
-          （加上顶部视图固有的 8dp 底留白）。
-        -->
-        <com.google.android.material.navigation.NavigationView
-            android:id="@+id/nav_view_tools"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:foreground="@drawable/drawer_divider_line"
-            app:menu="@menu/activity_main_drawer_tools" />
 
     </LinearLayout>
 
