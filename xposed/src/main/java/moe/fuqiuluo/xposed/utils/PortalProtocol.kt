@@ -37,6 +37,13 @@ object PortalProtocol {
         const val MOVE               = "move"
         const val PUT_CONFIG         = "put_config"
         const val RANDOM             = "random"
+        // 路线推进交给 system_server（见 hooks/RouteDriver）：App 只在开始时把整条
+        // 折线一次性交过来，之后不再逐 tick 推送 —— 这样 App 进程被系统冻结/杀掉时，
+        // 模拟位置仍然在走（否则目标应用会看到"原地不动"的配速尖峰）。
+        const val ROUTE_START        = "route_start"
+        const val ROUTE_STATE        = "route_state"
+        const val ROUTE_STOP         = "route_stop"
+        const val SET_ROUTE          = "set_route"
         const val SET_ALTITUDE       = "set_altitude"
         const val SET_BEARING        = "set_bearing"
         const val SET_PROXY          = "set_proxy"
@@ -89,6 +96,13 @@ object PortalProtocol {
         const val NEED_DOWNGRADE_TO_2G      = "need_downgrade_to_2g"
         const val NOISE_PROFILE             = "noise_profile"
         const val PROXY_BINDER              = "proxy"
+        const val ROUTE_FINISHED            = "route_finished"
+        const val ROUTE_LAT                 = "route_lat"
+        const val ROUTE_LON                 = "route_lon"
+        const val ROUTE_RUNNING             = "route_running"
+        const val ROUTE_TICK_MS             = "route_tick_ms"
+        const val ROUTE_TOTAL               = "route_total"
+        const val ROUTE_TRAVELLED           = "route_travelled"
         const val SENSOR_GRID_HZ            = "sensor_grid_hz"
         const val LISTENER_SIZE             = "size"
         const val SPEED                     = "speed"

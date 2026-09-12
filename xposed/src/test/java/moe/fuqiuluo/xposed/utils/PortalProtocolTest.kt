@@ -33,12 +33,12 @@ class PortalProtocolTest {
     @Test
     fun commandCount_isPinned() {
         // 新增/删除命令 ⇒ 改这条断言（顺带提醒你两侧都要接上）
-        assertEquals(29, cmd.size)
+        assertEquals(33, cmd.size)
     }
 
     @Test
     fun keyCount_isPinned() {
-        assertEquals(37, key.size)
+        assertEquals(44, key.size)
     }
 
     @Test
