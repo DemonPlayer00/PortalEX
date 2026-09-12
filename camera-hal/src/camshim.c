@@ -491,6 +491,17 @@ static char g_opt_mock_map[512] = {0};
  *  而"逆 ISP 合成一张自然颜色的 RAW"不是一朝一夕的事 —— 那就反过来：
  *  **先把真帧取下来，改一处，再喂回去**。人眼看到的仍是自然照片，改动处就是我们的。 */
 static char g_opt_raw_dump[256] = {0};
+/** `res_hook=<vaddr>` + `res_module=<模块名>` + `res_writer=1`：
+ *  **在"结果投递"这一刻写缓冲**，而不是盲目死循环。
+ *  为什么必须这样：录像的编码器是"ISP 写完 → 立刻读"，盲目循环的写入大多落在
+ *  ISP 写完之前（被覆盖）或之后（太晚），实测结果就是撕裂的花屏。 */
+static char g_opt_res_hook[64] = {0};
+static char g_opt_res_module[64] = {0};
+static int g_opt_res_writer = 0;
+/** `hook_dev_vaddrs=`：在 `camx.device-impl.so` 上装**记账钩子**（零调用），
+ *  用来回答"结果路径上到底哪个函数在跑" —— 拿到答案再决定写手挂哪儿。 */
+static char g_opt_hook_dev_vaddrs[256] = {0};
+/** `raw_dump=<尺寸>:<路径>` 的旧声明（保持顺序） */
 /** `req_watch=1`：以 2 毫秒周期盯住请求快照，**只要"输出流集合"变了就打印**。
  *  为什么需要：快照只保留"最近一次请求"，而静止/快照请求只占几十次预览请求里的少数，
  *  按秒级周期去读基本永远读不到它。2 毫秒轮询才可能抓到。 */
@@ -715,6 +726,14 @@ static void load_options(void) {
             g_opt_req_watch = atoi(val);
         } else if (strcmp(key, "raw_dump") == 0) {
             snprintf(g_opt_raw_dump, sizeof(g_opt_raw_dump), "%s", val);
+        } else if (strcmp(key, "res_hook") == 0) {
+            snprintf(g_opt_res_hook, sizeof(g_opt_res_hook), "%s", val);
+        } else if (strcmp(key, "res_module") == 0) {
+            snprintf(g_opt_res_module, sizeof(g_opt_res_module), "%s", val);
+        } else if (strcmp(key, "res_writer") == 0) {
+            g_opt_res_writer = atoi(val);
+        } else if (strcmp(key, "hook_dev_vaddrs") == 0) {
+            snprintf(g_opt_hook_dev_vaddrs, sizeof(g_opt_hook_dev_vaddrs), "%s", val);
         } else if (strcmp(key, "bufmap") == 0) {
             g_opt_bufmap = atoi(val);
         } else if (strcmp(key, "probe_size") == 0) {
@@ -3532,6 +3551,53 @@ static void portal_dmabuf_report(void) {
  * 为什么放在**我们自己的线程**：帧缓冲是 mmap 出来的，写它就是普通内存写 —— 不需要 call
  * 进 vendor 的任何锁，也不需要钩子做重活。热路径只负责把"哪块缓冲、多大"记下来。
  */
+/** 结果投递快照：钩子只写这几个字，解析全交给 res_writer 线程 */
+__attribute__((used)) static struct portal_res_snap {
+    unsigned long cnt;    /* +0  命中次数 */
+    unsigned long caller; /* +8  首次调用的返回地址 */
+    unsigned long dev;    /* +16 a0（callback_ops） */
+    unsigned long res;    /* +24 a1（camera3_capture_result*）—— 每次都写 */
+    unsigned long gen;    /* +32 代次，每次调用 +1（写线程靠它触发） */
+} g_res_snap;
+/** 写线程完成后置 1；钩子在这里**有限自旋**，保证"投递时缓冲里已经是我们的内容" */
+__attribute__((used)) static volatile unsigned long g_res_done;
+
+/**
+ * 结果钩子外壳：**零调用**。除记账外只做三件事 —— 存结果指针、代次 +1、把 done 清零后
+ * **有限自旋**等写线程完成（上限约 2~4 毫秒，超时也放行，绝不把 HAL 线程挂死）。
+ */
+#define PORTAL_HOOK_STUB_RES(NAME, ROFF)                                            \
+    __attribute__((naked)) static void NAME(void) {                                 \
+        __asm__ volatile(                                                           \
+            "mov x9, x30\n" "mov x10, x0\n" "mov x11, x1\n"                     \
+            "nop\n" "nop\n" "nop\n" "nop\n"  /* +12：被顶掉的 4 条 */          \
+            "adrp x16, g_res_snap\n"                                               \
+            "add x16, x16, #:lo12:g_res_snap\n"                                    \
+            "ldr x17, [x16]\n" "add x17, x17, #1\n" "str x17, [x16]\n"           \
+            "cmp x17, #1\n" "b.ne 1f\n"                                           \
+            "str x9,  [x16, #8]\n"                                                 \
+            "str x10, [x16, #16]\n"                                                \
+            "1:\n"                                                                 \
+            "str x11, [x16, #24]\n"                                                \
+            "ldr x17, [x16, #32]\n" "add x17, x17, #1\n" "str x17, [x16, #32]\n" \
+            "adrp x12, g_res_done\n"                                               \
+            "add x12, x12, #:lo12:g_res_done\n"                                    \
+            "str xzr, [x12]\n"                                                     \
+            /* 2,000,000 次自旋上限：单个 mov 立即数编码不了，必须 movz+movk */      \
+            "movz x17, #0x8480\n" "movk x17, #0x1e, lsl #16\n"                    \
+            "2:\n" "ldr x10, [x12]\n" "cbnz x10, 3f\n"                           \
+            "subs x17, x17, #1\n" "b.ne 2b\n"                                     \
+            "3:\n"                                                                 \
+            "adrp x16, " #ROFF "\n"                                                \
+            "add x16, x16, #:lo12:" #ROFF "\n"                                     \
+            "ldr x16, [x16]\n"                                                     \
+            "mov x30, x16\n"                                                       \
+            "ret\n");                                                              \
+    }
+
+__attribute__((used)) static volatile unsigned long g_hook_resume_res;
+PORTAL_HOOK_STUB_RES(portal_hook_res0, g_hook_resume_res)
+
 #define PORTAL_INJECT_MAX 24
 #define PORTAL_MOCK_MAX 6
 
@@ -3846,6 +3912,122 @@ static void *portal_raw_dump_thread(void *arg) {
     return NULL;
 }
 
+/**
+ * **结果投递写手**：被结果钩子的自旋"点名"后，立刻把匹配尺寸的模板写进这一帧的输出缓冲。
+ *
+ * 为什么必须挂在投递这一刻（而不是盲目死循环）：
+ * 录像链路上编码器是"ISP 写完 → 立刻读"，盲目循环的写入要么落在 ISP 写完之前（随后被覆盖），
+ * 要么太晚（编码器已经读完）——实测表现就是撕裂花屏。
+ * 这里在**结果回调入口**拿到 buffer handle，写完再放行（钩子侧有限自旋等待），
+ * 于是"消费者看到的一定是我们的内容"。
+ */
+static int portal_res_memfd(void) {
+    static int fd = -1;
+    if (fd < 0) fd = open("/proc/self/mem", O_RDONLY);
+    return fd;
+}
+
+static int portal_res_peek(unsigned long addr, void *buf, size_t len) {
+    int fd = portal_res_memfd();
+    if (fd < 0 || addr == 0) return -1;
+    ssize_t r = pread(fd, buf, len, (off_t)portal_untag((const void *)addr));
+    return (r == (ssize_t)len) ? 0 : -1;
+}
+
+static void *portal_res_writer_thread(void *arg) {
+    (void)arg;
+    unsigned long last_gen = 0;
+    int logged = 0;
+    struct { int fd; void *p; size_t size; } map[8];
+    int nmap = 0;
+    LOGI("结果写手：已启动，等 %s 的结果投递", g_opt_res_module[0] ? g_opt_res_module : "?");
+    for (;;) {
+        unsigned long gen = __atomic_load_n(&g_res_snap.gen, __ATOMIC_RELAXED);
+        if (gen == last_gen) { usleep(200); continue; }
+        last_gen = gen;
+        unsigned long res = __atomic_load_n(&g_res_snap.res, __ATOMIC_RELAXED);
+        unsigned int head[4] = {0};
+        if (portal_res_peek(res, head, sizeof(head)) != 0) {
+            __atomic_store_n(&g_res_done, 1ul, __ATOMIC_RELAXED);
+            continue;
+        }
+        unsigned long nout = head[1];
+        unsigned long outb = 0;
+        if (portal_res_peek(res + 8, &outb, sizeof(outb)) != 0) {
+            __atomic_store_n(&g_res_done, 1ul, __ATOMIC_RELAXED);
+            continue;
+        }
+        if (logged < 6) {
+            LOGI("结果投递：帧号=%u 输出路数=%lu 数组=%p", head[0], nout, (void *)outb);
+            logged++;
+        }
+        if (nout > 0 && nout <= 8 && portal_untag((const void *)outb) >= 0x1000) {
+            unsigned long arr[40] = {0};
+            if (portal_res_peek(outb, arr, sizeof(arr)) == 0) {
+                for (unsigned i = 0; i < nout && i < 8; i++) {
+                    unsigned long *e = arr + i * 5;   /* 条目按 0x28 试（CamX 扩展版） */
+                    unsigned long h = e[1];
+                    if (logged <= 6 && i == 0) {
+                        LOGI("  条目原始：%016lx %016lx %016lx %016lx %016lx", e[0], e[1], e[2], e[3],
+                             e[4]);
+                    }
+                    if (portal_untag((const void *)h) < 0x1000) continue;
+                    /* buffer 字段按 HAL3 契约是 buffer_handle_t*（再解一级才是 handle） */
+                    unsigned long real = 0;
+                    if (portal_res_peek(h, &real, sizeof(real)) != 0) continue;
+                    for (int pass = 0; pass < 2; pass++) {
+                        unsigned long cand = pass == 0 ? real : h;
+                        if (portal_untag((const void *)cand) < 0x1000) continue;
+                        unsigned int nh[8] = {0};
+                        if (portal_res_peek(cand, nh, sizeof(nh)) != 0) continue;
+                        int numfds = (int)nh[1];
+                        if (numfds < 1 || numfds > 4 || nh[0] > 12 || nh[2] > 64) continue;
+                        int fd = (int)nh[3];
+                        if (fd <= 2) continue;
+                        struct stat st;
+                        if (fstat(fd, &st) != 0 || st.st_size <= 0) continue;
+                        const unsigned char *tpl = NULL;
+                        size_t tlen = 0;
+                        for (int k = 0; k < g_mock_n; k++) {
+                            if (g_mock[k].size == (unsigned long)st.st_size && g_mock[k].tpl) {
+                                tpl = g_mock[k].tpl;
+                                tlen = g_mock[k].tlen;
+                                break;
+                            }
+                        }
+                        if (tpl == NULL) continue;
+                        void *m = NULL;
+                        for (int k = 0; k < nmap; k++)
+                            if (map[k].fd == fd) m = map[k].p;
+                        if (m == NULL && nmap < 8) {
+                            m = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                                     0);
+                            if (m != MAP_FAILED && m != NULL) {
+                                map[nmap].fd = fd;
+                                map[nmap].p = m;
+                                map[nmap].size = (size_t)st.st_size;
+                                nmap++;
+                                LOGI("结果写手：接管 fd=%d size=%ld → %p（模板 %zu 字节）", fd,
+                                     (long)st.st_size, m, tlen);
+                            } else {
+                                m = NULL;
+                            }
+                        }
+                        if (m != NULL) {
+                            memcpy(m, tpl, tlen < (size_t)st.st_size ? tlen : (size_t)st.st_size);
+                            if (logged <= 6)
+                                LOGI("结果写手：已写入 fd=%d size=%ld（帧 %u 第 %u 路）", fd,
+                                     (long)st.st_size, head[0], i);
+                        }
+                    }
+                }
+            }
+        }
+        __atomic_store_n(&g_res_done, 1ul, __ATOMIC_RELAXED);
+    }
+    return NULL;
+}
+
 /** JPEG 探针线程：300ms 一轮（快门后的码流只存在很短时间） */
 static void *portal_jpeg_thread(void *arg) {
     (void)arg;
@@ -4105,6 +4287,30 @@ static void portal_hook_req_list(const char *list) {
     }
 }
 
+/** 在"结果投递"入口装钩子（安装代码必须在 arm64 区里，符号才可见） */
+static void portal_hook_res_install(void) {
+    uintptr_t base = 0;
+    if (g_opt_res_module[0] != '\0') base = portal_module_base(g_opt_res_module);
+    if (base == 0 && g_real_module != NULL) {
+        Dl_info di;
+        if (dladdr((const void *)g_real_module, &di) != 0) base = (uintptr_t)di.dli_fbase;
+    }
+    unsigned long rv = strtoul(g_opt_res_hook, NULL, 0);
+    if (base == 0 || rv == 0) {
+        LOGE("结果钩子：拿不到模块基址（res_module=%s res_hook=%s）", g_opt_res_module,
+             g_opt_res_hook);
+        return;
+    }
+    if (g_hook_rec_next >= PORTAL_HOOK_MAX) {
+        LOGE("结果钩子：槽位用完了");
+        return;
+    }
+    int slot = g_hook_rec_next++;
+    snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "res+0x%lx", rv);
+    portal_inline_hook_ex(slot, base, rv, g_hook_name_buf[slot], (void *)portal_hook_res0,
+                          &g_hook_resume_res, 12);
+}
+
 /** 零调用钩子：真件与 oemlayer 都可挂 */
 static void portal_hook_rec_list(const char *list, const char *module_sub) {
     uintptr_t base = 0;
@@ -4260,6 +4466,8 @@ static void portal_bufmap(void) {}
 static void *portal_jpeg_thread(void *arg) { (void)arg; return NULL; }
 static void *portal_req_watch_thread(void *arg) { (void)arg; return NULL; }
 static void *portal_raw_dump_thread(void *arg) { (void)arg; return NULL; }
+static void *portal_res_writer_thread(void *arg) { (void)arg; return NULL; }
+static void portal_hook_res_install(void) { LOGE("结果钩子只有 arm64 实现"); }
 static void *portal_inject_thread(void *arg) { (void)arg; return NULL; }
 #endif
 
@@ -4694,6 +4902,16 @@ __attribute__((constructor)) static void on_load(void) {
         } else {
             LOGE("注入线程创建失败");
         }
+    }
+    if (g_opt_hook_dev_vaddrs[0] != '\0') {
+        portal_hook_rec_list(g_opt_hook_dev_vaddrs, "camx.device-impl.so");
+    }
+    if (g_opt_res_hook[0] != '\0') {
+        portal_hook_res_install();
+    }
+    if (g_opt_res_writer) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_res_writer_thread, NULL) == 0) pthread_detach(th);
     }
     if (g_opt_raw_dump[0] != '\0') {
         pthread_t th;
