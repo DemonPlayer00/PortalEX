@@ -57,6 +57,55 @@ policy "allow hal_camera_default magisk_file file { read open getattr map execut
 # ---------------------------------------------------------------------------
 MODDIR=${0%/*}
 OVL=/data/adb/portalex-overlay
+
+# ---------------------------------------------------------------------------
+# 单文件 bind 的**完整版**（overlayfs 不可用时的兜底；ACE5 实测走这条）
+#
+# 两个关键点：
+#  1) **真件也必须看起来在 /vendor 里**：vendor namespace 只允许 dlopen
+#     /vendor|/odm|/system/vendor，所以真件不能留在 /data/adb（那会 dlopen 失败 ⇒
+#     shim 只能按惰性模块运行 ⇒ 相机不可用）。而 /vendor 只读、建不了新文件，
+#     于是真件必须**借用一个已存在的闲置槽位**；
+#  2) 槽位白名单按"没人会加载"排序，且**当下没有任何进程映射它**才用：
+#     RenderScript 自 Android 14 起没有任何组件会加载，是首选；
+#     audio/vibrator/power 这类**会被懒加载**的绝不能碰。
+# ---------------------------------------------------------------------------
+pick_slot() {
+    for cand in android.hardware.renderscript@1.0-impl.so consumerir.default.so \
+        local_time.default.so vendor.qti.hardware.alarm-impl.so; do
+        [ "$cand" = "$NAME" ] && continue
+        [ -f "$HALDIR/$cand" ] || continue
+        grep -qF "$cand" /proc/*/maps 2>/dev/null && continue
+        echo "$cand"
+        return 0
+    done
+    return 1
+}
+
+bind_deploy() {
+    SLOT=$(pick_slot) || {
+        echo "portalex: 找不到闲置槽位，放弃 bind（相机保持原样）"
+        return 1
+    }
+    mount --bind "$ORIG" "$HALDIR/$SLOT" || {
+        echo "portalex: 真件 bind 到 $SLOT 失败"
+        return 1
+    }
+    if ! mount --bind "$SHIM" "$HALDIR/$NAME"; then
+        umount "$HALDIR/$SLOT"
+        echo "portalex: shim bind 失败，已回滚真件槽位"
+        return 1
+    fi
+    # ⚠️ 开关文件**不在这里写**：它必须在 SHARED_DIR 被打成 portalex_frame_file **之后**创建
+    # （新文件的标签继承目录；写在前面会拿到 shell_data_file，HAL 就读不到了 —— 这个坑很隐蔽，
+    #  因为文件明明存在、权限也对）。这里只把槽位记下来，由脚本末尾统一落盘。
+    PORTAL_SLOT="$HALDIR/$SLOT"
+    PORTAL_CFG_SRC="$SRC/portal.cfg"
+    PICKED_SLOT="$SLOT"
+    echo "portalex: bind 部署完成（真件→$SLOT，shim→$NAME）"
+    return 0
+}
+
 for HALDIR in /vendor/lib64/hw /vendor/lib/hw; do
     # 载荷可能在两种布局里（都实测过，见 scripts/build-camera-hal-module.sh 的文件头）：
     #   · `vendor/…`            —— ksud 安装的包（顶层 vendor/ 才装得上）
@@ -82,8 +131,10 @@ for HALDIR in /vendor/lib64/hw /vendor/lib/hw; do
     if mount -t overlay overlay -o "lowerdir=$HALDIR,upperdir=$UP,workdir=$OVL/work${HALDIR}" "$HALDIR" 2>/dev/null; then
         echo "portalex: overlay 已挂载到 $HALDIR（shim=$NAME）"
     else
-        echo "portalex: overlayfs 不可用，退回单文件 bind（真件路径可能缺失）"
-        mount --bind "$UP/$NAME" "$HALDIR/$NAME" 2>/dev/null && echo "portalex: bind $NAME"
+        # 旧版本这里只 bind 了 shim，真件路径因此不存在 ⇒ shim 按惰性模块运行（相机不可用）。
+        # 现在改成完整版：真件借一个闲置槽位 + 写 cfg 指过去。
+        echo "portalex: overlayfs 不可用，改用「真件借槽位 + shim 覆盖」"
+        bind_deploy
     fi
 done
 
@@ -134,3 +185,21 @@ chcon u:object_r:portalex_frame_file:s0 "$STATE_FILE" 2>/dev/null
 # 文件属主给 PortalEX（装了就给，没装就留给 0666 —— 安装后再重启一次即可）
 APP_UID=$(stat -c %u /data/data/moe.fuqiuluo.portalex 2>/dev/null)
 [ -n "$APP_UID" ] && chown "$APP_UID:$APP_UID" "$FRAME_FILE"
+
+# ---------------------------------------------------------------------------
+# 开关文件（bind 路线专用）：**必须在 SHARED_DIR 打好标签之后写**（见 bind_deploy 的注释）
+# real_hal 指向刚借的那个闲置槽位；其余键沿用随包发下来的 per-device 值
+# （real_hmi_bytes / ops_index 都是机型相关的，绝不能在这里硬编码）。
+# ---------------------------------------------------------------------------
+if [ -n "$PORTAL_SLOT" ]; then
+    CFG_OUT="$SHARED_DIR/portal.cfg"
+    if [ -f "$PORTAL_CFG_SRC" ]; then
+        sed "s|^real_hal=.*|real_hal=$PORTAL_SLOT|" "$PORTAL_CFG_SRC" > "$CFG_OUT"
+    else
+        printf 'real_hal=%s\n' "$PORTAL_SLOT" > "$CFG_OUT"
+    fi
+    grep -q '^real_hal=' "$CFG_OUT" || printf 'real_hal=%s\n' "$PORTAL_SLOT" >> "$CFG_OUT"
+    chmod 0644 "$CFG_OUT"
+    chcon u:object_r:portalex_frame_file:s0 "$CFG_OUT" 2>/dev/null
+    echo "portalex: 开关文件已写 $CFG_OUT（real_hal=$PORTAL_SLOT）"
+fi
