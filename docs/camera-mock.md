@@ -2614,3 +2614,67 @@ PortalCamShim: 已挂钩[0]/[1]/[2] …
 | 长时间录制不卡死 | ⚠️ 部分（`delay=0` 不卡、`delay=10ms` 会卡；需按"赢帧 vs 卡死"折中调参） |
 
 ⇒ 录像不再是"够不着"，而是"**能改、结构能进去**，剩下的是颜色（ISP 决定）与精确布局的细活"。
+
+## 44. 阶段总交接：做到了什么、怎么复现、卡在哪（2026-09-13，第 23 轮）
+
+### 44.1 能力矩阵（只写有实测证据的）
+
+| 能力 | 状态 | 证据 / 出处 |
+| --- | --- | --- |
+| 系统层接管摄像头输出缓冲（**对目标 App 零注入**） | ✅ | 预览整幅变成我们填的内容；相机 UI 不受影响（§23~§24） |
+| 照片模式预览 = 任意图像、几何正确 | ✅ | 测试卡方向/文字/配色都对（§24、§28.2） |
+| 录像模式预览（1920×1080 那一路） | ✅ | 视频模式预览显示我们的测试卡（§28.1） |
+| **照片内容可改**（真帧 → 改一处 → 回注） | ✅ | 落盘照片出现我们的亮块；差分定位 +74 vs 整帧漂移 +15（§38） |
+| 照片改动的**落点可精确控制** | ✅ | RAW→照片 是 90° 旋转 + 尺度 1.02；独立验证 9/19/28 像素（§41） |
+| 照片链路的可靠性做法 | ✅ | 残缺 JPEG 是概率性的（~1/3）⇒ 拍完校验 + 重拍（§39.1） |
+| 录像：**让编码器读我们写的内容** | ✅ | 最高 95.8% 的帧由我们主导（§35.3） |
+| 录像：**我们的图像结构进入录像** | ✅ | 修正几何后 21/30 帧与我们的卡结构相关 >0.5（最佳 +0.790，§43.2） |
+| 部署持久化（模块脚本） | ✅（手册验证） | 手册跑 `post-fs-data.sh` ⇒ 从 /odm 加载 shim、三钩子装上、拍照正常（§42.4） |
+| 照片：**凭空生成一张自然照片** | ⛔ | 需要逆 ISP（黑电平/CFA/增益/CCM/tone），长期项（§26、§41.4） |
+| 录像：**颜色正确** | ⛔ | 受 ISP 3A 限制（合成内容的颜色由 ISP 解释，§43.3） |
+| 录像：消掉瓦片级竖条纹（精确布局） | ⚠️ | 块内已对（Mesa `pixel_offset`），**块间**（宏瓦片/bank swizzle）待定（§43.3） |
+| 录像：长录不卡死 | ⚠️ | `delay=0` 不卡但赢帧少；`delay=10ms` 赢帧多但会卡（§36.5） |
+| 冷启动持久化（开机自动部署） | ⚠️ | 脚本与打包就绪，**尚未在冷启动路径上跑过**，且模块当前是禁用状态（§42.5） |
+
+### 44.2 复现命令（最短路径）
+
+```sh
+# A. 部署（运行期；只叠 /odm，**永不碰 /vendor**）
+adb push camera-hal/build/.../camshim.so /data/local/tmp/camshim.new.so
+adb shell "sh /data/local/tmp/ace5_deploy4.sh 'real_hal=/vendor/lib64/hw/camera.qcom.so;\
+real_hmi_bytes=376;ops_index=1;dump=1;report_period=20;req_vaddrs=0x1e49ca0;\
+hook_rec_vaddrs=0x1e46f60;hook_rec_ol_vaddrs=0x6cadc'"
+
+# B. 预览模拟（照片模式；盲写，作用域只到 4,038,656 这一类）
+#    mock_map=4038656:<NV12 素材>;inject_us=0     素材需 F=desired.transpose(FLIP_LEFT_RIGHT).transpose(TRANSPOSE)
+
+# C. 照片改内容（真帧 → 改一处 → 回注；**必须盲写**）
+adb shell setprop ctl.stop vendor.camera-provider   # 带 raw_dump 的 cfg 起一次，取真帧
+#   host: python3 rawedit.py real.raw mod.raw "2048,1523,0.10"   # ⇒ 落在照片中心
+#   再以 mock_map=15728640:<mod.raw>;inject_us=0 起 provider，拍照
+#   拍完 PIL 校验能解码，不能就重拍
+
+# D. 录像结构模拟（成簇写、**不要盲写**）
+#   mock_map=12591104:<瓦片化素材>;inject_sync=3;inject_burst=1;inject_delay_us=10000
+
+# E. 回滚（任何一条都不残留）
+adb shell "umount /odm/lib64/hw; umount /data/local/tmp/odmtmp; setprop ctl.start vendor.camera-provider"
+```
+标签与路径的坑：cfg 放 `/data/vendor/camera/portal.cfg`（`vendor_camera_data_file`，**零 sepolicy 补丁**）、
+建文件必须 `rm` 再写（`: >` 会留旧标签）、素材同样要 `chcon vendor_camera_data_file`。
+
+### 44.3 卡点（都定位到了具体位置，不是"再试试"）
+
+1. **录像块间布局**：块内已确定（Mesa `get_pixel_offset`，瓦片测试相关 0.80），块间（宏瓦片 4×4 瓦片、
+   bank swizzle 的 `highest_bank_bit`/`levels`）还没定；试过 Mesa mode4/8 + levels0，以及"简单行主序瓦片"，
+   都没有把 32px 级竖条纹消掉。下一步可用**多标记测绘**（64 块 × 4KB、按亮度分组）一次读出块间映射。
+2. **录像颜色**：ISP 3A 对合成内容的解释（同样影响照片链路）——要"颜色也对"就需要逆 3A/逆 ISP。
+3. **卡死 vs 赢帧的折中**：`inject_delay_us` 是单一旋钮，晚写赢面大但会卡；可以试"写成对半 + 逐块确认"。
+4. **照片逆 ISP**：长期项。
+5. **模块冷启动**：脚本已手册验证，需要在冷启动路径上跑一次（要重启设备）。
+
+### 44.4 需要用户点头的两件事
+
+- **装模块 + 重启**：把 `camera-hal/build/portalex-camera-hal-pineapple.zip` 装进 KernelSU（或覆盖已安装目录）
+  再重启一次，才能验证"开机自动部署"。模块当前是禁用状态，且这台设备的冷启动路径还没跑过这个脚本。
+- **是否继续啃录像的块间布局**：这条最费轮次（读数依赖录制 + 差分），收益是"录像颜色/几何都对"。
