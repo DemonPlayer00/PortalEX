@@ -213,7 +213,12 @@ class CalibrationFragment : Fragment() {
     ) {
         val accel = trace.accel()
         val gyro = trace.gyro()
-        chart.submit(accel, gyro)
+        // 横轴固定为采集窗口（8s）：曲线从左侧向右生长，形状不随样本数被拉伸
+        chart.submit(
+            SensorTraceChart.Series(trace.accelTime(), accel),
+            SensorTraceChart.Series(trace.gyroTime(), gyro),
+            SensorNoiseCalibrator.DURATION_MS.toFloat(),
+        )
         caption.text = "加速度模长 σ=%.4f（静止阈值 %.2f）\n陀螺模长 σ=%.4f（判定用单轴 σ≤%.2f，此处为参考）".format(
             sigmaOf(accel), SensorNoiseCalibrator.MAX_ACCEL_NORM_SIGMA,
             sigmaOf(gyro), SensorNoiseCalibrator.MAX_GYRO_SIGMA,

@@ -70,9 +70,20 @@ object SensorNoiseCalibrator {
      */
     class Trace(private val capacity: Int = 512) {
         private val accel = FloatArray(capacity)
+        private val accelTime = FloatArray(capacity)
         private var accelCount = 0
         private val gyro = FloatArray(capacity)
+        private val gyroTime = FloatArray(capacity)
         private var gyroCount = 0
+
+        /** 采集窗口起点（单调时钟）。未标记前样本时间记 0。 */
+        @Volatile
+        private var startMs = 0L
+
+        /** 采集循环开始时调用（丢掉建立期之后）：之后每个样本带上相对时间戳。 */
+        fun markStart() {
+            startMs = android.os.SystemClock.elapsedRealtime()
+        }
 
         /** 采集回调（主线程 handler）调用 */
         @Synchronized
@@ -81,9 +92,20 @@ object SensorNoiseCalibrator {
             val mag = sqrt(
                 (values[0] * values[0] + values[1] * values[1] + values[2] * values[2]).toDouble()
             ).toFloat()
+            val t0 = startMs
+            val t = if (t0 == 0L) 0f
+            else (android.os.SystemClock.elapsedRealtime() - t0).toFloat()
             when (type) {
-                Sensor.TYPE_ACCELEROMETER -> if (accelCount < capacity) accel[accelCount++] = mag
-                Sensor.TYPE_GYROSCOPE -> if (gyroCount < capacity) gyro[gyroCount++] = mag
+                Sensor.TYPE_ACCELEROMETER -> if (accelCount < capacity) {
+                    accel[accelCount] = mag
+                    accelTime[accelCount] = t
+                    accelCount++
+                }
+                Sensor.TYPE_GYROSCOPE -> if (gyroCount < capacity) {
+                    gyro[gyroCount] = mag
+                    gyroTime[gyroCount] = t
+                    gyroCount++
+                }
             }
         }
 
@@ -91,7 +113,13 @@ object SensorNoiseCalibrator {
         fun accel(): FloatArray = accel.copyOf(accelCount)
 
         @Synchronized
+        fun accelTime(): FloatArray = accelTime.copyOf(accelCount)
+
+        @Synchronized
         fun gyro(): FloatArray = gyro.copyOf(gyroCount)
+
+        @Synchronized
+        fun gyroTime(): FloatArray = gyroTime.copyOf(gyroCount)
     }
 
     /** 原始样本缓冲（回调线程写、采集线程读，自带同步） */
@@ -203,6 +231,8 @@ object SensorNoiseCalibrator {
             }
             if (registered == 0) return Result(base, "", false, "传感器注册失败")
 
+            // 波形的时间轴从这里开始计（与"已采集 x 秒"同一时刻）
+            trace?.markStart()
             val start = System.currentTimeMillis()
             while (true) {
                 val elapsed = System.currentTimeMillis() - start
