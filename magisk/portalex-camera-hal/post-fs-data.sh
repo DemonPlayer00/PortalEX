@@ -106,6 +106,19 @@ bind_deploy() {
     return 0
 }
 
+# /odm 路线的载荷先探一下：探到了就**完全不动 /vendor**（见文件末尾 ACE5 段的三条实测理由）
+ODM_SHIM_EARLY=""
+for cand in "$MODDIR/payload/odm/camera.qcom.so" "$MODDIR/system/odm/lib64/hw/camera.qcom.so" \
+            "$MODDIR/odm/lib64/hw/camera.qcom.so"; do
+    [ -s "$cand" ] && ODM_SHIM_EARLY="$cand" && break
+done
+SKIP_VENDOR=0
+if [ -s /odm/lib64/hw/camera.oemlayer.so ] && [ -n "$ODM_SHIM_EARLY" ]; then
+    SKIP_VENDOR=1
+    echo "portalex: 检测到 /odm 路线可用 ⇒ 本次**不碰 /vendor**（避免 media.swcodec 起不来）"
+fi
+
+if [ "$SKIP_VENDOR" = 0 ]; then
 for HALDIR in /vendor/lib64/hw /vendor/lib/hw; do
     # 载荷可能在两种布局里（都实测过，见 scripts/build-camera-hal-module.sh 的文件头）：
     #   · `vendor/…`            —— ksud 安装的包（顶层 vendor/ 才装得上）
@@ -137,6 +150,7 @@ for HALDIR in /vendor/lib64/hw /vendor/lib/hw; do
         bind_deploy
     fi
 done
+fi   # SKIP_VENDOR
 
 SHARED_DIR=/data/local/tmp/portalex
 FRAME_FILE=$SHARED_DIR/cammock.frames
@@ -202,4 +216,75 @@ if [ -n "$PORTAL_SLOT" ]; then
     chmod 0644 "$CFG_OUT"
     chcon u:object_r:portalex_frame_file:s0 "$CFG_OUT" 2>/dev/null
     echo "portalex: 开关文件已写 $CFG_OUT（real_hal=$PORTAL_SLOT）"
+fi
+
+# ---------------------------------------------------------------------------
+# ACE5 / 64 位 QTI 专用路线：**在 /odm 上叠 tmpfs-upper，绝不碰 /vendor**
+#
+# 为什么这一条必须单独写（三条都是实测结论）：
+#  1) provider 真正 dlopen 的是 **/odm/lib64/hw/camera.qcom.so**，而真件在
+#     `/vendor/lib64/hw/camera.qcom.so` 原封不动 —— 于是**不需要任何真件副本**，
+#     shim 自己按 `real_hal=` 去 dlopen /vendor 的路径即可（比 bind 路线简单也更安全）。
+#  2) 在 **/vendor/lib64/hw** 上叠 overlay 会让 `media.swcodec` 起不来
+#     （`GraphicBufferMapper: gralloc-mapper is missing` ⇒ 拍照直接废掉，连相机 App 都会死；
+#     见 docs/camera-mock.md §25.1）。**只叠 /odm 没有这个问题**（实测预览/拍照/录像全部正常）。
+#  3) 开关文件放 **/data/vendor/camera/portal.cfg**（`vendor_camera_data_file`）：
+#     相机 HAL 本来就在读写这个目录 ⇒ 不需要任何 sepolicy 补丁，也不需要 overlay。
+#     `/data/local/tmp/portalex/` 那条路在本机**不可达**：hal_camera_default 对
+#     `shell_data_file` 没有 dir-search（这里虽有 allow，但 ROM 的 dontaudit 会吞掉 avc，
+#     排查时会误判成"文件没写进去"）。
+# ---------------------------------------------------------------------------
+ODM_DIR=/odm/lib64/hw
+ODM_NAME=camera.qcom.so
+ODM_SHIM="$ODM_SHIM_EARLY"
+
+# ⚠️ 判据是"**目录在**"+ "我们有载荷"，**不是**"目标文件在" ——
+# 实测：本机 /odm/lib64/hw 上**本来就没有** camera.qcom.so（只有 camera.oemlayer.so 等），
+# 我们要做的正是"往里加一个"，所以按"文件存在"判会永远不触发（踩过）。
+if [ -d "$ODM_DIR" ] && [ -n "$ODM_SHIM" ]; then
+    TMP=/data/local/tmp/odmtmp
+    # ⚠️ 顺序不能反：**先挂 tmpfs，再建 upper/work**。反过来建的话，目录建在 tmpfs 之下，
+    # 一挂载就被盖住 ⇒ 后面 cp 到 upper/ 会报 "No such file or directory"（踩过）。
+    mkdir -p "$TMP"
+    mount | grep -q " $TMP " || mount -t tmpfs tmpfs "$TMP" 2>/dev/null
+    mkdir -p "$TMP/upper" "$TMP/work"
+    cp -f "$ODM_SHIM" "$TMP/upper/$ODM_NAME"
+    chmod 644 "$TMP/upper/$ODM_NAME" 2>/dev/null
+    if mount | grep -q " $ODM_DIR "; then
+        echo "portalex: $ODM_DIR 已有挂载，跳过（避免叠加两层）"
+    elif mount -t overlay overlay \
+            -o "lowerdir=$ODM_DIR,upperdir=$TMP/upper,workdir=$TMP/work" "$ODM_DIR" 2>/dev/null; then
+        echo "portalex: 已在 $ODM_DIR 叠上我们的 shim（/vendor 未被触碰）"
+    else
+        echo "portalex: $ODM_DIR overlay 失败，相机保持原样"
+    fi
+
+    # 开关文件：先删再建（`: >` 只截断、会留下旧标签 —— 踩过：
+    # 残留的 portalex_frame_file 标签让 HAL 读不到），并打 vendor_camera_data_file
+    CFG_DIR=/data/vendor/camera
+    mkdir -p "$CFG_DIR"
+    rm -f "$CFG_DIR/portal.cfg"
+    if [ -s "$MODDIR/payload/odm/portal.cfg" ]; then
+        cp -f "$MODDIR/payload/odm/portal.cfg" "$CFG_DIR/portal.cfg"
+    else
+        printf 'real_hal=/vendor/lib64/hw/%s\nreal_hmi_bytes=376\nops_index=1\ndump=1\n' "$ODM_NAME" \
+            > "$CFG_DIR/portal.cfg"
+    fi
+    chmod 666 "$CFG_DIR/portal.cfg"
+    chcon u:object_r:vendor_camera_data_file:s0 "$CFG_DIR/portal.cfg" 2>/dev/null
+
+    # 随包的模拟素材（可选）：放 /data/vendor/camera/ 并打同样的标签，
+    # 这样 cfg 里的 mock_map=… 就能直接引用它们
+    if [ -d "$MODDIR/payload/odm/mock" ]; then
+        for f in "$MODDIR/payload/odm/mock"/*; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            rm -f "$CFG_DIR/$base"
+            cp -f "$f" "$CFG_DIR/$base"
+            chmod 666 "$CFG_DIR/$base"
+            chcon u:object_r:vendor_camera_data_file:s0 "$CFG_DIR/$base" 2>/dev/null
+        done
+        echo "portalex: 模拟素材已就位（$(ls "$CFG_DIR" | wc -l) 个文件在 $CFG_DIR）"
+    fi
+    echo "portalex: 开关文件 = $CFG_DIR/portal.cfg"
 fi
