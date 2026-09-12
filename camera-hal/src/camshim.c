@@ -48,8 +48,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -64,6 +66,25 @@
  * 由模块的 sepolicy 规则授权 execute 即可（magiskpolicy 的语句格式见 sepolicy.rule）。
  */
 #define REAL_HAL_PATH "/vendor/lib/hw/camera.msm8998.orig.so"
+
+/**
+ * 运行期开关文件（由 Magisk 模块提供，随 `system/vendor/lib/hw/**` 挂进来）。
+ *
+ * **为什么要有它**：HAL 里的 A/B 实验若只能靠编译期开关，每换一组条件都要重编 + 重推 + 杀进程；
+ * 而本模块的 sepolicy 已经允许 `hal_camera_default` 读 `system_file`
+ * （见 magisk/portalex-camera-hal/sepolicy.rule），所以模块里**新增**的文件 HAL 读得到。
+ * 有了它，换条件只要 `adb push portal.cfg` + `kill provider`，秒级迭代 ——
+ * 更重要的是出问题能立刻把开关拨回全 0（纯转发），不必重新部署 .so。
+ *
+ * 格式：`key=value`，每行一条，`#` 开头为注释。缺省全 0（= 纯 M0 转发）。
+ *   dump=1         打印请求/结果的真实布局与流参数（只读，安全）
+ *   usage_patch=1  在 configure_streams 里给输出流补 SW 读写用途位（让 buffer 可 CPU 映射）
+ *   init_wrap=1    包一层框架回调表（注入的时序前提）
+ *   inject=1       往输出 buffer 的 Y 平面写合成图案（需 usage_patch + init_wrap）
+ *   freeze=1       不把请求转发给真 HAL（只有我们能自己产出结果时才用，否则应用会卡死）
+ *   cam=<id>       只对指定相机 id 生效（空 = 全部）
+ */
+#define PORTAL_CFG_PATH "/vendor/lib/hw/portal.cfg"
 
 /** 真实模块符号大小（实测 176 字节 = camera_module_t）；照抄这么多即可，不会越界读原件 */
 #define REAL_HMI_BYTES 176u
@@ -299,20 +320,90 @@ static int (*g_real_initialize)(const struct camera3_device *,
                                 const camera3_callback_ops_t *) = NULL;
 
 /*
- * 是否启用"注入试探"（EGL/CPU 写帧）。
+ * 注入的默认状态：**全关**（= 纯 M0 转发）。
  *
- * **默认关闭，而且必须默认关闭**：实测把注入试探留在里面会**破坏相机预览**（应用看到黑屏）——
- * 因为在 HAL 线程上创建/切换 EGL 上下文、以及对不可 CPU 映射的 buffer 反复试探，会干扰
- * vendor HAL 自己的图形状态。这条路线本身也已被证明走不通（见 docs/camera-mock.md §5.2），
- * 所以 camshim 的定位就应该是"纯接管 + 转发"的 M0：只证明我们在帧通路上，不改任何画面。
+ * 历史教训（docs/camera-mock.md §4.1）：早先把"包框架回调"与"改 configure_streams"两处接管
+ * 一起打开，应用看到**黑屏**。但那两处是**打包**测的，从未单独隔离 —— 而"改动用法位"正是让
+ * 应用 buffer 变成可 CPU 映射（从而能写进我们的画面）的唯一正规手段，所以本轮把它们拆成
+ * 独立开关逐个验证。默认仍全关，任何一项失败都安静退回纯转发。
  */
-#define PORTAL_CAMSHIM_ENABLE_INJECTION 0
-
-/* 注入相关状态 */
 static portal_gralloc_module_t *g_gralloc = NULL;
 static const camera3_callback_ops_t *g_framework_callbacks = NULL;
 static bool g_gralloc_tried = false;
 static unsigned long g_injected_frames = 0;
+
+/* ------------------------------------------------------------------ *
+ * 运行期开关（文件格式见 [PORTAL_CFG_PATH]）
+ * ------------------------------------------------------------------ */
+
+static int g_opt_dump = 0;
+static int g_opt_usage_patch = 0;
+static int g_opt_init_wrap = 0;
+static int g_opt_inject = 0;
+static int g_opt_freeze = 0;
+static int g_opt_pattern = 0;
+static char g_opt_cam[16] = {0};
+
+/** 当前 open 的相机 id；`cam=` 定向就靠它 */
+static char g_cur_cam[16] = {0};
+
+/** 本次 open 是否在作用范围内（cam= 为空即全部生效） */
+static bool portal_cam_selected(void) {
+    if (g_opt_cam[0] == '\0') return true;
+    return strcmp(g_opt_cam, g_cur_cam) == 0;
+}
+
+/**
+ * 读一次开关文件。**只读一次**（构造期后不再碰文件系统：HAL 热路径不做 IO）。
+ * 文件缺失/读不了 ⇒ 全 0 ⇒ 纯转发，这与部署前的行为完全一致。
+ */
+static void load_options(void) {
+    static bool tried = false;
+    if (tried) return;
+    tried = true;
+
+    FILE *f = fopen(PORTAL_CFG_PATH, "re");
+    if (f == NULL) {
+        LOGI("没有 %s：全部开关按关闭处理（纯 M0 转发）", PORTAL_CFG_PATH);
+        return;
+    }
+    char line[256];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\n' || *p == '\r' || *p == '\0') continue;
+        char *eq = strchr(p, '=');
+        if (eq == NULL) continue;
+        *eq = '\0';
+        char *key = p;
+        char *val = eq + 1;
+        char *end = val + strlen(val);
+        while (end > val && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ')) *--end = '\0';
+        /* key 也可能带尾空格 */
+        end = key + strlen(key);
+        while (end > key && end[-1] == ' ') *--end = '\0';
+
+        if (strcmp(key, "dump") == 0) {
+            g_opt_dump = atoi(val);
+        } else if (strcmp(key, "usage_patch") == 0) {
+            g_opt_usage_patch = atoi(val);
+        } else if (strcmp(key, "init_wrap") == 0) {
+            g_opt_init_wrap = atoi(val);
+        } else if (strcmp(key, "inject") == 0) {
+            g_opt_inject = atoi(val);
+        } else if (strcmp(key, "freeze") == 0) {
+            g_opt_freeze = atoi(val);
+        } else if (strcmp(key, "pattern") == 0) {
+            g_opt_pattern = atoi(val);
+        } else if (strcmp(key, "cam") == 0) {
+            snprintf(g_opt_cam, sizeof(g_opt_cam), "%s", val);
+        }
+    }
+    fclose(f);
+    LOGI("开关：dump=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d cam=%s",
+         g_opt_dump, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze, g_opt_pattern,
+         g_opt_cam[0] ? g_opt_cam : "(全部)");
+}
 
 /* 我们交给 HAL 的回调表（定义在这里，实现见下方 M1a 段）—— 先声明后引用 */
 static void portal_process_capture_result(const camera3_callback_ops_t *,
@@ -376,17 +467,179 @@ static int page_protection(const void *addr) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 请求/结果的真实布局探测
+ *
+ * **本机实测**：provider 传给 HAL 的 `camera3_capture_request_t` 与 AOSP 头文件字段顺序
+ * **不同** —— `num_output_buffers` 在 `output_buffers` **之前**（docs/camera-mock.md §5.4：
+ * 按头文件解引用 ⇒ `SIGSEGV fault addr 0x1`，因为把计数 1 当成了指针）。结果结构同理，不能赌。
+ *
+ * 这里按"哪一组看起来像（指针, 计数）"来选，两个候选**互斥消歧**：
+ *   · 指针必须 > 0x1000 且 4 字节对齐；计数必须落在 1..16。
+ * 交换序下 AOSP 候选会把计数当指针（判据不过），反之亦然 ⇒ 唯一解；两个候选都不成立就
+ * 直接放弃（绝不解引用一个没把握的地址）。
+ * ------------------------------------------------------------------ */
+
+struct portal_layout {
+    const camera3_stream_buffer_t *sbs;
+    uint32_t num;
+    const char *which;
+};
+
+/** 按给定的 (output_buffers 偏移, num_output_buffers 偏移) 试解一次，判据不过就返回 false */
+static bool portal_parse_pair(const void *raw, size_t out_off, size_t num_off,
+                              struct portal_layout *out) {
+    const char *base = (const char *)raw;
+    const void *ptr = *(const void *const *)(base + out_off);
+    uint32_t n = *(const uint32_t *)(base + num_off);
+    if ((uintptr_t)ptr <= 0x1000u || ((uintptr_t)ptr & 3u) != 0u || n < 1u || n > 16u) {
+        return false;
+    }
+    out->sbs = (const camera3_stream_buffer_t *)ptr;
+    out->num = n;
+    return true;
+}
+
+static void portal_layout_fail(struct portal_layout *out, const char *why) {
+    out->sbs = NULL;
+    out->num = 0;
+    out->which = why;
+}
+
+/** 请求：交换序(out@16,num@12) 优先（本机实测），再退 AOSP 序 */
+static bool portal_parse_request(const void *raw, struct portal_layout *out) {
+    if (portal_parse_pair(raw, 16, 12, out)) {
+        out->which = "交换序(out@16,num@12)";
+        return true;
+    }
+    if (portal_parse_pair(raw, 12, 16, out)) {
+        out->which = "AOSP序(out@12,num@16)";
+        return true;
+    }
+    portal_layout_fail(out, "认不出");
+    return false;
+}
+
+/** 结果：AOSP 序(out@12,num@8) 优先，再退交换序(out@8,num@12) —— 同样靠判据消歧 */
+static bool portal_parse_result(const void *raw, struct portal_layout *out) {
+    if (portal_parse_pair(raw, 12, 8, out)) {
+        out->which = "AOSP序(out@12,num@8)";
+        return true;
+    }
+    if (portal_parse_pair(raw, 8, 12, out)) {
+        out->which = "交换序(out@8,num@12)";
+        return true;
+    }
+    portal_layout_fail(out, "认不出");
+    return false;
+}
+
+/**
+ * 打印一个 gralloc 句柄的整数段。
+ *
+ * **为什么要打**：写像素需要 stride，而本机 `lockYCbCr` 在这些 buffer 上不工作、
+ * `GraphicBufferMapper::lock` 又只给基址不给 stride。厂商 gralloc 的私有字段里有几何信息，
+ * 但布局是厂商私有的 —— 只能打出来看（纯读，不改）。头字段不像 native_handle 就立刻收手。
+ */
+static void portal_dump_handle(uint32_t idx, const void *handle) {
+    if (handle == NULL || (uintptr_t)handle < 0x1000u) return;
+    const int *h = (const int *)handle;
+    int version = h[0], numFds = h[1], numInts = h[2];
+    if (numFds < 0 || numFds > 8 || numInts < 0 || numInts > 64) {
+        LOGI("  out[%u] handle=%p 头字段不像 native_handle（v=%d nFds=%d nInts=%d）→ 不解引用",
+             idx, handle, version, numFds, numInts);
+        return;
+    }
+    const int *ints = h + 3 + numFds;
+    char buf[400];
+    int off = snprintf(buf, sizeof(buf), "  out[%u] handle v=%d nFds=%d nInts=%d ints=", idx,
+                       version, numFds, numInts);
+    for (int k = 0; k < numInts && off < (int)sizeof(buf) - 14; k++) {
+        off += snprintf(buf + off, sizeof(buf) - off, "%d:%u ", k, (unsigned)ints[k]);
+    }
+    LOGI("%s", buf);
+}
+
+/** 打印一次请求的真实字段与每个输出流/句柄的参数（只读；dump 开关打开时才走） */
+static void portal_dump_request(const void *raw, unsigned long n) {
+    struct portal_layout L;
+    bool ok = portal_parse_request(raw, &L);
+    LOGI("请求布局#%lu：frame=%u w4=%p w8=%08x w12=%08x w16=%08x → %s num=%u", n,
+         *(const uint32_t *)raw, *(const void *const *)((const char *)raw + 4),
+         *(const uint32_t *)((const char *)raw + 8), *(const uint32_t *)((const char *)raw + 12),
+         *(const uint32_t *)((const char *)raw + 16), L.which, L.num);
+    if (!ok) return;
+    for (uint32_t i = 0; i < L.num; i++) {
+        const camera3_stream_buffer_t *sb = &L.sbs[i];
+        if (sb->stream == NULL) {
+            LOGI("  out[%u] stream=NULL", i);
+            continue;
+        }
+        LOGI("  out[%u] format=0x%x %ux%u usage=0x%x type=%d max_buffers=%u", i, sb->stream->format,
+             sb->stream->width, sb->stream->height, sb->stream->usage, sb->stream->stream_type,
+             sb->stream->max_buffers);
+        if (sb->buffer != NULL) portal_dump_handle(i, *sb->buffer);
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * 速率与耗时计量（判定"谁在限速"的唯一手段：传感器帧率 vs 我们的写帧开销）
+ * ------------------------------------------------------------------ */
+
+static unsigned long g_req_count = 0;
+static struct timespec g_req_prev;
+static double g_write_ms_total = 0.0;
+static unsigned long g_write_count = 0;
+
+static double portal_seconds_since(struct timespec *prev) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double dt = (double)(now.tv_sec - prev->tv_sec) + (double)(now.tv_nsec - prev->tv_nsec) / 1e9;
+    *prev = now;
+    return dt;
+}
+
+/** 每 120 个捕获请求报一次真实到达速率（含会话中途重配流后的抖动，故取整段平均） */
+static void portal_count_request(void) {
+    unsigned long n = __atomic_add_fetch(&g_req_count, 1, __ATOMIC_RELAXED);
+    if (n % 120 == 0) {
+        if (g_req_prev.tv_sec == 0) {
+            /* 首个样本只是把基准时间取回来（否则会把"进程启动至今"当成一次采样） */
+            portal_seconds_since(&g_req_prev);
+            return;
+        }
+        double dt = portal_seconds_since(&g_req_prev);
+        if (dt > 0.05) LOGI("捕获请求速率：120 个用时 %.0f ms ≈ %.1f fps", dt * 1000.0, 120.0 / dt);
+    }
+}
+
+/** 每 120 次写帧报一次平均耗时（写整幅 1600×1200 的 CPU 成本） */
+static void portal_count_write(double ms) {
+    unsigned long n = __atomic_add_fetch(&g_write_count, 1, __ATOMIC_RELAXED);
+    g_write_ms_total += ms;
+    if (n % 120 == 0) {
+        LOGI("写帧耗时：最近 120 帧平均 %.2f ms（累计 %lu 帧）", g_write_ms_total / 120.0, n);
+        g_write_ms_total = 0.0;
+    }
+}
+
+/* ------------------------------------------------------------------ *
  * 转发 + 接管
  * ------------------------------------------------------------------ */
 
 static int shim_process_capture_request(const struct camera3_device *dev,
                                         camera3_capture_request_t *request) {
-    /* M0：只证明我们在通路上（限流：每 120 帧一条，避免刷爆日志） */
     static unsigned long calls = 0;
     unsigned long n = __atomic_add_fetch(&calls, 1, __ATOMIC_RELAXED);
-    if (n == 1 || n % 120 == 0) {
-        LOGI("process_capture_request 已接管：#%lu", n);
+    portal_count_request();
+
+    if (n == 1 || n % 240 == 0) {
+        LOGI("process_capture_request 已接管：#%lu（相机 %s）", n, g_cur_cam[0] ? g_cur_cam : "?");
     }
+    if (request != NULL && g_opt_dump && portal_cam_selected() && (n <= 3 || n % 240 == 0)) {
+        portal_dump_request(request, n);
+    }
+    /* freeze：真 HAL 不参与（只有我们能自己产出并投递结果时才能开，否则应用等不到帧） */
+    if (g_opt_freeze) return 0;
     if (g_real_process_capture_request == NULL) return -1;
     return g_real_process_capture_request(dev, request);
 }
@@ -750,44 +1003,85 @@ static bool portal_cpu_writable(const camera3_stream_t *st) {
 #define PORTAL_ADD_SW_USAGE 0x00000033u
 
 /**
- * 是否在 configure_streams 里给输出流补 SW 用途位。
+ * QTI 的 `GRALLOC_USAGE_PRIVATE_0`：**UBWC 分配**（平铺 + 压缩）。
+ *
+ * 本机实测：应用预览流的最终 usage 是 `0x10020900` —— 其中 `0x10000000` 就是这一位，
+ * 而它是**厂商 HAL** 在 configure_streams 里后加的（框架进来时只有 0x900）。
+ * UBWC 的像素不是线性排布的，所以"按线性 stride 写入"会让读取方看到**平铺的小方块阵列**
+ * （实测：注入后真实场景确实没了，但图案形态是规则碎块而不是我们写的渐变）。
+ * `usage_patch=2` 在真 HAL 之后清掉这一位，让分配退回线性 —— 这是"能写对"的前提。
+ */
+#define PORTAL_GRALLOC_USAGE_PRIVATE_0 0x10000000u
+
+/**
+ * 是否在 configure_streams 里改输出流的用途位（运行期开关 `usage_patch`）。
  *
  * camera3 的既定机制：HAL 可以在 `configure_streams` 里改 `camera3_stream_t::usage`，
  * 框架会把 HAL 的位并进去并**按新 usage 重新分配 buffer** —— 这正是让"硬件写的相机流"
  * 变成"我们也能 CPU 写"的正规做法（否则只能眼巴巴看着 HW-only 的 buffer）。
  *
- * 默认关闭：改动会作用于**所有**相机流、影响每一次预览/录像的分配路径，
- * 必须在真机上单独验证（打开 → 看相机是否正常、日志里是否出现 M1a 注入计数）后再启用。
- * 打开方式：把下面的 0 改成 1，重新部署并观察 provider 是否稳定。
+ * 取值：0 = 不动；1 = 只补 SW 读写位；2 = 补 SW 位**并清 UBWC 位**（写整幅必需）。
+ *
+ * 实测依据：本机相机输出流的 usage 里一个 SW 位都没有，vcam 之所以能用
+ * `GraphicBufferMapper::lock()` 写进去，正是因为**它自己是 HAL、自己申报了 SW 位**
+ * （docs/camera-mock.md §5.4：lock 对无 SW 位的 buffer 是 abort，打死过 provider 三次）。
+ *
+ * **改位必须排在真 HAL 之后**：框架进来时是 0x900，UBWC / HW_CAMERA_WRITE 这些位是厂商 HAL
+ * 加的，先改会被它覆盖掉；框架在 configure_streams 返回后回读整张表（我们的 SW 位就是这么生效的）。
  */
-#define PORTAL_ENABLE_SW_USAGE_PATCH 0
-
 static int (*g_real_configure_streams)(const struct camera3_device *, void *) = NULL;
 
-static int portal_configure_streams(const struct camera3_device *dev, void *stream_list) {
-    if (stream_list != NULL && PORTAL_ENABLE_SW_USAGE_PATCH) {
-        /* camera3_stream_configuration_t { uint32_t num_streams; camera3_stream_t **streams;
-         *                                   uint32_t operation_mode; … } */
-        struct {
-            uint32_t num_streams;
-            camera3_stream_t **streams;
-        } *cfg = (void *)stream_list;
-        if (cfg->streams != NULL) {
-            for (uint32_t i = 0; i < cfg->num_streams; i++) {
-                camera3_stream_t *st = cfg->streams[i];
-                /* 只给"输出流"补位：INPUT 流（reprocess 的输入）不动 */
-                if (st != NULL && st->stream_type == 0 /* OUTPUT */) {
-                    st->usage |= PORTAL_ADD_SW_USAGE;
-                }
-            }
-        }
+/* 映射缓存整表清空（定义在下方写帧段；新会话必须失效，见 portal_configure_streams） */
+static void portal_invalidate_maps(void);
+
+static void portal_scrub_streams(void *stream_list) {
+    /* camera3_stream_configuration_t { uint32_t num_streams; camera3_stream_t **streams;
+     *                                   uint32_t operation_mode; … } */
+    struct {
+        uint32_t num_streams;
+        camera3_stream_t **streams;
+    } *cfg = (void *)stream_list;
+    if (cfg->streams == NULL || cfg->num_streams > 16u) return;
+    for (uint32_t i = 0; i < cfg->num_streams; i++) {
+        camera3_stream_t *st = cfg->streams[i];
+        if (st == NULL || st->stream_type != 0 /* OUTPUT */) continue;
+        /* JPEG/BLOB（0x21）与 RAW（0x20/0x25）不动：它们的 buffer 由硬件/编码器写，
+         * 补 SW 位不但没用，还会改掉分配路径把一次拍照弄坏。 */
+        int f = st->format;
+        if (f == 0x21 || f == 0x20 || f == 0x25) continue;
+        uint32_t before = st->usage;
+        st->usage |= PORTAL_ADD_SW_USAGE;
+        if (g_opt_usage_patch >= 2) st->usage &= ~PORTAL_GRALLOC_USAGE_PRIVATE_0;
+        LOGI("改用途位[%u]：format=0x%x %ux%u usage 0x%x → 0x%x（UBWC %s）", i, st->format,
+             st->width, st->height, before, st->usage,
+             (g_opt_usage_patch >= 2) ? "已清" : "保留");
     }
-    if (g_real_configure_streams == NULL) return -1;
-    return g_real_configure_streams(dev, stream_list);
 }
 
-/** 合成图案：移动竖条 + 横向渐变 —— 一眼就能看出"画面不是真实世界" */
+static int portal_configure_streams(const struct camera3_device *dev, void *stream_list) {
+    if (g_real_configure_streams == NULL) return -1;
+    /* 先让真 HAL 把它的位（UBWC / HW_CAMERA_WRITE）加完，再改我们那几位 */
+    int rc = g_real_configure_streams(dev, stream_list);
+    /* 新会话 ⇒ 新 buffer ⇒ 映射缓存整表失效 */
+    portal_invalidate_maps();
+    if (rc == 0 && stream_list != NULL && g_opt_usage_patch && portal_cam_selected()) {
+        portal_scrub_streams(stream_list);
+    }
+    return rc;
+}
+
+/** 合成图案：默认「移动竖条 + 横向渐变」；pattern=1/2 是探针用的纯横向/纵向渐变 */
 static inline uint8_t portal_pattern(int x, int y, int w, int h, uint32_t frame) {
+    if (g_opt_pattern == 1) {
+        /* 横向渐变：若布局正确，画面应是一条平滑的亮暗带（配合旋转也只是方向变） */
+        return (uint8_t)((x * 255) / (w > 0 ? w : 1));
+    }
+    if (g_opt_pattern == 2) {
+        return (uint8_t)((y * 255) / (h > 0 ? h : 1));
+    }
+    if (g_opt_pattern == 3) {
+        return 128; /* 纯灰：看色度是否中性、有无平铺碎块 */
+    }
     int bar = (int)((frame * 12u) % (uint32_t)(w > 0 ? w : 1));
     int dx = x - bar;
     if (dx < 0) dx = -dx;
@@ -799,185 +1093,319 @@ static inline uint8_t portal_pattern(int x, int y, int w, int h, uint32_t frame)
 }
 
 /**
- * 兜底路径：没有 legacy gralloc 时用 libui 的 mapper 锁平面 0（Y）。
+ * 写帧阶梯（每一级失败都只是返回 false，绝不给 HAL 留下坏状态）。
  *
- * **只写开头 [PORTAL_SAFE_ROWS] 行**，并且按 `row * width`（而不是真实 stride）定位：
- * 真实 stride ≥ width，所以写入范围 [0, rows*width) 一定落在平面起点之后、不会越界；
- * stride 更大时画面会有轻微斜切，但我们只要"看得见的证明"，安全性优先。
+ * 保命门在调用方 [inject_into_buffer]：**流的 usage 必须有 SW 写位**。
+ * 这是唯一被实测证明能区分"lock 可用"与"lock 直接 abort 掉 provider"的判据
+ * （无 SW 位的 buffer 上调用 mapper lock ⇒ abort，打死过 provider 三次）。
+ *
+ *   ① `lockYCbCr`：同时拿到 Y/Cb/Cr 指针与 stride ⇒ 写整幅，还能把色度抹成中性。
+ *   ② `lock()`：只有基址、没有 stride ⇒ 只写"开头有限行"，用 width 当步长上界，
+ *      写入区间 [0, rows*width) 必然落在平面内，**不会越界**；代价是画面斜切。
  */
-#define PORTAL_SAFE_ROWS 32
-/** 单次注入最多写多少字节：4KB 远小于任何相机平面的头部区域，绝不会越界 */
-#define PORTAL_SAFE_BYTES (4u * 1024u)
+#define PORTAL_SAFE_ROWS 64
 
-static bool inject_via_libui(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
-    if (!load_libui_mapper()) return false;
+/** 限流日志：同一处只打一次（这几条只在注入试探期出现，不影响稳态） */
+#define PORTAL_LOG_ONCE(level, ...) \
+    do {                            \
+        static bool logged_ = false; \
+        if (!logged_) {             \
+            logged_ = true;         \
+            level(__VA_ARGS__);     \
+        }                           \
+    } while (0)
 
-    /*
-     * **安全探测**：先问 buffer 自己的 usage，再决定要不要上锁。
-     *
-     * 这一步是本轮的关键：`GraphicBufferMapper::lock/lockYCbCr` 对"不可 CPU 映射"的 buffer
-     * 是 **abort** 而不是返回错误（实测把 provider 打死两次），所以绝不能用"试着锁一下"来探测。
-     * 而 `getUsage` 只是查描述符，失败也只是返回错误码 —— 拿它当门，才能安全地
-     * "等框架按我们补的 SW 用途位重新分配 buffer，等到了再写"。
-     */
-    if (g_gbm_get_usage == NULL) return false;
-    uint64_t usage = 0;
-    int grc = g_gbm_get_usage(g_gbm_self, handle, &usage);
-    if (grc != 0) {
-        /* 描述符查询失败的常见原因：legacy 分配路径的 buffer 没有 mapper 描述符 */
-        static unsigned long n = 0;
-        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
-            LOGE("getUsage 失败 rc=%d（该 buffer 可能没有 mapper 描述符）→ 不注入", grc);
-        }
-        return false;
+/**
+ * 帧模板：整幅只在**内容变化时**算一次，之后逐行 `memcpy`。
+ *
+ * 为什么必须这样：最初逐像素调 [portal_pattern]（内含一次除法）直接写目标内存，
+ * 实测 **123.77 ms/帧** —— 1600×1200 的 1.92M 像素上，除法叠加"对不可缓存的 gralloc
+ * 内存逐字节写"，把相机压到 8 fps 以下（对照：同一暗场景传感器本身约 12 fps）。
+ * 改成"模板 + 逐行 memcpy"后代价退化为纯内存带宽。
+ *
+ * 真实视频帧进来时走的就是同一条路：源帧逐行 memcpy 进相机 buffer（两侧 stride 可不同）。
+ */
+static uint8_t *g_tpl = NULL;
+static uint32_t g_tpl_w = 0, g_tpl_h = 0;
+static uint32_t g_tpl_frame = 0xFFFFFFFFu;
+static uint8_t *g_grad = NULL;
+static uint32_t g_grad_w = 0;
+/* 动态图案的静态底图：渐变+横纹只算一次，每帧只把底图拷过来再画竖条
+ * （实测：逐像素重建底图要 48 ms/帧 —— 比真正写进相机 buffer 的 3 ms 贵 16 倍） */
+static uint8_t *g_base = NULL;
+static uint32_t g_base_frame = 0;
+
+/** 横向渐变查表（每像素一次加法，取代除法） */
+static void portal_build_grad(uint32_t w) {
+    if (g_grad != NULL && g_grad_w == w) return;
+    free(g_grad);
+    g_grad = (uint8_t *)malloc(w);
+    g_grad_w = w;
+    if (g_grad == NULL) {
+        g_grad_w = 0;
+        return;
     }
-    if ((usage & (uint64_t)PORTAL_GRALLOC_USAGE_SW_WRITE_MASK) == 0) {
-        static unsigned long n = 0;
-        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
-            LOGI("buffer 实际 usage=0x%llx 仍无 SW 写位：等框架按新 usage 重分配（本帧不注入）",
-                 (unsigned long long)usage);
-        }
-        return false;
-    }
+    for (uint32_t x = 0; x < w; x++) g_grad[x] = (uint8_t)((x * 200u) / w);
+}
 
-    uint32_t lock_usage =
-        PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
+static const uint8_t *portal_template(uint32_t w, uint32_t h, uint32_t frame) {
+    if (g_tpl == NULL || g_tpl_w != w || g_tpl_h != h) {
+        free(g_tpl);
+        free(g_base);
+        g_tpl = (uint8_t *)malloc((size_t)w * h);
+        g_base = (uint8_t *)malloc((size_t)w * h);
+        g_tpl_w = w;
+        g_tpl_h = h;
+        g_tpl_frame = 0xFFFFFFFFu;
+        if (g_tpl == NULL || g_base == NULL) {
+            g_tpl_w = g_tpl_h = 0;
+            return NULL;
+        }
+        portal_build_grad(w);
+    }
+    if (g_tpl_frame == frame || g_tpl_frame == 0xFFFFFFFEu) return g_tpl; /* 后者=静态图案 */
+    if (g_grad == NULL && (g_opt_pattern == 0 || g_opt_pattern == 1)) return NULL;
+    g_tpl_frame = frame;
+
+    if (g_opt_pattern == 3) {
+        memset(g_tpl, 128, (size_t)w * h);
+        g_tpl_frame = 0xFFFFFFFEu; /* 静态：与帧号无关，不再重建 */
+        return g_tpl;
+    }
+    if (g_opt_pattern == 2) {
+        for (uint32_t r = 0; r < h; r++) {
+            memset(g_tpl + (size_t)r * w, (int)((r * 255u) / h), w);
+        }
+        g_tpl_frame = 0xFFFFFFFEu;
+        return g_tpl;
+    }
+    if (g_opt_pattern == 1) {
+        for (uint32_t r = 0; r < h; r++) memcpy(g_tpl + (size_t)r * w, g_grad, w);
+        g_tpl_frame = 0xFFFFFFFEu;
+        return g_tpl;
+    }
+    /* 默认：横向渐变 + 细横纹 + 移动竖条 */
+    if (g_base_frame != 0xFFFFFFFEu) {
+        for (uint32_t r = 0; r < h; r++) {
+            uint8_t *row = g_base + (size_t)r * w;
+            uint8_t shade = (r & 32) ? 8 : 0;
+            for (uint32_t x = 0; x < w; x++) {
+                uint8_t v = (uint8_t)(16 + g_grad[x] / 2 + shade);
+                row[x] = (v > 235) ? 235 : v;
+            }
+        }
+        g_base_frame = 0xFFFFFFFEu;
+    }
+    uint32_t bar = (frame * 12u) % (w > 0 ? w : 1);
+    uint32_t bar_half = (w / 12 > 8 ? w / 12 : 8);
+    uint32_t x0 = (bar > bar_half) ? bar - bar_half : 0;
+    uint32_t x1 = bar + bar_half;
+    if (x1 > w) x1 = w;
+    for (uint32_t r = 0; r < h; r++) {
+        uint8_t *row = g_tpl + (size_t)r * w;
+        memcpy(row, g_base + (size_t)r * w, w);
+        if (x1 > x0) memset(row + x0, 235, x1 - x0);
+    }
+    return g_tpl;
+}
+
+/** 按 ystride 写整幅 Y；有 cb/cr 时顺带把色度抹平（否则叠在真图色彩上会花） */
+static void portal_fill_frame(uint8_t *y, size_t ystride, uint8_t *cb, uint8_t *cr, size_t cstride,
+                              size_t chroma_step, uint32_t w, uint32_t h, uint32_t frame) {
+    if (y == NULL || ystride < w) return;
+    const uint8_t *tpl = portal_template(w, h, frame);
+    if (tpl != NULL) {
+        for (uint32_t r = 0; r < h; r++) {
+            memcpy(y + (size_t)r * ystride, tpl + (size_t)r * w, w);
+        }
+    }
+    if (cb == NULL || cr == NULL || cstride == 0) return;
+    if (chroma_step == 0) chroma_step = 2;
+    uint32_t cols = (w + 1) / 2;
+    size_t max_cols = cstride / chroma_step;
+    if ((size_t)cols > max_cols) cols = (uint32_t)max_cols;
+    size_t cbytes = (size_t)cols * chroma_step;
+    for (uint32_t r = 0; r < (h + 1) / 2; r++) {
+        /* NV12/NV21：cb 与 cr 指向同一平面的相邻字节，一次 memset 覆盖两个分量 */
+        memset(cb + (size_t)r * cstride, 128, cbytes);
+        if (!(chroma_step == 2 && cr == cb + 1)) memset(cr + (size_t)r * cstride, 128, cbytes);
+    }
+}
+
+/**
+ * 映射缓存：**每个 buffer 只 lock 一次，之后常驻**。
+ *
+ * 为什么必须缓存：Android 15 上 `GraphicBufferMapper::lock/unlock` 走的是 AIDL mapper，
+ * 每次都是 Binder 往返。实测"每帧 lock+unlock+getUsage"合计 **123 ms/帧**（改成逐行 memcpy
+ * 后仍有 51 ms）—— 也就是说瓶颈根本不在内存带宽，而在每帧三次 IPC。
+ * 缓存后每帧只剩纯 memcpy。
+ *
+ * 生命周期：只在一次 configure_streams 会话内有效（换会话就换 buffer），
+ * 所以在 [portal_configure_streams] 里整体清空。**不清空时不清锁**：保持映射是 HAL 写
+ * 相机 buffer 的常规做法（软件相机 HAL 就是这么干的）。
+ */
+struct portal_map {
+    void *handle;
+    uint8_t *y, *cb, *cr;
+    size_t ystride, cstride, chroma_step;
+    bool used;
+};
+
+#define PORTAL_MAP_SLOTS 8
+static struct portal_map g_maps[PORTAL_MAP_SLOTS];
+
+static void portal_invalidate_maps(void) {
+    memset(g_maps, 0, sizeof(g_maps));
+}
+
+/** 取（必要时建立）这个 buffer 的映射；失败返回 NULL */
+static struct portal_map *portal_get_map(void *handle, uint32_t w, uint32_t h) {
+    struct portal_map *free_slot = NULL;
+    for (int i = 0; i < PORTAL_MAP_SLOTS; i++) {
+        if (g_maps[i].used && g_maps[i].handle == handle) return &g_maps[i];
+        if (!g_maps[i].used && free_slot == NULL) free_slot = &g_maps[i];
+    }
+    if (free_slot == NULL) return NULL; /* 槽位用尽：本帧不注入（宁可少写一帧，也不动别人的映射） */
+
+    uint32_t lock_usage = PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
     struct portal_rect bounds = {0, 0, (int32_t)w, (int32_t)h};
 
-    /* 首选 lockYCbCr：能拿到 Y 平面指针**与 stride**，可以写整幅 */
     if (g_gbm_lock_ycbcr != NULL) {
         struct portal_android_ycbcr yc;
         memset(&yc, 0, sizeof(yc));
-        if (g_gbm_lock_ycbcr(g_gbm_self, handle, lock_usage, &bounds, &yc) != 0) {
-            static unsigned long n = 0;
-            if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) LOGE("lockYCbCr 失败");
-            return false;
+        int rc = g_gbm_lock_ycbcr(g_gbm_self, handle, lock_usage, &bounds, &yc);
+        if (rc == 0 && yc.y != NULL && yc.ystride >= w) {
+            PORTAL_LOG_ONCE(LOGI, "lockYCbCr 成功：ystride=%zu cstride=%zu step=%zu → 写整幅",
+                            yc.ystride, yc.cstride, yc.chroma_step);
+            free_slot->handle = handle;
+            free_slot->y = (uint8_t *)yc.y;
+            free_slot->cb = (uint8_t *)yc.cb;
+            free_slot->cr = (uint8_t *)yc.cr;
+            free_slot->ystride = yc.ystride;
+            free_slot->cstride = yc.cstride;
+            free_slot->chroma_step = yc.chroma_step;
+            free_slot->used = true;
+            return free_slot;
         }
-        uint8_t *base = (uint8_t *)yc.y;
-        if (base != NULL && yc.ystride > 0) {
-            for (uint32_t y = 0; y < h; y++) {
-                uint8_t *row = base + (size_t)y * yc.ystride;
-                for (uint32_t x = 0; x < w; x++) {
-                    row[x] = portal_pattern((int)x, (int)y, (int)w, (int)h, frame);
-                }
-            }
-        }
-        int fence = -1; /* unique_fd 在 ABI 上就是一个 int */
-        g_gbm_unlock(g_gbm_self, handle, &fence);
-        return base != NULL;
+        PORTAL_LOG_ONCE(LOGE, "lockYCbCr 失败 rc=%d（y=%p ystride=%zu）→ 退 lock()", rc, yc.y,
+                        yc.ystride);
     }
 
-    /* 退路：只有 lock（无 stride）时，只写开头一小块条纹，边界锁死 */
+    /* 退路：lock() 只有基址，没有 stride ⇒ 只能安全地写开头有限行 */
     void *vaddr = NULL;
-    if (g_gbm_lock(g_gbm_self, handle, lock_usage, &bounds, &vaddr) != 0 || vaddr == NULL) {
-        return false;
+    int rc = g_gbm_lock(g_gbm_self, handle, lock_usage, &bounds, &vaddr);
+    if (rc != 0 || vaddr == NULL) {
+        PORTAL_LOG_ONCE(LOGE, "lock() 失败 rc=%d → 本流不注入（相机行为不变）", rc);
+        return NULL;
     }
-    uint8_t *base = (uint8_t *)vaddr;
-    size_t bytes = (size_t)w * (size_t)(h < PORTAL_SAFE_ROWS ? h : PORTAL_SAFE_ROWS);
-    if (bytes > PORTAL_SAFE_BYTES) bytes = PORTAL_SAFE_BYTES;
-    for (size_t i = 0; i < bytes; i++) base[i] = ((i / 64) % 2) ? 235 : 16;
-    int fence = -1;
-    g_gbm_unlock(g_gbm_self, handle, &fence);
+    PORTAL_LOG_ONCE(LOGI, "lock() 成功（无 stride）：只写前 %u 行（会斜切，够证明是我们写的）",
+                    PORTAL_SAFE_ROWS);
+    free_slot->handle = handle;
+    free_slot->y = (uint8_t *)vaddr;
+    free_slot->cb = free_slot->cr = NULL;
+    free_slot->ystride = w; /* 用 width 当步长上界：写入区间必落在平面内，不会越界 */
+    free_slot->cstride = 0;
+    free_slot->chroma_step = 0;
+    free_slot->used = true;
+    return free_slot;
+}
+
+/** 真的把图案写进去；返回是否成功（阶梯见上方注释） */
+static bool portal_write_frame(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
+    struct timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    if (!load_libui_mapper()) return false;
+
+    /* 诊断：buffer 自己申报的 usage（只查描述符；一次就够，别放进每帧路径 —— 那是 Binder 往返） */
+    if (g_gbm_get_usage != NULL) {
+        static bool asked = false;
+        if (!asked) {
+            asked = true;
+            uint64_t u = 0;
+            int grc = g_gbm_get_usage(g_gbm_self, handle, &u);
+            LOGI("buffer 自报：getUsage rc=%d usage=0x%llx", grc, (unsigned long long)u);
+        }
+    }
+
+    struct portal_map *m = portal_get_map(handle, w, h);
+    if (m == NULL) return false;
+    portal_fill_frame(m->y, m->ystride, m->cb, m->cr, m->cstride, m->chroma_step, w, h, frame);
+    portal_count_write(portal_seconds_since(&t0) * 1000.0);
     return true;
 }
 
 /** 往一个输出 buffer 的 Y 平面写图案；成功返回 true */
 static bool inject_into_buffer(const camera3_stream_buffer_t *sb, uint32_t frame) {
     if (sb == NULL || sb->stream == NULL || sb->buffer == NULL) return false;
+    if (sb->status != 0) return false;
     camera3_stream_t *st = sb->stream;
     int format = st->format;
     /* 只碰 YUV 类输出：JPEG/BLOB（拍照）与 RAW 不动 —— 写坏它们会直接毁掉一次拍照 */
     if (format != PORTAL_PIXEL_FORMAT_YCbCr_420_888 &&
         format != PORTAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED) {
+        PORTAL_LOG_ONCE(LOGI, "输出流 format=0x%x 不是 YUV/私用格式 → 不注入", format);
         return false;
     }
     uint32_t w = st->width, h = st->height;
-    if (w == 0 || h == 0) return false;
-
-    /* GPU 路径优先：EGL/GL 的失败都是错误码，不会 abort；CPU 路径在本 ROM 上已被证明不可用 */
-    if (inject_via_gpu(*sb->buffer, w, h, frame)) {
-        return true;
-    }
+    if (w == 0 || h == 0 || w > 8192u || h > 8192u) return false;
 
     if (!portal_cpu_writable(st)) {
         /* 保命门：HW-only 的流绝不尝试 CPU 映射（会 abort 掉 provider，实测） */
-        static unsigned long n = 0;
-        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
-            LOGI("输出流 format=0x%x usage=0x%x 没有 SW 写位：跳过注入（需 configure_streams 补位）",
-                 format, st->usage);
-        }
+        PORTAL_LOG_ONCE(
+            LOGI, "输出流 format=0x%x usage=0x%x 无 SW 写位 → 跳过注入（需 usage_patch=1）", format,
+            st->usage);
         return false;
     }
-
-    /* 首选：legacy gralloc 的 lock_ycbcr（能拿到全部平面与 stride）。本机没有，故兜底。 */
-    if (g_gralloc == NULL || g_gralloc->lock_ycbcr == NULL) {
-        return inject_via_libui(*sb->buffer, w, h, frame);
-    }
-
-    struct portal_android_ycbcr ycbcr;
-    memset(&ycbcr, 0, sizeof(ycbcr));
-    int usage = PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
-    if (g_gralloc->lock_ycbcr(g_gralloc, *sb->buffer, usage, 0, 0, (int)w, (int)h, &ycbcr) != 0) {
-        /* 锁不上就纯转发：绝不能因此影响相机。限流记一条，便于判断是"偶发"还是"根本不支持" */
-        static unsigned long lock_fail = 0;
-        if (__atomic_add_fetch(&lock_fail, 1, __ATOMIC_RELAXED) == 1) {
-            LOGE("lock_ycbcr 失败（format=0x%x %ux%u）：本流不注入", format, w, h);
-        }
-        return false;
-    }
-    uint8_t *base = (uint8_t *)ycbcr.y;
-    if (base != NULL && ycbcr.ystride > 0) {
-        for (uint32_t y = 0; y < h; y++) {
-            uint8_t *row = base + (size_t)y * ycbcr.ystride;
-            for (uint32_t x = 0; x < w; x++) {
-                row[x] = portal_pattern((int)x, (int)y, (int)w, (int)h, frame);
-            }
-        }
-    }
-    g_gralloc->unlock(g_gralloc, *sb->buffer);
-    return base != NULL;
+    void *handle = *sb->buffer;
+    if ((uintptr_t)handle < 0x1000u) return false;
+    return portal_write_frame(handle, w, h, frame);
 }
 
 /** 我们给 HAL 的回调表：先注入，再交给框架 */
 static void portal_process_capture_result(const camera3_callback_ops_t *ops,
                                           const camera3_capture_result_t *result) {
     (void)ops;
-    /* 诊断：确认回调真的进来了，并记录每个流一次的格式/尺寸（格式决定能不能锁、怎么锁） */
     static bool entered = false;
     if (!entered) {
         entered = true;
         LOGI("process_capture_result 已进入我们的回调（注入时序成立）");
     }
-    if (result != NULL && result->output_buffers != NULL && result->num_output_buffers > 0) {
-        for (uint32_t i = 0; i < result->num_output_buffers && i < 4; i++) {
-            const camera3_stream_buffer_t *sb = &result->output_buffers[i];
-            if (sb->stream == NULL) continue;
-            static void *seen[8] = {0};
-            bool known = false;
-            for (int k = 0; k < 8; k++) {
-                if (seen[k] == (void *)sb->stream) { known = true; break; }
-                if (seen[k] == NULL) { seen[k] = (void *)sb->stream; break; }
-            }
-            if (!known) {
-                LOGI("输出流：format=0x%x %ux%u usage=0x%x stream_type=%d",
-                     sb->stream->format, sb->stream->width, sb->stream->height,
-                     sb->stream->usage, sb->stream->stream_type);
-            }
-        }
-        /* 注入默认关闭（见 PORTAL_CAMSHIM_ENABLE_INJECTION 的注释：开启会破坏预览） */
-        bool wrote = false;
-#if PORTAL_CAMSHIM_ENABLE_INJECTION
-        (void)inject_into_buffer;
-        for (uint32_t i = 0; i < result->num_output_buffers; i++) {
-            if (inject_into_buffer(&result->output_buffers[i], result->frame_number)) {
-                wrote = true;
+    if (result != NULL && g_opt_dump && portal_cam_selected()) {
+        static unsigned long rn = 0;
+        unsigned long n = __atomic_add_fetch(&rn, 1, __ATOMIC_RELAXED);
+        if (n == 1 || n % 240 == 0) {
+            struct portal_layout L;
+            bool ok = portal_parse_result((const void *)result, &L);
+            const char *raw = (const char *)result;
+            LOGI("结果布局#%lu：frame=%u w4=%p w8=%08x w12=%08x w16=%08x → %s num=%u", n,
+                 *(const uint32_t *)raw, *(const void *const *)(raw + 4),
+                 *(const uint32_t *)(raw + 8), *(const uint32_t *)(raw + 12),
+                 *(const uint32_t *)(raw + 16), L.which, L.num);
+            if (ok) {
+                for (uint32_t i = 0; i < L.num && i < 4; i++) {
+                    const camera3_stream_buffer_t *sb = &L.sbs[i];
+                    if (sb->stream == NULL) continue;
+                    LOGI("  res[%u] format=0x%x %ux%u usage=0x%x status=%d", i,
+                         sb->stream->format, sb->stream->width, sb->stream->height,
+                         sb->stream->usage, sb->status);
+                    if (sb->buffer != NULL) portal_dump_handle(i, *sb->buffer);
+                }
             }
         }
-#endif
-        if (wrote) {
-            unsigned long n = __atomic_add_fetch(&g_injected_frames, 1, __ATOMIC_RELAXED);
-            if (n == 1 || n % 120 == 0) {
-                LOGI("M1a 已注入合成图案：#%lu（frame=%u）", n, result->frame_number);
+    }
+    /* 注入：只在我们包了回调表、且开关允许时；写不进去就什么都不做 */
+    if (g_opt_inject && result != NULL && portal_cam_selected()) {
+        struct portal_layout L;
+        if (portal_parse_result((const void *)result, &L)) {
+            bool wrote = false;
+            for (uint32_t i = 0; i < L.num; i++) {
+                if (inject_into_buffer(&L.sbs[i], *(const uint32_t *)result)) wrote = true;
+            }
+            if (wrote) {
+                unsigned long n = __atomic_add_fetch(&g_injected_frames, 1, __ATOMIC_RELAXED);
+                if (n == 1 || n % 120 == 0) {
+                    LOGI("已注入合成图案：#%lu（frame=%u）", n, *(const uint32_t *)result);
+                }
             }
         }
     }
@@ -993,36 +1421,18 @@ static void portal_notify(const camera3_callback_ops_t *ops, const void *msg) {
     }
 }
 
-/** 接管 ops 表里的 initialize（camera3_device_ops 的第 0 项，自 Android 5 起未变） */
-static void patch_initialize(const struct camera3_device *dev) {
-    if (dev == NULL || dev->ops == NULL || g_real_initialize == NULL) return;
-    void **table = (void **)dev->ops;
-    if (table[0] != (void *)g_real_initialize) {
-        LOGE("ops[0] 不是预期的 initialize：本次不接管回调（相机行为不变）");
-        return;
-    }
-    long page_size = sysconf(_SC_PAGESIZE);
-    if (page_size <= 0) page_size = 4096;
-    int prot = page_protection(table);
-    if (mprotect((void *)((uintptr_t)table & ~(uintptr_t)(page_size - 1)), (size_t)page_size,
-                 PROT_READ | PROT_WRITE) != 0) {
-        LOGE("mprotect 失败：无法接管 initialize");
-        return;
-    }
-    table[0] = (void *)portal_initialize;
-    mprotect((void *)((uintptr_t)table & ~(uintptr_t)(page_size - 1)), (size_t)page_size,
-             prot > 0 ? prot : (PROT_READ | PROT_WRITE));
-    LOGI("已接管 initialize（ops[0]）：M1a 注入点就位");
-}
-
 /**
- * 把真实 ops 表里的 process_capture_request 换成我们的实现。
+ * 把真实 ops 表里的某一格换成我们的实现。
  *
- * 按**函数地址**扫表：不依赖结构布局、不依赖它在第几格。找到后原地改写那一格，
- * 并按页记下的原始权限还原（见 [page_protection]）。
+ * 按**函数地址**扫表：不依赖结构布局、不依赖它在第几格（本机已验证"结构布局 ≠ AOSP 头文件"，
+ * 所以按索引取槽是不可靠的）。找到后原地改写那一格，并按页记下的原始权限还原
+ * （见 [page_protection]：还原成只读会让 HAL 写同页静态量时 SEGV_ACCERR）。
+ *
+ * @return 命中槽位下标；未命中返回 -1
  */
-static void patch_ops(const struct camera3_device *dev) {
-    if (dev == NULL || dev->ops == NULL || g_real_process_capture_request == NULL) return;
+static int patch_ops_by_value(const struct camera3_device *dev, void *real_fn, void *our_fn,
+                              const char *name) {
+    if (dev == NULL || dev->ops == NULL || real_fn == NULL) return -1;
 
     void **table = (void **)dev->ops;
     long page_size = sysconf(_SC_PAGESIZE);
@@ -1041,13 +1451,13 @@ static void patch_ops(const struct camera3_device *dev) {
 
     if (mprotect((void *)begin, span, PROT_READ | PROT_WRITE) != 0) {
         LOGE("mprotect 失败：无法改写 ops 表（保持真实 HAL 行为）");
-        return;
+        return -1;
     }
 
     int hit = -1;
     for (int i = 0; i < 64; i++) {
-        if (table[i] == (void *)g_real_process_capture_request) {
-            table[i] = (void *)shim_process_capture_request;
+        if (table[i] == real_fn) {
+            table[i] = our_fn;
             hit = i;
             break;
         }
@@ -1060,15 +1470,43 @@ static void patch_ops(const struct camera3_device *dev) {
     }
 
     if (hit >= 0) {
-        LOGI("已接管 process_capture_request（ops[%d]）", hit);
+        LOGI("已接管 %s（ops[%d]）", name, hit);
     } else {
-        LOGE("ops 表里没找到真实 process_capture_request：本次不接管（相机行为不变）");
+        LOGE("ops 表里没找到真实 %s：本次不接管（相机行为不变）", name);
     }
+    return hit;
+}
+
+/** M0 必做：接管 process_capture_request（只计数/转发，不改画面） */
+static void patch_process_capture_request(const struct camera3_device *dev) {
+    patch_ops_by_value(dev, (void *)g_real_process_capture_request,
+                       (void *)shim_process_capture_request, "process_capture_request");
+}
+
+/** 开关 init_wrap=1：包一层框架回调表 —— 注入（改画面）的时序前提 */
+static void patch_initialize(const struct camera3_device *dev) {
+    if (g_real_initialize == NULL) {
+        LOGE("拿不到真实 initialize（导出符号 + ops[0] 兜底都失败）：无法包回调，本相机不注入");
+        return;
+    }
+    patch_ops_by_value(dev, (void *)g_real_initialize, (void *)portal_initialize, "initialize");
+}
+
+/** 开关 usage_patch=1：接管 configure_streams（给输出流补 SW 用途位） */
+static void patch_configure_streams(const struct camera3_device *dev) {
+    if (g_real_configure_streams == NULL) {
+        LOGE("拿不到真实 configure_streams 导出符号：无法补用途位");
+        return;
+    }
+    patch_ops_by_value(dev, (void *)g_real_configure_streams, (void *)portal_configure_streams,
+                       "configure_streams");
 }
 
 static int shim_open(const struct hw_module_t *module, const char *id,
                      struct hw_device_t **device) {
     (void)module;
+    load_options();
+    if (id != NULL) snprintf(g_cur_cam, sizeof(g_cur_cam), "%s", id);
     if (g_real_open == NULL) {
         LOGE("真实 HAL 未加载，open 失败");
         return -1;
@@ -1083,14 +1521,20 @@ static int shim_open(const struct hw_module_t *module, const char *id,
         if (g_real_initialize == NULL && cam_dev->ops != NULL) {
             g_real_initialize = (int (*)(const struct camera3_device *,
                                          const camera3_callback_ops_t *))((void **)cam_dev->ops)[0];
+            LOGI("initialize 改由 ops[0] 兜底取得：%p", (void *)g_real_initialize);
         }
-        patch_ops(cam_dev);
+        /* M0 基线：只换 process_capture_request 做计数 —— 这一处已被实测证明不破坏画面 */
+        patch_process_capture_request(cam_dev);
         /*
-         * ⚠️ 这里**不再**接管 `initialize`（包框架回调）与 `configure_streams`：
-         * 实测加了这两处之后应用看到的是**黑屏**（即便注入代码被编译期关闭也一样）。
-         * 本层的定位是"纯接管 + 转发"的 M0：只把 process_capture_request 换掉做计数，
-         * 其余一切保持 vendor HAL 原样。注入相关代码保留但默认不参与。
+         * 下面两处是**注入前提**，各自独立开关、必须单独验证（历史教训见 docs/camera-mock.md §4.1：
+         * 当初把两处一起打开看到黑屏，但从未隔离过，无法归因）。
          */
+        if (g_opt_init_wrap && portal_cam_selected()) {
+            patch_initialize(cam_dev);
+        }
+        if (g_opt_usage_patch && portal_cam_selected()) {
+            patch_configure_streams(cam_dev);
+        }
     }
     return rc;
 }
@@ -1135,12 +1579,23 @@ static void load_real_hal(void) {
     if (g_real_process_capture_request == NULL) {
         LOGE("没找到 process_capture_request 导出符号：本次不接管（相机行为不变）");
     }
-    /* initialize 的导出符号名较长且各版本可能不同：拿不到就退化为下面 patch_ops 里
-     * "直接用 ops[0] 的当前值当真实实现"，两条路都能走通 */
+    /* initialize 的导出符号名较长且各版本可能不同（实测本机是 `PK20camera3_callback_ops`，
+     * **不是**记忆里的 PK21）；拿不到就退化为 open 之后用 ops[0] 的当前值兜底，两条路都能走通 */
     g_real_initialize = (int (*)(const struct camera3_device *,
                                  const camera3_callback_ops_t *))dlsym(
         g_real_handle,
-        "_ZN7qcamera25QCamera3HardwareInterface10initializeEPK14camera3_devicePK21camera3_callback_ops");
+        "_ZN7qcamera25QCamera3HardwareInterface10initializeEPK14camera3_devicePK20camera3_callback_ops");
+    if (g_real_initialize == NULL) {
+        LOGI("initialize 没有导出符号：改用 ops[0] 兜底");
+    }
+    /* configure_streams：补用途位那条路要用它转发（实测符号是 P28camera3_stream_configuration） */
+    g_real_configure_streams =
+        (int (*)(const struct camera3_device *, void *))dlsym(
+            g_real_handle,
+            "_ZN7qcamera25QCamera3HardwareInterface17configure_streamsEPK14camera3_deviceP28camera3_stream_configuration");
+    if (g_real_configure_streams == NULL) {
+        LOGI("configure_streams 没有导出符号：usage_patch 那条路不可用");
+    }
 
     LOGI("真实 HAL 已加载并整块接管：%s（tag=0x%08x id=%s name=%s api=0x%04x）",
          REAL_HAL_PATH, HMI.common.tag, HMI.common.id, HMI.common.name,
@@ -1148,5 +1603,6 @@ static void load_real_hal(void) {
 }
 
 __attribute__((constructor)) static void on_load(void) {
+    load_options();
     load_real_hal();
 }
