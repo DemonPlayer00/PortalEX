@@ -814,3 +814,146 @@ permitted_paths="/odm:/vendor:/system/vendor"
 - 模块已 `touch /data/adb/modules/portalex-camera-hal/disable`（KernelSU 会跳过它），
   载荷与真件副本仍留在模块目录里备查；
 - 临时文件（`/data/local/tmp/{camshim64.so,cq.so,sm.so,camera.qcom.real.so,modtest*,md_*,mt*.zip,pch*.zip}`）待清理。
+
+---
+
+## 19. ACE5 HAL 路线实测：三道墙，两道已拆（2026-09-12/13）
+
+§18.5 的猜测（"ODM 层在读某个 NULL，很可能是我们顶替的文件/属性"）方向对了，但机制不是"别人读不到"，
+而是**我们自己交出了一个全零的模块**。本轮把 §18.5 的 A 路线推到第三道墙，方法是：
+**每崩一次就读 `/data/tombstones/`，用 NDK 的 `llvm-objdump` 反汇编崩溃点**（可复用，见 19.5）。
+
+### 19.0 摘要
+
+| # | 现象 | 根因 | 状态 |
+|---|---|---|---|
+| 1 | provider 崩在**任何日志之前**（`SEGV_MAPERR addr 0x0`，6 份 tombstone 签名逐帧一致） | 真件没打开时 `HMI = {0}` ⇒ `common.id == NULL`；OPPO OEM 层 `camera.oemlayer.so::load()` 会 `strcmp("camera", HMI->common.id)` | **已修**（惰性合法 HMI） |
+| 2a | shim 四个 cfg 路径**全部读不到**，dmesg 里没有对应 avc | `/data/local/tmp` 是 `shell_data_file`，`hal_camera_default` 缺 `search`（被 dontaudit 吞掉） | **已修**（一条 allow） |
+| 2b | `SEGV_ACCERR` in `__cfi_slowpath`，`x1 = 0`（`OemLayer::init()+312`） | 真件导出 `SetOplusCameraInfoCallback`，OEM 层 dlsym 后**无条件调用**；我们替换了原件却没有这个符号 | **已修**（转发桩） |
+| 3 | `SEGV_ACCERR` in `__cfi_slowpath`，`x1 = 0`（`OemLayer::init()+408`） | QTI/OPPO 的 **CHI 离线初始化**里，一个可打补丁的钩子表项（`[x10+0x78]`）从没被填过 | **未解**（见 19.4） |
+
+### 19.1 部署形态（KernelSU 不挂模块树 ⇒ 全部手动）
+
+```sh
+# 真件宿主槽：必须选一个**当下没有被任何进程映射**的 /vendor 文件
+# （vendor namespace 只允许 dlopen /vendor|/odm|/system/vendor）
+mount --bind <模块>/orig/camera.qcom.so.orig.so /vendor/lib64/hw/android.hardware.renderscript@1.0-impl.so
+mount --bind <模块>/system/vendor/lib64/hw/camera.qcom.so /vendor/lib64/hw/camera.qcom.so
+# 开关文件：/vendor 只读、无法新建文件 ⇒ 用 /data/local/tmp/portalex/portal.cfg（该目录已标成 portalex_frame_file）
+```
+
+`camera.qcom.sm8650.so` **不能**当宿主槽：它是正被 provider 映射的 CamX 实现（21 MB，且不导出 `HMI`）。
+
+### 19.2 第一道墙：全零 `HMI` 被 OPPO OEM 层读成 NULL
+
+三条互相印证的证据：
+
+1. tombstone：`#00 __strcmp_aarch64+156 ← #01 camera.oemlayer.so load(char const*)+276 ← getSocImpl ←
+   OemLayer::init ← CameraModule::init()`，`fault addr 0x0`、`x1 = 0`
+   （x0 指向 oemlayer rodata 里被比较的常量；bionic 的 strcmp 用后自增 `ldrb w2,[x0],#1`，所以 x0 比常量起始多 1 字节）；
+2. 反汇编 `load()`：`android_load_sphal_library(名字,2)` → `dlsym(h,"SetOplusCameraInfoCallback")` →
+   `dlsym(h,"HMI")` → `ldr x1,[x8,#8]` + `strcmp("camera", x1)`。`hw_module_t` 里 `tag`(4B) 之后是两个 **uint16**，
+   所以 `id` 正好在 **+8** —— x1 就是 `common.id`；
+3. 字符串表：`CamxLoad: Start load %s`、`HMI`、`camera`、`%s: load %s success`。
+
+而我们的 shim 当时：cfg 读不到（见 19.3）⇒ `real_hal` 退化成**硬编码的 MI6 32 位路径**
+`/vendor/lib/hw/camera.msm8998.orig.so` ⇒ `dlopen` 失败 ⇒ 旧代码只是 `LOGE + return`，**`HMI` 保持全零**。
+于是"相机不可用"被放大成"provider 崩溃循环"。
+
+修法：
+
+- `HMI` 从 `.data` 第一个字节起就是**合法但惰性**的模块（tag/版本/`id="camera"`/`methods` 静态初始化，
+  余下 48 个指针槽指向 `portal_inert_stub`（返回 `-ENODEV`））；真件加载成功后整块 `memcpy` 覆盖 + 尾部清零。
+  最坏情况因此降级为"零个相机、进程活着"；
+- 默认原件路径改为**自推导**：`dladdr()` 取自己 → `<自己>.orig.so`（部署约定本来就是"原件备份在 shim 旁边"）；
+- 失败原因落盘 `/data/local/tmp/portalex/camshim.state`（该文件须由模块预建：HAL 域没有在该目录 create 的权限）。
+
+验证（真机、不碰 /vendor）：用一个 arm64 探针 dlopen shim、复刻 OPPO 那句判据 ——
+`tag=0x48574d54 api=0x0204 hal=0x0100 id=camera … RESULT inert-ok: strcmp("camera", id) == 0`。
+
+### 19.3 第二道墙：cfg 读不到 + 少一个导出符号
+
+**(a) cfg**：shim 报"四个开关文件都不存在"，但文件确实存在、标签也对。真正原因是路径解析要**穿过**
+`/data/local/tmp`（`shell_data_file`），而 `hal_camera_default` 对它没有 `search`；dmesg 里看不到 avc
+（被 `dontaudit` 吞掉）—— 极易误判成"文件没写进去"。修法是一条极窄的规则：
+
+```
+allow hal_camera_default shell_data_file dir { search }      # 只给目录穿透，不给文件任何权限
+```
+
+**(b) `SetOplusCameraInfoCallback`**：OEM 层 `OemLayer::init()+312` 的机器码是
+
+```asm
+6f250: ldr  x19, [x8]            ; = dlsym 结果
+6f26c: bl   __cfi_slowpath       ; 先过 CFI（x1 = 目标指针）
+6f278: blr  x19                  ; ★ NULL 在这里炸
+```
+
+它**只把 dlsym 失败当一条日志，然后照样调用**。真件导出它（`FUNC`，8 字节 = `bti c; b <CamX 深处>`）。
+修法：shim 也导出这个名字并转发到真件实现；惰性时返回 `-ENODEV`（绝不假装成功）。
+
+修完这两条后的日志三连（本轮最硬的证据）：
+
+```
+PortalCamShim: 开关文件：/data/local/tmp/portalex/portal.cfg
+PortalCamShim: 真实 HAL 已加载并整块接管：/vendor/lib64/hw/android.hardware.renderscript@1.0-impl.so
+               （tag=0x48574d54 id=camera name=QTI Camera HAL api=0x0205，照抄 376 字节）
+CamxLoad: load: CameraInfoCallback dlsym success!
+```
+
+顺带确认：ACE5 上真件的 `HMI` 是 **376 字节**、`module_api_version = 0x0205`（MI6 是 176 字节 / 2.4），
+`real_hmi_bytes` 必须按机型配。
+
+### 19.4 第三道墙：CHI 离线初始化的空钩子表（未解）
+
+```
+OemLayer::init()+408 → OemLayer::LoadOfflineLib()+328
+  → ChiOfflineOpenContext.cfi+576 (com.qti.chi.offline.so)
+    → ChiOfflineCameraContext::ctor → chi_hal_override_entry.cfi+284 (com.qti.chi.override.so)
+      → ExtensionModule::ctor +16012 → ExtensionModule::GetFilteredMetadataTagsForDump()+1280
+        → __cfi_slowpath+28   ★ x1 = 0
+```
+
+`LoadOfflineLib()` 的字符串常量把它的行为说清楚了：它 `dlopen("/vendor/lib64/hw/com.qti.chi.offline.so")`
+（**固定路径**，不是候选列表）、`dlsym("ChiOfflineOpenContext")` 然后调用 —— 与 `camera.qcom.so` 没有直接关系。
+
+崩溃点机器码：
+
+```asm
+38de30: ldr  x20, [x10, #0x78]                     ; 一个可打补丁的钩子表项（x10 经 GOT 间接取得）
+38de20: adrp x11, 0x10e000 ; add x11, x11, #0x30   ; 默认实现地址
+38de40: cmp  x20, x11
+38de44: b.ne 0x38e2cc                              ; 不等于默认值 ⇒ 走 CFI 校验
+38e2cc: mov x0, #类型id ; mov x1, x20 ; bl __cfi_slowpath   ; ★ x20 = NULL
+```
+
+即：**这一格钩子从来没被填过**。谁该填它、为什么真件在场时会被填上，尚未确认；方向上更像
+"QTI 离线 CHI 初始化的时序/状态依赖"，而不是我们又少导出了一个符号。
+
+### 19.5 设备卫生（本轮踩到的两个坑，务必记住）
+
+1. **连崩之后 init 会禁用服务**：provider 崩够次数后 init 不再重启它，`pidof` 为空、相机彻底消失。
+   恢复：`setprop ctl.start vendor.camera-provider`（ACE5 实测有效）。
+2. **回滚脚本的 `||` 分支会撒谎**：`umount X && echo unbound || echo "not bound"` 在 **umount 失败**时
+   也打印 "not bound"，于是会误以为已卸载，而 `/vendor` 里仍是绑定后的内容。
+   正确顺序：**先杀 provider**（否则它持有文件、umount 返回 EBUSY）→ 再 umount → 最后核对
+   `ls -l` 的大小/时间戳是否为原件（ACE5：`camera.qcom.so` 36,114,272 B、renderscript impl 72,056 B）。
+
+### 19.6 ACE5 上已经证明 / 仍未证明
+
+**已证明**：手工部署后 —— shim 被加载并执行、能读到 cfg、能把真件从宿主槽加载并整块接管（376 字节）、
+能满足 OPPO OEM 层的两道校验（`HMI->common.id` 与 `SetOplusCameraInfoCallback`）；
+回滚后设备健康（provider running、`dumpsys media.camera` 报 6 个相机设备）。
+**仍未证明**：provider 能存活到相机可用（卡在第三道墙），以及后续的 M0/M1（接管与注入）。
+
+### 19.7 下一步（需要裁决）
+
+- **A. 试"开机期部署"**：把 19.1 的三步 bind 搬进 `post-fs-data.sh`（模块脚本在本 ROM 上是会跑的，
+  只是文件系统不被挂载），重启后看第三道墙是否还在。理由：目前是"运行期杀掉 provider 再拉起"，
+  而 QTI 的 CHI 钩子表可能是按开机期的服务顺序填的 —— 这一条能把"我们的替换不兼容"与
+  "运行期重启路径不同"分开。
+- **B. 继续反汇编那一格钩子表**：在 `com.qti.chi.override.so` / `com.qti.chi.offline.so` 里找写
+  `[x10+0x78]` 的地方，确认它是否依赖某个被我们顶替的库所提供的符号/状态。
+- **C. 放弃 ACE5 的 HAL 路线，改用注入平面**（见 18.5 B）。两者不是替代关系：HAL 路线的独有价值是
+  "对目标 app 完全不可见"，注入路线的独有价值是"装机不求人"。
+
