@@ -1101,3 +1101,93 @@ CameraX 系的是最大的一类。
   代价是往 app 里加一个调试特性（与既有 `CameraProbeActivity` 的探针传统一致）。
 - **C. 先修 20.3 的第 2 条后果**（模块侧配置通道），因为影响面比摄像头更大。
 
+---
+
+## 21. **突破**：让 vendor/odm 的 HAL 目录可写 ⇒ ACE5 上 HAL 路线跑起来了（2026-09-13）
+
+起因：用户提出"把 vendor 挂载目标改成 `/system/vendor`，看能否突破"。先给出**字面结论**，再给出
+真正突破的那一步。
+
+### 21.1 `/system/vendor` 本身不带来新能力
+
+```
+/system/vendor -> /vendor                       （符号链接）
+/vendor        /dev/block/dm-23 erofs（ro）      （只读）
+同一 inode：65047 19722880 /vendor/lib64/hw/camera.qcom.so = /system/vendor/.../camera.qcom.so
+```
+
+内核解析符号链接后是**同一个挂载点、同一份只读 erofs** ⇒ 换这个名字既不能新建文件、也不改变解析路径。
+
+### 21.2 真正的突破口：**tmpfs-upper 的 overlay 能把 HAL 目录变成可写**
+
+模块里那条 overlayfs 自挂载一直是失败的。这次把失败原因抓出来了（很关键，之前被当成"SELinux 拒绝"）：
+
+```
+overlayfs: filesystem on '/data/local/tmp/ovl/upper' not supported     ← upperdir 在 f2fs 上被拒
+```
+- f2fs upper + `userxattr` ✗ 仍然被拒；
+- **tmpfs upper ✓ 成功**：
+  ```
+  mount -t tmpfs tmpfs /data/local/tmp/ovltmp
+  mount -t overlay overlay -o lowerdir=/vendor/lib64/hw,upperdir=/data/local/tmp/ovltmp/upper,workdir=… /vendor/lib64/hw
+  ```
+  叠加是**透明**的（54 个原件照常可见），新文件只是"多出来的那一层"。
+
+新文件的标签会落在 `u:object_r:tmpfs:s0`（普通 tmpfs 不支持逐文件标签，`chcon` 会**静默无效**；
+`mount -o context=…` 又被 SELinux 拒）。补一条窄规则即可让相机 HAL 域读到它们：
+
+```
+allow hal_camera_default tmpfs file    { read open getattr map execute }
+allow hal_camera_default tmpfs lnk_file { read getattr }
+```
+
+### 21.3 部署形态（这是关键差别）
+
+```
+/odm/lib64/hw/camera.qcom.so      ← 我们的 shim（odm 优先于 vendor，两个消费者都先看它）
+/odm/lib64/hw/camera.qcom.so.orig.so → /vendor/lib64/hw/camera.qcom.so   （软链，shim 自推导的本件路径）
+/vendor/lib64/hw/camera.qcom.so   ← **真件原地不动**（36 MB 原件，自己的名字、自己的目录）
+/vendor/lib64/hw/portal.cfg       ← 开关（real_hal=/vendor/lib64/hw/camera.qcom.so、real_hmi_bytes=376、ops_index=1）
+```
+
+与之前失败配置的**唯一实质差别**：真件这次是从**它自己的规范路径**加载的，而不是被塞进
+renderScript 那个借用槽位。
+
+### 21.4 结果（实测）
+
+```
+CamxLoad: find_in_path: … /odm/lib64/hw/camera.qcom.so name camera.qcom.so
+CamxLoad: load: Start load /odm/lib64/hw/camera.qcom.so
+PortalCamShim: 真实 HAL 已加载并整块接管：/vendor/lib64/hw/camera.qcom.so（tag=0x48574d54 id=camera api=0x0205，376 字节）
+CamxLoad: load: CameraInfoCallback dlsym success!
+CamxLoad: load: load /odm/lib64/hw/camera.qcom.so success
+```
+
+- provider **存活**（多次重启均不崩）、tombstone 计数不变；
+- `dumpsys media.camera` 报 **6 个相机设备**，`com.oplus.camera` 能正常打开设备（客户端有记录）；
+- provider 的 maps 同时包含 `/odm/…/camera.qcom.so`（我们的 shim）、`/vendor/…/camera.qcom.so`（真件）、
+  `/vendor/…/camera.qcom.sm8650.so`（真件的 SoC 实现）、`/odm/…/camera.oemlayer.so`（OEM 层）。
+
+**⇒ §19.4 那道"CHI 离线初始化读到空钩子表"的墙消失了。** 结论性表述（按实测）：
+真件必须**从自己的规范路径**被加载，它才能完成自己那套初始化（很可能是按自身名字拼 `camera.qcom.<soc>.so`
+并完成 Oplus/CHI 的注册）；从借用槽位加载时它做不到，于是 CHI 的钩子表始终是空的。§19.9 里
+"结构性障碍"的说法因此要**修正**：障碍不是"必须同名同目录且无法两全"，而是"**真件必须在自己的目录里**"
+—— 而这一点现在用一个 tmpfs-upper overlay 就解决了（shim 另起一个 odm 路径即可）。
+
+### 21.5 仍未验证的一处（诚实记录）
+
+冷启动相机后**没有看到 shim 的 `open()` 日志**（banner 有、`open` 那几行没有）⇒ 这台 QTI AIDL provider
+打开设备的路径**可能不经过** `HMI.common.methods->open`。若如此，MI6 那套"在 open 里按值取
+ops[4]/ops[0] 并打补丁"在 ACE5 上就不会生效（M0 不是没日志，而是没被调用）。
+下一步只需在 `shim_open` 顶部加一行日志即可判定（overlay 让重部署变成**拷一个文件**）——
+这也让迭代速度从"改模块+重装+重启"变成"cp + 杀 provider"。
+
+### 21.6 对既有裁决的影响
+
+裁决 C 的理由是"HAL 路线在 ACE5 上被结构性阻塞"。该前提**已不成立** ⇒ 值得重裁：
+ACE5 上现在既能走 HAL 路线（对目标应用零注入），也能走注入平面；两者不再是二选一。
+
+（另注：本节的挂载与 SELinux 补丁都是**运行期**的，重启即恢复原状；要固化得写进
+`post-fs-data.sh` + `sepolicy.rule`，并把 overlay 的 upper 目录准备步骤一起带上。）
+
+
