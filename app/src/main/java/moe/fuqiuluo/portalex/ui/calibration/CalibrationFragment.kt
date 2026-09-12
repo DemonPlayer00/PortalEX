@@ -243,11 +243,17 @@ class CalibrationFragment : Fragment() {
         return kotlin.math.sqrt(acc / data.size)
     }
 
-    private fun progressText(elapsedMs: Long): String =
-        "请把手机放在平稳的表面（桌面），保持静止 ${SensorNoiseCalibrator.DURATION_MS / 1000} 秒。\n\n" +
-            "已采集 %.1f / %.1f 秒\n\n采集期间检测到移动会作废重来。".format(
-                elapsedMs / 1000.0, SensorNoiseCalibrator.DURATION_MS / 1000.0,
-            )
+    private fun progressText(elapsedMs: Long): String {
+        val total = SensorNoiseCalibrator.DURATION_MS / 1000.0
+        // 窗口在**第一个有效样本**到达时才开始 ⇒ 之前显示"等待中"。
+        // 旧实现从注册时刻就报"已采集 x 秒"，传感器慢的时候看着进度在跑、其实一个样本都没到。
+        if (elapsedMs <= 0L) {
+            return "请把手机放在平稳的表面（桌面），保持静止 ${total.toInt()} 秒。\n\n" +
+                "正在等待传感器数据…（收到第一个样本才开始计时）"
+        }
+        return "请把手机放在平稳的表面（桌面），保持静止 ${total.toInt()} 秒。\n\n" +
+            "已采集 %.1f / %.1f 秒\n\n采集期间检测到移动会作废重来。".format(elapsedMs / 1000.0, total)
+    }
 
     // ---- 下发与回读 ----
 

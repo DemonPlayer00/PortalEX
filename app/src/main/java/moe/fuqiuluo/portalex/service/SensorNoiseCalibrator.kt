@@ -31,7 +31,16 @@ object SensorNoiseCalibrator {
 
     /** 采集窗口（丢弃前 [WARMUP_MS] 的建立期样本） */
     const val DURATION_MS = 8000L
+
+    /**
+     * 建立期：从**第一个样本到达**起算（不是从注册时刻起算）。
+     * 旧实现按注册时刻算，而传感器注册后可能几百毫秒才吐第一个值 —— 那段时间既被算进
+     * "已采集 x 秒"，又把建立期样本当成有效样本喂进统计（真机上表现为"进度条先跑、数据后到"）。
+     */
     private const val WARMUP_MS = 600L
+
+    /** 注册后一直没有任何样本 ⇒ 早点失败，别让人白等满 8 秒再被告知"样本太少" */
+    private const val NO_DATA_TIMEOUT_MS = 3_000L
 
     /** 采样周期：50Hz（σ 是「每样本」的量，与注入栅格的量级要对得上） */
     private const val SAMPLING_US = 20_000
@@ -122,6 +131,59 @@ object SensorNoiseCalibrator {
         fun gyroTime(): FloatArray = gyroTime.copyOf(gyroCount)
     }
 
+    /**
+     * 采集窗口的时间判定（纯逻辑，无 Android 依赖 ⇒ host 可测）。
+     *
+     * 两个时刻分开：
+     *  · [firstSampleMs]：**第一个样本**到达 ⇒ 建立期从这里开始；
+     *  · [windowStartMs]：第一个**通过建立期**的样本 ⇒ 采集窗口（"已采集 x 秒"与波形横轴）从这里开始。
+     * 在窗口开始之前，[elapsedMs] 恒为 0：等待传感器的时间**不计入** 8 秒采集窗口。
+     */
+    internal class CollectWindow(
+        private val warmupMs: Long = WARMUP_MS,
+        private val durationMs: Long = DURATION_MS,
+        private val noDataTimeoutMs: Long = NO_DATA_TIMEOUT_MS,
+    ) {
+        /** 未设置用 -1 而不是 0：时间戳本身可能是 0（单调时钟起点、测试里的相对时刻） */
+        @Volatile
+        var firstSampleMs: Long = UNSET
+            private set
+
+        @Volatile
+        var windowStartMs: Long = UNSET
+            private set
+
+        /** 窗口是否已经开始（= 已经采到有效样本） */
+        val started: Boolean get() = windowStartMs != UNSET
+
+        /**
+         * 交给本窗口判定一个样本。
+         * @return true = 该样本进入统计（已过建立期）；false = 丢掉（建立期内的陈旧值）
+         */
+        @Synchronized
+        fun accept(nowMs: Long): Boolean {
+            if (firstSampleMs == UNSET) firstSampleMs = nowMs
+            if (nowMs - firstSampleMs < warmupMs) return false
+            if (windowStartMs == UNSET) windowStartMs = nowMs
+            return true
+        }
+
+        /** 已采集毫秒数；窗口尚未开始时恒为 0（等待传感器的时间不算采集） */
+        fun elapsedMs(nowMs: Long): Long =
+            if (windowStartMs == UNSET) 0L else (nowMs - windowStartMs).coerceAtLeast(0L)
+
+        /** 采集窗口是否已满 */
+        fun finished(nowMs: Long): Boolean = elapsedMs(nowMs) >= durationMs
+
+        /** 注册后至今一个样本都没来（连建立期样本都没有）⇒ 该早点失败 */
+        fun noDataArrived(registeredAtMs: Long, nowMs: Long): Boolean =
+            firstSampleMs == UNSET && nowMs - registeredAtMs >= noDataTimeoutMs
+
+        private companion object {
+            const val UNSET = -1L
+        }
+    }
+
     /** 原始样本缓冲（回调线程写、采集线程读，自带同步） */
     private class Buf {
         private val data = DoubleArray(BUF)
@@ -208,12 +270,14 @@ object SensorNoiseCalibrator {
         }
         if (bufs.isEmpty()) return Result(base, "", false, "本机没有可用的加速度/陀螺/磁场传感器")
 
-        val warmupEnd = System.currentTimeMillis() + WARMUP_MS
+        val window = CollectWindow()
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 val e = event ?: return
-                // 建立期样本丢弃：注册瞬间常带上一帧的陈旧值
-                if (System.currentTimeMillis() < warmupEnd) return
+                // 建立期从**第一个样本**起算（不是注册时刻）：注册瞬间常带上一帧的陈旧值，
+                // 而传感器可能要几百毫秒才吐第一个值 —— 等待时间既不算采集，也不喂统计。
+                if (!window.accept(System.currentTimeMillis())) return
+                if (window.elapsedMs(System.currentTimeMillis()) == 0L) trace?.markStart()
                 bufs[e.sensor.type]?.add(e.values)
                 trace?.push(e.sensor.type, e.values)
             }
@@ -231,13 +295,15 @@ object SensorNoiseCalibrator {
             }
             if (registered == 0) return Result(base, "", false, "传感器注册失败")
 
-            // 波形的时间轴从这里开始计（与"已采集 x 秒"同一时刻）
-            trace?.markStart()
-            val start = System.currentTimeMillis()
+            val registeredAt = System.currentTimeMillis()
             while (true) {
-                val elapsed = System.currentTimeMillis() - start
-                onProgress(elapsed)
-                if (elapsed >= DURATION_MS) break
+                val now = System.currentTimeMillis()
+                // 窗口未开始时报 0：等待传感器数据的那段不计入采集（与波形横轴同一时刻）
+                onProgress(window.elapsedMs(now))
+                if (window.finished(now)) break
+                if (window.noDataArrived(registeredAt, now)) {
+                    return Result(base, "", false, "传感器没有返回数据（等待 ${NO_DATA_TIMEOUT_MS}ms 仍为空），请重试")
+                }
                 Thread.sleep(100)
             }
         } finally {
