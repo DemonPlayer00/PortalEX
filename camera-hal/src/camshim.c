@@ -490,6 +490,20 @@ static int g_opt_inject_pattern = 0;
  *  其中必然有几遍正落在 ISP 的 DMA 中间，编码器读到的就是"半新半旧"。
  *  只写"ISP 刚写完"那一次，撕裂窗口就从"每帧几十遍"缩到"每帧一遍"。 */
 static int g_opt_inject_sync = 0;
+/** `inject_burst=<遍数>`：`inject_sync=3` 时，**只对"刚被重填过"的那几块**连续写 N 遍。
+ *
+ *  为什么必须这样：盲写会把**全部**目标每轮都写一遍（实测 24 块 × 12.59MB = **302MB/轮**），
+ *  内存带宽被吃光之后 ISP 写不进去、编码器掉帧 —— 实测录 8 秒只拿到 **25 帧**（应为 240 帧）。
+ *  只写"刚变的"那几块，写入量立刻降到跟帧率同量级（30 帧/秒 × 12.59MB ≈ 378MB/s）；
+ *  连写 N 遍是为了覆盖 ISP 那一帧写入的**尾巴**（写晚了才不会又被 ISP 盖掉）。 */
+static int g_opt_inject_burst = 3;
+/** `inject_delay_us=<微秒>`：模式 3 里"探测到重填之后、真正写入之前"等的这段时间。
+ *
+ *  为什么要等：实测（burst=1）我们只在**左侧一条竖带**里赢下画面，带宽随运气在 0~30% 之间变。
+ *  机理是 ISP 从左到右把这一帧写进缓冲：我们的写落在它写到 W% 的时候，
+ *  于是它**已经写完**的左边 W% 留下我们的数据，右边被它后来的写覆盖。
+ *  所以"写得更晚"就能赢下更大的面积 —— 等到它快写完再写，才有机会整帧归我们。 */
+static int g_opt_inject_delay_us = 0;
 /** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
  *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
  *
@@ -737,6 +751,10 @@ static void load_options(void) {
             g_opt_inject_pattern = atoi(val);
         } else if (strcmp(key, "inject_sync") == 0) {
             g_opt_inject_sync = atoi(val);
+        } else if (strcmp(key, "inject_burst") == 0) {
+            g_opt_inject_burst = atoi(val);
+        } else if (strcmp(key, "inject_delay_us") == 0) {
+            g_opt_inject_delay_us = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
             g_opt_live_probe = atoi(val);
         } else if (strcmp(key, "mock_map") == 0) {
@@ -1522,6 +1540,9 @@ static int (*g_real_configure_streams)(const struct camera3_device *, void *) = 
 
 /* 采样指纹（定义在下方存活探针段；注入线程的"静止判据"也要用） */
 static unsigned long long portal_hash64(const unsigned char *p);
+
+/* 单调微秒时钟（定义在下方存活探针段；注入线程的"延迟写"要用） */
+static unsigned long long portal_now_us(void);
 
 /* 映射缓存整表清空（定义在下方写帧段；新会话必须失效，见 portal_configure_streams） */
 static void portal_invalidate_maps(void);
@@ -3849,6 +3870,32 @@ static void *portal_inject_thread(void *arg) {
         }
         for (int i = 0; i < n; i++) {
             size_t len = t[i].tlen < t[i].size ? t[i].tlen : t[i].size;
+            if (g_opt_inject_sync >= 3) {
+                /* 只认"刚被重填过"的那几块：头 16 字节不再等于我们上次写的内容 ⇒ 就写它，
+                 * 连写 inject_burst 遍后收手，其余缓冲一个字节都不碰（这是不饿死 ISP 的关键）。 */
+                unsigned char ref3[PORTAL_SYNC_HEAD];
+                if (len < 128) continue;
+                if (t[i].tpl != NULL) memcpy(ref3, t[i].tpl, PORTAL_SYNC_HEAD);
+                else memset(ref3, g_opt_inject_byte, PORTAL_SYNC_HEAD);
+                if (memcmp(t[i].p, ref3, PORTAL_SYNC_HEAD) == 0) continue;
+                if (g_opt_inject_delay_us > 0) {
+                    /* stable==0：刚探测到 ⇒ 排期到 now+delay 再写；stable==1：等时间到 */
+                    if (t[i].stable == 0) {
+                        t[i].stable = 1;
+                        t[i].seen = portal_now_us() + (unsigned long long)g_opt_inject_delay_us;
+                        continue;
+                    }
+                    if (portal_now_us() < t[i].seen) continue;
+                }
+                t[i].stable = 0;
+                int reps = g_opt_inject_burst > 0 ? g_opt_inject_burst : 1;
+                for (int r = 0; r < reps; r++) {
+                    if (t[i].tpl != NULL) memcpy(t[i].p, t[i].tpl, len);
+                    else memset(t[i].p, g_opt_inject_byte, t[i].size);
+                    writes++;
+                }
+                continue;
+            }
             if (g_opt_inject_sync) {
                 unsigned char ref[PORTAL_SYNC_HEAD];
                 if (len < 128) continue;
@@ -3890,7 +3937,9 @@ static void *portal_inject_thread(void *arg) {
         /* 同步模式必须**低延迟**：轮询间隔要远小于一帧（33ms），否则"ISP 刚写完"这个窗口就错过了。
          * inject_us 在同步模式下被夹到 ≤200 微秒（0 表示不让出 CPU，最紧的轮询）。 */
         int sl;
-        if (g_opt_inject_sync >= 2) {
+        if (g_opt_inject_sync >= 3) {
+            sl = g_opt_inject_us > 0 ? (g_opt_inject_us < 200 ? g_opt_inject_us : 200) : 50;
+        } else if (g_opt_inject_sync >= 2) {
             sl = g_opt_inject_us > 0 ? (g_opt_inject_us < 200 ? g_opt_inject_us : 200) : 50;
         } else if (g_opt_inject_sync == 1) {
             sl = g_opt_inject_us < 200 ? g_opt_inject_us : 200;
@@ -3954,6 +4003,13 @@ static void portal_req_report(void) {
  *  12,443,648（MPG_139_Buffer1，尺寸最接近 3840×2160 NV12）整个录像期间**一次都没被重填**。
  *  尺寸这个键不可靠，那就换成"谁在动"这个键：录像时活着的那几块，才是 ISP/编码器真正在用的面。 */
 #define PORTAL_LIVE_MAX 160
+
+/** 单调微秒时钟（只在我们自己的线程里调用，不受"钩子内零调用"约束） */
+static unsigned long long portal_now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000ull + (unsigned long long)ts.tv_nsec / 1000ull;
+}
 
 static unsigned long long portal_hash64(const unsigned char *p) {
     unsigned long long h = 1469598103934665603ull;
