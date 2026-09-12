@@ -267,13 +267,55 @@
                         android:text="@string/dfused_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/dfused_switch"
+            </LinearLayout>
+
+            <!-- 融合定位处置：三态互斥滑块（拒绝 | 放行 | 伪装）。
+                 无融合定位的机型上整块禁用（见 SettingsFragment 的 fusedAvailable 判定）。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="5dp"
+                android:paddingEnd="5dp">
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/dfused_slider"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="1"
+                    android:valueFrom="0"
+                    android:valueTo="2"
+                    android:value="2" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="start"
+                        android:text="拒绝"
+                        android:textSize="11sp" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:text="放行（不推荐）"
+                        android:textSize="11sp" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:text="伪装"
+                        android:textSize="11sp" />
+                </LinearLayout>
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/dfused_state"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:textSize="11sp" />
             </LinearLayout>
 
             <LinearLayout
