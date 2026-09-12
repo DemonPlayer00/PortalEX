@@ -1060,6 +1060,9 @@ static int (*g_real_configure_streams)(const struct camera3_device *, void *) = 
 /* 映射缓存整表清空（定义在下方写帧段；新会话必须失效，见 portal_configure_streams） */
 static void portal_invalidate_maps(void);
 
+/* 等 acquire_fence（定义在下方拍照片段；写 YUV 槽位时也要用） */
+static void portal_wait_fence(int fd);
+
 /* 帧文件侧的两个前向声明（定义在下方外源帧段；configure_streams 要提前问"产帧端活着吗"） */
 static bool portal_fsrc_open(void);
 static bool portal_fsrc_alive(void);
@@ -1670,7 +1673,9 @@ static struct portal_map *portal_get_map(void *handle, uint32_t w, uint32_t h) {
     return free_slot;
 }
 /** 真的把图案写进去；返回是否成功（阶梯见上方注释） */
-static bool portal_write_frame(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
+static bool portal_write_frame(void *handle, uint32_t w, uint32_t h, uint32_t frame,
+                               int acquire_fence) {
+    portal_wait_fence(acquire_fence);
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     if (!load_libui_mapper()) return false;
@@ -1691,6 +1696,33 @@ static bool portal_write_frame(void *handle, uint32_t w, uint32_t h, uint32_t fr
     portal_fill_frame(m->y, m->ystride, m->cb, m->cr, m->cstride, m->chroma_step, w, h, frame);
     portal_count_write(portal_seconds_since(&t0) * 1000.0);
     return true;
+}
+
+/**
+ * 等 `acquire_fence` —— **写别人的 buffer 之前必须等它**。
+ *
+ * 实测教训：拍照的 BLOB buffer 上，我们的"替换 + 清零"被 vendor 的 JPEG 编码器**覆盖**了
+ * （文件里我们的 JPEG 之后那一段是真实照片的残片，直到 ~900 KB 才归零）。
+ * 原因是 **HAL 的结果回调触发时 buffer 未必写完**：QTI 的 JPEG 编码在独立线程上，
+ * 完成信号走 `camera3_stream_buffer_t::acquire_fence`。不等它，我们就是在和编码器抢内存。
+ *
+ * 为什么用 libsync 的 `sync_wait`：它**返回错误码**、不会 abort，符合"HAL 里只调失败可返回的 API"。
+ * 等不到（超时）也只是继续写 —— 宁可这一帧有瑕疵，也不能把结果线程挂死。
+ */
+static int (*g_sync_wait)(int fd, int timeout_ms) = NULL;
+static bool g_sync_tried = false;
+
+static void portal_wait_fence(int fd) {
+    if (fd < 0) return;
+    if (!g_sync_tried) {
+        g_sync_tried = true;
+        void *h = dlopen("libsync.so", RTLD_NOW | RTLD_LOCAL);
+        if (h != NULL) g_sync_wait = (int (*)(int, int))dlsym(h, "sync_wait");
+        if (g_sync_wait == NULL) LOGI("拿不到 sync_wait：不等 fence（有竞态风险）");
+    }
+    if (g_sync_wait == NULL) return;
+    int rc = g_sync_wait(fd, 200);
+    if (rc != 0) PORTAL_LOG_ONCE(LOGI, "acquire_fence 未在 200ms 内就绪 rc=%d（继续写）", rc);
 }
 
 /** 照片区大小上限（保守：实测 BLOB buffer 约 7.6 MB，4 MB 一定放得下） */
@@ -1724,6 +1756,7 @@ static bool portal_write_photo(const camera3_stream_buffer_t *sb) {
     uint32_t lock_usage =
         PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
     struct portal_rect bounds = {0, 0, (int32_t)sb->stream->width, (int32_t)sb->stream->height};
+    portal_wait_fence(sb->acquire_fence);
     void *vaddr = NULL;
     int rc = g_gbm_lock(g_gbm_self, handle, lock_usage, &bounds, &vaddr);
     if (rc != 0 || vaddr == NULL) {
@@ -1763,7 +1796,7 @@ static bool inject_into_buffer(const camera3_stream_buffer_t *sb, uint32_t frame
     }
     void *handle = *sb->buffer;
     if ((uintptr_t)handle < 0x1000u) return false;
-    return portal_write_frame(handle, w, h, frame);
+    return portal_write_frame(handle, w, h, frame, sb->acquire_fence);
 }
 
 /** 我们给 HAL 的回调表：先注入，再交给框架 */

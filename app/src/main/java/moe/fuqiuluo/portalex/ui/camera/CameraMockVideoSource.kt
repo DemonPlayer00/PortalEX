@@ -56,6 +56,9 @@ object CameraMockVideoSource {
      */
     private const val PHOTO_INTERVAL_MS = 1500L
 
+    /** 照片体积软上限：超过就降质量重编（真 HAL 那张实测 ~930 KB，我们留足余量） */
+    private const val PHOTO_SOFT_MAX = 400 * 1024
+
     private val lock = Any()
     private var thread: Thread? = null
 
@@ -236,6 +239,30 @@ object CameraMockVideoSource {
     }
 
     /**
+     * 编码一张 JPEG，并**把体积压在安全线以内**。
+     *
+     * 为什么需要压：照片**长度不是我们说了算** —— 实测保存下来的文件用的是真 HAL 那张照片的
+     * 字节数（~930 KB），我们只提供前 N 字节，后面是零。若我们的 JPEG 比它长，文件就会被截断
+     * ⇒ 照片损坏。所以先按 85 编，超过 [PHOTO_SOFT_MAX] 就降质量重编一次（宁可糊一点，不要坏图）。
+     */
+    private fun encodeJpeg(nv21: ByteArray, w: Int, h: Int): ByteArray? {
+        for (quality in intArrayOf(85, 65)) {
+            val baos = java.io.ByteArrayOutputStream(256 * 1024)
+            val ok = runCatching {
+                YuvImage(nv21, ImageFormat.NV21, w, h, null)
+                    .compressToJpeg(Rect(0, 0, w, h), quality, baos)
+            }.isSuccess
+            if (!ok) return null
+            val bytes = baos.toByteArray()
+            if (bytes.size <= PHOTO_SOFT_MAX || quality == 65) {
+                if (quality != 85) Log.i(TAG, "照片降质量重编：q=$quality → ${bytes.size} 字节")
+                return bytes
+            }
+        }
+        return null
+    }
+
+    /**
      * 把当前解码帧编码成 JPEG 放进共享文件的**照片区**（拍照时由 HAL 搬进 BLOB buffer）。
      *
      * `YuvImage` 只吃 **NV21**（Y 平面 + VU 交织），而解码器给的是 NV12（UV 交织，U 在前）
@@ -280,16 +307,11 @@ object CameraMockVideoSource {
             p += w
         }
 
-        val baos = java.io.ByteArrayOutputStream(256 * 1024)
-        val encoded = runCatching {
-            YuvImage(out, ImageFormat.NV21, w, h, null)
-                .compressToJpeg(Rect(0, 0, w, h), 85, baos)
-        }.isSuccess
-        if (!encoded) {
+        val bytes = encodeJpeg(out, w, h)
+        if (bytes == null) {
             Log.w(TAG, "JPEG 编码失败（照片仍会是真实画面）")
             return
         }
-        val bytes = baos.toByteArray()
         if (CameraFrameSink.publishPhoto(bytes, w, h)) {
             photoCount++
             if (photoCount == 1L || photoCount % 20L == 0L) {
