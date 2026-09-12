@@ -30,12 +30,29 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <TextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/camera_mock"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/camera_mock"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <ImageButton
+                        android:id="@+id/camera_mock_info"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/camera_mock_info"
+                        android:src="@drawable/baseline_info_outline_24"
+                        app:tint="?attr/colorOnSurfaceVariant" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/camera_mock_status"
@@ -56,23 +73,7 @@
                     android:textColor="?attr/colorPrimary"
                     tools:text="当前模拟位置 39.90872, 116.39750 → 命中「小区门口」（2 段匹配，距离 12 m）" />
 
-                <TextView
-                    android:id="@+id/camera_mock_targets"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                    android:textColor="?attr/colorOnSurfaceVariant"
-                    tools:text="目标应用：未指定（所有被注入的应用都会命中）" />
 
-                <TextView
-                    android:id="@+id/camera_mock_hint"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="@string/camera_mock_hint"
-                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/switch_camera_mock"
@@ -130,10 +131,17 @@
             android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
             android:textColor="?attr/colorOnSurfaceVariant" />
 
+        <!--
+            列表卡：0dp + weight=1 = 「吃掉剩余高度」。**不能写 match_parent** ——
+            竖屏 LinearLayout 里 match_parent 是"和父容器一样高"，上面几张卡一变高
+            （例如状态栏多出一行"当前模拟位置"）列表就被整体挤出屏幕，实测第一版就是这样：
+            明明有 1 个点位，列表里什么都看不见。
+        -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/camera_point_card"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
             android:layout_margin="8dp"
             app:cardCornerRadius="12dp"
             app:cardPreventCornerOverlap="false"

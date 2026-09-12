@@ -89,14 +89,16 @@
     <string name="camera_mock">摄像头模拟</string>
     <string name="camera_mock_start">启动摄像头模拟</string>
     <string name="camera_mock_stop">停止模拟</string>
-    <string name="camera_mock_hint">自测：把 PortalEX 自己加进 LSPosed 作用域后，点「录制视频」应当看到模拟画面（那里走的就是被拦截的相机）。\n启动后，目标应用申请到的摄像头画面会被换成「距当前模拟位置最近、且标签匹配」的视频点素材（有多段则随机取一段，从随机秒数起播、播完循环）。\n需要在 LSPosed 作用域里勾选目标应用，并在其下次申请摄像头时生效。</string>
+    <string name="camera_mock_hint">启动后，目标应用申请到的摄像头画面会被换成「距当前模拟位置最近、且标签匹配」的视频点素材：同一坐标有多段时随机取一段，从随机秒数起播、播完回到开头循环。\n\n需要先在 LSPosed 作用域里勾选目标应用，并在其下次申请摄像头时生效。\n\n自测：把 PortalEX 自己勾进作用域，点「录制视频」应当看到模拟画面（那里走的就是被拦截的相机）。</string>
+    <string name="camera_mock_info">玩法说明</string>
+    <string name="got_it">知道了</string>
     <string name="camera_mock_filter_label">标签筛选（多个标签为「全含」）</string>
     <string name="camera_mock_targets">目标应用</string>
-    <string name="camera_mock_targets_desc">留空 = 不限制（所有被注入的应用都会命中）。\n一行一个包名，例如 com.tencent.mm</string>
+    <string name="camera_mock_targets_desc">留空 = 不限制。一行一个包名，例如 com.tencent.mm</string>
     <string name="camera_mock_targets_unset">目标应用：未指定（所有被注入的应用都会命中）</string>
     <string name="camera_mock_targets_value">目标应用：%1$s</string>
     <string name="camera_mock_position_idle">未启动：目标应用看到的仍是真实摄像头</string>
-    <string name="camera_mock_position_unknown">当前模拟位置未知（位置模拟未启动或系统服务未就绪）→ 本次将在全部匹配素材里随机取一段</string>
+    <string name="camera_mock_position_unknown">当前模拟位置未知 → 本次在全部匹配素材里随机取一段</string>
     <string name="camera_mock_started_open">摄像头模拟已启动：所有被注入的应用都会命中</string>
     <string name="camera_mock_started_targeted">摄像头模拟已启动：仅指定的目标应用会命中</string>
     <string name="camera_mock_stopped">摄像头模拟已停止</string>

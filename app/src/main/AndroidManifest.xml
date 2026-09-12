@@ -69,7 +69,8 @@
         <activity
             android:name=".ui.camera.CameraRecordActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:exported="false" />
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <!--
             摄像头模拟的跨进程通道（配置清单 + 视频文件 fd）。
