@@ -65,8 +65,8 @@
     <string name="calibration_footer">σ 就是标准差本身，改大即更抖；σ = 0 表示该轴完全不抖。方向角与旋转矢量是融合量，不参与一键校准。</string>
     <string name="binder_sensor_mock">Binder 外周传感器模拟</string>
     <string name="binder_sensor_mock_desc">只在系统框架层伪造外周传感器，不向目标应用注入任何 hook\n需重启目标应用生效</string>
-    <string name="dfused">禁用融合定位</string>
-    <string name="dfused_desc">是否禁用融合定位</string>
+    <string name="dfused">融合定位处置</string>
+    <string name="dfused_desc">对系统融合定位（fused）的三态处置：拒绝 / 放行（不推荐）/ 伪装\n伪装 = 让融合照常算，但结果换成模拟位置；本机无融合定位时此项不可用</string>
     <string name="cdma">网络降级</string>
     <string name="cdma_desc">将网络降级为CDMA</string>
     <string name="show_route">显示路线</string>

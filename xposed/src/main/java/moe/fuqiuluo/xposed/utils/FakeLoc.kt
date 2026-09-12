@@ -48,9 +48,11 @@ object FakeLoc {
     var binderSensorNativeReady: Boolean
         get() = LocConfig.binderSensorNativeReady
         set(value) { LocConfig.binderSensorNativeReady = value }
-    var disableFusedLocation: Boolean
-        get() = LocConfig.disableFusedLocation
-        set(value) { LocConfig.disableFusedLocation = value }
+    /** 融合定位处置三态（见 [FusedMode]） */
+    /** 融合定位处置三态（见 [FusedMode]）；拒绝/放行的派生读法见下方 rejectFused / allowFusedResult */
+    var fusedMode: Int
+        get() = LocConfig.fusedMode
+        set(value) { LocConfig.fusedMode = value }
     var disableNetworkLocation: Boolean
         get() = LocConfig.disableNetworkLocation
         set(value) { LocConfig.disableNetworkLocation = value }
@@ -84,6 +86,18 @@ object FakeLoc {
     var loopBroadcastLocation: Boolean
         get() = LocConfig.loopBroadcastLocation
         set(value) { LocConfig.loopBroadcastLocation = value }
+    /**
+     * 是否**拒绝**融合定位（模式 = 拒绝）：报 fused 不可用 + 拦它的命令。
+     * 保留这个派生读法，是为了让 hook 里的判断保持一句话可读。
+     */
+    val rejectFused: Boolean get() = LocConfig.fusedMode == FusedMode.REJECT
+
+    /**
+     * 是否**放行**融合结果（模式 = 放行）：融合算出来的位置原样交给应用，不改写。
+     * ⚠️ 不推荐 —— 就是历史上的"位置被拉回"。见 [FusedMode.ALLOW]。
+     */
+    val allowFusedResult: Boolean get() = LocConfig.fusedMode == FusedMode.ALLOW
+
     /** 把噪声档下发给原生层（实现见 [LocConfig.applyNoiseProfile]）。 */
     fun applyNoiseProfile(native: (Int, Float) -> Unit) = LocConfig.applyNoiseProfile(native)
 

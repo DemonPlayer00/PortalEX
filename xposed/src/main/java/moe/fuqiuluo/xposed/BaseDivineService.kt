@@ -126,7 +126,11 @@ abstract class BaseDivineService {
             }
             FakeLoc.enableLog = rely.getBoolean("enable_log", FakeLoc.enableLog)
             FakeLoc.enableDebugLog = rely.getBoolean("enable_debug_log", FakeLoc.enableDebugLog)
-            FakeLoc.disableFusedLocation = rely.getBoolean("disable_fused_location", FakeLoc.disableFusedLocation)
+            // 融合处置：新键（三态）优先；旧布尔键兜底映射为 拒绝/伪装（旧模块/旧 App 互通）
+            FakeLoc.fusedMode = moe.fuqiuluo.xposed.utils.FusedMode.sanitize(
+                rely.getInt("fused_mode", -1).takeIf { it >= 0 }
+                    ?: if (rely.getBoolean("disable_fused_location", false)) 0 else 2
+            )
             FakeLoc.enableAGPS = rely.getBoolean("enable_agps", FakeLoc.enableAGPS)
             FakeLoc.enableNMEA = rely.getBoolean("enable_nmea", FakeLoc.enableNMEA)
             FakeLoc.hideMock = rely.getBoolean("hide_mock", FakeLoc.hideMock)

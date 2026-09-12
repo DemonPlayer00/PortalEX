@@ -889,7 +889,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             val command = args[1] as String
             val outResult = args[2] as? Bundle
 
-            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+            if (FakeLoc.enable && FakeLoc.rejectFused && provider == "fused") {
                 result = false
                 return@beforeHook
             }
@@ -945,7 +945,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                             param.result = BinderUtils.isLocationProviderEnabled(userId)
                         } else if (FakeLoc.enable && provider == "network") {
                             param.result = !FakeLoc.enable
-                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+                        } else if (FakeLoc.enable && FakeLoc.rejectFused && provider == "fused") {
                             param.result = false
                             return
                         } else {
@@ -969,7 +969,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                             param.result = true
                         } else if (FakeLoc.enable && provider == "network") {
                             param.result = !FakeLoc.enable
-                        } else if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+                        } else if (FakeLoc.enable && FakeLoc.rejectFused && provider == "fused") {
                             param.result = false
                             return
                         }
@@ -1149,7 +1149,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             // 拦掉一次「注册成功但永远没有回调」= 真机上不存在的异常态，本身就是特征；
             // 而且持续取位是实体运动类应用的主数据源，拦了它连模拟数据都送不进去。
 
-            if (FakeLoc.enable && FakeLoc.disableFusedLocation && provider == "fused") {
+            if (FakeLoc.enable && FakeLoc.rejectFused && provider == "fused") {
                 result = null
                 return@beforeHook
             }

@@ -11,7 +11,6 @@ import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.debug
-import moe.fuqiuluo.portalex.ext.disableFusedProvider
 import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
@@ -204,6 +203,20 @@ object MockServiceHelper {
             return Pair(rely.getDouble(Key.LAT), rely.getDouble(Key.LON))
         }
         return null
+    }
+
+    /**
+     * 查询系统侧的**融合定位状态**：本机有没有融合定位、当前处置模式、以及 hook 状态单行诊断。
+     *
+     * 设置页用它决定三态滑块是否可用（无融合定位的机型整体禁用），并在调试模式下把
+     * [PortalProtocol.Key.FUSED_STATUS] 显示的 hook 状态回读出来。
+     */
+    fun getFusedState(locationManager: LocationManager): Bundle? {
+        if (!::randomKey.isInitialized) return null
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.GET_FUSED_STATE)
+        val ok = locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
+        return if (ok) rely else null
     }
 
     fun getLocationListenerSize(locationManager: LocationManager): Int? {

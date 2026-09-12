@@ -9,7 +9,7 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.debug
-import moe.fuqiuluo.portalex.ext.disableFusedProvider
+import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
@@ -73,7 +73,7 @@ object ConfigSync {
         FakeLoc.altitude = context.altitude
         FakeLoc.speed = context.speed
         FakeLoc.enableDebugLog = context.debug
-        FakeLoc.disableFusedLocation = context.disableFusedProvider
+        FakeLoc.fusedMode = context.fusedMode
         FakeLoc.needDowngradeToCdma = context.needDowngradeToCdma
         FakeLoc.minSatellites = context.minSatelliteCount
         FakeLoc.enableAGPS = context.enableAGPS
@@ -101,7 +101,12 @@ object ConfigSync {
         rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
         rely.putDouble(Key.SPEED, FakeLoc.speed)
         rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
-        rely.putBoolean(Key.DISABLE_FUSED_LOCATION, FakeLoc.disableFusedLocation)
+        rely.putInt(Key.FUSED_MODE, FakeLoc.fusedMode)
+        // 旧模块只认布尔键：把三态映射过去（拒绝=true；放行/伪装=false ⇒ 旧模块按"伪装"处理）
+        rely.putBoolean(
+            Key.DISABLE_FUSED_LOCATION,
+            FakeLoc.fusedMode == moe.fuqiuluo.xposed.utils.FusedMode.REJECT
+        )
         rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
         rely.putInt(Key.MIN_SATELLITES, FakeLoc.minSatellites)
         rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, context.loopBroadcastlocation)

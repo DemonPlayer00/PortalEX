@@ -152,10 +152,15 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 AndroidFusedLocationProviderHook(lpparam.classLoader)
             }
             "com.xiaomi.location.fused" -> {
+                // 厂商 fused 进程：本机有融合定位（即使没有 AOSP 的 FusedLocationProvider 类）
+                moe.fuqiuluo.xposed.utils.FusedStatus.markAvailable(lpparam.processName ?: lpparam.packageName)
                 ThirdPartyLocationHook(lpparam.classLoader)
+                moe.fuqiuluo.xposed.utils.FusedStatus.logIfDebug()
             }
             "com.oplus.location" -> {
+                moe.fuqiuluo.xposed.utils.FusedStatus.markAvailable(lpparam.processName ?: lpparam.packageName)
                 OplusLocationHook(lpparam.classLoader)
+                moe.fuqiuluo.xposed.utils.FusedStatus.logIfDebug()
             }
         }
     }
