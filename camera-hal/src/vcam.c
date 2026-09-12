@@ -179,6 +179,9 @@ struct portal_android_ycbcr {
 };
 
 static void *g_gbm_self = NULL;
+static void (*g_gbm_preload)(void *) = NULL;
+static int (*g_gbm_import)(void *, void *) = NULL;      /* importBuffer(handle) */
+static int (*g_gbm_free_buffer)(void *, void *);        /* freeBuffer(handle) */
 static int (*g_gbm_lock_ycbcr)(void *, void *, uint32_t, const struct portal_rect *,
                                struct portal_android_ycbcr *) = NULL;
 static int (*g_gbm_lock)(void *, void *, uint32_t, const struct portal_rect *, void **) = NULL;
@@ -229,21 +232,66 @@ static camera3_callback_ops_t g_real_dummy_cbs = {real_dummy_result, real_dummy_
  */
 static void *g_meta_lib = NULL;
 static void *(*p_alloc_meta)(size_t, size_t) = NULL;
-static void *g_result_meta = NULL;
+static int (*p_add_entry)(void *, uint32_t, const void *, size_t) = NULL;
+static const char *(*p_tag_name)(uint32_t) = NULL;
+static uint32_t g_tag_timestamp = 0;
+static bool g_meta_tried = false;
 
-static void ensure_result_meta(void) {
-    if (g_result_meta != NULL) return;
+/**
+ * 反查 `ANDROID_SENSOR_TIMESTAMP` 的 tag 值（**不猜**）。
+ *
+ * 为什么必须反查：本机连结构布局都和 AOSP 头文件不一致（见上面的布局探测），
+ * 常量值自然也不能照抄记忆。而 `libcamera_metadata.so` 导出了
+ * `get_camera_metadata_tag_name(tag)` —— 扫一遍 (section × index) 就能把真名问出来。
+ * 只做一次，结果缓存。
+ */
+static void ensure_meta_api(void) {
+    if (g_meta_tried) return;
+    g_meta_tried = true;
+    g_meta_lib = dlopen("libcamera_metadata.so", RTLD_NOW | RTLD_LOCAL);
     if (g_meta_lib == NULL) {
-        g_meta_lib = dlopen("libcamera_metadata.so", RTLD_NOW | RTLD_LOCAL);
-        if (g_meta_lib == NULL) {
-            LOGE("dlopen libcamera_metadata.so 失败：%s", dlerror());
-            return;
-        }
-        p_alloc_meta = (void *(*)(size_t, size_t))dlsym(g_meta_lib, "allocate_camera_metadata");
+        LOGE("dlopen libcamera_metadata.so 失败：%s", dlerror());
+        return;
     }
-    if (p_alloc_meta == NULL) return;
-    g_result_meta = p_alloc_meta(4, 64);
-    LOGI("结果元数据已就绪：%p", g_result_meta);
+    p_alloc_meta = (void *(*)(size_t, size_t))dlsym(g_meta_lib, "allocate_camera_metadata");
+    p_add_entry = (int (*)(void *, uint32_t, const void *, size_t))dlsym(
+        g_meta_lib, "add_camera_metadata_entry");
+    p_tag_name = (const char *(*)(uint32_t))dlsym(g_meta_lib, "get_camera_metadata_tag_name");
+    if (p_tag_name != NULL) {
+        for (uint32_t section = 0; section <= 0x20 && g_tag_timestamp == 0; section++) {
+            for (uint32_t index = 0; index <= 0x40; index++) {
+                uint32_t tag = (section << 16) | index;
+                const char *name = p_tag_name(tag);
+                if (name != NULL && strcmp(name, "timestamp") == 0) {
+                    g_tag_timestamp = tag;
+                    break;
+                }
+            }
+        }
+    }
+    LOGI("元数据 API：alloc=%p add=%p tag_name=%p；ANDROID_SENSOR_TIMESTAMP=0x%08x",
+         (void *)p_alloc_meta, (void *)p_add_entry, (void *)p_tag_name, g_tag_timestamp);
+}
+
+/**
+ * 每帧申请一份结果元数据并写入时间戳。
+ *
+ * camera3 的约定：这份元数据的所有权**交给框架**（它 acquire 后会释放），
+ * 所以必须每帧新申请、我们自己不 free —— 真 HAL 也是这么做的。
+ */
+static void *build_result_meta(int64_t timestamp_ns) {
+    ensure_meta_api();
+    if (p_alloc_meta == NULL) return NULL;
+    void *meta = p_alloc_meta(8, 128);
+    if (meta != NULL && p_add_entry != NULL && g_tag_timestamp != 0) {
+        int rc = p_add_entry(meta, g_tag_timestamp, &timestamp_ns, 1);
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            LOGI("时间戳已写入结果元数据（tag=0x%08x rc=%d）", g_tag_timestamp, rc);
+        }
+    }
+    return meta;
 }
 
 /* ---------------- 我们自己的 device ---------------- */
@@ -270,7 +318,15 @@ static void load_mapper(void) {
     if (g_gbm_lock != NULL) return;
     void *h = dlopen("libui.so", RTLD_NOW | RTLD_LOCAL);
     if (h == NULL) return;
-    void (*preload)(void) = (void (*)(void))dlsym(h, "_ZN7android19GraphicBufferMapper10preloadHalEv");
+    /* preloadHal 也是**成员函数**（mangled 名无 K）⇒ 需要 this；
+     * 必须真的调用它：它才建立到 mapper 服务的连接，不调 lock 会直接失败 */
+    g_gbm_preload = (void (*)(void *))dlsym(h, "_ZN7android19GraphicBufferMapper10preloadHalEv");
+    /* 跨进程拿到的 gralloc handle 必须先 import 才能 lock：
+     * 框架分配的 buffer 由 cameraserver 持有，HAL 侧要先把它"登记"进本进程的 mapper */
+    g_gbm_import = (int (*)(void *, void *))dlsym(
+        h, "_ZN7android19GraphicBufferMapper12importBufferEPK13native_handle");
+    g_gbm_free_buffer = (int (*)(void *, void *))dlsym(
+        h, "_ZN7android19GraphicBufferMapper10freeBufferEPK13native_handle");
     void **slot = (void **)dlsym(h, "_ZN7android9SingletonINS_19GraphicBufferMapperEE9sInstanceE");
     g_gbm_self = slot ? *slot : NULL;
     g_gbm_lock_ycbcr = (int (*)(void *, void *, uint32_t, const struct portal_rect *,
@@ -281,9 +337,12 @@ static void load_mapper(void) {
     g_gbm_unlock = (int (*)(void *, void *, void *))dlsym(
         h, "_ZN7android19GraphicBufferMapper6unlockEPK13native_handlePNS_4base14unique_fd_implINS4_13DefaultCloserEEE");
     if (g_gbm_self == NULL) {
-        /* 单例还没建：用 preloadHal 触发一次（它也需要 this，这里退化为不调用） */
-        (void)preload;
-        LOGE("mapper 单例未就绪（sInstance=NULL）");
+        LOGE("mapper 单例未就绪（sInstance=NULL）：无法 preload/锁内存");
+        return;
+    }
+    if (g_gbm_preload != NULL) {
+        g_gbm_preload(g_gbm_self);
+        LOGI("已调用 GraphicBufferMapper::preloadHal（建立 mapper 服务连接）");
     }
 }
 
@@ -351,13 +410,50 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
     /* 只画我们自己在 configure_streams 里标了 SW 用途的流（否则 lock 会 abort） */
     load_mapper();
     if (g_gbm_lock_ycbcr == NULL || g_gbm_self == NULL) return false;
+    /* import 一次（同一 handle 重复 import 是幂等的；失败也不致命，继续试锁） */
+    if (g_gbm_import != NULL) {
+        static unsigned long imported = 0;
+        int irc = g_gbm_import(g_gbm_self, handle);
+        if (irc != 0 && __atomic_add_fetch(&imported, 1, __ATOMIC_RELAXED) == 1) {
+            LOGE("importBuffer 失败 rc=%d（继续尝试 lock）", irc);
+        }
+    }
     struct portal_android_ycbcr yc;
     memset(&yc, 0, sizeof(yc));
     struct portal_rect r = {0, 0, (int32_t)w, (int32_t)h};
     if (g_gbm_lock_ycbcr(g_gbm_self, handle, USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN, &r, &yc) !=
         0) {
         static unsigned long n = 0;
-        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) LOGE("lockYCbCr 失败（%ux%u）", w, h);
+        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
+            /* handle 合法性诊断：native_handle_t 头部是 version/numFds/numInts */
+            const int32_t *hi = (const int32_t *)handle;
+            LOGE("lockYCbCr 失败（%ux%u）：handle=%p [version=%d numFds=%d numInts=%d]", w, h,
+                 handle, hi[0], hi[1], hi[2]);
+        }
+        /* 兜底：lockYCbCr 失败时退回老的 lock()（不要求 YCbCr 描述符）。
+         * 只写开头若干行、以 width 当 stride 上界，绝不越界。 */
+        if (g_gbm_lock != NULL) {
+            void *vaddr = NULL;
+            if (g_gbm_lock(g_gbm_self, handle, USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN, &r,
+                           &vaddr) == 0 &&
+                vaddr != NULL) {
+                uint8_t *b = (uint8_t *)vaddr;
+                uint32_t rows = h < 32 ? h : 32;
+                for (uint32_t y = 0; y < rows; y++) {
+                    uint8_t *row = b + (size_t)y * (size_t)w;
+                    uint8_t v = ((y / 3) % 2) ? 210 : 24;
+                    memset(row, v, w);
+                }
+                int f = -1;
+                g_gbm_unlock(g_gbm_self, handle, &f);
+                static bool logged = false;
+                if (!logged) {
+                    logged = true;
+                    LOGI("已用 lock() 兜底写入（lockYCbCr 不可用）");
+                }
+                return true;
+            }
+        }
         return false;
     }
     uint8_t *base = (uint8_t *)yc.y;
@@ -462,8 +558,8 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
     camera3_capture_result_t res;
     memset(&res, 0, sizeof(res));
     res.frame_number = req->frame_number;
-    ensure_result_meta();
-    res.result = g_result_meta; /* 必须是结构合法的元数据（NULL 会被框架校验拒掉） */
+    /* 每帧一份合法元数据 + 时间戳（所有权交给框架） */
+    res.result = build_result_meta(msg.message.shutter.timestamp);
     res.num_output_buffers = num;
     res.output_buffers = sbs;
     res.partial_result = 0;
