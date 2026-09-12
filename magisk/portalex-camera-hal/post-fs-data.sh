@@ -113,6 +113,8 @@ policy "allow untrusted_app portalex_frame_file dir { search read open getattr w
 policy "allow untrusted_app portalex_frame_file file { read write open getattr map create unlink }"
 policy "allow hal_camera_default portalex_frame_file dir { search read open getattr }"
 policy "allow hal_camera_default portalex_frame_file file { read write open getattr map }"
+# 让 HAL 域能"穿过" /data/local/tmp（shell_data_file）去读 portalex/ 里的开关文件与帧通道
+policy "allow hal_camera_default shell_data_file dir { search }"
 policy "allow untrusted_app shell_data_file dir { search getattr }"
 
 # 预建帧文件（**app 不建文件**：新建文件的标签由创建者决定，会落在 app 域的类型上；
@@ -121,8 +123,14 @@ if [ ! -f "$FRAME_FILE" ]; then
     truncate -s "$FRAME_BYTES" "$FRAME_FILE"
 fi
 chmod 0666 "$FRAME_FILE"
+# shim 的故障状态文件：HAL 域对该目录只有 search/read，没有 create/add_name，
+# 所以**必须由模块预建**（否则 shim 想落盘也写不出来 —— §19 排查时正因此丢过一次线索）。
+STATE_FILE="$SHARED_DIR/camshim.state"
+[ -f "$STATE_FILE" ] || : > "$STATE_FILE"
+chmod 0666 "$STATE_FILE"
 chcon u:object_r:portalex_frame_file:s0 "$SHARED_DIR" 2>/dev/null
 chcon u:object_r:portalex_frame_file:s0 "$FRAME_FILE" 2>/dev/null
+chcon u:object_r:portalex_frame_file:s0 "$STATE_FILE" 2>/dev/null
 # 文件属主给 PortalEX（装了就给，没装就留给 0666 —— 安装后再重启一次即可）
 APP_UID=$(stat -c %u /data/data/moe.fuqiuluo.portalex 2>/dev/null)
 [ -n "$APP_UID" ] && chown "$APP_UID:$APP_UID" "$FRAME_FILE"

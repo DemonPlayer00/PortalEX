@@ -20,3 +20,10 @@ allow untrusted_app portalex_frame_file file { read write open getattr map creat
 allow hal_camera_default portalex_frame_file dir { search read open getattr }
 allow hal_camera_default portalex_frame_file file { read write open getattr map }
 allow untrusted_app shell_data_file dir { search getattr }
+
+# shim 要读 `/data/local/tmp/portalex/portal.cfg`（bring-up 开关文件）：路径解析必须先**穿过**
+# `/data/local/tmp` 本身，而它的类型是 shell_data_file —— 这里只给目录的 search，
+# 不给 shell_data_file 上任何文件权限（cfg 自己带 portalex_frame_file 标签，走上面那条）。
+# 实测（ACE5）：少了这一条，shim 的四个候选路径全部 fopen 失败并报"都不存在"，
+# 而 dmesg 里看不到对应 avc（被 dontaudit 吞掉）—— 排查时极容易误判成"文件没写进去"。
+allow hal_camera_default shell_data_file dir { search }

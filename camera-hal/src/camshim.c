@@ -43,10 +43,17 @@
  */
 #define LOG_TAG "PortalCamShim"
 
+/* `dladdr()`：用来推导"原件就在自己旁边"的默认路径（见 default_real_hal_path）。
+ * bionic 把它放在 _GNU_SOURCE 之后，所以必须在本文件任何系统头之前定义。 */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <android/log.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -67,6 +74,11 @@
  * `adb_data_file`，`hal_camera_default` 读不了它 —— dlopen 直接报 "library not found"
  * （EACCES 被 linker 报成 not found）。放在同一个 vendor 库目录下、只换个文件名，
  * 由模块的 sepolicy 规则授权 execute 即可（magiskpolicy 的语句格式见 sepolicy.rule）。
+ *
+ * ⚠️ 这里只是**最后的兜底**。真正的默认值由 [default_real_hal_path] 从"自己所在路径"推导
+ * （`<自己的路径>.orig.so`），因为部署约定本来就是"原件备份在 shim 旁边、只换文件名"。
+ * 教训（ACE5 / Android 16，docs/camera-mock.md §19）：旧代码把**本行**当默认值用时，
+ * 32 位路径在 64 位机上必然不存在 ⇒ dlopen 失败 ⇒ 旧代码留着全零的 `HMI` ⇒ provider 崩。
  */
 #define REAL_HAL_PATH "/vendor/lib/hw/camera.msm8998.orig.so"
 
@@ -89,7 +101,14 @@
  */
 #define PORTAL_CFG_PATH "/vendor/lib/hw/portal.cfg"
 
-/** 真实模块符号大小（实测 176 字节 = camera_module_t）；照抄这么多即可，不会越界读原件 */
+/**
+ * 真实模块符号大小（照抄这么多字节）。
+ *
+ * 实测：MI6 = 176（Android 15 / 32 位），**ACE5 = 376**（Android 16 / 64 位）——
+ * 所以它是运行期开关（`real_hmi_bytes=`）而不是常量；这里的值只是老机型兜底。
+ * 抄少了不会越界（我们的留白有 536 字节），但会留下**未被真实值覆盖的槽位**，
+ * 那些槽位在惰性初值里指向兜底回调（见 portal_hmi_t），不会再是"全零"。
+ */
 #define REAL_HMI_BYTES 176u
 
 /* ------------------------------------------------------------------ *
@@ -310,6 +329,16 @@ static bool load_libui_mapper(void) {
  */
 #define HARDWARE_MODULE_TAG 0x48574D54u /* 'HWMT' */
 
+/*
+ * 惰性模块的版本号初值（真实值在原件加载成功后被整块覆盖）。
+ * AOSP 的算法是 `HARDWARE_MAKE_API_VERSION(maj,min) = (maj << 8) | min`：
+ *   `HARDWARE_HAL_API_VERSION`      = (1,0) = 0x0100
+ *   `CAMERA_MODULE_API_VERSION_2_4` = (2,4) = 0x0204
+ * 不用 AOSP 的宏名，免得以后有人 `#include <hardware/hardware.h>` 时撞名。
+ */
+#define PORTAL_HAL_API_VERSION 0x0100u
+#define PORTAL_CAMERA_MODULE_API_VERSION 0x0204u
+
 /* ------------------------------------------------------------------ *
  * 状态
  * ------------------------------------------------------------------ */
@@ -437,10 +466,20 @@ static void load_options(void) {
      * 开关文件按顺序找：
      *  1) `/vendor/lib64/hw/portal.cfg`（64 位设备的正式位置，模块挂进去的）；
      *  2) `/vendor/lib/hw/portal.cfg`（32 位设备的正式位置）；
-     *  3) `/data/local/tmp/portal.cfg`（**bring-up 用**：/vendor 是只读挂载，bind mount 又无法新建文件，
-     *     所以在还没装模块的设备上，开关只能放这里 —— 需要一条 sepolicy 允许 HAL 域读它）。
+     *  3) `/data/local/tmp/portalex/portal.cfg`（**bring-up 首选**：整个目录已经被标成
+     *     `portalex_frame_file`，而 sepolicy 里已有
+     *     `allow hal_camera_default portalex_frame_file file { read write open getattr map }`
+     *     ⇒ 不需要为它再加任何规则）；
+     *  4) `/data/local/tmp/portal.cfg`（最老的 bring-up 位置，需要额外一条对 `shell_data_file`
+     *     的 allow，只留给"资料目录还没建起来"的场合）。
+     *
+     * ⚠️ 为什么值得为"多找一个地方"写这么多注释：ACE5 上模块文件根本没被挂载（KernelSU 的
+     * 这台机器不挂模块树），于是 1/2 都不存在 —— 而旧代码在"找不到 cfg"时会退化到硬编码的
+     * MI6 原件路径，接着就是 §19 那场 provider 崩溃。多一个可达的候选路径，就少一次那种失败。
      */
-    static const char *cands[] = {"/vendor/lib64/hw/portal.cfg", PORTAL_CFG_PATH,
+    static const char *cands[] = {"/vendor/lib64/hw/portal.cfg",
+                                  PORTAL_CFG_PATH,
+                                  "/data/local/tmp/portalex/portal.cfg",
                                   "/data/local/tmp/portal.cfg"};
     FILE *f = NULL;
     const char *used = NULL;
@@ -449,7 +488,8 @@ static void load_options(void) {
         if (f != NULL) used = cands[i];
     }
     if (f == NULL) {
-        LOGI("三个开关文件都不存在（%s / %s / /data/local/tmp/portal.cfg）：全部开关按关闭处理",
+        LOGI("四个开关文件都不存在（%s / %s / /data/local/tmp/portalex/portal.cfg / "
+             "/data/local/tmp/portal.cfg）：全部开关按关闭处理",
              cands[0], cands[1]);
         return;
     }
@@ -521,19 +561,82 @@ static int shim_open(const struct hw_module_t *module, const char *id,
                      struct hw_device_t **device);
 
 /**
+ * 惰性兜底回调：原件没打开时，任何被点名调用的 `camera_module_t` 回调都落到这里。
+ *
+ * 返回 `-ENODEV`：`get_number_of_cameras()` 被当整数读时是负数 ⇒ provider 的循环一次都不进
+ * ⇒ "零个相机"；其余回调返回错误码也是明确的"不可用"语义。绝不返回 0/成功值 ——
+ * 假装有相机比说没有更糟。
+ */
+static int portal_inert_stub(void) { return -ENODEV; }
+
+static struct hw_module_methods_t g_methods = {.open = shim_open};
+
+/*
+ * ------------------------------------------------------------------ *
+ * OPPO OEM 层额外索要的导出符号（**必须转出去，不能只有 HMI**）
+ *
+ * 血案（ACE5 / Android 16 / ColorOS 16，docs/camera-mock.md §19）：`/odm/lib64/hw/camera.oemlayer.so`
+ * 的 `load()` 会按「这个文件导出 `HMI` 吗」在候选目录里挑一个相机 HAL，然后
+ *   1) `dlsym(h, "SetOplusCameraInfoCallback")` —— 只把失败当一条日志；
+ *   2) `dlsym(h, "HMI")` + `strcmp("camera", HMI->common.id)`；
+ * 并在 `OemLayer::init()` 里**无条件调用**第 1 步拿到的指针：
+ *
+ *     6f250: ldr  x19, [x8]          ; = dlsym 结果
+ *     6f26c: bl   __cfi_slowpath     ; 先过 CFI（x1 = 目标指针）
+ *     6f278: blr  x19                ; ★ NULL 就在这里炸
+ *
+ * 我们替换了原件，就必须连这个符号一起提供，否则 dlsym 得到 NULL、调用时崩在
+ * `__cfi_slowpath` 里（tombstone: `OemLayer::init() (.cfi)+312` → `__cfi_slowpath+28`，
+ * x1 = 0）—— 而 provider 崩溃循环会连带把整机相机打死。
+ *
+ * 惰性时返回 `-ENODEV`（真件没加载 ⇒ 明确说"没有"），绝不假装成功。
+ * ------------------------------------------------------------------ */
+typedef int (*portal_oplus_info_cb_t)(void *info);
+static portal_oplus_info_cb_t g_real_oplus_info_cb = NULL;
+
+__attribute__((visibility("default"))) int SetOplusCameraInfoCallback(void *info) {
+    if (g_real_oplus_info_cb == NULL) return -ENODEV;
+    return g_real_oplus_info_cb(info);
+}
+
+/**
  * 我们导出的模块入口（符号名必须是 `HMI`：`HAL_MODULE_INFO_SYM` 展开后就是它）。
  *
  * 留 512 字节而不是 128：真实结构是 `camera_module_t`（见文件头"取舍 2"），
  * 声明小了会让 provider 读到相邻内存当回调/数量，直接崩在 init 里。
+ *
+ * **惰性合法初值**（2026-09-12 在一台一加 ACE5 上换来的，见 docs/camera-mock.md §19）：
+ * 原件加载成功时这个结构被整块 memcpy 覆盖；而**加载失败时它必须仍然合法**。
+ * 反例：Android 16 的 OPPO OEM 层（`/odm/lib64/hw/camera.oemlayer.so` 的 `load()`）会自己
+ * 把 `camera.qcom` 再加载一遍，然后执行
+ *
+ *     strcmp("camera", ((camera_module_t *)dlsym(h, "HMI"))->common.id)
+ *
+ * 旧的 `HMI = {0}` 在这种情况下 `common.id == NULL` ⇒ provider 崩在这句 strcmp 里，
+ * 而且崩在构造函数第一行日志之前（tombstone `#00 __strcmp_aarch64 ← load+276`；
+ * 六份 tombstone 签名逐帧一致，连"日志一行都没有"都对得上）。
+ * 现在最坏情况降级为"相机不可用、进程活着"，与应用的 fail-inert 纪律一致。
  */
 struct portal_hmi_t {
-    struct hw_module_t common; /* 前 128 字节：AOSP hw_module_t 布局 */
-    uint32_t extra[96];        /* 留白：真实结构更大，绝不能少 */
+    struct hw_module_t common; /* AOSP 布局：id 在 +8（tag 4 + api 2 + hal 2） */
+    void *extra[48];           /* 留白：真实结构更大，绝不能少（376 字节仍在 512 内） */
 };
 
-__attribute__((visibility("default"))) struct portal_hmi_t HMI = {0};
-
-static struct hw_module_methods_t g_methods = {.open = shim_open};
+__attribute__((visibility("default"))) struct portal_hmi_t HMI = {
+    .common =
+        {
+            .tag = HARDWARE_MODULE_TAG,
+            .module_api_version = PORTAL_CAMERA_MODULE_API_VERSION,
+            .hal_api_version = PORTAL_HAL_API_VERSION,
+            .id = "camera",
+            .name = "PortalEX camera shim (inert until real HAL loads)",
+            .author = "PortalEX",
+            .methods = &g_methods,
+            .dso = NULL,
+        },
+    /* 其余槽位先全指向惰性回调；加载成功后整块覆盖 + 尾部清零（见 load_real_hal） */
+    .extra = {[0 ... 47] = (void *)&portal_inert_stub},
+};
 
 /* ------------------------------------------------------------------ *
  * 页保护读取
@@ -2325,18 +2428,64 @@ static int shim_open(const struct hw_module_t *module, const char *id,
  * 真实 HAL 加载
  * ------------------------------------------------------------------ */
 
+/**
+ * 默认原件路径：**原件就在自己旁边**（`<本 .so 的完整路径>.orig.so`）。
+ *
+ * 为什么不再硬编码机型路径：模块的部署约定本来就是"把原件备份到 shim 旁边、只换文件名"
+ * （见 build-camera-hal-module.sh 与 customize.sh），所以自行推导对任何机型都成立；
+ * 而硬编码一定在别的机型上错 —— "原件路径错"的后果曾经是最坏的那一种（见 §19）。
+ * 推导不出来（dli_fname 不是绝对路径）时才退回历史常量。
+ */
+static const char *default_real_hal_path(void) {
+    static char buf[512];
+    if (buf[0] != '\0') return buf;
+    Dl_info info;
+    if (dladdr((const void *)&HMI, &info) != 0 && info.dli_fname != NULL &&
+        info.dli_fname[0] == '/') {
+        snprintf(buf, sizeof(buf), "%s.orig.so", info.dli_fname);
+    } else {
+        snprintf(buf, sizeof(buf), "%s", REAL_HAL_PATH);
+    }
+    return buf;
+}
+
+/**
+ * 把一条状态落盘（best-effort，失败即放弃，绝不影响相机）。
+ *
+ * 为什么需要它：logcat 会滚、tombstone 只记崩溃，而"原件没加载成功"这类**非崩溃**故障
+ * 恰恰是最难事后定位的一种 —— §19 那场排查里，最缺的就是"shim 到底走到哪一步"。
+ * 文件由模块的 post-fs-data.sh 预创建并标成 `portalex_frame_file`（HAL 域有 write 权限，
+ * 但没有在该目录里 create 的权限），路径与帧通道同目录。
+ */
+static void portal_write_state(const char *fmt, ...) {
+    FILE *f = fopen("/data/local/tmp/portalex/camshim.state", "we");
+    if (f == NULL) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
 static void load_real_hal(void) {
     if (g_real_handle != NULL) return;
 
-    const char *path = g_opt_real_hal[0] ? g_opt_real_hal : REAL_HAL_PATH;
+    const char *path = g_opt_real_hal[0] ? g_opt_real_hal : default_real_hal_path();
     g_real_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (g_real_handle == NULL) {
-        LOGE("dlopen 原件失败（%s）：%s", path, dlerror());
+        /* ⚠️ 这里**不能**就这么走人：`HMI` 必须保持惰性合法（见 portal_hmi_t 的注释）。
+         * 旧代码 return 之后 `HMI` 是全零，ACE5 的 OPPO OEM 层会因此在 strcmp 里空指针崩溃，
+         * 把"相机不可用"放大成"provider 崩溃循环"。 */
+        LOGE("原件 dlopen 失败（%s）：%s —— 本次按惰性模块运行（相机不可用，进程安全）", path,
+             dlerror());
+        portal_write_state("state=inert reason=dlopen-failed path=%s", path);
         return;
     }
     g_real_module = (struct hw_module_t *)dlsym(g_real_handle, "HMI");
     if (g_real_module == NULL) {
-        LOGE("原件里没有 HMI 符号");
+        LOGE("原件里没有 HMI 符号（%s）—— 本次按惰性模块运行", path);
+        portal_write_state("state=inert reason=no-HMI-symbol path=%s", path);
         dlclose(g_real_handle);
         g_real_handle = NULL;
         return;
@@ -2347,6 +2496,12 @@ static void load_real_hal(void) {
     unsigned copy_bytes = g_opt_real_hmi_bytes ? g_opt_real_hmi_bytes : REAL_HMI_BYTES;
     if (copy_bytes > sizeof(HMI)) copy_bytes = sizeof(HMI);
     memcpy(&HMI, g_real_module, copy_bytes);
+
+    /* 抄完把尾部清零：惰性初值往留白里填的是兜底回调指针，真实结构之外的槽位必须恢复成"无"，
+     * 免得以后有人照着留下来的指针去猜字段（真实结构 MI6 176 / ACE5 376，我们留了 536）。 */
+    if (copy_bytes < sizeof(HMI)) {
+        memset((char *)&HMI + copy_bytes, 0, sizeof(HMI) - copy_bytes);
+    }
 
     /* 只改这一处：open 走我们的（接管 camera3_device_ops 的入口） */
     HMI.common.methods = &g_methods;
@@ -2381,10 +2536,23 @@ static void load_real_hal(void) {
     if (g_real_configure_streams == NULL) {
         LOGI("configure_streams 没有导出符号：usage_patch 那条路不可用");
     }
+    /* OPPO OEM 层索要的那个符号（见文件上方 SetOplusCameraInfoCallback 的注释）：
+     * 拿到就转发，拿不到也**不致命**（我们的桩会返回 -ENODEV，OEM 层不会因此崩）。 */
+    g_real_oplus_info_cb =
+        (portal_oplus_info_cb_t)dlsym(g_real_handle, "SetOplusCameraInfoCallback");
+    if (g_real_oplus_info_cb == NULL) {
+        LOGI("原件没有 SetOplusCameraInfoCallback（OEM 层会收到 -ENODEV）");
+    }
 
     LOGI("真实 HAL 已加载并整块接管：%s（tag=0x%08x id=%s name=%s api=0x%04x，照抄 %u 字节）",
          path, HMI.common.tag, HMI.common.id, HMI.common.name, HMI.common.module_api_version,
          copy_bytes);
+    /* 一起把"三处接管点各拿到了没有"落盘：这三条决定了后面能做到哪个里程碑 */
+    portal_write_state("state=ok path=%s id=%s bytes=%u open=%p pcr=%p init=%p cfg=%p oplus_cb=%p",
+                       path, HMI.common.id ? HMI.common.id : "(null)", copy_bytes,
+                       (void *)g_real_open, (void *)g_real_process_capture_request,
+                       (void *)g_real_initialize, (void *)g_real_configure_streams,
+                       (void *)g_real_oplus_info_cb);
 }
 
 __attribute__((constructor)) static void on_load(void) {
