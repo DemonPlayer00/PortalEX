@@ -196,8 +196,9 @@ object RemoteCommandHandler {
                 val gridHz = rely.getInt(Key.SENSOR_GRID_HZ, -1)
                 if (gridHz >= 0) {
                     FakeLoc.sensorGridHz = gridHz
-                    runCatching { BinderSensorNative.setGridHz(gridHz) }
-                        .onFailure { Logger.warn("栅格恢复失败：${it.message}") }
+                    if (BinderSensorMock.isNativeReady) {
+                        pushToNative("栅格恢复") { BinderSensorNative.setGridHz(gridHz) }
+                    }
                 }
                 if (!BinderSensorMock.onConfigChanged()) {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
@@ -370,15 +371,18 @@ object RemoteCommandHandler {
                 FakeLoc.enableBinderSensorMock = binderSensorMock
                 FakeLoc.sensorGridHz = sensorGridHz
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
-                runCatching { BinderSensorNative.setGridHz(sensorGridHz) }
-                    .onFailure { Logger.warn("栅格设置下发失败：${it.message}") }
+                if (BinderSensorMock.isNativeReady) {
+                    pushToNative("栅格设置下发") { BinderSensorNative.setGridHz(sensorGridHz) }
+                }
                 if (noiseProfile != null) {
                     FakeLoc.noiseProfile = noiseProfile
-                    runCatching {
-                        FakeLoc.applyNoiseProfile { index, amp ->
-                            BinderSensorNative.setNoise(index, amp)
+                    if (BinderSensorMock.isNativeReady) {
+                        pushToNative("噪声档下发") {
+                            FakeLoc.applyNoiseProfile { index, amp ->
+                                BinderSensorNative.setNoise(index, amp)
+                            }
                         }
-                    }.onFailure { Logger.warn("噪声档下发失败：${it.message}") }
+                    }
                 }
                 // 原生层挂不上就明确回报失败：App 侧据此提示"配置失败"，
                 // 而不是让用户以为开关生效了、实际什么都没发生。
@@ -551,8 +555,23 @@ object RemoteCommandHandler {
     private fun applyNoiseProfile(rely: Bundle) {
         val raw = rely.getFloatArray(Key.NOISE_PROFILE) ?: return
         FakeLoc.noiseProfile = SensorNoise.sanitize(raw)
-        FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
-        Logger.info("Binder 外周传感器模拟：噪声档已下发 ${SensorNoise.encode(FakeLoc.noiseProfile)}")
+        if (BinderSensorMock.isNativeReady) {
+            pushToNative("噪声档下发") {
+                FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
+            }
+        }
+        Logger.info("Binder 外周传感器模拟：噪声档=${SensorNoise.encode(FakeLoc.noiseProfile)}")
+    }
+
+    /**
+     * 把注入参数推给原生层 —— **只在原生层已装载时**。
+     *
+     * 装载现在推迟到模拟会话启动（见 [BinderSensorMock]），因此 App 启动时的 `put_config`
+     * 通常早于装载：那一刻推只会得到 `UnsatisfiedLinkError`（既是噪声、又会误导排查"是不是库没加载"）。
+     * 值已经存进 [FakeLoc]，装载时由 [BinderSensorMock] 的 `applyStoredConfig()` 一次性重放。
+     */
+    private inline fun pushToNative(what: String, block: () -> Unit) {
+        runCatching(block).onFailure { Logger.warn("$what 失败：${it.message}") }
     }
 }
 
