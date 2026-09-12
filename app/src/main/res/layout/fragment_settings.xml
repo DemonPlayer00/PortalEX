@@ -531,6 +531,70 @@
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
+            <!-- 后台保活（默认开）：前台服务 + partial wake lock，见 MockKeepAliveService -->
+            <LinearLayout
+                android:id="@+id/keep_alive_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="5dp">
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="后台保活"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="模拟期间用一个前台服务把 App 钉在前台档，防止被系统冻结\n（冻结期间位置会停住，跑步应用上就是一段异常配速）"
+                        android:textSize="11sp" />
+                </LinearLayout>
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/keep_alive_switch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    app:useMaterialThemeColors="true"
+                    app:trackTint="@color/switch_track_tint"/>
+            </LinearLayout>
+
+            <!-- 电池优化白名单：点一下申请系统豁免（后台活跃权限） -->
+            <LinearLayout
+                android:id="@+id/battery_optimization_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="5dp">
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="电池优化白名单"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/battery_optimization_state"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="读取中…"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/allow_landscape_layout"
                 android:layout_width="match_parent"

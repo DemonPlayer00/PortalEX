@@ -29,6 +29,8 @@
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- 允许使用PowerManager的 WakeLocks保持进程在休眠时从屏幕消失 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 「后台保活」设置项（默认开）：申请加入电池优化白名单，供用户在设置页一键请求 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 允许一个程序打开窗口使用 TYPE_SYSTEM_ALERT，显示在其他所有程序的顶层 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.SYSTEM_OVERLAY_WINDOW" />
@@ -57,6 +59,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            会话期间的后台保活服务（设置项「后台保活」，默认开）。
+
+            为什么需要：App 是普通应用进程，退到后台会变成 cached，被 Android 的
+            Cached Apps Freezer 冻结 —— 冻结期间运动循环整段停摆（实测 25.6s/47.7s 空洞），
+            而 system_server 仍在按保活节奏推帧（位置不动、vel≈0），目标跑步应用会看到
+            "原地不动"。前台服务把本进程钉在 FOREGROUND_SERVICE 档，冻结器不会碰它。
+        -->
+        <service
+            android:name=".service.MockKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- 百度地图定位服务 -->
         <service

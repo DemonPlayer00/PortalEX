@@ -143,11 +143,6 @@ object ConfigSync {
      * 关着开关时也要发 —— 系统侧进程重启后不该残留"开着"的状态。
      */
     fun restoreAfterHandshake(context: Context, locationManager: LocationManager?): Result {
-        // 收掉可能残留的路线推进：路线由 system_server 推进后，App 被系统杀掉时
-        // 模块侧的驱动线程**不会**跟着死（这正是我们要的），但下次 App 起来时
-        // 它已经不知道自己在跑哪条路线了 ⇒ 必须显式停掉，否则会出现
-        // "没人操作、位置自己在走"的幽灵推进。要接着跑，用户重新起播即可。
-        locationManager?.let { runCatching { MockServiceHelper.routeStop(it) } }
         val sensor = setSensorMock(context, locationManager, context.binderSensorMock)
         val config = push(context, locationManager)
         // 两者任一失败都要如实上报；传感器开关的失败更严重（决定注入层装不装）
