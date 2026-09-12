@@ -1,0 +1,18 @@
+/home/DemonPlayer/Android/Sdk/cmake/3.22.1/bin/cmake \
+  -H/var/www/PortalEX/camera-hal \
+  -DCMAKE_SYSTEM_NAME=Android \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_SYSTEM_VERSION=24 \
+  -DANDROID_PLATFORM=android-24 \
+  -DANDROID_ABI=armeabi-v7a \
+  -DCMAKE_ANDROID_ARCH_ABI=armeabi-v7a \
+  -DANDROID_NDK=/home/DemonPlayer/Android/Sdk/ndk/27.3.13750724 \
+  -DCMAKE_ANDROID_NDK=/home/DemonPlayer/Android/Sdk/ndk/27.3.13750724 \
+  -DCMAKE_TOOLCHAIN_FILE=/home/DemonPlayer/Android/Sdk/ndk/27.3.13750724/build/cmake/android.toolchain.cmake \
+  -DCMAKE_MAKE_PROGRAM=/home/DemonPlayer/Android/Sdk/cmake/3.22.1/bin/ninja \
+  -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=/var/www/PortalEX/camera-hal/build/intermediates/cxx/Debug/4r1u4l52/obj/armeabi-v7a \
+  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/var/www/PortalEX/camera-hal/build/intermediates/cxx/Debug/4r1u4l52/obj/armeabi-v7a \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -B/var/www/PortalEX/camera-hal/.cxx/Debug/4r1u4l52/armeabi-v7a \
+  -GNinja \
+  -DANDROID_STL=none

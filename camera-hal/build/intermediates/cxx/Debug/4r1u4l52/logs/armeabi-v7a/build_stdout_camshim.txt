@@ -1,0 +1,7 @@
+ninja: Entering directory `/var/www/PortalEX/camera-hal/.cxx/Debug/4r1u4l52/armeabi-v7a'
+[1/2] Building C object CMakeFiles/camshim.dir/src/camshim.c.o
+/var/www/PortalEX/camera-hal/src/camshim.c:59:110: warning: '/*' within block comment [-Wcomment]
+   59 |  * **为什么放在 vendor 库目录里而不是 /data/adb**：实测（MI6/Android 15）`/data/adb/portalex/**`
+      |                                                                                             ^
+1 warning generated.
+[2/2] Linking C shared library ../../../../build/intermediates/cxx/Debug/4r1u4l52/obj/armeabi-v7a/camshim.so
