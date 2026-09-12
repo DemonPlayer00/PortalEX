@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  视频点编辑页：上半是地图（准星 = 取点位置），下半是这个坐标名下的视频清单。
+  视频列表不做嵌套滚动 —— 地图固定 240dp，剩下的高度整块留给 RecyclerView。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    tools:context=".ui.camera.CameraPointEditFragment">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="240dp">
+
+        <com.baidu.mapapi.map.MapView
+            android:id="@+id/bmapView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <!-- 准星：取点位置取地图中心，屏幕上需要一个参照物（与路线模拟页同一套做法） -->
+        <ImageView
+            android:id="@+id/camera_crosshair"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:clickable="false"
+            android:contentDescription="@string/draw_crosshair"
+            android:focusable="false"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_draw_crosshair" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="8dp"
+            app:cardCornerRadius="10dp"
+            app:cardPreventCornerOverlap="false"
+            app:contentPadding="6dp">
+
+            <TextView
+                android:id="@+id/camera_coord_readout"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                android:textColor="?attr/colorOnSurface"
+                tools:text="准星 39.90872, 116.39750" />
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 地图类型内部状态源：与路线模拟页一致，UI 入口在右上角三点栏 -->
+        <RadioGroup
+            android:id="@+id/map_type_group"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:visibility="gone">
+
+            <RadioButton
+                android:id="@+id/map_type_normal"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="@string/normal_view" />
+
+            <RadioButton
+                android:id="@+id/map_type_satellite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/satellite_view" />
+        </RadioGroup>
+
+    </FrameLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
+        android:hint="@string/camera_point_name">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/camera_point_name_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:maxLines="1" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <TextView
+        android:id="@+id/camera_video_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/history_label_margin"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="@dimen/history_label_margin"
+        android:layout_marginBottom="4dp"
+        android:text="@string/camera_video_list"
+        android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+        android:textColor="?attr/colorOnSurfaceVariant" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/camera_video_card"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_margin="8dp"
+        app:cardCornerRadius="12dp"
+        app:cardPreventCornerOverlap="false"
+        app:contentPadding="8dp">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/camera_video_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </com.google.android.material.card.MaterialCardView>
+
+</LinearLayout>
