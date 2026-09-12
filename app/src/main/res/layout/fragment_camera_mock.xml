@@ -44,6 +44,17 @@
                         android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
                         android:textColor="?attr/colorOnSurfaceVariant" />
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/camera_mock_map_toggle"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:minWidth="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="@string/camera_mock_show_map"
+                        android:textAppearance="@style/TextAppearance.Material3.LabelLarge" />
+
                     <ImageButton
                         android:id="@+id/camera_mock_info"
                         android:layout_width="36dp"
@@ -96,6 +107,33 @@
                     app:iconTint="?attr/colorOnPrimary" />
 
             </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!--
+            地图卡：与路线编辑页同一套地图操作（可拖动/缩放/切卫星图），
+            把「视频点」和「当前表象位置」画在同一张图上 —— 用户一眼就能看出
+            "现在会播哪个点"，这正是选片规则（最近命中点）的可视化。
+            默认**收起**：展开后地图会吃掉 180dp，实测把下面的列表卡（0dp/weight=1）
+            挤到只剩一条缝（点位的名字/坐标/标签全看不见）。所以做成"一键展开/收起"，
+            默认保证列表可用，要看"点在哪儿、我在哪儿"时再展开。
+        -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/camera_mock_map_card"
+            android:layout_width="match_parent"
+            android:layout_height="180dp"
+            android:visibility="gone"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginEnd="8dp"
+            app:cardCornerRadius="12dp"
+            app:cardPreventCornerOverlap="false">
+
+            <com.baidu.mapapi.map.MapView
+                android:id="@+id/camera_mock_map"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clickable="true" />
+
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
