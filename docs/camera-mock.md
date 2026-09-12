@@ -1776,3 +1776,52 @@ F = desired_upright.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.TRANSPOSE)
   **可挂的结果路径**（例如 `camx.device-impl.so` 里别的、非跳板的结果函数，或
   oemlayer 侧的 `process_capture_result` 回调），要么改从
   **写时序**入手（把盲目循环换成"跟着请求节拍写一轮"）。
+
+## 28. 现状交接：什么是真的做到了、什么没有、下一步从哪根线头接（2026-09-13，第 8 轮收尾）
+
+### 28.1 能力矩阵（只写有实测证据的）
+
+| 能力 | 状态 | 证据 |
+| --- | --- | --- |
+| 系统层改相机输出缓冲（目标 App 零注入） | **做到** | 预览整幅变成我们填的内容（绿/渐变/测试卡），相机 UI 不受影响 |
+| 照片模式预览 = 任意图像、几何正确 | **做到** | `PORTALEX / SYSTEM-LEVEL / CAMERA MOCK` 测试卡在预览里方向与文字均正确 |
+| 录像模式预览（1920×1080 那一路） | **做到** | 视频模式预览显示 `VIDEO MOCK 1920x1080` 测试卡 |
+| 存下来的**照片**由我们决定 | **部分** | 注 RAW10 ⇒ 照片内容随我们变；注预览 YUV ⇒ 照片完全不变。结构可控，颜色由 ISP 决定（逆 ISP 未做） |
+| 存下来的**录像**由我们决定 | **未做到** | 注 4K 那一路 ⇒ 录像仍是真实场景；注 1080p 那一路 ⇒ 录像花屏（撕裂） |
+| 入口钩子本身（零调用、BTI 安全、可挂 oemlayer 与 camera.qcom） | **做到** | 多轮实测，命中计数与相机行为均正常 |
+
+### 28.2 复现"已做到"的那部分（最短路径）
+
+```sh
+# 1) 部署（只挂 /odm；cfg 与素材在相机自己的数据目录）
+adb push camera-hal/build/intermediates/cxx/Debug/4r1u4l52/obj/arm64-v8a/camshim.so /data/local/tmp/camshim.new.so
+adb push <宿主机生成的 mock 帧> /data/local/tmp/mock.raw
+adb shell "cat /data/local/tmp/mock.raw > /data/vendor/camera/mock.raw; chmod 666 /data/vendor/camera/mock.raw"
+adb shell "sh /data/local/tmp/ace5_deploy4.sh \
+  'real_hal=/vendor/lib64/hw/camera.qcom.so;real_hmi_bytes=376;ops_index=1;dump=1;report_period=30;\
+mock_map=4038656:/data/vendor/camera/mock.raw;inject_us=0'"
+```
+
+- 预览帧的几何（实测）：`2136×1200 YUV420`，stride **2176**，Y@0、UV@2,611,200，
+  缓冲 **4,038,656**；屏幕上是 **镜像+转置** 显示，所以素材要
+  `F = desired.transpose(FLIP_LEFT_RIGHT).transpose(TRANSPOSE)` 之后再转 NV12。
+- 录像模式预览用 **3,194,880** 那一类（1920×1080），4K 录像用 **12,591,104** 那一类（6 块 `MAP_UNKNOWN`）。
+- 回滚：`umount /odm/lib64/hw; umount /data/local/tmp/odmtmp; setprop ctl.restart vendor.camera-provider`
+  （**不要**挂 `/vendor/lib64/hw`，理由见 §25.1）。
+
+### 28.3 未完成的两件事，以及为什么卡住
+
+1. **存下来的录像**：正确落点是"结果投递那一刻"，但
+   `camx.device-impl.so` 的 `sProcessCaptureResult`/`sNotify`/`sProcessCaptureRequest`
+   都是 `bti c; b <实现>` 跳板（**不可重放、挂不上**），而改挂它们的实现函数会让
+   相机 App 直接起不来（§27.3）。剩下的路：① 找 oemlayer 侧的 `process_capture_result`
+   回调（那是我们能挂的模块）；② 把盲目循环换成"跟着请求节拍写一轮"。
+2. **存下来的照片**：输入已确定是 RAW10，结构可控、颜色被 ISP 重写。
+   要喂"任意自然图片"需要一次逆 ISP（黑电平 / CFA / 增益 / CCM 校准）；
+   短路径是用 `raw_dump=<尺寸>:<路径>` 取真帧、局部改写后回注（本轮已把工具做好）。
+
+### 28.4 这一路顺手纠正的两个错误判断（写在最后提醒未来的自己）
+
+1. `media.swcodec` 的 `gralloc-mapper is missing` **不是设备既有问题**，是 `/vendor/lib64/hw`
+   上的 overlay 造成的（§25.1）——"既有问题"必须退回原厂状态验一次才敢下结论。
+2. 1080p30 录像全黑**也不是**我们的锅（不注入也黑，§26.3）——同样是先做了基线对照。
