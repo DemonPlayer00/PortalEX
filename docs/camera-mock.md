@@ -1007,3 +1007,79 @@ OemLayer::init()+408 → OemLayer::LoadOfflineLib()+328
    全过程写 `deploy.log`。**这是 fail-inert 纪律在部署侧的实现**：一次实验不该换来一台需要手救的设备。
    本次实验里它按设计生效了。
 
+---
+
+## 20. 注入平面（用户裁决 C：ACE5 按机型分路走注入）
+
+HAL 路线在 ACE5 上撞到结构性障碍（§19.9），用户裁决按机型分路：**ACE5 走注入平面，HAL 路线保留给
+MI6 这类"模块挂载正常、没有 OPPO OEM 层"的机型**。注入平面本身早已存在于本仓（`Camera2MockHook`
+换排水面 + 逐面 GL 喂帧 + provider 供片），缺的是 API 28+ 那条路。
+
+### 20.1 补上 `SessionConfiguration` 路径（CameraX 走这条）
+
+旧版只拦 `createCaptureSession(List<Surface>, …)`，对 `createCaptureSession(SessionConfiguration, Handler)`
+**只记一条"暂不支持"的日志**。而 CameraX 正是走后者 —— 也就是说"装好了却没生效"的应用里，
+CameraX 系的是最大的一类。
+
+实现（`Camera2MockHook.interceptSessionConfig`）：
+
+1. 从 `SessionConfiguration.getOutputConfigurations()` 里掏出应用请求的输出面
+   （`OutputConfiguration#getSurfaces()` 是 @hide，退到公开的 `getSurface()`）；
+2. 走与 List 路径**同一套**判定（`CameraMockController.prepare`：开关 + 命中素材 + 排水面）；
+3. 用**公开构造器**重建配置：`OutputConfiguration(Surface)` + `SessionConfiguration(int, List, Executor, StateCallback)`，
+   回调包一层（`onConfigured` 里先开始喂帧再回调应用）；
+4. `addTarget` 那条重定向不用改 —— 应用手里的还是它自己的面，会被换成排水面。
+
+不保留会话参数（`setSessionParameters`）：真实相机的画面整个丢弃，而 List 路径本来也没有会话参数。
+
+**API 28 的类一律只用反射**（模块 `minSdk = 24`）：静态引用老设备上不存在的类会让整个
+`Camera2MockHook` 解析失败，把别的钩子一起拖下水。安装时还会把 `createCaptureSession` 的
+**重载清单**打一条日志（换 ROM/换 Android 版本时这是最省事的第一手资料）。
+
+### 20.2 验证工具
+
+- `MockLibraryJsonTest`（单测）：**手工构造的库 JSON 必须能被解码**。真机 bring-up 常常要绕过 UI
+  直接塞一份素材（录一段要点十几下），这类人手写的 JSON 最容易在字段名/类型上与编解码器悄悄错开，
+  而错开的后果是"库看起来是空的"而不是报错；
+- 真机素材注入配方：`portal.xml` 里 `cameraMockEnabled=true` + `cameraMockLibrary=<JSON 数组>`，
+  视频本体推到 `filesDir/camera/<file>`（**必须 chown 到 app 的 uid 并保持该文件的 SELinux 标签**：
+  新文件由 root 创建会拿到 `app_data_file:s0` 而丢掉 MLS 类别，app 读不了 —— 实测踩过）。
+
+### 20.3 ACE5 上验证卡在哪（**未解释的环境问题**）
+
+APK（含新钩子）已装机（`1.0.4.r390.9239001`），但真机验证被一件与代码无关的事挡住：
+**ACE5 上 app 的"实际生效值"与 `portal.xml` 不一致。**
+
+证据（都是实测）：
+
+| 观测 | 值 |
+|---|---|
+| `portal.xml` 里写 `cameraMockEnabled` | `false`（sed 写入，内容与 mtime 都核对过） |
+| app 的 Test 页（`ctx.cameraMockEnabled` 直读） | **开** |
+| `portal.xml` 里写 `speed` | `9.9` |
+| Test 页"设定速度" | **3.50 m/s** |
+| 删掉整个 `portal.xml` 后启动 app | **不重建**，页面的值照旧 |
+| `grep -rl cameraMockEnabled /data/data/*/shared_prefs/` | 只有那一个文件 |
+| app 进程自己的命名空间视图 `/proc/<pid>/root/…/portal.xml` | 与我编辑的是同一个文件（内容是 `false`） |
+
+也就是说：**文件是同一个、标签/属主都对、进程是全新的，但 app 读到的值不是文件里的值**，
+而且 app 自己的写入也不落在这个文件上。这与 §19 的 HAL 障碍无关，是 app 侧的状态问题，
+下一个会话应当先解决它（候选：ColorOS 的数据隔离、本机存在的 `MultiApp`（user 999）、
+或者我们把 `dumpsys` 报的 dataDir 当成了唯一事实来源）。
+
+**它为什么重要**：模块侧拿素材的唯一通道是 provider → provider 读的就是这份偏好。
+若偏好写入在这台机器上不落地，那么不只是摄像头模拟，**位置模拟的配置同样传不过去**。
+
+### 20.4 下一步（需要裁决）
+
+- **A. 先查这个状态问题**（最高优先：它决定 ACE5 上"注入平面能不能被配置"）；
+- **B. 给注入平面加一个"无素材探针"模式**（调试开关放开"必须有命中素材"这一条），
+  这样验证"换面 + 喂帧"是否在 Android 16 上真实生效就不依赖 app 的素材库；
+- **C. 直接把目标应用加进 LSPosed 作用域**再试：本机**没有装 LSPosed 管理器**
+  （`pm list packages` 里只有 `org.lsposed.lspatch`/`dirtysepolicy`），改作用域要么走管理器
+  （可用模块的 `action.sh` 那串 `android_secret_code://5776733` 广播拉起），要么改
+  `/data/adb/lspd/config/modules_config.db` 再重启（注意 WAL 会覆盖主库）。
+  当前作用域里只有位置类应用，其中 `com.zjwh.android_wh_physicalfitness`（步道乐跑）**就是 CameraX 应用**
+  （dex 里 1600+ 处 `androidx/camera`、16 处 `SessionConfiguration`）—— 它本身就能当靶子，
+  `FaceActivity`/`AiCameraActivity` 可用 `am start` 直接拉起。
+
