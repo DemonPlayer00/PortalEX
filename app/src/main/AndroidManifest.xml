@@ -24,6 +24,8 @@
 
     <!-- 允许访问振动设备 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 摄像头模拟：录制"地图视频点"的素材需要在应用内调用摄像头（仅录制页使用） -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- 普通计步类应用读 TYPE_STEP_COUNTER / STEP_DETECTOR 需要它（Android 10+ 运行时权限）；
          Test 页的"普通应用视角"用真订阅来复现目标应用看到的东西 -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
@@ -59,6 +61,28 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            摄像头模拟的录制页：**应用内**调用 Camera2 录制（不走系统相机 Intent）。
+            转屏交给 configChanges，避免录制中重建 Activity 把会话打断。
+        -->
+        <activity
+            android:name=".ui.camera.CameraRecordActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
+
+        <!--
+            摄像头模拟的跨进程通道（配置清单 + 视频文件 fd）。
+
+            `exported=true` 且不设 `android:permission`：被注入的目标应用是**别人的 uid**，
+            不可能持有我们的签名权限。门禁在代码里做（按 Binder.getCallingUid + 目标应用清单，
+            见 CameraMockProvider.gate）；只做两件事：回清单/位置、按 id 发视频 fd。
+        -->
+        <provider
+            android:name=".service.CameraMockProvider"
+            android:authorities="moe.fuqiuluo.portalex.cameramock"
+            android:exported="true"
+            android:grantUriPermissions="true" />
 
         <!--
             会话期间的后台保活服务（设置项「后台保活」，默认开）。

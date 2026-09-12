@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  模块安装时向 LSPosed 申报的默认作用域：**只包含位置链路需要的 5 个系统进程**。
+
+  摄像头模拟（Camera Mock）是唯一需要注入**用户应用**的功能：Camera2 的客户端类
+  （CameraManager / CameraDeviceImpl / CaptureRequest.Builder）全在应用自己的进程里，
+  系统框架侧没有可动手的位置。这条不是默认作用域能覆盖的 —— 需要用户在本机 LSPosed
+  管理器里手动把目标应用勾进来（应用内「Camera Mock」页可以填目标应用清单做二次限制）。
+  默认值刻意不偷偷扩大：注入别人的进程是重手，必须由用户显式选择。
+-->
 <resources>
     <string-array name="xposed_scope">
         <item>android</item>

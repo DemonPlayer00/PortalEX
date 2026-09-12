@@ -23,6 +23,11 @@ import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.StepProbe
+import moe.fuqiuluo.portalex.ui.camera.CameraMockRuntime
+import moe.fuqiuluo.portalex.ui.camera.CameraMockStore
+import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
+import moe.fuqiuluo.portalex.ui.camera.cameraMockTagFilter
+import moe.fuqiuluo.portalex.ui.camera.cameraMockTargets
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
 /**
@@ -90,6 +95,26 @@ class TestFragment : Fragment() {
             appendLine("服务已握手     ${MockServiceHelper.isServiceInit()}")
             appendLine("会话运行中     ${mockServiceViewModel.isServiceStart()}")
             appendLine("作用域         LSPosed 决定；本页只统计系统侧数据")
+
+            // 摄像头模拟是唯一注入目标应用的功能族，它的"有没有生效"只能靠 provider
+            // 两侧的旁证看出来：谁在什么时候来取过清单、模块侧回报拦到了什么。
+            // 真机日志常常拿不到，这一块就是那类问题的第一现场。
+            val points = CameraMockStore.points(ctx)
+            appendLine()
+            appendLine("═══ 摄像头模拟 ═══")
+            appendLine("开关           ${if (ctx.cameraMockEnabled) "开" else "关"}")
+            appendLine("素材           ${points.size} 个视频点 / ${points.sumOf { it.videos.size }} 段视频")
+            appendLine("标签筛选       ${ctx.cameraMockTagFilter.joinToString("、").ifEmpty { "（不筛选）" }}")
+            appendLine("目标应用       ${ctx.cameraMockTargets.joinToString("、").ifEmpty { "（未指定 = 不限制）" }}")
+            appendLine(
+                "当前表象位置   " + (CameraMockRuntime.position()?.let {
+                    "%.6f, %.6f".format(it.first, it.second)
+                } ?: "未知")
+            )
+            appendLine("── provider 访问（模块侧来取清单/素材）──")
+            appendLine(CameraMockRuntime.dumpAccess())
+            appendLine("── 模块侧回传（选中素材 / 起播秒 / 失败原因）──")
+            appendLine(CameraMockRuntime.dumpReports())
 
             val lm = mockServiceViewModel.locationManager
             if (lm == null) {

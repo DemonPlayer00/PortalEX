@@ -211,6 +211,7 @@ class MainActivity : AppCompatActivity() {
                 appBarConfiguration = AppBarConfiguration(
                     setOf(
                         R.id.nav_home, R.id.nav_mock, R.id.nav_gnss_mock, R.id.nav_route_gallery,
+                        R.id.nav_camera_mock,
                         R.id.nav_calibration, R.id.nav_test, R.id.nav_settings
                     ), drawerLayout
                 )
@@ -237,11 +238,13 @@ class MainActivity : AppCompatActivity() {
                         // 否则两处会同时高亮（NavigationUI 只负责点亮匹配的那一项）
 
 
-                        // 悬浮胶囊单实例：仅主界面/路线回放页/路线模拟页注册功能集
+                        // 悬浮胶囊单实例：仅主界面/路线回放页/路线模拟页/摄像头模拟页注册功能集
                         // （各自 Fragment onResume 中 setActions），其余目的地统一隐藏
                         if (destination.id != R.id.nav_home &&
                             destination.id != R.id.nav_route_gallery &&
-                            destination.id != R.id.nav_route_edit
+                            destination.id != R.id.nav_route_edit &&
+                            destination.id != R.id.nav_camera_mock &&
+                            destination.id != R.id.nav_camera_point_edit
                         ) {
                             fabBar.setActions(emptyList())
                         }
@@ -332,7 +335,9 @@ class MainActivity : AppCompatActivity() {
         val menu = binding.appBarMain.toolbar.menu
         menu.findItem(R.id.action_search)?.isVisible = destinationId == R.id.nav_home
         menu.findItem(R.id.action_map_controls)?.isVisible =
-            destinationId == R.id.nav_home || destinationId == R.id.nav_route_edit
+            destinationId == R.id.nav_home ||
+                    destinationId == R.id.nav_route_edit ||
+                    destinationId == R.id.nav_camera_point_edit
     }
 
     private fun requireFloatWindows(): Boolean {

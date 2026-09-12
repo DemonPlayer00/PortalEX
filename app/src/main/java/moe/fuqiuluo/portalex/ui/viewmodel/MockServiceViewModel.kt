@@ -275,6 +275,14 @@ class MockServiceViewModel : ViewModel() {
                 // 关闭时同样要下发——系统侧进程重启后不该残留"开着"的状态。
                 // 启动恢复：开关 + 栅格 + 噪声档一次下发（唯一出口，见 ConfigSync）
                 ConfigSync.restoreAfterHandshake(Portal.appContext, value)
+
+                // 摄像头模拟要"距当前表象位置最近的视频点"，而 provider 的 call() 跑在
+                // binder 线程上、自己拿不到定位连接 —— 由这里（唯一持有 locationManager、
+                // 且已握手的地方）注册一个取值函数。握手未完成/模拟未启动时它返回 null，
+                // provider 如实回"位置未知"，模块侧退化为"在全部匹配素材里随机取"。
+                moe.fuqiuluo.portalex.ui.camera.CameraMockRuntime.positionSupplier = {
+                    MockServiceHelper.getLocation(value)
+                }
             }
         }
 
