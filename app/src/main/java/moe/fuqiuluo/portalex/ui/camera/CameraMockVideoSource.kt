@@ -79,6 +79,11 @@ object CameraMockVideoSource {
     private var photoCount = 0L
     private var nv21: ByteArray = ByteArray(0)
     private var photoRow: ByteArray = ByteArray(0)
+    /** 缩放到目标几何后的 NV21（与 nv21 分开，避免自己踩自己） */
+    private var scaled: ByteArray = ByteArray(0)
+    private var colMap: IntArray = IntArray(0)
+    private var rowMap: IntArray = IntArray(0)
+    private var cColMap: IntArray = IntArray(0)
 
     /** 供 [stop] 撤保活用（[start] 时记下 application context） */
     @Volatile
@@ -239,6 +244,48 @@ object CameraMockVideoSource {
     }
 
     /**
+     * 最近邻缩放 NV21 → 目标几何。
+     *
+     * 为什么在 app 侧做：相机请求的静态流是 2592×1944（实测），而解码帧是 1920×1080 ——
+     * 照片要按**请求的几何**出，否则相册里看到的尺寸和相机设置不一致。
+     * 用查表（预计算列/行映射）而不是逐像素除法；色度按 2 字节一组整体搬。
+     */
+    private fun scaleNv21(src: ByteArray, sw: Int, sh: Int, dw: Int, dh: Int): ByteArray {
+        if (sw == dw && sh == dh) return src
+        val outSize = dw * dh * 3 / 2
+        if (scaled.size < outSize) scaled = ByteArray(outSize)
+        val dst = scaled
+        if (colMap.size != dw) {
+            colMap = IntArray(dw) { it * sw / dw }
+        }
+        if (rowMap.size != dh) {
+            rowMap = IntArray(dh) { it * sh / dh }
+        }
+        var p = 0
+        for (y in 0 until dh) {
+            val srow = rowMap[y] * sw
+            for (x in 0 until dw) dst[p + x] = src[srow + colMap[x]]
+            p += dw
+        }
+        /* 色度：每对 2 字节（VU）整体搬，按半分辨率映射 */
+        val cw = dw / 2
+        val ch = dh / 2
+        val scw = sw / 2
+        if (cColMap.size != cw) cColMap = IntArray(cw) { it * scw / cw }
+        val srcChroma = sw * sh
+        for (y in 0 until ch) {
+            val srow = srcChroma + rowMap[y * 2] / 2 * sw
+            for (x in 0 until cw) {
+                val so = srow + cColMap[x] * 2
+                dst[p + x * 2] = src[so]
+                dst[p + x * 2 + 1] = src[so + 1]
+            }
+            p += dw
+        }
+        return dst
+    }
+
+    /**
      * 编码一张 JPEG，并**把体积压在安全线以内**。
      *
      * 为什么需要压：照片**长度不是我们说了算** —— 实测保存下来的文件用的是真 HAL 那张照片的
@@ -307,12 +354,20 @@ object CameraMockVideoSource {
             p += w
         }
 
-        val bytes = encodeJpeg(out, w, h)
+        /* 照片按**静态流请求的几何**出（相机实测请求 2592×1944），拿不到就用解码帧自己的尺寸 */
+        val req = CameraFrameSink.photoRequestSize()
+        val (jw, jh) = req ?: (w to h)
+        val jpegSource = if (jw != w || jh != h) scaleNv21(out, w, h, jw, jh) else out
+
+        val bytes = encodeJpeg(jpegSource, jw, jh)
         if (bytes == null) {
             Log.w(TAG, "JPEG 编码失败（照片仍会是真实画面）")
             return
         }
-        if (CameraFrameSink.publishPhoto(bytes, w, h)) {
+        if (photoCount == 0L || photoCount % 20L == 0L) {
+            Log.i(TAG, "照片几何：请求 ${jw}x$jh（解码帧 ${w}x$h）→ ${bytes.size} 字节")
+        }
+        if (CameraFrameSink.publishPhoto(bytes, jw, jh)) {
             photoCount++
             if (photoCount == 1L || photoCount % 20L == 0L) {
                 Log.i(TAG, "照片帧已更新：${bytes.size} 字节（${w}x$h），第 $photoCount 次")
