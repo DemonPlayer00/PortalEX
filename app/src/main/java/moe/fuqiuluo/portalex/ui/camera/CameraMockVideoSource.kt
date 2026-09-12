@@ -77,6 +77,7 @@ object CameraMockVideoSource {
     /** 照片帧（JPEG）相关状态 */
     private var lastPhotoMs = 0L
     private var lastPhotoReqSeq = 0
+    private var mirroredCount = 0L
     private var photoCount = 0L
     private var nv21: ByteArray = ByteArray(0)
     private var photoRow: ByteArray = ByteArray(0)
@@ -311,6 +312,44 @@ object CameraMockVideoSource {
     }
 
     /**
+     * 水平镜像 NV21（原地）。
+     *
+     * 用途见 `CameraFrameSink.photoFlags()`：相机 app 会给我们那张**不带 EXIF** 的 JPEG
+     * 合成 `Orientation=2`（水平镜像），把已经正立的内容翻过去；这里先翻一次抵消掉。
+     * Y 平面逐行对调；色度是 VU 交织，按**对**交换。
+     */
+    private fun mirrorNv21InPlace(buf: ByteArray, w: Int, h: Int) {
+        var row = 0
+        while (row < h) {
+            var i = row * w
+            var j = row * w + w - 1
+            while (i < j) {
+                val t = buf[i]; buf[i] = buf[j]; buf[j] = t
+                i++; j--
+            }
+            row++
+        }
+        val uvBase = w * h
+        var r = 0
+        while (r < h / 2) {
+            val base = uvBase + r * w
+            var a = 0
+            var b = w - 2
+            while (a < b) {
+                val v0 = buf[base + a]
+                val u0 = buf[base + a + 1]
+                buf[base + a] = buf[base + b]
+                buf[base + a + 1] = buf[base + b + 1]
+                buf[base + b] = v0
+                buf[base + b + 1] = u0
+                a += 2
+                b -= 2
+            }
+            r++
+        }
+    }
+
+    /**
      * 把当前解码帧编码成 JPEG 放进共享文件的**照片区**（拍照时由 HAL 搬进 BLOB buffer）。
      *
      * `YuvImage` 只吃 **NV21**（Y 平面 + VU 交织），而解码器给的是 NV12（UV 交织，U 在前）
@@ -365,6 +404,12 @@ object CameraMockVideoSource {
             p += w
         }
 
+        /* 先按 HAL 的变换标志处理（抵消相机 app 写的 EXIF 镜像），再按请求几何缩放 */
+        if (CameraFrameSink.photoFlags() and 1 != 0) {
+            mirrorNv21InPlace(out, w, h)
+            mirroredCount++
+            if (mirroredCount == 1L) Log.i(TAG, "照片已按 HAL 标志水平镜像（抵消相机 app 的 EXIF 镜像）")
+        }
         /* 照片按**静态流请求的几何**出（相机实测请求 2592×1944），拿不到就用解码帧自己的尺寸 */
         val req = CameraFrameSink.photoRequestSize()
         val (jw, jh) = req ?: (w to h)
