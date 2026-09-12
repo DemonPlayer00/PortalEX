@@ -948,6 +948,8 @@ OemLayer::init()+408 → OemLayer::LoadOfflineLib()+328
 
 ### 19.7 下一步（需要裁决）
 
+> **A 已于 2026-09-13 执行，结果见 §19.8（否证）。**
+
 - **A. 试"开机期部署"**：把 19.1 的三步 bind 搬进 `post-fs-data.sh`（模块脚本在本 ROM 上是会跑的，
   只是文件系统不被挂载），重启后看第三道墙是否还在。理由：目前是"运行期杀掉 provider 再拉起"，
   而 QTI 的 CHI 钩子表可能是按开机期的服务顺序填的 —— 这一条能把"我们的替换不兼容"与
@@ -956,4 +958,52 @@ OemLayer::init()+408 → OemLayer::LoadOfflineLib()+328
   `[x10+0x78]` 的地方，确认它是否依赖某个被我们顶替的库所提供的符号/状态。
 - **C. 放弃 ACE5 的 HAL 路线，改用注入平面**（见 18.5 B）。两者不是替代关系：HAL 路线的独有价值是
   "对目标 app 完全不可见"，注入路线的独有价值是"装机不求人"。
+
+### 19.8 开机期部署实验（A）：**否证**
+
+把 19.1 的三步搬进模块脚本后重启（顺带加了 watchdog，见 19.10）。结果：
+
+| 观测 | 值 |
+|---|---|
+| shim 是否加载了真件 | **是** —— `camshim.state`：`state=ok path=/vendor/lib64/hw/android.hardware.renderscript@1.0-impl.so id=camera bytes=376 open=0x… oplus_cb=0x… pcr=0x0 init=0x0 cfg=0x0` |
+| provider | 开机后**连崩 6 次**（SIGSEGV ×4 + init SIGABRT ×2） |
+| tombstone | 与运行期重启**完全相同的 CHI 签名**：`__cfi_slowpath ← GetFilteredMetadataTagsForDump()+1280 ← ExtensionModule ctor ← chi_hal_override_entry ← ChiOfflineCameraContext ctor ← ChiOfflineOpenContext ← LoadOfflineLib+328 ← OemLayer::init()+408` |
+| watchdog | 判定不稳定 → 自动杀 provider → 卸挂载 → 删 cfg → `setprop ctl.start` → 相机恢复（pid 13399、6 个设备） |
+
+**结论**：第三道墙与"运行期重启路径不同"无关，开机期一样撞。A 假设被否证。
+
+（`pcr/init/cfg=0x0` 是预期的：ACE5 的 `camera.qcom.so` 不导出 `QCamera3HardwareInterface::*`，
+那三处要靠 `ops_index=1` 在 `open()` 时从 ops 表按值取 —— 而 provider 根本没走到 `open()`。）
+
+### 19.9 结构性结论：为什么这一层这么难
+
+把三件事放在一起看，ACE5 上的障碍是**结构性的**，不是"再补一个符号"能解决的：
+
+1. `camera.qcom.so` 同时是：HAL 入口（导出 `HMI`）、Oplus 回调提供者（导出 `SetOplusCameraInfoCallback`）、
+   SoC 调度器（按名字加载 `camera.qcom.sm8650.so`）；OPPO 的 OEM 层和 QTI 的 CHI 都直接依赖这个**文件**；
+2. 我们的 shim 必须在**同一个路径**上顶替它（provider 用 `hw_get_module` 按路径加载），
+   于是真件只能被塞进另一个槽位 —— 而那个槽位**不是它的名字**；
+3. 真件被我们加载后，OPPO/QTI 的后续初始化（CHI 离线上下文的钩子表）就没有被填上。
+
+已排除的廉价解释：
+
+- **"RTLD_GLOBAL 能让 `dlsym(handle)` 找到依赖里的符号"** —— 实测**不行**（`dlsym(host_handle,…)` 返回 NULL）；
+  所以"把真件作为依赖挂上、让消费者从我们这里查到真符号"这条路只能靠 DT_NEEDED（运行时无法动态加，
+  且 ACE5 上 /vendor 只读、无法为它新建文件）；
+- **"真件自省自己的路径/名字所以行为不同"** —— 真件与 `com.qti.chi.override.so` 都**不导入**
+  `dladdr`/`readlink`/`realpath`，也没有 `/proc/self/**` 之类的字符串 ⇒ 没有证据支持。
+
+### 19.10 模块侧同时交付的两件东西
+
+1. **自挂载的 bind 路线补全**（`post-fs-data.sh`）：旧版在 `overlayfs` 不可用时只 bind 了 shim，
+   真件路径因此不存在 ⇒ shim 按惰性模块运行（相机不可用）。现在会：
+   从白名单里挑一个**当下没有任何进程映射**的闲置槽位（首选 RenderScript）；bind 真件到该槽位；
+   bind shim 到 `camera.qcom.so`；把开关文件写到 `/data/local/tmp/portalex/portal.cfg`
+   （注意必须**在目录打好 `portalex_frame_file` 标签之后**创建，否则新文件继承
+   `shell_data_file`，HAL 读不到）。
+2. **watchdog（`service.sh`，late_start）**：开机后按"连续 3 次采样 pid 一致"判定 provider 是否稳定
+   （崩溃循环时 init 每 5 秒重启一次，`pidof` 时有时无，不能只看非空）；不稳定就**自动回滚**
+   （先杀 provider 再 umount，否则 EBUSY）并 `setprop ctl.start vendor.camera-provider`，
+   全过程写 `deploy.log`。**这是 fail-inert 纪律在部署侧的实现**：一次实验不该换来一台需要手救的设备。
+   本次实验里它按设计生效了。
 
