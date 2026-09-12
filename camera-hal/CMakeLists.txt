@@ -20,3 +20,11 @@ set_target_properties(vcam PROPERTIES
     C_VISIBILITY_PRESET default
     VISIBILITY_INLINES_HIDDEN OFF
     PREFIX "")
+
+# 关闭**影子调用栈（SCS）**：本 .so 会被"套在 vendor 代码上"运行 —— 我们的钩子是从
+# 真件 HAL（vendor 编译，**不维护 x18 影子栈**）的入口跳进来的，若我们自己用 SCS，
+# 函数返回时会从 x18 指向的垃圾栈里弹返回地址，直接跳到野地址
+# （实测 tombstone：`#00 pc 0xf8a0 <unknown>`，`#01 portal_hook_01+72`）。
+# x18 在 Android arm64 上是平台寄存器，vendor 代码里它可以是任何东西。
+target_compile_options(camshim PRIVATE -fno-sanitize=shadow-call-stack)
+target_compile_options(vcam PRIVATE -fno-sanitize=shadow-call-stack)
