@@ -40,6 +40,18 @@ object CameraFrameSink {
     private const val HDR_BYTES = 4096
     private const val SLOTS = 3
 
+    /**
+     * 亮度槽位大小：**固定 4 MiB，不再从文件长度反推**。
+     *
+     * 为什么要固定：槽位之后要留出**照片区**（拍照的 JPEG 由 app 编码、HAL 搬运，
+     * 见 docs/camera-mock.md §15）。从文件长度反推会把整份文件吃干，photo 区长度为 0。
+     * 1080p 的一帧 NV12 是 2.6 MB，4 MiB 有余量。
+     */
+    private const val SLOT_BYTES = 4 * 1024 * 1024
+
+    /** 照片区最小可用长度：小于它就没法放一张像样的 JPEG */
+    private const val PHOTO_MIN = 256 * 1024
+
     /* 头部字段偏移（与 camshim.c 的 struct portal_frame_hdr 一一对应） */
     private const val OFF_MAGIC = 0
     private const val OFF_VERSION = 4
@@ -58,10 +70,16 @@ object CameraFrameSink {
     private const val OFF_CONSUMER_W = 64
     private const val OFF_CONSUMER_H = 68
     private const val OFF_PRODUCER_STATE = 72
+    private const val OFF_PHOTO_W = 80
+    private const val OFF_PHOTO_H = 84
+    private const val OFF_PHOTO_BYTES = 88
+    private const val OFF_PHOTO_SEQ = 92
 
     private var raf: RandomAccessFile? = null
     private var map: ByteBuffer? = null
     private var slotBytes = 0
+    private var photoOffset = 0
+    private var photoSeq = 0
     private var yStride = 0
     private var uvStride = 0
     private var nextSlot = 0
@@ -108,9 +126,15 @@ object CameraFrameSink {
             return false
         }
         val total = runCatching { handle.length() }.getOrDefault(0L)
-        val per = ((total - HDR_BYTES) / SLOTS).toInt()
-        if (per <= 0 || per < w * h * 3 / 2) {
-            Log.w(TAG, "帧文件太小：$total 字节，槽 $per < 需要的 ${w * h * 3 / 2}")
+        val per = SLOT_BYTES
+        val need = HDR_BYTES.toLong() + SLOTS.toLong() * per + PHOTO_MIN
+        if (total < need) {
+            Log.w(TAG, "帧文件太小：$total 字节 < 需要 $need（3×4MiB 槽 + 照片区）")
+            runCatching { handle.close() }
+            return false
+        }
+        if (per < w * h * 3 / 2) {
+            Log.w(TAG, "槽位 $per 放不下 ${w}x$h 的一帧（需要 ${w * h * 3 / 2}）")
             runCatching { handle.close() }
             return false
         }
@@ -125,6 +149,8 @@ object CameraFrameSink {
         raf = handle
         map = buffer
         slotBytes = per
+        photoOffset = HDR_BYTES + SLOTS * per
+        photoSeq = 0
         width = w
         height = h
         /* 目标布局与源一致：Y 行 stride 留 16 对齐余量，UV 行 stride 同 Y（半平面） */
@@ -151,6 +177,10 @@ object CameraFrameSink {
         buffer.putInt(OFF_CONSUMER_W, 0)
         buffer.putInt(OFF_CONSUMER_H, 0)
         buffer.putInt(OFF_PRODUCER_STATE, 1)
+        buffer.putInt(OFF_PHOTO_W, 0)
+        buffer.putInt(OFF_PHOTO_H, 0)
+        buffer.putInt(OFF_PHOTO_BYTES, 0)
+        buffer.putInt(OFF_PHOTO_SEQ, 0)
         isEnabled = false
         Log.i(TAG, "帧文件已打开：$PATH ${w}x$h stride=$yStride/$uvStride 槽=$SLOTS/${per}B")
         return true
@@ -231,6 +261,31 @@ object CameraFrameSink {
         return true
     }
 
+    /**
+     * 发布一张照片（JPEG 字节）到照片区，供 HAL 在拍照时搬进 BLOB buffer。
+     *
+     * 为什么由 app 编码：libjpeg 的 `jpeg_compress_struct` 是**版本相关的 ABI**，
+     * 在 HAL 里自带头文件等于赌版本；而这里 `YuvImage.compressToJpeg` 是现成的（Skia 原生）。
+     * **顺序**：先写字节 → 再写长度/尺寸 → 最后 `photo_seq++`（HAL 只认 seq 变化）。
+     */
+    @Synchronized
+    fun publishPhoto(jpeg: ByteArray, w: Int, h: Int): Boolean {
+        val m = map ?: return false
+        if (jpeg.isEmpty() || w <= 0 || h <= 0) return false
+        if (photoOffset + jpeg.size > m.capacity()) {
+            Log.w(TAG, "照片区放不下：${jpeg.size} 字节 > 剩余 ${m.capacity() - photoOffset}")
+            return false
+        }
+        m.position(photoOffset)
+        m.put(jpeg)
+        m.putInt(OFF_PHOTO_W, w)
+        m.putInt(OFF_PHOTO_H, h)
+        m.putInt(OFF_PHOTO_BYTES, jpeg.size)
+        photoSeq += 1
+        m.putInt(OFF_PHOTO_SEQ, photoSeq)
+        return true
+    }
+
     /** 整行拷贝：源与目标 stride 可以不同，逐行 `get(byte[])` + `put(byte[])` */
     private fun copyRows(
         src: ByteBuffer,
@@ -289,6 +344,7 @@ object CameraFrameSink {
         if (m != null) {
             runCatching { m.putInt(OFF_ENABLED, 0) }
             runCatching { m.putInt(OFF_PRODUCER_STATE, 0) }
+            runCatching { m.putInt(OFF_PHOTO_BYTES, 0) }
         }
         isEnabled = false
         map = null
