@@ -45,14 +45,14 @@
           画在工具页的 `foreground` 上，不塞独立的 View —— 容器宽度是 wrap_content：
           · match_parent 的 View 会把抽屉撑到满屏宽；
           · 0dp+weight 在**纵向** LinearLayout 里分配的是高度（实测把工具组推到了屏幕底部）。
-          线的上下各 12dp：上方 = 顶部视图固有的 8dp 底留白 + 这里 4dp margin，下方 = paddingTop。
+          线下方不再额外留白：紧贴线的就是工具组第一项（Calibration）；线上方保留 4dp margin
+          （加上顶部视图固有的 8dp 底留白）。
         -->
         <com.google.android.material.navigation.NavigationView
             android:id="@+id/nav_view_tools"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:paddingTop="12dp"
             android:foreground="@drawable/drawer_divider_line"
             app:menu="@menu/activity_main_drawer_tools" />
 
