@@ -47,14 +47,14 @@ object CameraMockVideoSource {
     private const val RESELECT_METERS = 1.0
 
     /**
-     * 照片帧（JPEG）的重编码间隔。
+     * 照片帧（JPEG）的"保活刷新"间隔（真正的触发是 HAL 的拍照请求序号，见 [maybePublishPhoto]）。
      *
      * 为什么不等"拍照请求"到来再编码：HAL 是在 `process_capture_result` 里把照片 buffer 换掉的，
      * 那一刻必须**已经有**可搬的 JPEG（同步等 app 编码会把 HAL 的结果线程堵住）。
      * 所以这里维持一张"当前帧的 JPEG"，按固定节拍刷新 —— 照片最多比预览旧 1.5 秒，
      * 对"模拟"完全够用（视频内容本来就在慢慢走）。
      */
-    private const val PHOTO_INTERVAL_MS = 1500L
+    private const val PHOTO_KEEPWARM_MS = 10_000L
 
     /** 照片体积软上限：超过就降质量重编（真 HAL 那张实测 ~930 KB，我们留足余量） */
     private const val PHOTO_SOFT_MAX = 400 * 1024
@@ -76,6 +76,7 @@ object CameraMockVideoSource {
 
     /** 照片帧（JPEG）相关状态 */
     private var lastPhotoMs = 0L
+    private var lastPhotoReqSeq = 0
     private var photoCount = 0L
     private var nv21: ByteArray = ByteArray(0)
     private var photoRow: ByteArray = ByteArray(0)
@@ -317,7 +318,17 @@ object CameraMockVideoSource {
      */
     private fun maybePublishPhoto(image: Image) {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastPhotoMs < PHOTO_INTERVAL_MS) return
+        /*
+         * **按需编码**：HAL 在 `process_capture_request` 阶段（比 BLOB 结果早一百多毫秒）就
+         * 把 `photo_req_seq` +1，这里看到序号变了才编。
+         * 原来是无条件每 1.5 s 编一张 5 MP（≈200–300 ms 重活），实测把 HAL 的写帧从 17 ms
+         * 顶到 43–48 ms；改成按需之后热路径不再被周期性重活污染。
+         * 仍然保留一个 10 s 的"保活刷新"：万一 HAL 那次等待超时，照片区里至少有一张不算太旧的。
+         */
+        val reqSeq = CameraFrameSink.photoRequestSeq()
+        val onDemand = reqSeq != lastPhotoReqSeq
+        if (!onDemand && now - lastPhotoMs < PHOTO_KEEPWARM_MS) return
+        lastPhotoReqSeq = reqSeq
         lastPhotoMs = now
 
         val w = CameraFrameSink.width

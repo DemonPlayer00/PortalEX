@@ -77,6 +77,8 @@ object CameraFrameSink {
     /** HAL 回写：静态流（拍照）请求的几何 */
     private const val OFF_PHOTO_REQ_W = 96
     private const val OFF_PHOTO_REQ_H = 100
+    /** HAL 回写：拍照请求序号（HAL 在请求阶段就 +1，通知我们"现在就编一张"） */
+    private const val OFF_PHOTO_REQ_SEQ = 104
 
     private var raf: RandomAccessFile? = null
     private var map: ByteBuffer? = null
@@ -202,6 +204,10 @@ object CameraFrameSink {
         val h = m.getInt(OFF_PHOTO_REQ_H)
         return if (w > 0 && h > 0 && w <= 8192 && h <= 8192) w to h else null
     }
+
+    /** HAL 回写的拍照请求序号；0 表示还没有过拍照请求 */
+    @Synchronized
+    fun photoRequestSeq(): Int = map?.getInt(OFF_PHOTO_REQ_SEQ) ?: 0
 
     /** HAL 回写的"它实际的流尺寸"（HAL 在取帧时填），拿不到返回 null */
     @Synchronized

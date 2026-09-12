@@ -419,6 +419,8 @@ static void load_options(void) {
 /* 我们交给 HAL 的回调表（定义在这里，实现见下方 M1a 段）—— 先声明后引用 */
 static void portal_process_capture_result(const camera3_callback_ops_t *,
                                           const camera3_capture_result_t *);
+/* 拍照请求的早期信号（定义在外源帧段；请求回调里就要用到，故前置声明） */
+static void portal_fsrc_signal_photo(uint32_t w, uint32_t h);
 static void portal_notify(const camera3_callback_ops_t *, const void *);
 static camera3_callback_ops_t g_our_callbacks = {
     .process_capture_result = portal_process_capture_result,
@@ -655,6 +657,19 @@ static int shim_process_capture_request(const struct camera3_device *dev,
 
     if (n == 1 || n % 240 == 0) {
         LOGI("process_capture_request 已接管：#%lu（相机 %s）", n, g_cur_cam[0] ? g_cur_cam : "?");
+    }
+    /* **拍照请求的早期信号**：这里就能看到 BLOB 流，比结果早一百多毫秒 */
+    if (request != NULL && g_opt_src_file[0] != '\0' && portal_cam_selected()) {
+        struct portal_layout LR;
+        if (portal_parse_request(request, &LR)) {
+            for (uint32_t i = 0; i < LR.num; i++) {
+                const camera3_stream_t *st = LR.sbs[i].stream;
+                if (st != NULL && st->format == 0x21) {
+                    portal_fsrc_signal_photo(st->width, st->height);
+                    break;
+                }
+            }
+        }
     }
     if (request != NULL && g_opt_dump && portal_cam_selected()) {
         bool want = (n <= 3 || n % 240 == 0);
@@ -1078,6 +1093,7 @@ static void portal_wait_fence(int fd);
 static bool portal_fsrc_open(void);
 static bool portal_fsrc_alive(void);
 static void portal_fsrc_set_photo_req(uint32_t w, uint32_t h);
+static void portal_fsrc_signal_photo(uint32_t w, uint32_t h);
 
 static void portal_scrub_streams(void *stream_list) {
     /* camera3_stream_configuration_t { uint32_t num_streams; camera3_stream_t **streams;
@@ -1321,6 +1337,9 @@ struct portal_frame_hdr {
     /* 消费端（HAL）回写：**静态流（BLOB）请求的几何** —— app 据此把照片编码到这个尺寸，
      * 而不是沿用解码帧自己的 1920×1080（实测相机请求的是 2592×1944） */
     uint32_t photo_req_w, photo_req_h;
+    /* 消费端（HAL）回写的**拍照请求序号**：HAL 在 `process_capture_request` 里发现 BLOB 流
+     * 就 +1，通知 app"现在就编一张"（按需编码，避免周期性 5 MP 重活拖慢热路径） */
+    uint32_t photo_req_seq;
 };
 
 static int g_fsrc_fd = -1;
@@ -1415,6 +1434,29 @@ static void portal_fsrc_set_photo_req(uint32_t w, uint32_t h) {
     hdr->photo_req_w = w;
     hdr->photo_req_h = h;
     LOGI("静态流几何回写：%ux%u（app 据此编码照片）", w, h);
+}
+
+/** 拍照前的照片序号：HAL 用它判断"app 有没有为这次拍照编出新的一张" */
+static uint32_t g_photo_seq_at_request = 0;
+
+/**
+ * 通知 app：**现在就编一张照片**（在 `process_capture_request` 阶段，比 BLOB 结果早
+ * 一百多毫秒 —— vendor 自己编那张 JPEG 也要这么久，正好并行）。
+ *
+ * 为什么要按需：原来 app 每 1.5 s 无条件编一张 5 MP（缩放 + JPEG ≈ 200–300 ms 重活），
+ * 实测把 HAL 的写帧从 17 ms 顶到 43–48 ms（分段日志里亮度/色度成对出现尖峰 = 抢带宽）。
+ * 改成"拍照才编"之后，热路径不再被周期性重活污染。
+ */
+static void portal_fsrc_signal_photo(uint32_t w, uint32_t h) {
+    if (!g_fsrc_writable || g_fsrc_map == NULL) return;
+    struct portal_frame_hdr *hdr = (struct portal_frame_hdr *)g_fsrc_map;
+    if (hdr->photo_req_w != w || hdr->photo_req_h != h) {
+        hdr->photo_req_w = w;
+        hdr->photo_req_h = h;
+    }
+    g_photo_seq_at_request = hdr->photo_seq;
+    hdr->photo_req_seq++;
+    LOGI("拍照请求：已通知 app 编码 %ux%u（req_seq=%u）", w, h, hdr->photo_req_seq);
 }
 
 /** 取当前该用的源槽；没有可用帧返回 NULL */
@@ -1579,15 +1621,30 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
         return true;
     }
 
+    struct timespec ty0;
+    clock_gettime(CLOCK_MONOTONIC, &ty0);
     if (!portal_build_maps(0, sw, sh, w, h)) return false;
     const uint32_t *map_rows = g_scale[0].rows;
     const uint32_t *map_cols = g_scale[0].cols;
     /* 亮度：逐行按列映射取源字节（查表，无分支计算） */
+    /*
+     * **4 字节成组**取源、一次 32 位存目标：逐字节 gather 在这颗 SoC 上要 ~46 ms/帧
+     * （1600×1200 目标、源 1920×1080），吃掉一半帧率。成组之后访存次数降到 1/4。
+     * 列映射已预计算，且目标行 4 字节对齐（stride 为 16 对齐），所以可以直接 32 位存。
+     */
     for (uint32_t r = 0; r < h; r++) {
         const uint8_t *srow = src + (size_t)map_rows[r] * sy;
         uint8_t *drow = dy + (size_t)r * dystride;
-        for (uint32_t x = 0; x < w; x++) drow[x] = srow[map_cols[x]];
+        uint32_t x = 0;
+        for (; x + 4 <= w; x += 4) {
+            uint32_t v = (uint32_t)srow[map_cols[x]] | ((uint32_t)srow[map_cols[x + 1]] << 8) |
+                         ((uint32_t)srow[map_cols[x + 2]] << 16) |
+                         ((uint32_t)srow[map_cols[x + 3]] << 24);
+            memcpy(drow + x, &v, 4);
+        }
+        for (; x < w; x++) drow[x] = srow[map_cols[x]];
     }
+    double y_ms = portal_seconds_since(&ty0) * 1000.0;
     if (dcb == NULL || dcstride == 0 || suv == 0) return true;
     if (!interleaved) {
         PORTAL_LOG_ONCE(LOGE, "目标色度不是 NV12/NV21 交织布局（step=%zu cb=%p cr=%p）→ 只写亮度",
@@ -1595,6 +1652,8 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
         return true;
     }
     /* 色度：半分辨率，每元素 2 字节（U,V）一起搬，省一半访存 */
+    struct timespec tu0;
+    clock_gettime(CLOCK_MONOTONIC, &tu0);
     uint32_t cw = w / 2, ch = h / 2;
     if (!portal_build_maps(1, sw / 2, sh / 2, cw, ch)) return true;
     const uint32_t *cmap_rows = g_scale[1].rows;
@@ -1602,7 +1661,18 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
     for (uint32_t r = 0; r < ch; r++) {
         const uint8_t *srow = suvp + (size_t)cmap_rows[r] * suv;
         uint8_t *drow = dcb + (size_t)r * dcstride;
-        for (uint32_t x = 0; x < cw; x++) {
+        uint32_t x = 0;
+        if (!g_opt_swap_uv) {
+            /* 两个色度元素（4 字节）一次搬 */
+            for (; x + 2 <= cw; x += 2) {
+                const uint8_t *p0 = srow + (size_t)cmap_cols[x] * 2;
+                const uint8_t *p1 = srow + (size_t)cmap_cols[x + 1] * 2;
+                uint32_t v = (uint32_t)p0[0] | ((uint32_t)p0[1] << 8) |
+                             ((uint32_t)p1[0] << 16) | ((uint32_t)p1[1] << 24);
+                memcpy(drow + x * 2, &v, 4);
+            }
+        }
+        for (; x < cw; x++) {
             const uint8_t *sp = srow + (size_t)cmap_cols[x] * 2;
             if (g_opt_swap_uv) {
                 drow[x * 2] = sp[1];
@@ -1611,6 +1681,14 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
                 drow[x * 2] = sp[0];
                 drow[x * 2 + 1] = sp[1];
             }
+        }
+    }
+    {
+        static unsigned long split_n = 0;
+        unsigned long sn = __atomic_add_fetch(&split_n, 1, __ATOMIC_RELAXED);
+        if (sn <= 3 || sn % 240 == 0) {
+            LOGI("缩放分段耗时：亮度 %.1f ms / 色度 %.1f ms（%ux%u → %ux%u）", y_ms,
+                 portal_seconds_since(&tu0) * 1000.0, sw, sh, w, h);
         }
     }
     return true;
@@ -1776,6 +1854,7 @@ static void portal_wait_fence(int fd) {
         if (g_sync_wait == NULL) LOGI("拿不到 sync_wait：不等 fence（有竞态风险）");
     }
     if (g_sync_wait == NULL) return;
+    PORTAL_LOG_ONCE(LOGI, "acquire_fence 有效：fd=%d（等它写完再覆盖）", fd);
     int rc = g_sync_wait(fd, 200);
     if (rc != 0) PORTAL_LOG_ONCE(LOGI, "acquire_fence 未在 200ms 内就绪 rc=%d（继续写）", rc);
 }
@@ -1834,6 +1913,11 @@ static bool portal_write_photo(const camera3_stream_buffer_t *sb) {
     if (sb == NULL || sb->stream == NULL || sb->buffer == NULL) return false;
     if (!portal_fsrc_open() || g_fsrc_map == NULL) return false;
     struct portal_frame_hdr *h = (struct portal_frame_hdr *)g_fsrc_map;
+    /* 等 app 为**这次**拍照编出的新照片（按需编码）；超时就沿用上一张（旧但合法） */
+    for (int i = 0; i < 40; i++) {
+        if (h->photo_seq != g_photo_seq_at_request) break;
+        usleep(5000);
+    }
     uint32_t n = h->photo_bytes;
     if (n == 0 || n > PORTAL_PHOTO_MAX) return false;
     if (h->slots == 0 || h->slot_bytes == 0) return false;
