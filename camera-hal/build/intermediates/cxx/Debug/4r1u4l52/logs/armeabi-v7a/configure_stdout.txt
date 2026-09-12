@@ -1,0 +1,9 @@
+-- The C compiler identification is Clang 18.0.4
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /home/DemonPlayer/Android/Sdk/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /var/www/PortalEX/camera-hal/.cxx/Debug/4r1u4l52/armeabi-v7a

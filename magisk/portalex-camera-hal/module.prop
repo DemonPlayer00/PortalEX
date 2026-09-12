@@ -1,0 +1,6 @@
+id=portalex-camera-hal
+name=PortalEX Camera HAL Shim
+version=0.1.0-M0
+versionCode=1
+author=PortalEX
+description=把 vendor 摄像头 HAL 换成 PortalEX 包装层（摄像头模拟的数据面）。M0：只接管并转发，不改变相机行为。停用本模块即可完全回退。
