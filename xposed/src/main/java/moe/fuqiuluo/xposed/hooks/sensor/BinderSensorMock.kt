@@ -240,6 +240,7 @@ object BinderSensorMock {
             if (ok) {
                 nativeReady = true
                 seedHandleMap()
+                applyStoredConfig()
                 Logger.info("BinderSensorMock: ${BinderSensorNative.status()}")
                 return true
             }
@@ -248,6 +249,22 @@ object BinderSensorMock {
             Logger.error("BinderSensorMock: native layer unavailable, feature inert")
             return false
         }
+    }
+
+    /**
+     * 把**已经存在**的注入参数重新下发给刚装载好的原生层。
+     *
+     * 为什么必须有这一步：装载现在推迟到会话启动（开机不碰 HAL），而 App 的 `put_config`
+     * 通常在装载**之前**到达 —— 那一刻 `setGridHz` / `setNoise` 只会报
+     * `UnsatisfiedLinkError` 并被丢掉。少了这次重放，用户标定的噪声档与注入栅格会在
+     * "开机后第一次开会话"时静默退回内置默认（值还在 [FakeLoc]，但原生层不知道）。
+     */
+    private fun applyStoredConfig() {
+        runCatching { BinderSensorNative.setGridHz(FakeLoc.sensorGridHz) }
+            .onFailure { Logger.warn("BinderSensorMock: 栅格重放失败：${it.message}") }
+        runCatching {
+            FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
+        }.onFailure { Logger.warn("BinderSensorMock: 噪声档重放失败：${it.message}") }
     }
 
     /**
