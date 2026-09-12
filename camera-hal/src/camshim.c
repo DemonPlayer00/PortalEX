@@ -382,6 +382,265 @@ static int shim_process_capture_request(const struct camera3_device *dev,
 }
 
 /* ------------------------------------------------------------------ *
+ * M1b：GPU 合成 —— 用 EGLImage 把相机 buffer 当**渲染目标**
+ *
+ * 为什么要绕到 GPU：本 ROM 的相机输出 buffer 没有 mapper 描述符
+ * （`getUsage` 返回 ENOSYS），既无法安全探测能否 CPU 写，而 `lock` 对不可映射的 buffer
+ * 又是 abort（打死过 provider 三次）⇒ CPU 直写不可安全实现。
+ * 而 EGL/GL 这条路**每一步失败都返回错误码**（EGL_NO_IMAGE/EGL_NO_CONTEXT/GL error），
+ * 不会把 HAL 进程带走 —— 这正是 HAL 里做实验的硬要求。
+ *
+ * 做法：`eglCreateImageKHR(EGL_NATIVE_BUFFER_ANDROID, handle)` 把 buffer 变成 EGLImage
+ * → `glEGLImageTargetTexture2DOES` 绑成外部纹理 → 挂到 FBO 上当颜色附件 → 直接
+ * clear + scissor 画条带（不需要写 shader）。
+ *
+ * 两个必须守住的点：
+ *  1. **保存并恢复当前 EGL 上下文**：我们跑在 HAL 的线程上，若该线程已有 current context，
+ *     切走会让 HAL 之后的 GL 调用画到我们的上下文里 —— 用完必须恢复原样；
+ *  2. glEGLImageTargetTexture2DOES / eglCreateImageKHR 都是扩展，必须走 eglGetProcAddress；
+ *     拿不到就整条路径放弃（返回 false，纯转发）。
+ * ------------------------------------------------------------------ */
+
+#define PORTAL_EGL_NATIVE_BUFFER_ANDROID 0x3140
+#define PORTAL_EGL_IMAGE_PRESERVED_KHR 0x30D2
+#define PORTAL_GL_TEXTURE_EXTERNAL_OES 0x8D65
+#define PORTAL_GL_FRAMEBUFFER 0x8D40
+#define PORTAL_GL_COLOR_ATTACHMENT0 0x8CE0
+#define PORTAL_GL_FRAMEBUFFER_COMPLETE 0x8CD5
+
+/* EGL / GLES 函数指针 */
+static void *g_egl = NULL, *g_gles = NULL;
+static void *(*p_eglGetProcAddress)(const char *) = NULL;
+static void *(*p_eglGetDisplay)(int) = NULL;
+static int (*p_eglInitialize)(void *, int *, int *) = NULL;
+static int (*p_eglChooseConfig)(void *, const int *, void **, int, int *) = NULL;
+static void *(*p_eglCreateContext)(void *, void *, void *, const int *) = NULL;
+static void *(*p_eglCreatePbufferSurface)(void *, void *, const int *) = NULL;
+static int (*p_eglMakeCurrent)(void *, void *, void *, void *) = NULL;
+static void *(*p_eglGetCurrentContext)(void) = NULL;
+static void *(*p_eglGetCurrentDisplay)(void) = NULL;
+static void *(*p_eglGetCurrentSurface)(int) = NULL;
+static void *(*p_eglCreateImageKHR)(void *, void *, unsigned int, void *, const int *) = NULL;
+static int (*p_eglDestroyImageKHR)(void *, void *) = NULL;
+static int (*p_eglGetError)(void) = NULL;
+static void (*p_glEGLImageTargetTexture2DOES)(unsigned int, void *) = NULL;
+static void (*p_glGenTextures)(int, unsigned int *) = NULL;
+static void (*p_glBindTexture)(unsigned int, unsigned int) = NULL;
+static void (*p_glTexParameteri)(unsigned int, unsigned int, int) = NULL;
+static void (*p_glGenFramebuffers)(int, unsigned int *) = NULL;
+static void (*p_glBindFramebuffer)(unsigned int, unsigned int) = NULL;
+static void (*p_glFramebufferTexture2D)(unsigned int, unsigned int, unsigned int, unsigned int,
+                                        int) = NULL;
+static unsigned int (*p_glCheckFramebufferStatus)(unsigned int) = NULL;
+static void (*p_glViewport)(int, int, int, int) = NULL;
+static void (*p_glClearColor)(float, float, float, float) = NULL;
+static void (*p_glClear)(unsigned int) = NULL;
+static void (*p_glScissor)(int, int, int, int) = NULL;
+static void (*p_glEnable)(unsigned int) = NULL;
+static void (*p_glDisable)(unsigned int) = NULL;
+static void (*p_glDeleteFramebuffers)(int, const unsigned int *) = NULL;
+static void (*p_glDeleteTextures)(int, const unsigned int *) = NULL;
+
+static void *g_egl_display = NULL;
+static void *g_egl_context = NULL;
+static void *g_egl_surface = NULL;
+static bool g_egl_tried = false;
+static bool g_egl_ready = false;
+
+static void *sym(void *lib, const char *name) {
+    void *p = lib ? dlsym(lib, name) : NULL;
+    if (p == NULL && p_eglGetProcAddress != NULL) p = p_eglGetProcAddress(name);
+    return p;
+}
+
+/** 初始化一次：EGL display/context/pbuffer + 所有函数指针。任何一步失败都返回 false */
+static bool portal_egl_init(void) {
+    if (g_egl_tried) return g_egl_ready;
+    g_egl_tried = true;
+
+    g_egl = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
+    g_gles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
+    if (g_egl == NULL || g_gles == NULL) {
+        LOGE("dlopen libEGL/libGLESv2 失败：GPU 注入不可用（相机行为不变）");
+        return false;
+    }
+
+    p_eglGetProcAddress = (void *(*)(const char *))dlsym(g_egl, "eglGetProcAddress");
+    p_eglGetDisplay = (void *(*)(int))sym(g_egl, "eglGetDisplay");
+    p_eglInitialize = (int (*)(void *, int *, int *))sym(g_egl, "eglInitialize");
+    p_eglChooseConfig = (int (*)(void *, const int *, void **, int, int *))sym(g_egl, "eglChooseConfig");
+    p_eglCreateContext = (void *(*)(void *, void *, void *, const int *))sym(g_egl, "eglCreateContext");
+    p_eglCreatePbufferSurface =
+        (void *(*)(void *, void *, const int *))sym(g_egl, "eglCreatePbufferSurface");
+    p_eglMakeCurrent = (int (*)(void *, void *, void *, void *))sym(g_egl, "eglMakeCurrent");
+    p_eglGetCurrentContext = (void *(*)(void))sym(g_egl, "eglGetCurrentContext");
+    p_eglGetCurrentDisplay = (void *(*)(void))sym(g_egl, "eglGetCurrentDisplay");
+    p_eglGetCurrentSurface = (void *(*)(int))sym(g_egl, "eglGetCurrentSurface");
+    p_eglCreateImageKHR =
+        (void *(*)(void *, void *, unsigned int, void *, const int *))sym(g_egl, "eglCreateImageKHR");
+    p_eglDestroyImageKHR = (int (*)(void *, void *))sym(g_egl, "eglDestroyImageKHR");
+    p_eglGetError = (int (*)(void))sym(g_egl, "eglGetError");
+    p_glEGLImageTargetTexture2DOES =
+        (void (*)(unsigned int, void *))sym(g_gles, "glEGLImageTargetTexture2DOES");
+    p_glGenTextures = (void (*)(int, unsigned int *))sym(g_gles, "glGenTextures");
+    p_glBindTexture = (void (*)(unsigned int, unsigned int))sym(g_gles, "glBindTexture");
+    p_glTexParameteri = (void (*)(unsigned int, unsigned int, int))sym(g_gles, "glTexParameteri");
+    p_glGenFramebuffers = (void (*)(int, unsigned int *))sym(g_gles, "glGenFramebuffers");
+    p_glBindFramebuffer = (void (*)(unsigned int, unsigned int))sym(g_gles, "glBindFramebuffer");
+    p_glFramebufferTexture2D =
+        (void (*)(unsigned int, unsigned int, unsigned int, unsigned int, int))sym(
+            g_gles, "glFramebufferTexture2D");
+    p_glCheckFramebufferStatus = (unsigned int (*)(unsigned int))sym(g_gles, "glCheckFramebufferStatus");
+    p_glViewport = (void (*)(int, int, int, int))sym(g_gles, "glViewport");
+    p_glClearColor = (void (*)(float, float, float, float))sym(g_gles, "glClearColor");
+    p_glClear = (void (*)(unsigned int))sym(g_gles, "glClear");
+    p_glScissor = (void (*)(int, int, int, int))sym(g_gles, "glScissor");
+    p_glEnable = (void (*)(unsigned int))sym(g_gles, "glEnable");
+    p_glDisable = (void (*)(unsigned int))sym(g_gles, "glDisable");
+    p_glDeleteFramebuffers = (void (*)(int, const unsigned int *))sym(g_gles, "glDeleteFramebuffers");
+    p_glDeleteTextures = (void (*)(int, const unsigned int *))sym(g_gles, "glDeleteTextures");
+
+    if (p_eglGetDisplay == NULL || p_eglInitialize == NULL || p_eglCreateImageKHR == NULL ||
+        p_glEGLImageTargetTexture2DOES == NULL || p_glCheckFramebufferStatus == NULL) {
+        LOGE("EGL/GL 关键函数缺失（image=%p targetTexture=%p）→ GPU 注入不可用",
+             (void *)p_eglCreateImageKHR, (void *)p_glEGLImageTargetTexture2DOES);
+        return false;
+    }
+
+    g_egl_display = p_eglGetDisplay(0 /* EGL_DEFAULT_DISPLAY */);
+    int major = 0, minor = 0;
+    if (g_egl_display == NULL || !p_eglInitialize(g_egl_display, &major, &minor)) {
+        LOGE("eglInitialize 失败 → GPU 注入不可用");
+        return false;
+    }
+    /* 1x1 pbuffer 只为满足"有 surface"的要求；真正渲染目标是每帧的 EGLImage */
+    const int cfg_attr[] = {0x3024 /*RED_SIZE*/,   8,
+                            0x3023 /*GREEN_SIZE*/, 8,
+                            0x3022 /*BLUE_SIZE*/,  8,
+                            0x3040 /*RENDERABLE_TYPE*/, 0x0004 /*ES2_BIT*/,
+                            0x3033 /*SURFACE_TYPE*/, 0x0001 /*PBUFFER_BIT*/,
+                            0x3038 /*NONE*/,       0};
+    void *config = NULL;
+    int num = 0;
+    if (!p_eglChooseConfig(g_egl_display, cfg_attr, &config, 1, &num) || num == 0) {
+        LOGE("eglChooseConfig 失败 → GPU 注入不可用");
+        return false;
+    }
+    const int ctx_attr[] = {0x3098 /*CONTEXT_CLIENT_VERSION*/, 2, 0x3038, 0};
+    g_egl_context = p_eglCreateContext(g_egl_display, config, NULL /*no share*/, ctx_attr);
+    const int pb_attr[] = {0x3057 /*WIDTH*/, 1, 0x3056 /*HEIGHT*/, 1, 0x3038, 0};
+    g_egl_surface = p_eglCreatePbufferSurface(g_egl_display, config, pb_attr);
+    if (g_egl_context == NULL || g_egl_surface == NULL) {
+        LOGE("创建 EGL 上下文/pbuffer 失败 → GPU 注入不可用");
+        return false;
+    }
+    g_egl_ready = true;
+    LOGI("GPU 注入就绪：EGL %d.%d display=%p context=%p", major, minor, g_egl_display,
+         g_egl_context);
+    return true;
+}
+
+/**
+ * 把图案画进这个 buffer。**每一步失败都只是返回 false**（EGL/GL 都是错误码语义）。
+ * @return true = 真的画进去了
+ */
+static bool inject_via_gpu(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
+    if (!portal_egl_init()) return false;
+
+    /* 保存调用线程原有的 EGL 状态，结束前原样恢复（HAL 可能在同一线程用 GL） */
+    void *prev_ctx = p_eglGetCurrentContext ? p_eglGetCurrentContext() : NULL;
+    void *prev_dpy = p_eglGetCurrentDisplay ? p_eglGetCurrentDisplay() : NULL;
+    void *prev_draw = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x3059 /*DRAW*/) : NULL;
+    void *prev_read = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x305A /*READ*/) : NULL;
+
+    if (!p_eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
+        return false;
+    }
+
+    bool ok = false;
+    /* 属性组合逐个试：EGL 的失败全是错误码，可以放心试探（并把错误码记下来） */
+    const int attr_none[] = {0x3038 /*EGL_NONE*/, 0};
+    const int attr_preserved[] = {PORTAL_EGL_IMAGE_PRESERVED_KHR, 1, 0x3038, 0};
+    const int attr_unpreserved[] = {PORTAL_EGL_IMAGE_PRESERVED_KHR, 0, 0x3038, 0};
+    const int *variants[3] = {attr_none, attr_preserved, attr_unpreserved};
+    const char *variant_names[3] = {"none", "preserved=1", "preserved=0"};
+    void *image = NULL;
+    int last_err = 0;
+    for (int v = 0; v < 3 && image == NULL; v++) {
+        if (p_eglGetError) p_eglGetError(); /* 清掉历史错误 */
+        image = p_eglCreateImageKHR(g_egl_display, NULL, PORTAL_EGL_NATIVE_BUFFER_ANDROID, handle,
+                                    variants[v]);
+        if (image == NULL && p_eglGetError) last_err = p_eglGetError();
+        if (image != NULL) {
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                LOGI("eglCreateImageKHR 成功（attrs=%s）—— 该 buffer 可作为 EGL 渲染目标",
+                     variant_names[v]);
+            }
+        }
+    }
+    if (image == NULL) {
+        static unsigned long n = 0;
+        if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
+            LOGE("eglCreateImageKHR 三种属性组合均失败（eglGetError=0x%x）→ 该流不注入", last_err);
+        }
+        goto restore;
+    }
+    {
+        unsigned int tex = 0, fbo = 0;
+        p_glGenTextures(1, &tex);
+        p_glBindTexture(PORTAL_GL_TEXTURE_EXTERNAL_OES, tex);
+        p_glTexParameteri(PORTAL_GL_TEXTURE_EXTERNAL_OES, 0x2801 /*MIN_FILTER*/, 0x2600 /*NEAREST*/);
+        p_glTexParameteri(PORTAL_GL_TEXTURE_EXTERNAL_OES, 0x2800 /*MAG_FILTER*/, 0x2600);
+        p_glEGLImageTargetTexture2DOES(PORTAL_GL_TEXTURE_EXTERNAL_OES, image);
+
+        p_glGenFramebuffers(1, &fbo);
+        p_glBindFramebuffer(PORTAL_GL_FRAMEBUFFER, fbo);
+        p_glFramebufferTexture2D(PORTAL_GL_FRAMEBUFFER, PORTAL_GL_COLOR_ATTACHMENT0,
+                                 PORTAL_GL_TEXTURE_EXTERNAL_OES, tex, 0);
+        if (p_glCheckFramebufferStatus(PORTAL_GL_FRAMEBUFFER) == PORTAL_GL_FRAMEBUFFER_COMPLETE) {
+            p_glViewport(0, 0, (int)w, (int)h);
+            p_glDisable(0x0B71 /*GL_DEPTH_TEST*/);
+            p_glDisable(0x0BE2 /*GL_BLEND*/);
+            /* 底色 */
+            p_glClearColor(0.06f, 0.06f, 0.06f, 1.0f);
+            p_glClear(0x00004000 /*GL_COLOR_BUFFER_BIT*/);
+            /* 横条：每 1/12 高度一条亮带，随时间上下移动 —— 一眼看出是我们画的 */
+            int band = (int)(h / 12 > 4 ? h / 12 : 4);
+            int offset = (int)((frame * 8u) % (uint32_t)(h + (uint32_t)band)) - band;
+            p_glEnable(0x0C11 /*GL_SCISSOR_TEST*/);
+            for (int i = -1; i < 12; i++) {
+                int y = offset + i * band * 2;
+                p_glScissor(0, y, (int)w, band);
+                if (i % 2 == 0) {
+                    p_glClearColor(0.92f, 0.92f, 0.20f, 1.0f);
+                } else {
+                    p_glClearColor(0.10f, 0.55f, 0.95f, 1.0f);
+                }
+                p_glClear(0x00004000);
+            }
+            p_glDisable(0x0C11);
+            ok = true;
+        } else {
+            static unsigned long n = 0;
+            if (__atomic_add_fetch(&n, 1, __ATOMIC_RELAXED) == 1) {
+                LOGE("FBO 不完整（EGLImage 不能作为颜色附件）→ 该流不注入");
+            }
+        }
+        p_glBindFramebuffer(PORTAL_GL_FRAMEBUFFER, 0);
+        if (fbo) p_glDeleteFramebuffers(1, &fbo);
+        if (tex) p_glDeleteTextures(1, &tex);
+    }
+    p_eglDestroyImageKHR(g_egl_display, image);
+
+restore:
+    /* 原样恢复调用线程的 EGL 状态 */
+    p_eglMakeCurrent(prev_dpy, prev_draw, prev_read, prev_ctx);
+    return ok;
+}
+
+/* ------------------------------------------------------------------ *
  * M1a：把合成图案写进输出 buffer 的 Y 平面
  *
  * 时序选在**回调方向**（HAL 填完 buffer、交给框架之前），而不是 process_capture_request
@@ -624,6 +883,11 @@ static bool inject_into_buffer(const camera3_stream_buffer_t *sb, uint32_t frame
     }
     uint32_t w = st->width, h = st->height;
     if (w == 0 || h == 0) return false;
+
+    /* GPU 路径优先：EGL/GL 的失败都是错误码，不会 abort；CPU 路径在本 ROM 上已被证明不可用 */
+    if (inject_via_gpu(*sb->buffer, w, h, frame)) {
+        return true;
+    }
 
     if (!portal_cpu_writable(st)) {
         /* 保命门：HW-only 的流绝不尝试 CPU 映射（会 abort 掉 provider，实测） */
