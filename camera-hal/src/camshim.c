@@ -350,6 +350,16 @@ static char g_opt_cam[16] = {0};
 static char g_opt_src_file[160] = {0};
 /** 色度 U/V 是否互换（NV12 ↔ NV21）：这种错只有看图才认得出，故做运行期开关 */
 static int g_opt_swap_uv = 0;
+/**
+ * 照片是否**预镜像**（水平翻转）。
+ *
+ * 为什么需要它（实测）：相机 app 给"真 HAL 那张 JPEG"写 EXIF Orientation=**7**（镜像+旋转），
+ * 给"我们的 JPEG"写的是 **2**（只镜像）—— 差别在于我们的 JPEG **不带 EXIF**，app 走了自己的
+ * 回退公式。结果是相册里那张照片被水平翻了过去（预览与源视频都是花在右，照片里花在左）。
+ * 所以照片路径先镜像一次，让 app 的镜像抵消掉。
+ * **只有看图才认得出这类错**，所以按项目惯例做成运行期开关（默认关：别的设备/别的 app 未必一样）。
+ */
+static int g_opt_photo_mirror = 0;
 
 /** 当前 open 的相机 id；`cam=` 定向就靠它 */
 static char g_cur_cam[16] = {0};
@@ -404,6 +414,8 @@ static void load_options(void) {
             g_opt_pattern = atoi(val);
         } else if (strcmp(key, "swap_uv") == 0) {
             g_opt_swap_uv = atoi(val);
+        } else if (strcmp(key, "photo_mirror") == 0) {
+            g_opt_photo_mirror = atoi(val);
         } else if (strcmp(key, "src_file") == 0) {
             snprintf(g_opt_src_file, sizeof(g_opt_src_file), "%s", val);
         } else if (strcmp(key, "cam") == 0) {
@@ -411,9 +423,10 @@ static void load_options(void) {
         }
     }
     fclose(f);
-    LOGI("开关：dump=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d cam=%s src=%s",
+    LOGI("开关：dump=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d photo_mirror=%d cam=%s src=%s",
          g_opt_dump, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze, g_opt_pattern,
-         g_opt_cam[0] ? g_opt_cam : "(全部)", g_opt_src_file[0] ? g_opt_src_file : "(图案)");
+         g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
+         g_opt_src_file[0] ? g_opt_src_file : "(图案)");
 }
 
 /* 我们交给 HAL 的回调表（定义在这里，实现见下方 M1a 段）—— 先声明后引用 */
@@ -1430,6 +1443,12 @@ static bool portal_fsrc_alive(void) {
 static void portal_fsrc_set_photo_req(uint32_t w, uint32_t h) {
     if (!g_fsrc_writable || g_fsrc_map == NULL) return;
     struct portal_frame_hdr *hdr = (struct portal_frame_hdr *)g_fsrc_map;
+    /* 照片变换标志（bit0=水平镜像）：告诉 app 编码前要不要翻转 */
+    uint32_t want_flags = (g_opt_photo_mirror ? 1u : 0u);
+    if (hdr->reserved2 != want_flags) {
+        hdr->reserved2 = want_flags;
+        LOGI("照片变换标志回写：0x%x（bit0=水平镜像）", want_flags);
+    }
     if (hdr->photo_req_w == w && hdr->photo_req_h == h) return;
     hdr->photo_req_w = w;
     hdr->photo_req_h = h;

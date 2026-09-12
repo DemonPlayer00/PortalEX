@@ -70,6 +70,8 @@ object CameraFrameSink {
     private const val OFF_CONSUMER_W = 64
     private const val OFF_CONSUMER_H = 68
     private const val OFF_PRODUCER_STATE = 72
+    /** HAL 回写：照片变换标志（bit0 = 编码前水平镜像，用于抵消相机 app 写的 EXIF 镜像） */
+    private const val OFF_PHOTO_FLAGS = 76
     private const val OFF_PHOTO_W = 80
     private const val OFF_PHOTO_H = 84
     private const val OFF_PHOTO_BYTES = 88
@@ -204,6 +206,10 @@ object CameraFrameSink {
         val h = m.getInt(OFF_PHOTO_REQ_H)
         return if (w > 0 && h > 0 && w <= 8192 && h <= 8192) w to h else null
     }
+
+    /** HAL 回写的照片变换标志（bit0=水平镜像） */
+    @Synchronized
+    fun photoFlags(): Int = map?.getInt(OFF_PHOTO_FLAGS) ?: 0
 
     /** HAL 回写的拍照请求序号；0 表示还没有过拍照请求 */
     @Synchronized
