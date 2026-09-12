@@ -1045,41 +1045,59 @@ CameraX 系的是最大的一类。
   视频本体推到 `filesDir/camera/<file>`（**必须 chown 到 app 的 uid 并保持该文件的 SELinux 标签**：
   新文件由 root 创建会拿到 `app_data_file:s0` 而丢掉 MLS 类别，app 读不了 —— 实测踩过）。
 
-### 20.3 ACE5 上验证卡在哪（**未解释的环境问题**）
+### 20.3 ACE5 上验证卡在哪（**已查明：偏好被 ROM/LSPosed 重定向**）
 
-APK（含新钩子）已装机（`1.0.4.r390.9239001`），但真机验证被一件与代码无关的事挡住：
-**ACE5 上 app 的"实际生效值"与 `portal.xml` 不一致。**
+现象（都是实测）：app 的**实际生效值**与 `<dataDir>/shared_prefs/portal.xml` 不一致 ——
+文件里写 `cameraMockEnabled=false`/`speed=9.9`，Test 页显示**开**/3.50；`pm clear` 之后从零观察，
+点开关**连 `shared_prefs/` 目录都不会被创建**（而 app 在 `files/`、`databases/`、`cache/` 里写得好好的）。
 
-证据（都是实测）：
+**根因**：这台 ROM 上 app 的偏好被**重定向**到了
 
-| 观测 | 值 |
-|---|---|
-| `portal.xml` 里写 `cameraMockEnabled` | `false`（sed 写入，内容与 mtime 都核对过） |
-| app 的 Test 页（`ctx.cameraMockEnabled` 直读） | **开** |
-| `portal.xml` 里写 `speed` | `9.9` |
-| Test 页"设定速度" | **3.50 m/s** |
-| 删掉整个 `portal.xml` 后启动 app | **不重建**，页面的值照旧 |
-| `grep -rl cameraMockEnabled /data/data/*/shared_prefs/` | 只有那一个文件 |
-| app 进程自己的命名空间视图 `/proc/<pid>/root/…/portal.xml` | 与我编辑的是同一个文件（内容是 `false`） |
+```
+/data/misc/apexdata/3330ff58-3211-44de-8268-d430d214ea4f/prefs/moe.fuqiuluo.portalex/portal.xml
+  标签 u:object_r:lsposed_file:s0:c211,c257,c512,c768   （同一目录下还有另一个包的 moe.fuqiuluo.portal）
+```
 
-也就是说：**文件是同一个、标签/属主都对、进程是全新的，但 app 读到的值不是文件里的值**，
-而且 app 自己的写入也不落在这个文件上。这与 §19 的 HAL 障碍无关，是 app 侧的状态问题，
-下一个会话应当先解决它（候选：ColorOS 的数据隔离、本机存在的 `MultiApp`（user 999）、
-或者我们把 `dumpsys` 报的 dataDir 当成了唯一事实来源）。
+该文件是**活的**（`portal.xml` 11.8 KB，点一次开关它就更新），根命名空间里**没有**对应的 bind mount
+（重定向发生在 app 自己的命名空间/LSPosed 侧）。`<dataDir>/shared_prefs/portal.xml` 是个**诱饵**：
+早期版本留下的、之后再没被读过也没被写过。
 
-**它为什么重要**：模块侧拿素材的唯一通道是 provider → provider 读的就是这份偏好。
-若偏好写入在这台机器上不落地，那么不只是摄像头模拟，**位置模拟的配置同样传不过去**。
+两个后果：
 
-### 20.4 下一步（需要裁决）
+1. **外部注入状态要写那一份**，而且必须**原地写**（`cat > file`，不能用 `sed -i`/`cp` 换 inode ——
+   新文件会丢掉 `lsposed_file` 标签）。改完之后 provider 立刻返回了素材 ✓（这一步是实测通过的）。
+2. **更重要**：模块侧的 `ModulePrefs`（XSharedPreferences，读 `<PortalEX dataDir>/shared_prefs/portal.xml`）
+   在这种 ROM 上读到的是那份**诱饵** ⇒ 位置/传感器那些**开关的传播是断的**，
+   而摄像头这条路没事（它走 provider，provider 在 app 进程里读的是活文件）。
+   这很可能就是"ACE5 上模块看起来活着、却不干活"的根源。
 
-- **A. 先查这个状态问题**（最高优先：它决定 ACE5 上"注入平面能不能被配置"）；
-- **B. 给注入平面加一个"无素材探针"模式**（调试开关放开"必须有命中素材"这一条），
-  这样验证"换面 + 喂帧"是否在 Android 16 上真实生效就不依赖 app 的素材库；
-- **C. 直接把目标应用加进 LSPosed 作用域**再试：本机**没有装 LSPosed 管理器**
-  （`pm list packages` 里只有 `org.lsposed.lspatch`/`dirtysepolicy`），改作用域要么走管理器
-  （可用模块的 `action.sh` 那串 `android_secret_code://5776733` 广播拉起），要么改
-  `/data/adb/lspd/config/modules_config.db` 再重启（注意 WAL 会覆盖主库）。
-  当前作用域里只有位置类应用，其中 `com.zjwh.android_wh_physicalfitness`（步道乐跑）**就是 CameraX 应用**
-  （dex 里 1600+ 处 `androidx/camera`、16 处 `SessionConfiguration`）—— 它本身就能当靶子，
-  `FaceActivity`/`AiCameraActivity` 可用 `am start` 直接拉起。
+另一个顺带发现：`pm clear` **清不掉**这份重定向的偏好（CE 被清了，它还在），所以那台机器上
+"清除数据"并不等于清空设置。
+
+候选修法（未实施）：① 模块侧统一改走 provider（摄像头这条路已经是这么做的）；
+② `XSharedPreferences(File)` + 运行时发现重定向路径；③ 读不到时判定为"配置不可用"并明确报错，
+而不是静默按"开关未开"处理。
+
+### 20.4 目标应用上的实测（Android 16）
+
+用已在 LSPosed 作用域里的 CameraX 应用（步道乐跑）实测，**钩子装上了**，并且重载清单是第一手资料：
+
+```
+[Portal] 摄像头模拟：createCaptureSession 重载 = SessionConfiguration | List,StateCallback,Handler
+[Portal] 摄像头模拟：Camera2 hook 已安装（com.zjwh.android_wh_physicalfitness）
+```
+
+`am start .../.mvi.me.FaceActivity` 会立刻退出（需要登录态），所以"看到虚拟帧"这一步
+还需要一个能自主进入相机的靶子（见 20.5）。
+
+### 20.5 下一步（需要裁决）
+
+- **A. 把 `com.oplus.camera` 加进 LSPosed 作用域**：它是 *List* 路径（dex 里 `createCaptureSession`
+  22 处、无 CameraX），正好验证**既有**那条路 + 整条喂帧链路；本机没装 LSPosed 管理器，
+  要用模块的 `action.sh`（`android_secret_code://5776733` 广播）拉起，或改
+  `/data/adb/lspd/config/modules_config.db` 再重启（注意 WAL）。
+- **B. 给本应用加一个 CameraX 探针页**（调试开关同时放开"OWN_PACKAGE 不注入"），
+  这样 `SessionConfiguration` 这条**新**路径能被确定性地验证，不依赖第三方应用与登录态 ——
+  代价是往 app 里加一个调试特性（与既有 `CameraProbeActivity` 的探针传统一致）。
+- **C. 先修 20.3 的第 2 条后果**（模块侧配置通道），因为影响面比摄像头更大。
 
