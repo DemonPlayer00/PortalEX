@@ -31,7 +31,6 @@ import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.R
-import moe.fuqiuluo.portalex.android.permission.RequestPermissions
 import moe.fuqiuluo.portalex.android.widget.FabBarView
 import moe.fuqiuluo.portalex.bdmap.locateMe
 import moe.fuqiuluo.portalex.bdmap.setMapConfig
@@ -57,6 +56,10 @@ import kotlin.random.Random
  */
 class CameraPointEditFragment : Fragment(), MapControlsHost {
 
+    private companion object {
+        const val REQUEST_CAMERA = 1001
+    }
+
     private var _binding: FragmentCameraPointEditBinding? = null
     private val binding get() = _binding!!
 
@@ -71,7 +74,17 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     /** 地图是否已经给出过有效中心：没就绪前不拿"北京默认中心"去覆盖坐标 */
     private var mapReady = false
 
-    private val permissionRequester by lazy { RequestPermissions(requireActivity() as androidx.appcompat.app.AppCompatActivity) }
+    /**
+     * 摄像头权限用**经典 requestPermissions + onRequestPermissionsResult**，
+     * 不走 `RequestPermissions`（它内部是 `registerForActivityResult`）。
+     *
+     * 实测踩过（MI6/LineageOS 15，安装后首次点「录制视频」即崩）：
+     * `registerForActivityResult` 要求"在 STARTED 之前注册"，而本页是用户点进来的，
+     * 那一刻 **Activity 已经 RESUMED** —— 在 Fragment.onCreate 里注册同样抛
+     * `IllegalStateException: LifecycleOwner ... is attempting to register while current state is RESUMED`。
+     * 经典 API 没有这个时序约束，而且本页只需要"申请一次、拿到就录"。
+     */
+    private var pendingRecordAfterPermission = false
 
     private val recordLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -367,18 +380,31 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     private fun startRecording() {
         val ctx = requireContext()
-        lifecycleScope.launch {
-            // 权限判定直接查系统状态：RequestPermissions 只负责"申请"，不负责"查询"
-            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                val (granted, _) = permissionRequester.request(setOf(Manifest.permission.CAMERA))
-                if (granted.isEmpty()) {
-                    Toast.makeText(ctx, "需要摄像头权限才能录制", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-            }
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
             recordLauncher.launch(Intent(ctx, CameraRecordActivity::class.java))
+            return
+        }
+        pendingRecordAfterPermission = true
+        requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+    }
+
+    @Deprecated("经典权限回调：本页必须绕过 registerForActivityResult 的注册时序限制（见字段注释）")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_CAMERA) return
+        val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+        val wanted = pendingRecordAfterPermission
+        pendingRecordAfterPermission = false
+        when {
+            granted && wanted -> recordLauncher.launch(Intent(requireContext(), CameraRecordActivity::class.java))
+            !granted -> Toast.makeText(requireContext(), "需要摄像头权限才能录制", Toast.LENGTH_SHORT).show()
         }
     }
 
