@@ -1520,6 +1520,9 @@ static bool portal_cpu_writable(const camera3_stream_t *st) {
  */
 static int (*g_real_configure_streams)(const struct camera3_device *, void *) = NULL;
 
+/* 采样指纹（定义在下方存活探针段；注入线程的"静止判据"也要用） */
+static unsigned long long portal_hash64(const unsigned char *p);
+
 /* 映射缓存整表清空（定义在下方写帧段；新会话必须失效，见 portal_configure_streams） */
 static void portal_invalidate_maps(void);
 
@@ -3743,6 +3746,9 @@ typedef struct {
     size_t size;
     const unsigned char *tpl;   /* NULL ⇒ 用 inject_byte 纯色填 */
     size_t tlen;
+    /* `inject_sync=2`（静止判据）用的状态：见下面注入线程的注释 */
+    unsigned long long seen;
+    int stable;
 } portal_target;
 
 /**
@@ -3844,30 +3850,60 @@ static void *portal_inject_thread(void *arg) {
         for (int i = 0; i < n; i++) {
             size_t len = t[i].tlen < t[i].size ? t[i].tlen : t[i].size;
             if (g_opt_inject_sync) {
-                /* 头部还是我们上次写进去的内容 ⇒ ISP 尚未重填 ⇒ 让开，一个字节都不碰。
-                 * 这一条就是"跟着 ISP 节拍写"的全部实现：把写入压到每帧**一次**。 */
                 unsigned char ref[PORTAL_SYNC_HEAD];
-                if (len < PORTAL_SYNC_HEAD) continue;
+                if (len < 128) continue;
                 if (t[i].tpl != NULL) memcpy(ref, t[i].tpl, PORTAL_SYNC_HEAD);
                 else memset(ref, g_opt_inject_byte, PORTAL_SYNC_HEAD);
-                if (memcmp(t[i].p, ref, PORTAL_SYNC_HEAD) == 0) continue;
+                if (g_opt_inject_sync >= 2) {
+                    /* 静止判据：**等这一块稳定下来再写**。
+                     * 为什么不能只看"头部变了"：ISP 是逐行把整帧写进去的，头部一变就写，
+                     * 我们的写会落在 ISP **还在写**的中途 —— 实测症状就是"实景 + 顶部一条色带"
+                     * （只有抢在 ISP 最后一笔之后的那些字节留了下来）。
+                     * 头 + 尾两个窗口连续 3 次采样都不变 ⇒ 这一帧写完了；此时到编码器读之间
+                     * 还隔着 release fence 的间隙，写一轮才可能整块留下来。 */
+                    unsigned char *pp = (unsigned char *)t[i].p;
+                    unsigned long long h =
+                        portal_hash64(pp) ^ (portal_hash64(pp + len - 64) << 1);
+                    if (h == t[i].seen) {
+                        if (t[i].stable < 1000) t[i].stable++;
+                    } else {
+                        t[i].seen = h;
+                        t[i].stable = 0;
+                    }
+                    if (memcmp(pp, ref, PORTAL_SYNC_HEAD) == 0) continue;  /* 还是我们写的 */
+                    if (t[i].stable < 3) continue;                          /* ISP 还在写 */
+                } else if (memcmp(t[i].p, ref, PORTAL_SYNC_HEAD) == 0) {
+                    continue;
+                }
             }
             if (t[i].tpl != NULL) {
                 memcpy(t[i].p, t[i].tpl, len);
             } else {
                 memset(t[i].p, g_opt_inject_byte, t[i].size);
             }
+            if (g_opt_inject_sync >= 2) {
+                t[i].stable = 0;
+                t[i].seen = 0;   /* 从头等下一次"稳定" */
+            }
             writes++;
         }
         /* 同步模式必须**低延迟**：轮询间隔要远小于一帧（33ms），否则"ISP 刚写完"这个窗口就错过了。
          * inject_us 在同步模式下被夹到 ≤200 微秒（0 表示不让出 CPU，最紧的轮询）。 */
-        int sl = g_opt_inject_sync ? (g_opt_inject_us < 200 ? g_opt_inject_us : 200) : g_opt_inject_us;
+        int sl;
+        if (g_opt_inject_sync >= 2) {
+            sl = g_opt_inject_us > 0 ? (g_opt_inject_us < 200 ? g_opt_inject_us : 200) : 50;
+        } else if (g_opt_inject_sync == 1) {
+            sl = g_opt_inject_us < 200 ? g_opt_inject_us : 200;
+        } else {
+            sl = g_opt_inject_us;
+        }
         if (sl > 0) usleep((useconds_t)sl);
         rounds++;
         time_t now = time(NULL);
         if (g_opt_inject_sync && now != stat_last) {
             stat_last = now;
-            LOGI("同步注入：%lu 轮 / %lu 次写（%d 块缓冲）", rounds, writes, n);
+            LOGI("同步注入(模式%d)：%lu 轮 / %lu 次写（%d 块缓冲）", g_opt_inject_sync, rounds,
+                 writes, n);
         }
         if (announced && now - last_scan >= 5) {   /* 每 5 秒重扫：换模式/重建会话都会换一批缓冲 */
             last_scan = now;
