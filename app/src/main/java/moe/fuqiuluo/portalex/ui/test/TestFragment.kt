@@ -116,6 +116,14 @@ class TestFragment : Fragment() {
             appendLine("── 模块侧回传（选中素材 / 起播秒 / 失败原因）──")
             appendLine(CameraMockRuntime.dumpReports())
 
+            // 控制面（system_server 侧、对目标应用零注入）：谁在什么时候用了哪个摄像头
+            val lmForCamera = mockServiceViewModel.locationManager
+            appendLine("── 系统侧摄像头控制面（AppOps + CameraServiceProxy）──")
+            appendLine(
+                if (lmForCamera == null) "（定位服务未就绪，命令通道不可用）"
+                else MockServiceHelper.getCameraEvents(lmForCamera) ?: "（系统侧无应答：模块未在 system_server 内活动？）"
+            )
+
             val lm = mockServiceViewModel.locationManager
             if (lm == null) {
                 appendLine()

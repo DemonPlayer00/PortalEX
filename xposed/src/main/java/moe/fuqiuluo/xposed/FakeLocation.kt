@@ -144,6 +144,15 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
                 Logger.info("Debug Log Status: ${FakeLoc.enableDebugLog}")
                 FakeLoc.isSystemServerProcess = true
                 startFakeLocHook(systemClassLoader)
+
+                // 摄像头控制面：system_server 里的 AppOps 与 CameraServiceProxy —— 对目标应用零注入，
+                // 也不碰视频流（画面必须由 cameraserver/HAL 侧的原生件提供）。
+                // 两个类加载器都给它：实测这两个 loader 能看到的 com.android.server.* 并不总是同一批。
+                step("CameraWatch") {
+                    moe.fuqiuluo.xposed.hooks.camera.CameraWatch.install(
+                        lpparam.classLoader, systemClassLoader
+                    )
+                }
                 TelephonyHook.hookSubOnTransact(lpparam.classLoader)
                 WlanHook(systemClassLoader)
                 AndroidFusedLocationProviderHook(lpparam.classLoader)
