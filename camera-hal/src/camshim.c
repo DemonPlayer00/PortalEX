@@ -479,6 +479,16 @@ static int g_opt_inject_us = 15000;
 /** `inject_pattern=1`：不做纯色填充，改成**逐字节渐变** —— 用来证明"逐像素可控"
  *  （纯色只能证明"写进去了"，渐变才能证明每个字节都由我们决定）。 */
 static int g_opt_inject_pattern = 0;
+/** `mock_file=<路径>`：把文件内容当作**要注入的整帧原始数据**（尺寸 = 目标缓冲的平面大小）。
+ *  优先于 inject_byte/inject_pattern。文件读一次、模板化，热循环只做 memcpy。 */
+static char g_opt_mock_file[192] = {0};
+/** `stride_probe=1`：用"行间相关性"实测目标缓冲的**行 stride**（不猜布局） */
+static int g_opt_stride_probe = 0;
+/** `bufmap=1`：按段打印目标缓冲的内容分布（先知道数据在哪，再谈布局） */
+static int g_opt_bufmap = 0;
+/** `probe_size=<字节>`：**只看不写**的探针目标尺寸。必须与注入解耦 ——
+ *  踩过：探针复用了 inject_size，结果探针读到的永远是我们自己刚填进去的均匀值。 */
+static unsigned long g_opt_probe_size = 0;
 /** `hook_ol_vaddrs=...`：同一套钩子挂在 **oemlayer** 上的目标（基址按 maps 里的模块路径取） */
 static char g_opt_hook_ol_vaddrs[512] = {0};
 /** `hook_null_vaddrs=0x1e46f60`：装**空钩子**（只重放、不调用 C），用于隔离机制本身 */
@@ -668,6 +678,14 @@ static void load_options(void) {
             g_opt_inject_us = atoi(val);
         } else if (strcmp(key, "inject_pattern") == 0) {
             g_opt_inject_pattern = atoi(val);
+        } else if (strcmp(key, "mock_file") == 0) {
+            snprintf(g_opt_mock_file, sizeof(g_opt_mock_file), "%s", val);
+        } else if (strcmp(key, "stride_probe") == 0) {
+            g_opt_stride_probe = atoi(val);
+        } else if (strcmp(key, "bufmap") == 0) {
+            g_opt_bufmap = atoi(val);
+        } else if (strcmp(key, "probe_size") == 0) {
+            g_opt_probe_size = strtoul(val, NULL, 0);
         } else if (strcmp(key, "hook_nrec_vaddrs") == 0) {
             snprintf(g_opt_hook_nrec_vaddrs, sizeof(g_opt_hook_nrec_vaddrs), "%s", val);
         } else if (strcmp(key, "hook_rec_vaddrs") == 0) {
@@ -3242,6 +3260,168 @@ static int portal_peek(unsigned long addr, void *buf, size_t len) {
     return (r == (ssize_t)len) ? 0 : -1;
 }
 
+/**
+ * **实测行 stride**（不猜布局）：同一幅图像相邻两行高度相关，所以"行间平均绝对差"
+ * 在真 stride 处取极小值。候选 2048..4128 步进 32，打印最好的 5 个。
+ * 只读映射 + 只读内存，不可能崩。
+ */
+static void portal_stride_probe(void) {
+    if (!g_opt_stride_probe) return;
+    int target = -1;
+    unsigned long tsize = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        int fd = atoi(e->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(path, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0) continue;
+        unsigned long want = g_opt_probe_size ? g_opt_probe_size : g_opt_inject_size;
+        if (want != 0 && (unsigned long)st.st_size != want) continue;
+        if (want == 0 && st.st_size < 1048576) continue;
+        target = fd;
+        tsize = (unsigned long)st.st_size;
+        break;
+    }
+    closedir(d);
+    if (target < 0) {
+        LOGI("stride 试探：没找到目标缓冲（inject_size=%lu）", g_opt_inject_size);
+        return;
+    }
+    unsigned char *m = (unsigned char *)mmap(NULL, tsize, PROT_READ, MAP_SHARED, target, 0);
+    if (m == MAP_FAILED) {
+        LOGI("stride 试探：fd=%d mmap 失败（errno=%d）", target, errno);
+        return;
+    }
+    LOGI("stride 试探：fd=%d 共 %lu 字节，行间相关性扫描（注入应当关闭，否则读到的是我们自己填的值）",
+         target, tsize);
+    unsigned long bases[2] = {0, 1000000};
+    for (int bi = 0; bi < 2; bi++) {
+    unsigned long base = bases[bi];
+    if (base + 65536 > tsize) continue;
+    int best[5] = {0};
+    long bestc[5] = {0};
+    for (int st = 2048; st <= 4128; st += 32) {
+        if (base + (unsigned long)st * 8 >= tsize) break;
+        long cost = 0;
+        int n = 0;
+        for (int row = 0; row < 8; row++) {
+            const unsigned char *a = m + base + (size_t)row * st;
+            const unsigned char *b = a + st;
+            for (int x = 0; x < 512; x++) {
+                int diff = (int)a[x] - (int)b[x];
+                cost += diff < 0 ? -diff : diff;
+            }
+            n += 512;
+        }
+        long avg = n ? cost / n : 0;
+        for (int k = 0; k < 5; k++) {
+            if (best[k] == 0 || avg < bestc[k]) {
+                for (int j = 4; j > k; j--) { best[j] = best[j - 1]; bestc[j] = bestc[j - 1]; }
+                best[k] = st;
+                bestc[k] = avg;
+                break;
+            }
+        }
+    }
+    LOGI("  —— 基准偏移 0x%lx ——", base);
+    for (int k = 0; k < 5; k++) {
+        if (best[k] != 0) LOGI("  stride 候选 %d：平均行差 %ld", best[k], bestc[k]);
+    }
+    }
+    /* 用最优 stride 看"行相关"沿纵向怎么变：Y 平面结束、UV 平面开始的位置会变形 */
+    int bs = 0;
+    {
+        long bc = 0;
+        for (int st = 2048; st <= 4128; st += 32) {
+            if ((unsigned long)st * 8 >= tsize) continue;
+            long cost = 0;
+            for (int row = 0; row < 8; row++) {
+                const unsigned char *a = m + (size_t)row * st;
+                const unsigned char *b = a + st;
+                for (int x = 0; x < 512; x++) {
+                    int diff = (int)a[x] - (int)b[x];
+                    cost += diff < 0 ? -diff : diff;
+                }
+            }
+            if (bs == 0 || cost < bc) { bs = st; bc = cost; }
+        }
+    }
+    if (bs > 0) {
+        LOGI("  纵向相关性剖面（stride=%d）：", bs);
+        for (unsigned long row = 0; row + 2 < tsize / (unsigned long)bs; row += 200) {
+            const unsigned char *a = m + row * (unsigned long)bs;
+            const unsigned char *b = a + bs;
+            long cost = 0;
+            for (int x = 0; x < 512; x++) {
+                int diff = (int)a[x] - (int)b[x];
+                cost += diff < 0 ? -diff : diff;
+            }
+            LOGI("  第 %lu 行（偏移 %lu）行差 %ld", row, row * (unsigned long)bs, cost / 512);
+        }
+    }
+    munmap(m, tsize);
+}
+
+/**
+ * `bufmap=1`：把目标缓冲**整块扫一遍**，按 256KB 一段打印"非零占比 / 最小 / 最大"。
+ * 为什么需要：行 stride 试探第一轮全是"平均行差 0" —— 说明缓冲开头是**全零**，
+ * 图像数据根本不在偏移 0 处。先看清数据在哪儿，再谈布局。
+ */
+static void portal_bufmap(void) {
+    if (!g_opt_bufmap) return;
+    int fds[4] = {-1, -1, -1, -1};
+    unsigned long szs[4] = {0};
+    int n = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL && n < 4) {
+        int fd = atoi(e->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(path, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0) continue;
+        unsigned long want2 = g_opt_probe_size ? g_opt_probe_size : g_opt_inject_size;
+        if (want2 != 0 && (unsigned long)st.st_size != want2) continue;
+        fds[n] = fd;
+        szs[n] = (unsigned long)st.st_size;
+        n++;
+    }
+    closedir(d);
+    if (n == 0) { LOGI("bufmap：没找到目标缓冲"); return; }
+    for (int i = 0; i < n; i++) {
+        unsigned char *m = (unsigned char *)mmap(NULL, szs[i], PROT_READ, MAP_SHARED, fds[i], 0);
+        if (m == MAP_FAILED) { LOGI("bufmap：fd=%d mmap 失败", fds[i]); continue; }
+        LOGI("bufmap fd=%d size=%lu：", fds[i], szs[i]);
+        for (unsigned long off = 0; off + 262144 <= szs[i]; off += 262144) {
+            int nz = 0, mn = 255, mx = 0;
+            for (int k = 0; k < 1024; k++) {
+                unsigned char v = m[off + (unsigned long)k * 256];
+                if (v) nz++;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            }
+            LOGI("   +0x%06lx  非零 %4d/1024  min=%3d max=%3d", off, nz, mn, mx);
+        }
+        munmap(m, szs[i]);
+    }
+}
+
 /** 进程自己持有的 dmabuf 清单 —— 相机输出缓冲就在里面（先看清再动手） */
 static void portal_dmabuf_report(void) {
     DIR *d = opendir("/proc/self/fd");
@@ -3332,6 +3512,7 @@ static void *portal_inject_thread(void *arg) {
     size_t sizes[PORTAL_INJECT_MAX];
     int nmap = 0;
     unsigned long rounds = 0;
+    int since_scan = 0;
     int announced = 0;
 
     if (g_opt_inject_size == 0 && g_opt_inject_fd >= 0) {
@@ -3370,28 +3551,58 @@ static void *portal_inject_thread(void *arg) {
          * 所以"写进去"必须**跑赢 ISP**。逐字节 for 循环（≈10 倍慢于 memcpy）就会输 ——
          * 实测此时预览仍是实时画面、注入完全不生效。正确做法：图案在我们自己的内存里
          * **预先算好**，热循环只剩 memcpy/memset。 */
-        if (g_opt_inject_pattern == 0) {
+        if (g_inject_tpl == NULL &&
+            (g_opt_mock_file[0] != '\0' || g_opt_inject_pattern != 0)) {
+                if (g_opt_mock_file[0] != '\0') {
+                    /* 载入"整帧原始数据"当模板：这是 M2 的内容源 —— 图像就是文件里的字节 */
+                    int mf = open(g_opt_mock_file, O_RDONLY);
+                    if (mf < 0) {
+                        LOGE("注入：打不开 %s（errno=%d）", g_opt_mock_file, errno);
+                    } else {
+                        struct stat mst;
+                        if (fstat(mf, &mst) == 0 && mst.st_size > 0) {
+                            g_inject_tpl = (unsigned char *)malloc((size_t)mst.st_size);
+                            if (g_inject_tpl != NULL) {
+                                ssize_t got = read(mf, g_inject_tpl, (size_t)mst.st_size);
+                                if (got == mst.st_size) {
+                                    g_inject_tpl_size = (size_t)mst.st_size;
+                                    LOGI("注入：模板来自 %s（%zu 字节）", g_opt_mock_file,
+                                         g_inject_tpl_size);
+                                } else {
+                                    LOGE("注入：只读到 %zd/%lld 字节", got, (long long)mst.st_size);
+                                    free(g_inject_tpl);
+                                    g_inject_tpl = NULL;
+                                }
+                            }
+                        }
+                        close(mf);
+                    }
+                }
+                if (g_inject_tpl == NULL && g_opt_inject_pattern != 0) {
+                    g_inject_tpl = (unsigned char *)malloc(sizes[0]);
+                    if (g_inject_tpl == NULL) {
+                        LOGE("注入：图案模板分配失败（%zu 字节）", sizes[0]);
+                        return NULL;
+                    }
+                    for (size_t o = 0; o < sizes[0]; o++)
+                        g_inject_tpl[o] = (unsigned char)((o >> 6) & 0xFFu);
+                    g_inject_tpl_size = sizes[0];
+                    LOGI("注入：渐变模板已生成（%zu 字节）", g_inject_tpl_size);
+                }
+        }
+        if (g_inject_tpl == NULL) {
             for (int i = 0; i < nmap; i++) memset(maps[i], g_opt_inject_byte, sizes[i]);
         } else {
-            if (g_inject_tpl == NULL || g_inject_tpl_size < sizes[0]) {
-                free(g_inject_tpl);
-                g_inject_tpl = (unsigned char *)malloc(sizes[0]);
-                if (g_inject_tpl == NULL) {
-                    LOGE("注入：图案模板分配失败（%zu 字节）", sizes[0]);
-                    return NULL;
-                }
-                for (size_t o = 0; o < sizes[0]; o++)
-                    g_inject_tpl[o] = (unsigned char)((o >> 6) & 0xFFu);
-                g_inject_tpl_size = sizes[0];
-                LOGI("注入：图案模板已生成（%zu 字节）", g_inject_tpl_size);
-            }
             for (int i = 0; i < nmap; i++)
                 memcpy(maps[i], g_inject_tpl, sizes[i] < g_inject_tpl_size ? sizes[i]
                                                                           : g_inject_tpl_size);
         }
         if (g_opt_inject_us > 0) usleep((useconds_t)g_opt_inject_us);
         /* 每 ~15 秒重扫一次：会话重建后 fd/缓冲都会换一批 */
-        if (announced && ++rounds % 600 == 0) {
+        since_scan += (g_opt_inject_us > 0) ? g_opt_inject_us : 8;
+        (void)rounds;
+        if (announced && since_scan >= 15000000) {
+            since_scan = 0;
             for (int i = 0; i < nmap; i++) munmap(maps[i], sizes[i]);
             nmap = 0;
         }
@@ -3427,6 +3638,8 @@ static void portal_req_report(void) {
         }
     }
     if (g_opt_req_probe) portal_dmabuf_report();
+    portal_stride_probe();
+    portal_bufmap();
 }
 
 /** 周期汇报线程：不碰 vendor 的任何锁，只读我们自己的 .bss 并写日志 */
@@ -3828,6 +4041,8 @@ static void portal_hook_req_list(const char *list) {
 }
 static void portal_req_report(void) {}
 static void portal_dmabuf_report(void) {}
+static void portal_stride_probe(void) {}
+static void portal_bufmap(void) {}
 static void *portal_inject_thread(void *arg) { (void)arg; return NULL; }
 #endif
 
