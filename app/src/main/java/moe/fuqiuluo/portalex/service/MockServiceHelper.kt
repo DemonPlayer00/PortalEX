@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.cadenceScale
+import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
@@ -166,6 +167,11 @@ object MockServiceHelper {
         startLoopBroadcastLocation(locationManager)
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
+        // 会话期间保持后台活跃（设置项，默认开）：前台服务 + partial wake lock，
+        // 让本进程不进 cached 档 —— 否则退后台会被冻结、运动循环整段停摆
+        runCatching { Portal.appContext }.getOrNull()
+            ?.takeIf { it.keepAliveInBackground }
+            ?.let { MockKeepAliveService.start(it) }
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             isMockStart(locationManager)
         } else {
@@ -181,6 +187,8 @@ object MockServiceHelper {
         rely.putString(Key.COMMAND_ID, Cmd.STOP)
         stopLoopBroadcastLocation()
         runCatching { Portal.appContext }.getOrNull()?.let { stopSensorPollKeepAlive(it) }
+        // 会话结束 ⇒ 前台服务必须跟着走（不做"没人开会话却常驻"的幽灵）
+        runCatching { Portal.appContext }.getOrNull()?.let { MockKeepAliveService.stop(it) }
         FakeLoc.enable = false
         if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             return !isMockStart(locationManager)
@@ -255,59 +263,6 @@ object MockServiceHelper {
 
     fun setLocation(locationManager: LocationManager, lat: Double, lon: Double): Boolean {
         return updateLocation(locationManager, lat, lon, "=")
-    }
-
-    /**
-     * 把**整条路线**交给 system_server（App 之后不再逐 tick 推送）。
-     *
-     * 为什么需要：App 是普通应用进程，退后台会被 Cached Apps Freezer 冻结 —— 实测
-     * MI6/LineageOS 15 上切后台后运动循环整段停摆 25~48s，期间位置一动不动，
-     * 目标跑步应用看到"原地不动"（配速尖峰）。推进权交给 system_server 后，
-     * App 被冻/被杀都不影响"世界在走"。
-     *
-     * @param latArr 展开后的折线纬度（平滑段已由 App 侧做过贝塞尔采样）
-     * @param lonArr 折线经度，长度需一致
-     * @param tickIntervalMs 推进 tick 间隔（= 设置页的「上报间隔」，20~1000ms）
-     * @return 模块是否接受（旧版模块不认识该命令 ⇒ false，调用方应回退到逐 tick 推送）
-     */
-    fun setRoute(
-        locationManager: LocationManager,
-        latArr: DoubleArray,
-        lonArr: DoubleArray,
-        tickIntervalMs: Long
-    ): Boolean {
-        if (!::randomKey.isInitialized) return false
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.SET_ROUTE)
-        rely.putDoubleArray(Key.ROUTE_LAT, latArr)
-        rely.putDoubleArray(Key.ROUTE_LON, lonArr)
-        rely.putLong(Key.ROUTE_TICK_MS, tickIntervalMs)
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
-
-    /** 开始路线推进（system_server 侧起驱动线程） */
-    fun routeStart(locationManager: LocationManager): Boolean {
-        if (!::randomKey.isInitialized) return false
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.ROUTE_START)
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
-
-    /** 停止路线推进（悬浮窗关闭 / 停会话 / 换路线 / 播放结束都要调，见调用点注释） */
-    fun routeStop(locationManager: LocationManager): Boolean {
-        if (!::randomKey.isInitialized) return false
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.ROUTE_STOP)
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
-
-    /** 路线状态回包（running/finished/travelled/total/lat/lon）；读不到返回 null */
-    fun routeState(locationManager: LocationManager): Bundle? {
-        if (!::randomKey.isInitialized) return null
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.ROUTE_STATE)
-        val ok = locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-        return if (ok) rely else null
     }
 
     /**

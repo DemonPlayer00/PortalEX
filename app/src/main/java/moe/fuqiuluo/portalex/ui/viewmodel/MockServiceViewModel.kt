@@ -22,7 +22,6 @@ import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ui.mock.Rocker
 import moe.fuqiuluo.xposed.utils.FakeLoc
-import moe.fuqiuluo.xposed.utils.PortalProtocol
 import net.sf.geographiclib.Geodesic
 import kotlin.math.abs
 
@@ -62,21 +61,6 @@ class MockServiceViewModel : ViewModel() {
     /** 上一次运动推进的时刻（nanoTime）。0 = 无锚点（循环刚起 / 刚重置），首个 tick 用名义间隔 */
     private var lastMotionNanos = 0L
 
-    /**
-     * 路线是否已交给 system_server 推进（true ⇒ App **不再**逐 tick 推送路线坐标）。
-     *
-     * 见 `MockServiceHelper.setRoute` 的 KDoc：App 会被系统冻结，推进权必须在 system_server。
-     * false 有两种含义：还没交出去（本 tick 会尝试）、或模块不支持（旧版模块 ⇒ 回退到
-     * App 逐 tick 推送的老路径，行为与改造前一致）。
-     */
-    private var moduleRoute = false
-
-    /** 旧版模块不支持路线命令：只提示一次（不静默假装成功，也不刷屏） */
-    private var moduleRouteUnsupportedWarned = false
-
-    /** 路线完成/被系统侧停止的轮询任务 */
-    private var routePollJob: Job? = null
-
     companion object {
         /**
          * 单 tick 最大推进时长（ms）。超过就丢掉多余时长（模拟"那段时间没在跑"）。
@@ -108,8 +92,6 @@ class MockServiceViewModel : ViewModel() {
 
     /** 选中路线：立即完整重置自动播放器（重选同一条也从头播放，不残留旧进度） */
     fun selectRouteForPlayback(route: HistoricalRoute) {
-        // 换路线：先停掉旧的系统侧推进，避免"旧路线还在走、新路线又起播"
-        stopModuleRoute()
         selectedRoute = route
         resetPlayback(route)
     }
@@ -119,7 +101,6 @@ class MockServiceViewModel : ViewModel() {
      * 避免播放器继续持有已不存在的路线（幽灵路线）。
      */
     fun clearSelectedRoute() {
-        stopModuleRoute()
         selectedRoute = null
         resetPlayback(null)
         if (::rocker.isInitialized) {
@@ -140,8 +121,6 @@ class MockServiceViewModel : ViewModel() {
             rocker.autoStatus = false
         }
         rockerCoroutineController.pause()
-        // ★ 关窗必须显式停掉 system_server 侧的推进：交出去之后，App 侧停摆不再等于位置停住
-        stopModuleRoute()
     }
 
     /**
@@ -357,12 +336,8 @@ class MockServiceViewModel : ViewModel() {
                     )
                 }
                 if (isAutoPlaying) {
-                    // 路线推进交给 system_server（整条折线一次性交付，见 startModuleRoute）；
-                    // 只有模块不支持该命令时才回退到 App 逐 tick 推送（老路径）。
-                    if (!moduleRoute) startModuleRoute(activity)
-                    if (!moduleRoute) advanceRoutePlayback(activity, advanceMs)
+                    advanceRoutePlayback(activity, advanceMs)
                 } else {
-                    if (moduleRoute) stopModuleRoute()
                     advanceRockerMove(advanceMs)
                 }
             }
@@ -377,78 +352,6 @@ class MockServiceViewModel : ViewModel() {
      * 路线播放永远推进不了（就停在原地）。旧实现是两个独立协程，路线播放不受摇杆暂停影响，
      * 合并后必须保住这一点。
      */
-    /**
-     * 把当前选中路线的**展开后折线**整条交给 system_server，并请它起播。
-     *
-     * 成功后 `moduleRoute = true`：App 的运动循环不再推路线坐标（只保留摇杆路径与回退路径）。
-     * 失败（旧版模块不认识 `set_route`）⇒ 返回 false，由调用方回退到逐 tick 推送，
-     * 并明确提示用户"需重启手机让模块生效"——不做假成功。
-     */
-    private fun startModuleRoute(activity: Activity): Boolean {
-        val lm = locationManager ?: return false
-        val selected = selectedRoute ?: return false
-        if (selected.route.size < 2) return false
-        if (cachedRoute !== selected) resetPlayback(selected)
-        if (pathPoints.size < 2) return false
-
-        val lat = DoubleArray(pathPoints.size) { pathPoints[it].lat }
-        val lon = DoubleArray(pathPoints.size) { pathPoints[it].lon }
-        val tickMs = activity.reportDuration.coerceIn(20, 1000).toLong()
-        if (!MockServiceHelper.setRoute(lm, lat, lon, tickMs)) {
-            if (!moduleRouteUnsupportedWarned) {
-                moduleRouteUnsupportedWarned = true
-                android.widget.Toast.makeText(
-                    activity,
-                    "模块版本较旧：路线仍由 App 推进（重启手机后生效）",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
-            }
-            return false
-        }
-        // 起点：先落位（此刻驱动还没起，不会被它覆盖），再起播
-        MockServiceHelper.setLocation(lm, lat[0], lon[0])
-        if (!MockServiceHelper.routeStart(lm)) return false
-        moduleRoute = true
-        Log.d("MockServiceViewModel", "路线已交给 system_server 推进：${pathPoints.size} 点 / ${"%.0f".format(routeDistance)}m")
-        startRouteStatePolling(activity)
-        return true
-    }
-
-    /**
-     * 停止 system_server 侧的路线推进。
-     *
-     * **必须挂到所有"该停"的路径上**——推进权交出去以后，App 侧停摆不再自动等于
-     * "位置停住"：悬浮窗关闭（[stopMotionForFloatingHidden]）、换/清路线、停会话都要显式停。
-     * 漏一处就是"窗口关了但位置还在走"。
-     */
-    private fun stopModuleRoute() {
-        if (!moduleRoute) return
-        moduleRoute = false
-        routePollJob?.cancel()
-        routePollJob = null
-        locationManager?.let { MockServiceHelper.routeStop(it) }
-    }
-
-    /** 轮询系统侧路线状态：完成 ⇒ 与原行为一致地收尾（复位 + 完成提示音） */
-    private fun startRouteStatePolling(activity: Activity) {
-        routePollJob?.cancel()
-        routePollJob = viewModelScope.launch {
-            while (isActive && moduleRoute) {
-                delay(500)
-                val lm = locationManager ?: continue
-                val state = MockServiceHelper.routeState(lm) ?: continue
-                if (state.getBoolean(PortalProtocol.Key.ROUTE_FINISHED)) {
-                    moduleRoute = false
-                    resetPlayback(null)
-                    if (::rocker.isInitialized) rocker.autoStatus = false
-                    playCompletionSound(activity)
-                    break
-                }
-                if (!state.getBoolean(PortalProtocol.Key.ROUTE_RUNNING)) break
-            }
-        }
-    }
-
     private fun advanceRockerMove(advanceMs: Double) {
         if (rockerCoroutineController.consume()) return
         val lm = locationManager ?: return   // 定位服务未就绪：本 tick 跳过，下次自动重试

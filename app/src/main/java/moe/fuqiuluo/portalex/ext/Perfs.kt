@@ -268,6 +268,22 @@ var Context.sensorNoiseReport: String
     }
 
 /**
+ * 会话期间**保持后台活跃**（默认开）：
+ * 起一个自己的前台服务 + partial wake lock，把 `:app` 进程钉在 FOREGROUND_SERVICE 档。
+ *
+ * 为什么默认开：App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结 ——
+ * 冻结期间运动循环整段停摆（实测 25.6s / 47.7s 空洞），system_server 仍在按保活节奏推帧
+ * （位置不动、vel≈0），目标跑步应用看到"原地不动"。
+ *
+ * 关闭后行为与改造前一致：不占前台、不持锁（靠悬浮窗时的 perceptible 档维持）。
+ */
+var Context.keepAliveInBackground: Boolean
+    get() = sharedPrefs.getBoolean("keepAliveInBackground", true)
+    set(value) = sharedPrefs.edit {
+        putBoolean("keepAliveInBackground", value)
+    }
+
+/**
  * Binder 外周传感器模拟。**默认开启**：
  * 打开后由 system_server 侧原生 hook 在系统框架层接管外周传感器
  * （步频 / 加速度 / 角度 / 指南针），**不 hook 目标应用**；
