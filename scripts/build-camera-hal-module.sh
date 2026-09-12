@@ -42,6 +42,34 @@ pack_one() {
     chmod 755 "$STAGE/customize.sh" "$STAGE/post-fs-data.sh"
 
     cp "$SO" "$STAGE/$DIR/$NAME"
+
+    # ACE5（pineapple）：**另带一份 /odm 路线的载荷**。
+    # 为什么两份都要：provider 在 ACE5 上 dlopen 的是 /odm/lib64/hw/camera.qcom.so，
+    # 而 /vendor 那层 overlay 会让 media.swcodec 起不来（拍照废，见 docs §25.1）。
+    # /odm 路线**不需要真件副本** —— 真件留在 /vendor 原封不动，shim 按 real_hal= 去 dlopen。
+    if [ "$PLATFORM" = "pineapple" ]; then
+        mkdir -p "$STAGE/payload/odm"
+        cp "$SO" "$STAGE/payload/odm/$NAME"
+        chmod 644 "$STAGE/payload/odm/$NAME"
+        cat > "$STAGE/payload/odm/portal.cfg" <<EOF
+real_hal=/vendor/lib64/hw/$NAME
+real_hmi_bytes=$HMI
+ops_index=$OPS
+dump=1
+report_period=20
+req_vaddrs=0x1e49ca0
+hook_rec_vaddrs=0x1e46f60
+hook_rec_ol_vaddrs=0x6cadc
+EOF
+        chmod 644 "$STAGE/payload/odm/portal.cfg"
+        # 模拟素材目录（可选）：把要用的 mock 文件放这里，post-fs-data 会搬到
+        # /data/vendor/camera/ 并打上 vendor_camera_data_file 标签，cfg 里可直接引用。
+        mkdir -p "$STAGE/payload/odm/mock"
+        if [ -d magisk/mock ]; then
+            cp -f magisk/mock/* "$STAGE/payload/odm/mock/" 2>/dev/null
+        fi
+        echo "  · 已带 /odm 路线载荷（payload/odm/）"
+    fi
     # 占位文件：1 字节，只为给 post-fs-data 的 bind mount 一个**已存在**的目标
     printf 'P' > "$STAGE/$DIR/$NAME.orig.so"
     # 开关文件：逐机器写死（安装期不再生成，理由见文件头）
