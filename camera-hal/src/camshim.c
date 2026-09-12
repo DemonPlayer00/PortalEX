@@ -70,6 +70,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -456,6 +457,28 @@ static char g_opt_hook_vaddrs[512] = {0};
  * 所以：诊断必须显式打开、用完就关；**默认部署走的是"零诊断"的形态**。
  */
 static int g_opt_open_probe = 0;
+/** 开关 `report_period=<秒>`：周期汇报零调用钩子的命中情况。
+ *  为什么要有它：钩子体里一条 I/O 都不能做（§22.9），汇报只能等 open —— 而 open 只在
+ *  每次相机会话开始时发生一次，实验时"读数"要开一次关一次相机。周期线程把读数解耦。 */
+static int g_opt_report_period = 0;
+/** 开关 `req_vaddrs=0x…`：在**请求入口**（已实测 = 真件 process_capture_request 0x1e49ca0）
+ *  装一个"零调用请求快照"外壳 —— 纯 load/store 把 camera3_capture_request_t 的
+ *  前几个字段与首个输出缓冲的 gralloc handle 抄进我们自己的 .bss，
+ *  供汇报线程（非热路径）读取。这是做图像注入前必须先拿到的现场数据。 */
+static char g_opt_req_vaddrs[128] = {0};
+/** 开关 `req_probe=1`：汇报线程在打印快照后，尝试 mmap 首缓冲的 dmabuf（只读）*/
+static int g_opt_req_probe = 0;
+/** `inject_fd=<fd>`：把某个 dmabuf 里持续填成 `inject_byte`（先在日志里看 dmabuf 清单再挑）
+ *  `inject_byte=<0-255>` 填充字节；`inject_us=<微秒>` 填充周期。 */
+static int g_opt_inject_fd = -1;
+/** `inject_size=<字节>`：按**大小**选靶（首选，因为 fd 号每次重启都变）——
+ *  把所有该大小的 dmabuf 全部持续填充。相机输出缓冲在 fd 表里的名字就是 MAP_UNKNOWN。 */
+static unsigned long g_opt_inject_size = 0;
+static int g_opt_inject_byte = 0x80;
+static int g_opt_inject_us = 15000;
+/** `inject_pattern=1`：不做纯色填充，改成**逐字节渐变** —— 用来证明"逐像素可控"
+ *  （纯色只能证明"写进去了"，渐变才能证明每个字节都由我们决定）。 */
+static int g_opt_inject_pattern = 0;
 /** `hook_ol_vaddrs=...`：同一套钩子挂在 **oemlayer** 上的目标（基址按 maps 里的模块路径取） */
 static char g_opt_hook_ol_vaddrs[512] = {0};
 /** `hook_null_vaddrs=0x1e46f60`：装**空钩子**（只重放、不调用 C），用于隔离机制本身 */
@@ -629,6 +652,22 @@ static void load_options(void) {
             snprintf(g_opt_hook_vaddrs, sizeof(g_opt_hook_vaddrs), "%s", val);
         } else if (strcmp(key, "open_probe") == 0) {
             g_opt_open_probe = atoi(val);
+        } else if (strcmp(key, "report_period") == 0) {
+            g_opt_report_period = atoi(val);
+        } else if (strcmp(key, "req_vaddrs") == 0) {
+            snprintf(g_opt_req_vaddrs, sizeof(g_opt_req_vaddrs), "%s", val);
+        } else if (strcmp(key, "req_probe") == 0) {
+            g_opt_req_probe = atoi(val);
+        } else if (strcmp(key, "inject_fd") == 0) {
+            g_opt_inject_fd = atoi(val);
+        } else if (strcmp(key, "inject_size") == 0) {
+            g_opt_inject_size = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "inject_byte") == 0) {
+            g_opt_inject_byte = (int)(strtoul(val, NULL, 0) & 0xFFu);
+        } else if (strcmp(key, "inject_us") == 0) {
+            g_opt_inject_us = atoi(val);
+        } else if (strcmp(key, "inject_pattern") == 0) {
+            g_opt_inject_pattern = atoi(val);
         } else if (strcmp(key, "hook_nrec_vaddrs") == 0) {
             snprintf(g_opt_hook_nrec_vaddrs, sizeof(g_opt_hook_nrec_vaddrs), "%s", val);
         } else if (strcmp(key, "hook_rec_vaddrs") == 0) {
@@ -2759,7 +2798,7 @@ static void *portal_load_scan_thread(void *arg) {
  * 函数入口挂钩（inline hook）—— 见 g_opt_inline_hook 的注释
  * ------------------------------------------------------------------ */
 
-#define PORTAL_HOOK_MAX 20
+#define PORTAL_HOOK_MAX 32
 /** 每个挂钩位的"返回点"（安装时填成 entry+16） */
 __attribute__((used)) static volatile unsigned long g_hook_resume[PORTAL_HOOK_MAX];
 /** 每个挂钩位的命中计数（钩子体只自增；汇报在 open 时做） */
@@ -2783,6 +2822,9 @@ struct portal_hook_rec {
 __attribute__((used)) static struct portal_hook_rec g_hook_rec[PORTAL_HOOK_MAX];
 static char g_hook_name_buf[PORTAL_HOOK_MAX][64];
 static const char *g_hook_name[PORTAL_HOOK_MAX];
+/** 零调用类钩子（rec/req）的槽位游标：多张列表**共用**同一片槽位，
+ *  否则第二次调用会从 0 重新分配、把第一张列表的钩子全顶掉（踩过）。 */
+static int g_hook_rec_next = 0;
 
 /*
  * 钩子外壳（**通用版**）：开头 4 条指令是占位 nop，安装时被替换成目标函数被顶掉的
@@ -2865,6 +2907,18 @@ PORTAL_HOOK_STUB(portal_hook_16, 128, 16)
 PORTAL_HOOK_STUB(portal_hook_17, 136, 17)
 PORTAL_HOOK_STUB(portal_hook_18, 144, 18)
 PORTAL_HOOK_STUB(portal_hook_19, 152, 19)
+PORTAL_HOOK_STUB(portal_hook_20, 160, 20)
+PORTAL_HOOK_STUB(portal_hook_21, 168, 21)
+PORTAL_HOOK_STUB(portal_hook_22, 176, 22)
+PORTAL_HOOK_STUB(portal_hook_23, 184, 23)
+PORTAL_HOOK_STUB(portal_hook_24, 192, 24)
+PORTAL_HOOK_STUB(portal_hook_25, 200, 25)
+PORTAL_HOOK_STUB(portal_hook_26, 208, 26)
+PORTAL_HOOK_STUB(portal_hook_27, 216, 27)
+PORTAL_HOOK_STUB(portal_hook_28, 224, 28)
+PORTAL_HOOK_STUB(portal_hook_29, 232, 29)
+PORTAL_HOOK_STUB(portal_hook_30, 240, 30)
+PORTAL_HOOK_STUB(portal_hook_31, 248, 31)
 
 /**
  * **空钩子**：只重放被顶掉的 4 条指令，然后跳回 entry+16 —— 不调用任何 C 代码。
@@ -3001,6 +3055,77 @@ PORTAL_HOOK_STUB_NREC(portal_hook_nrec1, 8, portal_hook_nrec1_c)
             "ret\n");                                                          \
     }
 
+/**
+ * 请求快照（只由裸汇编外壳写、只由汇报线程读；两边都不调用任何函数）。
+ * 字段偏移与外壳里的 `str …, [x16, #N]` 一一对应 —— 改一处必须改两处。
+ */
+__attribute__((used)) static struct portal_req_snap {
+    unsigned long cnt;    /* +0  命中次数 */
+    unsigned long caller; /* +8  首次调用的返回地址 */
+    unsigned long dev;    /* +16 a0 = camera3_device_t* */
+    unsigned long req;    /* +24 a1 = 请求结构指针 */
+    unsigned long q[24];  /* +32 req[0..23] **原样** 192 字节快照 */
+} g_req_snap;
+__attribute__((used)) static volatile unsigned long g_hook_resume_req;
+
+/**
+ * 请求入口外壳：**零调用、只做一级解引用**。
+ *
+ * ⚠️ 血的教训（本机实测，tombstone 里 `#00 portal_hook_req0+132`、fault addr 0x7700000000）：
+ * 第一版在这里按"标准 camera3_capture_request_t 布局"继续往二级解引用
+ * （`req[+8]` → 缓冲数组 → `[+8]` → gralloc handle），结果那个位置的指针是脏的，
+ * 钩子直接在 vendor 的请求路径里把 provider 打死，连带相机 App 一起死。
+ * **热路径里不许有"我以为布局是这样"的解引用** —— 外壳只抄那一级契约保证有效的内存，
+ * 布局判断全部搬到我们自己的线程里，用 /proc/self/maps 逐个指针验完再读。
+ */
+#define PORTAL_HOOK_STUB_REQ(NAME)                                                  \
+    __attribute__((naked)) static void NAME(void) {                                 \
+        __asm__ volatile(                                                           \
+            "mov x9, x30\n" "mov x10, x0\n" "mov x11, x1\n"                     \
+            "nop\n" "nop\n" "nop\n" "nop\n"  /* +12：被顶掉的 4 条 */          \
+            "adrp x16, g_req_snap\n"                                               \
+            "add x16, x16, #:lo12:g_req_snap\n"                                    \
+            "ldr x17, [x16]\n" "add x17, x17, #1\n" "str x17, [x16]\n"           \
+            "cmp x17, #1\n" "b.ne 1f\n"                                           \
+            "str x9,  [x16, #8]\n"                                                 \
+            "str x10, [x16, #16]\n"                                                \
+            "str x11, [x16, #24]\n"                                                \
+            "1:\n"                                                                 \
+            "cbz x11, 2f\n"                                                        \
+            "ldr x17, [x11]\n" "str x17, [x16, #32]\n"                       \
+            "ldr x17, [x11, #8]\n" "str x17, [x16, #40]\n"                       \
+            "ldr x17, [x11, #16]\n" "str x17, [x16, #48]\n"                       \
+            "ldr x17, [x11, #24]\n" "str x17, [x16, #56]\n"                       \
+            "ldr x17, [x11, #32]\n" "str x17, [x16, #64]\n"                       \
+            "ldr x17, [x11, #40]\n" "str x17, [x16, #72]\n"                       \
+            "ldr x17, [x11, #48]\n" "str x17, [x16, #80]\n"                       \
+            "ldr x17, [x11, #56]\n" "str x17, [x16, #88]\n"                       \
+            "ldr x17, [x11, #64]\n" "str x17, [x16, #96]\n"                       \
+            "ldr x17, [x11, #72]\n" "str x17, [x16, #104]\n"                       \
+            "ldr x17, [x11, #80]\n" "str x17, [x16, #112]\n"                       \
+            "ldr x17, [x11, #88]\n" "str x17, [x16, #120]\n"                       \
+            "ldr x17, [x11, #96]\n" "str x17, [x16, #128]\n"                       \
+            "ldr x17, [x11, #104]\n" "str x17, [x16, #136]\n"                       \
+            "ldr x17, [x11, #112]\n" "str x17, [x16, #144]\n"                       \
+            "ldr x17, [x11, #120]\n" "str x17, [x16, #152]\n"                       \
+            "ldr x17, [x11, #128]\n" "str x17, [x16, #160]\n"                       \
+            "ldr x17, [x11, #136]\n" "str x17, [x16, #168]\n"                       \
+            "ldr x17, [x11, #144]\n" "str x17, [x16, #176]\n"                       \
+            "ldr x17, [x11, #152]\n" "str x17, [x16, #184]\n"                       \
+            "ldr x17, [x11, #160]\n" "str x17, [x16, #192]\n"                       \
+            "ldr x17, [x11, #168]\n" "str x17, [x16, #200]\n"                       \
+            "ldr x17, [x11, #176]\n" "str x17, [x16, #208]\n"                       \
+            "ldr x17, [x11, #184]\n" "str x17, [x16, #216]\n"                       \
+            "2:\n"                                                                 \
+            "adrp x16, g_hook_resume_req\n"                                        \
+            "add x16, x16, #:lo12:g_hook_resume_req\n"                             \
+            "ldr x16, [x16]\n"                                                     \
+            "mov x30, x16\n"                                                       \
+            "ret\n");                                                              \
+    }
+
+PORTAL_HOOK_STUB_REQ(portal_hook_req0)
+
 __attribute__((used)) static volatile unsigned long g_hook_resume_rec[PORTAL_HOOK_MAX];
 PORTAL_HOOK_STUB_REC(portal_hook_rec00, 0, 0)
 PORTAL_HOOK_STUB_REC(portal_hook_rec01, 8, 32)
@@ -3022,6 +3147,18 @@ PORTAL_HOOK_STUB_REC(portal_hook_rec16, 128, 512)
 PORTAL_HOOK_STUB_REC(portal_hook_rec17, 136, 544)
 PORTAL_HOOK_STUB_REC(portal_hook_rec18, 144, 576)
 PORTAL_HOOK_STUB_REC(portal_hook_rec19, 152, 608)
+PORTAL_HOOK_STUB_REC(portal_hook_rec20, 160, 640)
+PORTAL_HOOK_STUB_REC(portal_hook_rec21, 168, 672)
+PORTAL_HOOK_STUB_REC(portal_hook_rec22, 176, 704)
+PORTAL_HOOK_STUB_REC(portal_hook_rec23, 184, 736)
+PORTAL_HOOK_STUB_REC(portal_hook_rec24, 192, 768)
+PORTAL_HOOK_STUB_REC(portal_hook_rec25, 200, 800)
+PORTAL_HOOK_STUB_REC(portal_hook_rec26, 208, 832)
+PORTAL_HOOK_STUB_REC(portal_hook_rec27, 216, 864)
+PORTAL_HOOK_STUB_REC(portal_hook_rec28, 224, 896)
+PORTAL_HOOK_STUB_REC(portal_hook_rec29, 232, 928)
+PORTAL_HOOK_STUB_REC(portal_hook_rec30, 240, 960)
+PORTAL_HOOK_STUB_REC(portal_hook_rec31, 248, 992)
 
 static void *const g_hook_rec_fns[PORTAL_HOOK_MAX] = {
     (void *)portal_hook_rec00, (void *)portal_hook_rec01, (void *)portal_hook_rec02,
@@ -3031,6 +3168,18 @@ static void *const g_hook_rec_fns[PORTAL_HOOK_MAX] = {
     (void *)portal_hook_rec12, (void *)portal_hook_rec13, (void *)portal_hook_rec14,
     (void *)portal_hook_rec15, (void *)portal_hook_rec16, (void *)portal_hook_rec17,
     (void *)portal_hook_rec18, (void *)portal_hook_rec19,
+    (void *)portal_hook_rec20,
+    (void *)portal_hook_rec21,
+    (void *)portal_hook_rec22,
+    (void *)portal_hook_rec23,
+    (void *)portal_hook_rec24,
+    (void *)portal_hook_rec25,
+    (void *)portal_hook_rec26,
+    (void *)portal_hook_rec27,
+    (void *)portal_hook_rec28,
+    (void *)portal_hook_rec29,
+    (void *)portal_hook_rec30,
+    (void *)portal_hook_rec31,
 };
 
 static void *const g_hook_fns[PORTAL_HOOK_MAX] = {
@@ -3038,7 +3187,20 @@ static void *const g_hook_fns[PORTAL_HOOK_MAX] = {
     (void *)portal_hook_04, (void *)portal_hook_05, (void *)portal_hook_06, (void *)portal_hook_07,
     (void *)portal_hook_08, (void *)portal_hook_09, (void *)portal_hook_10, (void *)portal_hook_11,
     (void *)portal_hook_12, (void *)portal_hook_13, (void *)portal_hook_14, (void *)portal_hook_15,
-    (void *)portal_hook_16, (void *)portal_hook_17, (void *)portal_hook_18, (void *)portal_hook_19,
+    (void *)portal_hook_16, (void *)portal_hook_17, (void *)portal_hook_18,
+    (void *)portal_hook_19,
+    (void *)portal_hook_20,
+    (void *)portal_hook_21,
+    (void *)portal_hook_22,
+    (void *)portal_hook_23,
+    (void *)portal_hook_24,
+    (void *)portal_hook_25,
+    (void *)portal_hook_26,
+    (void *)portal_hook_27,
+    (void *)portal_hook_28,
+    (void *)portal_hook_29,
+    (void *)portal_hook_30,
+    (void *)portal_hook_31,
 };
 
 /** 把各入口的累计命中打出来 —— 只在 open 这种非热路径上调用，钩子体自身不做 I/O */
@@ -3057,6 +3219,228 @@ static void portal_hook_report_counts(void) {
             LOGI("钩子累计：入口[%d] %s 命中 %lu 次", k, g_hook_name[k] ? g_hook_name[k] : "?", c2);
         }
     }
+}
+
+/**
+ * 汇报请求快照 —— 同样只在**我们自己的线程**里做。
+ * `req_probe=1` 时顺带做一次 dmabuf 只读 mmap 试探：只为确认"拿到 fd 就能映射到帧缓冲"
+ * 这条路在 ACE5 上成立（图像注入的前提）。写像素留到下一步。
+ */
+/**
+ * **安全窥视**：一切"异步读来的指针"都用 `/proc/self/mem` 的 `pread` 去读。
+ * 为什么不用直接解引用（同一轮踩过）：脏指针会当场 SIGSEGV，把 provider 与相机 App 一起带走
+ * （tombstone：`#00 portal_hook_req0+132`、fault addr 0x7700000000）；
+ * `pread` 遇到坏地址只返回 EFAULT/EIO，**不可能崩**。这是"零调用钩子 + 线程侧解析"
+ * 这套结构里唯一正确的读法。
+ */
+static int portal_peek(unsigned long addr, void *buf, size_t len) {
+    if (addr == 0 || buf == NULL) return -1;
+    int fd = open("/proc/self/mem", O_RDONLY);
+    if (fd < 0) return -1;
+    ssize_t r = pread(fd, buf, len, (off_t)portal_untag((const void *)addr));
+    close(fd);
+    return (r == (ssize_t)len) ? 0 : -1;
+}
+
+/** 进程自己持有的 dmabuf 清单 —— 相机输出缓冲就在里面（先看清再动手） */
+static void portal_dmabuf_report(void) {
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) return;
+    struct dirent *e;
+    int found = 0, shown = 0;
+    unsigned long long biggest = 0;
+    while ((e = readdir(d)) != NULL) {
+        int fd = atoi(e->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t n = readlink(path, link, sizeof(link) - 1);
+        if (n <= 0) continue;
+        link[n] = '\0';
+        if (strstr(link, "dmabuf") == NULL && strstr(link, "dma-buf") == NULL) continue;
+        struct stat st;
+        memset(&st, 0, sizeof(st));
+        if (fstat(fd, &st) != 0) continue;
+        /* 只要"像帧缓冲"的：小对象（传感器/元数据 4K 那些）全部略过，日志才有用 */
+        if (st.st_size >= 524288 && shown < 40) {
+            LOGI("  dmabuf fd=%d size=%lld link=%s", fd, (long long)st.st_size, link);
+            shown++;
+        }
+        if ((unsigned long long)st.st_size > biggest) biggest = (unsigned long long)st.st_size;
+        found++;
+    }
+    closedir(d);
+    LOGI("  dmabuf 合计 %d 个，最大 %llu 字节，上面列的是 ≥512KB 的（最多 40 个）", found, biggest);
+}
+
+/**
+ * 注入线程：把指定 dmabuf 持续填成同一个字节。
+ *
+ * 为什么放在**我们自己的线程**：帧缓冲是 mmap 出来的，写它就是普通内存写 —— 不需要 call
+ * 进 vendor 的任何锁，也不需要钩子做重活。热路径只负责把"哪块缓冲、多大"记下来。
+ */
+#define PORTAL_INJECT_MAX 24
+
+/** 按大小把该尺寸的 dmabuf 全部映射下来；返回映射块数 */
+static int portal_inject_map_by_size(void *maps[], size_t sizes[], int cap) {
+    int n = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) return 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL && n < cap) {
+        int fd = atoi(e->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(path, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0) continue;
+        if ((unsigned long)st.st_size != g_opt_inject_size) continue;
+        void *m = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (m == MAP_FAILED) {
+            LOGI("注入：fd=%d size=%ld mmap 失败（errno=%d）", fd, (long)st.st_size, errno);
+            continue;
+        }
+        maps[n] = m;
+        sizes[n] = (size_t)st.st_size;
+        LOGI("注入：fd=%d size=%ld → %p（%s）", fd, (long)st.st_size, m, link);
+        n++;
+    }
+    closedir(d);
+    return n;
+}
+
+/**
+ * 注入线程：把目标缓冲**持续**填成同一个字节。
+ *
+ * 为什么按大小选靶：fd 号每次 provider 重启都会变，写死 fd 不是可复现的做法；
+ * 相机输出缓冲在 fd 表里就是 `MAP_UNKNOWN` + 一个固定尺寸（实测 2136x1200 YUV420 ⇒ 4038656）。
+ * 为什么要"持续"填：相机以 30fps 往同一批缓冲里写新帧，只填一次在 33ms 后就没了。
+ */
+/** 预生成的注入图案（只算一次，热循环只做 memcpy） */
+static unsigned char *g_inject_tpl = NULL;
+static size_t g_inject_tpl_size = 0;
+
+static void *portal_inject_thread(void *arg) {
+    (void)arg;
+    void *maps[PORTAL_INJECT_MAX];
+    size_t sizes[PORTAL_INJECT_MAX];
+    int nmap = 0;
+    unsigned long rounds = 0;
+    int announced = 0;
+
+    if (g_opt_inject_size == 0 && g_opt_inject_fd >= 0) {
+        struct stat st;
+        if (fstat(g_opt_inject_fd, &st) != 0 || st.st_size <= 0) {
+            LOGE("注入线程：fd=%d 取不到大小（errno=%d）", g_opt_inject_fd, errno);
+            return NULL;
+        }
+        void *m = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                       g_opt_inject_fd, 0);
+        if (m == MAP_FAILED) {
+            LOGE("注入线程：fd=%d mmap 失败（errno=%d）", g_opt_inject_fd, errno);
+            return NULL;
+        }
+        maps[0] = m;
+        sizes[0] = (size_t)st.st_size;
+        nmap = 1;
+    }
+
+    for (;;) {
+        if (nmap == 0) {
+            if (g_opt_inject_size != 0) {
+                nmap = portal_inject_map_by_size(maps, sizes, PORTAL_INJECT_MAX);
+            }
+            if (nmap == 0) {
+                sleep(2);
+                continue;
+            }
+            size_t total = 0;
+            for (int i = 0; i < nmap; i++) total += sizes[i];
+            LOGI("注入线程：%d 块缓冲，共 %zu 字节，每 %d 微秒填 0x%02x", nmap, total,
+                 g_opt_inject_us, g_opt_inject_byte);
+            announced = 1;
+        }
+        /* ⚠️ 关键（实测）：相机以 ~30fps 把新帧 DMA 进同一批缓冲，
+         * 所以"写进去"必须**跑赢 ISP**。逐字节 for 循环（≈10 倍慢于 memcpy）就会输 ——
+         * 实测此时预览仍是实时画面、注入完全不生效。正确做法：图案在我们自己的内存里
+         * **预先算好**，热循环只剩 memcpy/memset。 */
+        if (g_opt_inject_pattern == 0) {
+            for (int i = 0; i < nmap; i++) memset(maps[i], g_opt_inject_byte, sizes[i]);
+        } else {
+            if (g_inject_tpl == NULL || g_inject_tpl_size < sizes[0]) {
+                free(g_inject_tpl);
+                g_inject_tpl = (unsigned char *)malloc(sizes[0]);
+                if (g_inject_tpl == NULL) {
+                    LOGE("注入：图案模板分配失败（%zu 字节）", sizes[0]);
+                    return NULL;
+                }
+                for (size_t o = 0; o < sizes[0]; o++)
+                    g_inject_tpl[o] = (unsigned char)((o >> 6) & 0xFFu);
+                g_inject_tpl_size = sizes[0];
+                LOGI("注入：图案模板已生成（%zu 字节）", g_inject_tpl_size);
+            }
+            for (int i = 0; i < nmap; i++)
+                memcpy(maps[i], g_inject_tpl, sizes[i] < g_inject_tpl_size ? sizes[i]
+                                                                          : g_inject_tpl_size);
+        }
+        if (g_opt_inject_us > 0) usleep((useconds_t)g_opt_inject_us);
+        /* 每 ~15 秒重扫一次：会话重建后 fd/缓冲都会换一批 */
+        if (announced && ++rounds % 600 == 0) {
+            for (int i = 0; i < nmap; i++) munmap(maps[i], sizes[i]);
+            nmap = 0;
+        }
+    }
+    return NULL;
+}
+
+static void portal_req_report(void) {
+    unsigned long c = __atomic_load_n(&g_req_snap.cnt, __ATOMIC_RELAXED);
+    if (c != 0 && g_req_snap.req != 0) {
+        LOGI("请求快照：命中 %lu 次 device=%p req=%p caller=%p", c, (void *)g_req_snap.dev,
+             (void *)g_req_snap.req, (void *)g_req_snap.caller);
+        LOGI("  帧号=%u settings=%p 输出缓冲数=%lu 数组=%p priv_settings=%p priv_result=%p",
+             (unsigned)g_req_snap.q[0], (void *)g_req_snap.q[1], g_req_snap.q[3] & 0xFFFFFFFFul,
+             (void *)g_req_snap.q[4], (void *)g_req_snap.q[9], (void *)g_req_snap.q[11]);
+        unsigned long outb = g_req_snap.q[4];
+        unsigned long nout = g_req_snap.q[3] & 0xFFFFFFFFul;
+        unsigned long arr[15] = {0};
+        if (nout > 0 && nout <= 3 && portal_untag((const void *)outb) >= 0x1000 &&
+            portal_peek(outb, arr, sizeof(arr)) == 0) {
+            for (unsigned i = 0; i < nout; i++) {
+                unsigned long *e = arr + i * 5;   /* 条目 0x28 字节 */
+                LOGI("  out[%u]: stream=%p buffer=%p status=%u acq=%d rel=%d priv=%p", i,
+                     (void *)e[0], (void *)e[1], (unsigned)e[2], (int)(e[2] >> 32), (int)e[3],
+                     (void *)e[4]);
+                /* camera3_stream_t：type/width/height/format/usage/max_buffers 一眼看出这是哪路流 */
+                unsigned int st[12] = {0};
+                if (portal_peek(e[0], st, sizeof(st)) == 0) {
+                    LOGI("      stream: type=%d %ux%u format=%d(0x%x) usage=0x%x max=%u", (int)st[0],
+                         st[1], st[2], (int)st[3], st[3], st[4], st[5]);
+                }
+            }
+        }
+    }
+    if (g_opt_req_probe) portal_dmabuf_report();
+}
+
+/** 周期汇报线程：不碰 vendor 的任何锁，只读我们自己的 .bss 并写日志 */
+static void *portal_report_thread(void *arg) {
+    (void)arg;
+    unsigned period = (unsigned)g_opt_report_period;
+    if (period == 0) period = 5;
+    for (;;) {
+        sleep(period);
+        LOGI("零调用钩子周期汇报（每 %u 秒）", period);
+        portal_hook_report_counts();
+        portal_req_report();
+    }
+    return NULL;
 }
 
 /** 路径里带 `sub` 的第一个映射的起始地址（= 该 ELF 的 vaddr 0）。找不到返回 0。 */
@@ -3268,6 +3652,32 @@ static void portal_hook_nrec_list(const char *list) {
     }
 }
 
+/**
+ * 请求快照钩子：只挂**请求入口**（真件 process_capture_request）。零调用。
+ * 复用 portal_inline_hook_ex（slot 只用来存名字），重放槽同样是 +12。
+ */
+static void portal_hook_req_list(const char *list) {
+    uintptr_t base = 0;
+    if (g_real_module != NULL) {
+        Dl_info di;
+        if (dladdr((const void *)g_real_module, &di) != 0) base = (uintptr_t)di.dli_fbase;
+    }
+    if (base == 0) { LOGE("请求快照：拿不到真件基址"); return; }
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s", list);
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL; tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') tok++;
+        unsigned long v = strtoul(tok, NULL, 0);
+        if (v == 0) continue;
+        if (g_hook_rec_next >= PORTAL_HOOK_MAX) { LOGE("请求快照：槽位用完了"); return; }
+        int slot = g_hook_rec_next++;
+        snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "req+0x%lx", v);
+        portal_inline_hook_ex(slot, base, v, g_hook_name_buf[slot], (void *)portal_hook_req0,
+                              &g_hook_resume_req, 12);
+    }
+}
+
 /** 零调用钩子：真件与 oemlayer 都可挂 */
 static void portal_hook_rec_list(const char *list, const char *module_sub) {
     uintptr_t base = 0;
@@ -3281,7 +3691,7 @@ static void portal_hook_rec_list(const char *list, const char *module_sub) {
     char buf[512];
     snprintf(buf, sizeof(buf), "%s", list);
     char *save = NULL;
-    int slot = 0;
+    int slot = g_hook_rec_next;
     for (char *tok = strtok_r(buf, ",", &save); tok != NULL && slot < PORTAL_HOOK_MAX;
          tok = strtok_r(NULL, ",", &save)) {
         while (*tok == ' ') tok++;
@@ -3295,6 +3705,7 @@ static void portal_hook_rec_list(const char *list, const char *module_sub) {
                               &g_hook_resume_rec[slot], 12);
         slot++;
     }
+    g_hook_rec_next = slot;
 }
 
 /** touch 钩子：带一次调用，但被调者只 `ret`（隔离"C 函数内部"与"发起调用"） */
@@ -3410,6 +3821,14 @@ static void portal_hook_nrec_list(const char *list) {
     LOGE("nrec 钩子只有 arm64 实现：本机是 32 位，跳过");
 }
 static void portal_hook_report_counts(void) {}
+static void *portal_report_thread(void *arg) { (void)arg; return NULL; }
+static void portal_hook_req_list(const char *list) {
+    (void)list;
+    LOGE("请求快照钩子只有 arm64 实现：本机是 32 位，跳过");
+}
+static void portal_req_report(void) {}
+static void portal_dmabuf_report(void) {}
+static void *portal_inject_thread(void *arg) { (void)arg; return NULL; }
 #endif
 
 struct portal_bind_arg {
@@ -3816,6 +4235,10 @@ static void load_real_hal(void) {
     if (g_opt_hook_rec_ol_vaddrs[0] != '\0') {
         portal_hook_rec_list(g_opt_hook_rec_ol_vaddrs, "camera.oemlayer.so");
     }
+    /* 请求快照钩子：做图像注入前必须先看到请求与缓冲的真身 */
+    if (g_opt_req_vaddrs[0] != '\0') {
+        portal_hook_req_list(g_opt_req_vaddrs);
+    }
     /* 可选：扫描并接管真件自己的 ops 表（ACE5 的 device->ops 是 NULL，只能走这条） */
     if (g_opt_ops_scan) {
         /* 关键：**放到独立线程**。构造函数是在 provider 主线程里跑的，扫描一旦占住它，
@@ -3832,4 +4255,20 @@ static void load_real_hal(void) {
 __attribute__((constructor)) static void on_load(void) {
     load_options();
     load_real_hal();
+    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_inject_thread, NULL) == 0) {
+            pthread_detach(th);
+        } else {
+            LOGE("注入线程创建失败");
+        }
+    }
+    if (g_opt_report_period > 0 || g_opt_req_vaddrs[0] != '\0') {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_report_thread, NULL) == 0) {
+            pthread_detach(th);
+        } else {
+            LOGE("汇报线程创建失败");
+        }
+    }
 }
