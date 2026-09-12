@@ -1326,3 +1326,46 @@ CamX 的，不经过 `camera3_device_ops`。
 dev 侧留的是**能用的形态**：overlay + shim（`/odm/lib64/hw/camera.qcom.so`）+ 真件原地不动
 + `portal.cfg` 里**没有** `hook_vaddrs`（钩子默认关）。实测 `Begin OPEN=1 / Begin CONFIG=1`、
 逐帧出流、provider 稳定、tombstone 未增。全部改动都是运行期的，重启即回原厂。
+
+### 22.8 突破：BTI 才是"钩子一开就打断会话"的真凶（2026-09-13 续）
+
+§22.5 里"钩子一开、会话必死"的现象查清了，原因**不在**我们的 C 代码、也不在锁：
+ACE5 真件 `camera.qcom.so` 的 `.text` 带 **BTI**（Branch Target Identification）。
+我们把入口前 16 字节换成 `ldr x16,#8; br x16; .quad 钩子`，钩子里记账完再用
+`br x16` 跳回 `entry+16` —— 而 `entry+16` 是函数**中部**，不是 `bti`/`paciasp` 这类合法落点，
+于是间接分支被 BTI 判为非法目标，**直接 SIGILL**：
+
+```
+signal 4 (SIGILL), code 1 (ILL_ILLOPC), fault addr 0x00000078f6aaef70
+  #00 pc 0x1e46f70  /vendor/lib64/hw/camera.qcom.so (CamX::configure_streams ... .cfi)+16
+  #01 pc 0x10a00    /odm/lib64/hw/camera.qcom.so (portal_hook_nrec0+60)   ← 我们的外壳
+  x16 0x78f6aaef70                                                        ← 返回点
+```
+
+**修法**：跳回中部改用 **`RET`**（RET 不受 BTI 约束）—— 把返回点写进 `x30` 再 `ret`。
+`x30` 的原始（已签名）值早被重放的 `stp x29,x30,[sp,#-0x60]!` 存进函数自己的栈帧，
+收尾时函数会自己恢复，不冲突。
+
+### 22.9 现在的形态：**可用的、BTI 安全的、零注入的入口钩子**（实测）
+
+- 记账**不调用任何 C 代码**：外壳里只用内联汇编读写我们自己的 `.bss`
+  （`adrp/add/ldr/add/str/cmp/bne/…`），因此不会在 vendor 持锁的路径上触发 PLT 惰性绑定；
+- 汇报放在 `shim_open`（非热路径）里做，钩子体一行 I/O 都没有；
+- 外壳序言 → 重放槽的偏移必须**逐外壳对齐**（5 条 mov=20B、3 条 mov=12B；写错就把自己的计数指令覆盖掉）。
+
+实测（真件 `configure_streams`，vaddr `0x1e46f60`）：
+
+```
+已挂钩[0] real+0x1e46f60：入口 0x7a21870f60 → 钩子 0x7a2c8e4a24（重放 d503233f a9ba7bfd a9016ffc a90267fa，返回点 0x7a21870f70）
+零调用钩子[0] real+0x1e46f60 命中 1 次；首次：caller=/odm/lib64/hw/camera.oemlayer.so+0x6fb30
+             a0=0xb4000079b59e1710（device） a1=0x7fd8129900（stream_list）
+Begin CONFIG=2   逐帧出流=562   provider 稳定（pid 未变）   tombstone 未涨
+```
+
+即：**在系统层把 vendor HAL 的函数入口换掉、还能顺手拿到调用现场，同时相机行为完全不变**。
+这就是 M0 在 ACE5 上真正跑通的那一刻；下一步（M1）就是让钩子**改东西**（请求/流/输出 buffer），
+而"改"必须同样满足两条约束：**不许 call、不许跳回中部**。
+
+余下的两个已知坑（都在本节新加）：
+1. 跳回中部必须用 `ret`（见 22.8）；
+2. 外壳序言与重放槽偏移必须对齐（见 22.9 第三条）——写错的表现是"挂上就崩、且没有 tombstone 说明"。
