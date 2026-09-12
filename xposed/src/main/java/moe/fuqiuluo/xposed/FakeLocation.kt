@@ -136,9 +136,11 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
 
                 ThirdPartyLocationHook(lpparam.classLoader)
 
-                // 实验性：Binder 外周传感器模拟。开关打开时（put_config 到达即触发）
-                // 才装载原生注入层并起调度线程；关闭时本调用不做任何事。
-                BinderSensorMock.onConfigChanged()
+                // Binder 外周传感器模拟：**开机阶段只登记开关，绝不装载**。
+                // 这里调 onConfigChanged() 曾在 MI6/LineageOS 15 上把开机卡死（system_server
+                // 永久等待 sensorservice）——装载只在模拟会话启动时发生，见
+                // BinderSensorMock.registerAtBoot / onSimulationChanged。
+                BinderSensorMock.registerAtBoot()
 
                 // 运行时投递通道：只解析框架的 JNI 入口并捕获 SensorService 实例（零副作用），
                 // 注册载体/投递由 BinderSensorMock 在开关打开后按需触发。
