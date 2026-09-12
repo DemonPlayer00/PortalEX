@@ -203,6 +203,23 @@ static struct real_camera_module *g_real_cam = NULL;
 static void *g_real_device = NULL; /* 只用于 construct_default_request_settings */
 static const void *(*g_real_default_settings)(const struct camera3_device *, int) = NULL;
 
+/*
+ * 真 device 的"空回调"：我们只借真 HAL 的**模板构造**能力，绝不接它的帧。
+ *
+ * 为什么必须先给真 device 调一次 initialize：实测 —— 不调就直接转发
+ * `construct_default_request_settings`，真 HAL 内部状态是空的，provider 当场
+ * SIGSEGV（fault addr 0x1）。它的模板路径依赖 initialize 里建立的内部对象。
+ */
+static void real_dummy_result(const camera3_callback_ops_t *ops, const camera3_capture_result_t *r) {
+    (void)ops;
+    (void)r;
+}
+static void real_dummy_notify(const camera3_callback_ops_t *ops, const camera3_notify_msg_t *m) {
+    (void)ops;
+    (void)m;
+}
+static camera3_callback_ops_t g_real_dummy_cbs = {real_dummy_result, real_dummy_notify};
+
 /* ---------------- 结果元数据（libcamera_metadata.so） ----------------
  *
  * camera3 要求每帧结果带一份**结构合法**的 camera_metadata。我们最初传 NULL，
@@ -289,6 +306,18 @@ static int vcam_configure_streams(const struct camera3_device *dev,
         /* **关键**：这时候框架还没分配 buffer —— 我们提的用法位会真正生效，
          * 于是拿到的就是"我们自己能写的"buffer（这正是外包一层做不到的事）。 */
         if (st->stream_type == 0 /* OUTPUT */) {
+            /*
+             * **把 IMPLEMENTATION_DEFINED 落成具体的 YUV 格式**（0x22 → 0x23）。
+             *
+             * 为什么必须这么做：`GraphicBufferMapper::lockYCbCr` 只认具体 YUV 格式，
+             * 对 IMPLEMENTATION_DEFINED 直接返回错误（实测 `lockYCbCr 失败（1600x1200）`），
+             * 于是我们拿不到平面指针、也就写不进帧。相机 HAL 本来就有权为
+             * IMPLEMENTATION_DEFINED 选定实际格式，选 YUV_420_888 既让我们能 CPU 写，
+             * 也仍能被 GPU 当纹理采样（HW_TEXTURE 在），预览显示不受影响。
+             */
+            if (st->format == 0x22 /* IMPLEMENTATION_DEFINED */) {
+                st->format = 0x23; /* YCbCr_420_888 */
+            }
             st->usage |= USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN;
             /*
              * **max_buffers 必须由 HAL 填**：框架传进来的是 0，不填就会在
@@ -352,10 +381,63 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
     (void)dev;
     if (req == NULL) return -1;
 
+    /*
+     * **结构布局自适应**（实测踩过）：按 AOSP 教科书布局取 `output_buffers` 时，
+     * 我在偏移 0xc 读到的是数值 1（其实就是 `num_output_buffers`），解引用即
+     * `SIGSEGV fault addr 0x1`（tombstone: vcam_process_capture_request+0x4a，
+     * 指令正是 `ldr r0, [r0]` 读 `sb->stream`）。也就是说本机 provider 传给 HAL 的
+     * `camera3_capture_request_t` 与 AOSP 头文件的字段偏移**不一致**。
+     *
+     * 与其赌一个版本，这里按"哪一组看起来像 (指针, 计数)"来选，并把原始字段打一条日志
+     * —— 既当场可用，又把真相留在日志里供以后收敛。
+     */
+    const char *raw = (const char *)req;
+    /*
+     * **本机实测布局**（日志 `请求布局探测` 一次就定了）：
+     *   +0 frame_number=0  +4 settings(指针)  +8 0x0  +12 0x1(计数)  +16 指针
+     * ⇒ provider 传进来的结构里 `num_output_buffers` **在 output_buffers 之前**，
+     * 与 AOSP `camera3.h` 的字段顺序不同（按头文件解引用就是那次 SIGSEGV@0x1）。
+     * 实测优先：先试这个布局，再退回教科书顺序，最后退回"少一个指针"的顺序。
+     */
+    const void *out_measured = *(const void *const *)(raw + 16);
+    uint32_t num_measured = *(const uint32_t *)(raw + 12);
+    const void *out_a = *(const void *const *)(raw + 12);
+    uint32_t num_a = *(const uint32_t *)(raw + 16);
+    const void *out_b = *(const void *const *)(raw + 8);
+    uint32_t num_b = *(const uint32_t *)(raw + 12);
+    const void *outputs = NULL;
+    uint32_t num = 0;
+    const char *which = "none";
+    if ((uintptr_t)out_measured > 0x1000u && num_measured > 0 && num_measured <= 16u) {
+        outputs = out_measured;
+        num = num_measured;
+        which = "实测(+16/+12)";
+    } else if ((uintptr_t)out_a > 0x1000u && num_a > 0 && num_a <= 16u) {
+        outputs = out_a;
+        num = num_a;
+        which = "AOSP(+12/+16)";
+    } else if ((uintptr_t)out_b > 0x1000u && num_b > 0 && num_b <= 16u) {
+        outputs = out_b;
+        num = num_b;
+        which = "备选(+8/+12)";
+    }
+    static bool logged_layout = false;
+    if (!logged_layout) {
+        logged_layout = true;
+        LOGI("请求布局探测：frame=%u settings=%p raw[8]=%p raw[12]=%p raw[16]=%p → 采用 %s（num=%u）",
+             *(const uint32_t *)raw, *(const void *const *)(raw + 4),
+             *(const void *const *)(raw + 8), *(const void *const *)(raw + 12),
+             *(const void *const *)(raw + 16), which, num);
+    }
+    if (outputs == NULL) return 0; /* 认不出来就直接放行，绝不猜着解引用 */
+
+    const camera3_stream_buffer_t *sbs = (const camera3_stream_buffer_t *)outputs;
     bool painted = false;
-    for (uint32_t i = 0; i < req->num_output_buffers; i++) {
-        const camera3_stream_buffer_t *sb = &req->output_buffers[i];
-        if (sb->stream == NULL || sb->buffer == NULL) continue;
+    for (uint32_t i = 0; i < num; i++) {
+        const camera3_stream_buffer_t *sb = &sbs[i];
+        if (sb->stream == NULL || sb->buffer == NULL || (uintptr_t)(*sb->buffer) < 0x1000u) {
+            continue;
+        }
         if (paint(*sb->buffer, sb->stream->width, sb->stream->height, req->frame_number)) {
             painted = true;
         }
@@ -380,11 +462,10 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
     camera3_capture_result_t res;
     memset(&res, 0, sizeof(res));
     res.frame_number = req->frame_number;
-    /* 必须是**结构合法**的元数据（NULL 会被框架校验拒掉，整会话作废） */
     ensure_result_meta();
-    res.result = g_result_meta;
-    res.num_output_buffers = req->num_output_buffers;
-    res.output_buffers = req->output_buffers;
+    res.result = g_result_meta; /* 必须是结构合法的元数据（NULL 会被框架校验拒掉） */
+    res.num_output_buffers = num;
+    res.output_buffers = sbs;
     res.partial_result = 0;
     g_framework_cb->process_capture_result(g_framework_cb, &res);
     return 0;
@@ -456,6 +537,14 @@ static int vcam_open(const struct hw_module_t *module, const char *id, struct hw
                 const void **table = (const void **)rcd->ops;
                 g_real_default_settings =
                     (const void *(*)(const struct camera3_device *, int))table[3];
+                /* ops[0] = initialize：先让真 device 把内部状态建起来，否则模板会崩 */
+                int (*real_init)(const struct camera3_device *,
+                                 const camera3_callback_ops_t *) =
+                    (int (*)(const struct camera3_device *, const camera3_callback_ops_t *))table[0];
+                if (real_init != NULL) {
+                    int rc = real_init(rcd, &g_real_dummy_cbs);
+                    LOGI("真 device initialize 完成（rc=%d，仅为取模板，不接它的帧）", rc);
+                }
             }
         }
     }
