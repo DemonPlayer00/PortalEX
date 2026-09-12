@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.cadenceScale
+import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
@@ -166,6 +167,11 @@ object MockServiceHelper {
         startLoopBroadcastLocation(locationManager)
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
+        // 会话期间保持后台活跃（设置项，默认开）：前台服务 + partial wake lock，
+        // 让本进程不进 cached 档 —— 否则退后台会被冻结、运动循环整段停摆
+        runCatching { Portal.appContext }.getOrNull()
+            ?.takeIf { it.keepAliveInBackground }
+            ?.let { MockKeepAliveService.start(it) }
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             isMockStart(locationManager)
         } else {
@@ -181,6 +187,8 @@ object MockServiceHelper {
         rely.putString(Key.COMMAND_ID, Cmd.STOP)
         stopLoopBroadcastLocation()
         runCatching { Portal.appContext }.getOrNull()?.let { stopSensorPollKeepAlive(it) }
+        // 会话结束 ⇒ 前台服务必须跟着走（不做"没人开会话却常驻"的幽灵）
+        runCatching { Portal.appContext }.getOrNull()?.let { MockKeepAliveService.stop(it) }
         FakeLoc.enable = false
         if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             return !isMockStart(locationManager)

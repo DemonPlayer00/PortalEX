@@ -32,11 +32,13 @@ import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.sensorGridHz
+import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.reportDuration
 
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.service.MockKeepAliveService
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
@@ -47,6 +49,23 @@ class SettingsFragment : Fragment() {
     private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
 
     @SuppressLint("SetTextI18n")
+    override fun onResume() {
+        super.onResume()
+        if (_binding != null) refreshBatteryOptimizationState()
+    }
+
+    /** 电池优化白名单状态：文案如实反映，不做假成功 */
+    private fun refreshBatteryOptimizationState() {
+        val ctx = context ?: return
+        val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        val exempt = pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+        binding.batteryOptimizationState.text = if (exempt) {
+            "已加入（系统不会限制后台运行）"
+        } else {
+            "未加入 — 点此申请（部分 ROM 会限制后台，导致模拟中途停住）"
+        }
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -174,6 +193,49 @@ class SettingsFragment : Fragment() {
             showToast(if (isChecked) "已开启外周传感器模拟" else "已关闭外周传感器模拟")
             updateRemoteConfig()
         }
+
+        // 「后台保活」（默认开）：前台服务 + partial wake lock，防止 :app 被 Cached Apps Freezer 冻结。
+        // 关掉时立刻撤服务；开着且模拟在跑时立刻起服务（不必等下次开模拟）。
+        binding.keepAliveSwitch.isChecked = requireContext().keepAliveInBackground
+        binding.keepAliveSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().keepAliveInBackground = isChecked
+            val ctx = requireContext()
+            if (isChecked) {
+                val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
+                    as? android.location.LocationManager
+                if (lm != null && MockServiceHelper.isMockStart(lm)) {
+                    MockKeepAliveService.start(ctx)
+                }
+                showToast("已开启后台保活")
+            } else {
+                MockKeepAliveService.stop(ctx)
+                showToast("已关闭后台保活（退后台可能被系统冻结）")
+            }
+        }
+
+        // 「电池优化白名单」：点一下申请系统豁免（这就是"后台活跃权限"的系统入口）
+        binding.batteryOptimizationLayout.setOnClickListener {
+            val pm = requireContext().getSystemService(android.content.Context.POWER_SERVICE)
+                as? android.os.PowerManager
+            if (pm?.isIgnoringBatteryOptimizations(requireContext().packageName) == true) {
+                showToast("已在电池优化白名单中")
+                return@setOnClickListener
+            }
+            runCatching {
+                startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:${requireContext().packageName}")
+                    )
+                )
+            }.onFailure {
+                // 个别 ROM 没有这个 Activity：退回「电池优化」列表页，让用户手动加白
+                runCatching {
+                    startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }.onFailure { e -> showToast("无法打开电池优化设置：${e.message}") }
+            }
+        }
+        refreshBatteryOptimizationState()
 
         // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
         binding.cadenceScaleLayout.setOnClickListener {
