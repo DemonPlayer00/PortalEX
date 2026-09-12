@@ -493,6 +493,8 @@ object RemoteCommandHandler {
     private fun scheduleInitialPullback() {
         if (FakeLoc.loopBroadcastLocation) return
         if (!FakeLoc.isSystemServerProcess) return
+        // 路线推进已由 system_server 独占坐标 ⇒ 不需要"启动拉回"，也不该去抢
+        if (RouteDriver.isRunning) return
         kotlin.concurrent.thread(name = "InitialPullback", isDaemon = true, start = true) {
             try {
                 Thread.sleep(500)
