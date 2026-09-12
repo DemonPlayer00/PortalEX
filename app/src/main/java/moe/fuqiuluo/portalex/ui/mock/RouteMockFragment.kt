@@ -109,13 +109,12 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                 }
 
                 override fun onFinished() {
-                    if (!isRockerLocked) {
-                        rockerCoroutineController.pause()
-                    }
+                    // 锁定开着 ⇒ 松手继续走（无人值守，需要后台保活）；否则关门停下
+                    onRockerFinished(isRockerLocked)
                 }
 
                 override fun onStarted() {
-                    rockerCoroutineController.resume()
+                    onRockerStarted()
                 }
             })
         }

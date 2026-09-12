@@ -167,11 +167,9 @@ object MockServiceHelper {
         startLoopBroadcastLocation(locationManager)
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
-        // 会话期间保持后台活跃（设置项，默认开）：前台服务 + partial wake lock，
-        // 让本进程不进 cached 档 —— 否则退后台会被冻结、运动循环整段停摆
-        runCatching { Portal.appContext }.getOrNull()
-            ?.takeIf { it.keepAliveInBackground }
-            ?.let { MockKeepAliveService.start(it) }
+        // 注意：**不在这里起后台保活**。保活只服务"无人值守仍在推进"（自动播放 /
+        // 摇杆锁定后继续走），由运动循环按需起停（见 MockServiceViewModel.syncBackgroundKeepAlive）：
+        // 会话开着但没在动的时候占前台/持锁属于无谓耗电，遵循系统省电策略。
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             isMockStart(locationManager)
         } else {
