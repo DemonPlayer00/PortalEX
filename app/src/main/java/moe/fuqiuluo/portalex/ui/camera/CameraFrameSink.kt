@@ -74,6 +74,9 @@ object CameraFrameSink {
     private const val OFF_PHOTO_H = 84
     private const val OFF_PHOTO_BYTES = 88
     private const val OFF_PHOTO_SEQ = 92
+    /** HAL 回写：静态流（拍照）请求的几何 */
+    private const val OFF_PHOTO_REQ_W = 96
+    private const val OFF_PHOTO_REQ_H = 100
 
     private var raf: RandomAccessFile? = null
     private var map: ByteBuffer? = null
@@ -187,6 +190,18 @@ object CameraFrameSink {
     }
 
     private fun align(v: Int, a: Int): Int = (v + a - 1) / a * a
+
+    /**
+     * HAL 回写的**静态流（拍照）请求几何** —— 照片要按这个尺寸编码。
+     * 拿不到（没跑模拟 / HAL 还没配置静态流）返回 null，调用方按解码帧自己的尺寸编码。
+     */
+    @Synchronized
+    fun photoRequestSize(): Pair<Int, Int>? {
+        val m = map ?: return null
+        val w = m.getInt(OFF_PHOTO_REQ_W)
+        val h = m.getInt(OFF_PHOTO_REQ_H)
+        return if (w > 0 && h > 0 && w <= 8192 && h <= 8192) w to h else null
+    }
 
     /** HAL 回写的"它实际的流尺寸"（HAL 在取帧时填），拿不到返回 null */
     @Synchronized

@@ -1066,6 +1066,7 @@ static void portal_wait_fence(int fd);
 /* 帧文件侧的两个前向声明（定义在下方外源帧段；configure_streams 要提前问"产帧端活着吗"） */
 static bool portal_fsrc_open(void);
 static bool portal_fsrc_alive(void);
+static void portal_fsrc_set_photo_req(uint32_t w, uint32_t h);
 
 static void portal_scrub_streams(void *stream_list) {
     /* camera3_stream_configuration_t { uint32_t num_streams; camera3_stream_t **streams;
@@ -1090,6 +1091,7 @@ static void portal_scrub_streams(void *stream_list) {
         if (f != 0x21 && g_opt_usage_patch >= 2) {
             st->usage &= ~PORTAL_GRALLOC_USAGE_PRIVATE_0;
         }
+        if (f == 0x21) portal_fsrc_set_photo_req(st->width, st->height);
         LOGI("改用途位[%u]：format=0x%x %ux%u usage 0x%x → 0x%x（UBWC %s）", i, st->format,
              st->width, st->height, before, st->usage,
              (g_opt_usage_patch >= 2) ? "已清" : "保留");
@@ -1299,6 +1301,9 @@ struct portal_frame_hdr {
      * 负载位置 = HDR + slots*slot_bytes（紧接亮度槽位之后），长度 photo_bytes。
      */
     uint32_t photo_w, photo_h, photo_bytes, photo_seq;
+    /* 消费端（HAL）回写：**静态流（BLOB）请求的几何** —— app 据此把照片编码到这个尺寸，
+     * 而不是沿用解码帧自己的 1920×1080（实测相机请求的是 2592×1944） */
+    uint32_t photo_req_w, photo_req_h;
 };
 
 static int g_fsrc_fd = -1;
@@ -1314,7 +1319,16 @@ static bool g_fsrc_writable = false;
 static bool portal_fsrc_open(void) {
     if (g_fsrc_map != NULL) return true;
     if (g_opt_src_file[0] == '\0') return false;
-    int fd = open(g_opt_src_file, O_RDONLY | O_CLOEXEC);
+    /*
+     * **必须 O_RDWR**：下面要用 PROT_WRITE 映射（HAL 要回写 `consumer_w/h`、`photo_req_w/h`）。
+     * 实测踩过：O_RDONLY + PROT_WRITE 的 mmap 直接 EACCES ⇒ 静默退回只读映射 ⇒
+     * 几何回写全部失效（app 只能按解码帧自己的尺寸编码照片）。
+     * 拿不到写权限时退回 O_RDONLY（只读模式下功能仍然可用，只是不回写几何）。
+     */
+    int fd = open(g_opt_src_file, O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        fd = open(g_opt_src_file, O_RDONLY | O_CLOEXEC);
+    }
     if (fd < 0) {
         PORTAL_LOG_ONCE(LOGE, "帧文件打不开：%s（errno=%d）→ 本流继续用图案", g_opt_src_file, errno);
         return false;
@@ -1374,6 +1388,16 @@ static bool portal_fsrc_alive(void) {
     clock_gettime(CLOCK_MONOTONIC, &nw);
     uint64_t now_ns = (uint64_t)nw.tv_sec * 1000000000ull + (uint64_t)nw.tv_nsec;
     return !(now_ns > ts && now_ns - ts > 5000000000ull);
+}
+
+/** 把静态流（拍照）请求的几何回写给 app：照片要按这个尺寸编码，而不是解码帧自己的尺寸 */
+static void portal_fsrc_set_photo_req(uint32_t w, uint32_t h) {
+    if (!g_fsrc_writable || g_fsrc_map == NULL) return;
+    struct portal_frame_hdr *hdr = (struct portal_frame_hdr *)g_fsrc_map;
+    if (hdr->photo_req_w == w && hdr->photo_req_h == h) return;
+    hdr->photo_req_w = w;
+    hdr->photo_req_h = h;
+    LOGI("静态流几何回写：%ux%u（app 据此编码照片）", w, h);
 }
 
 /** 取当前该用的源槽；没有可用帧返回 NULL */
@@ -1725,6 +1749,44 @@ static void portal_wait_fence(int fd) {
     if (rc != 0) PORTAL_LOG_ONCE(LOGI, "acquire_fence 未在 200ms 内就绪 rc=%d（继续写）", rc);
 }
 
+/* ------------------------------------------------------------------ *
+ * `camera3_jpeg_blob`：JPEG 长度**真正的传达方式**
+ *
+ * AOSP 的约定：HAL 把 JPEG 写在 buffer 开头，并在 **buffer 末尾**放一个
+ *   `camera3_jpeg_blob_t { uint16 jpeg_blob_id(=0x00FF); uint32 jpeg_size; }`（含对齐 = 8 字节），
+ * 框架读这 8 个字节才知道"这张 JPEG 到底多长"。
+ *
+ * 这解释了本轮之前所有反常现象：保存下来的照片是 924,960 字节而我们的 JPEG 只有 126 KB ——
+ * 因为那 6~8 个字节我们**从没碰过**，一直是真 HAL 那张照片的长度。
+ * 修法：把自己的 JPEG 写进去的同时，**在同一个位置写我们自己的 blob**（长度=我们的字节数）。
+ * ------------------------------------------------------------------ */
+
+#define PORTAL_JPEG_BLOB_ID 0x00FFu
+#define PORTAL_JPEG_BLOB_BYTES 8u
+
+/** 在候选容量处找 camera3_jpeg_blob；找到返回容量，否则 0 */
+static uint32_t portal_find_jpeg_capacity(const uint8_t *base, const void *handle, uint32_t *out_size,
+                                         int verbose) {
+    if (base == NULL || handle == NULL) return 0;
+    const int *h = (const int *)handle;
+    if (h[1] < 0 || h[1] > 8 || h[2] < 0 || h[2] > 64) return 0;
+    const int *ints = h + 3 + h[1];
+    for (int i = 0; i < h[2]; i++) {
+        uint32_t cap = (uint32_t)ints[i];
+        if (cap < 65536u || cap > 64u * 1024u * 1024u) continue;
+        const uint8_t *p = base + cap - PORTAL_JPEG_BLOB_BYTES;
+        uint16_t id = (uint16_t)(p[0] | (p[1] << 8));
+        uint32_t sz = (uint32_t)p[4] | ((uint32_t)p[5] << 8) | ((uint32_t)p[6] << 16) |
+                      ((uint32_t)p[7] << 24);
+        if (verbose) LOGI("  容量候选 ints[%d]=%u → 尾部 id=0x%04x size=%u", i, cap, id, sz);
+        if (id == PORTAL_JPEG_BLOB_ID && sz > 0 && sz < cap) {
+            *out_size = sz;
+            return cap;
+        }
+    }
+    return 0;
+}
+
 /** 照片区大小上限（保守：实测 BLOB buffer 约 7.6 MB，4 MB 一定放得下） */
 #define PORTAL_PHOTO_MAX (4u * 1024u * 1024u)
 
@@ -1756,7 +1818,14 @@ static bool portal_write_photo(const camera3_stream_buffer_t *sb) {
     uint32_t lock_usage =
         PORTAL_GRALLOC_USAGE_SW_READ_OFTEN | PORTAL_GRALLOC_USAGE_SW_WRITE_OFTEN;
     struct portal_rect bounds = {0, 0, (int32_t)sb->stream->width, (int32_t)sb->stream->height};
+    static unsigned long photo_n = 0;
+    unsigned long pn = __atomic_add_fetch(&photo_n, 1, __ATOMIC_RELAXED);
+    bool dump_photo = (g_opt_dump && pn <= 6);
+    if (dump_photo) LOGI("照片#%lu 搬运前（等 fence 之前）句柄：", pn);
+    if (dump_photo) portal_dump_handle(90, handle);
     portal_wait_fence(sb->acquire_fence);
+    if (dump_photo) LOGI("照片#%lu 搬运前（等 fence 之后）句柄：", pn);
+    if (dump_photo) portal_dump_handle(91, handle);
     void *vaddr = NULL;
     int rc = g_gbm_lock(g_gbm_self, handle, lock_usage, &bounds, &vaddr);
     if (rc != 0 || vaddr == NULL) {
@@ -1764,11 +1833,37 @@ static bool portal_write_photo(const camera3_stream_buffer_t *sb) {
         return false;
     }
     memcpy(vaddr, g_fsrc_map + off, n);
-    size_t wipe = PORTAL_PHOTO_MAX;
+    /* 先看看真 HAL 的 blob（同时把 buffer 容量问出来） */
+    uint32_t real_size = 0;
+    uint32_t cap = portal_find_jpeg_capacity((const uint8_t *)vaddr, handle, &real_size, dump_photo);
+    size_t wipe;
+    if (cap != 0) {
+        /* 找到容量：只清到 blob 之前，并**写我们自己的 blob**（长度 = 我们的字节数） */
+        wipe = (size_t)cap - PORTAL_JPEG_BLOB_BYTES;
+        if (dump_photo) {
+            LOGI("  真 HAL 的 blob：容量=%u 它那张=%u 字节（我们=%u）", cap, real_size, n);
+        }
+        uint8_t *blob = (uint8_t *)vaddr + wipe;
+        memset(blob, 0, PORTAL_JPEG_BLOB_BYTES);
+        blob[0] = (uint8_t)(PORTAL_JPEG_BLOB_ID & 0xFF);
+        blob[1] = (uint8_t)(PORTAL_JPEG_BLOB_ID >> 8);
+        blob[4] = (uint8_t)(n & 0xFF);
+        blob[5] = (uint8_t)((n >> 8) & 0xFF);
+        blob[6] = (uint8_t)((n >> 16) & 0xFF);
+        blob[7] = (uint8_t)((n >> 24) & 0xFF);
+    } else {
+        /* 没找到（例如真 HAL 还没写 blob）：保守清 4 MiB，不动尾部 */
+        wipe = PORTAL_PHOTO_MAX;
+        PORTAL_LOG_ONCE(LOGI, "没找到 camera3_jpeg_blob：本次不改长度（照片尾部会是零）");
+    }
     if (wipe > n) memset((uint8_t *)vaddr + n, 0, wipe - n);
     int fence = -1;
     g_gbm_unlock(g_gbm_self, handle, &fence);
     LOGI("照片已替换：%u 字节（来自共享帧文件的照片区）", n);
+    if (dump_photo) {
+        LOGI("照片#%lu 搬运后句柄（我们的 JPEG 长度=%u）：", pn, n);
+        portal_dump_handle(92, handle);
+    }
     return true;
 }
 
