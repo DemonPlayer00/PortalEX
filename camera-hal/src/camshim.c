@@ -1040,6 +1040,17 @@ static bool portal_cpu_writable(const camera3_stream_t *st) {
 #define PORTAL_GRALLOC_USAGE_PRIVATE_0 0x10000000u
 
 /**
+ * `GRALLOC_USAGE_HW_VIDEO_ENCODER`：**录像用的编码器流，必须完全不碰**。
+ *
+ * 实测教训：录像会话里编码器流是 `format=0x22 1920x1080 usage=0x10030022`（含 0x10000）。
+ * 我们按"非 BLOB 就清 UBWC"的规则清了它 —— 结果**录到的画面是平铺噪声**：
+ * 编码器（Venus）按 UBWC 布局读这块内存，清掉 UBWC 之后它读到的就是垃圾。
+ * 也就是说"补位 + 注入"会把**录像内容弄坏**，比不接管更糟。所以这条流一律跳过：
+ * 不补位、不清 UBWC、不注入 ⇒ 录像内容退回**真实相机**（已知边界，见 docs §15.8）。
+ */
+#define PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER 0x00010000u
+
+/**
  * 是否在 configure_streams 里改输出流的用途位（运行期开关 `usage_patch`）。
  *
  * camera3 的既定机制：HAL 可以在 `configure_streams` 里改 `camera3_stream_t::usage`，
@@ -1084,6 +1095,12 @@ static void portal_scrub_streams(void *stream_list) {
         int f = st->format;
         /* RAW（0x20/0x25）不动：模拟 RAW 没有意义，改它的分配只会把拍照弄坏 */
         if (f == 0x20 || f == 0x25) continue;
+        /* 录像编码器流也不动：清了 UBWC 会让编码器读到平铺噪声（实测），把录像内容弄坏 */
+        if ((st->usage & PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0) {
+            LOGI("视频编码器流（format=0x%x %ux%u usage=0x%x）不动：编码器按 UBWC 读",
+                 st->format, st->width, st->height, st->usage);
+            continue;
+        }
         uint32_t before = st->usage;
         st->usage |= PORTAL_ADD_SW_USAGE;
         /* BLOB（0x21）是线性字节块，没有平铺问题 ⇒ 只补写位、不动 UBWC；
@@ -1458,19 +1475,27 @@ static const uint8_t *portal_fsrc_pick(void) {
  * 与模块侧 `CameraVideoPlayer` 的 fit-center 一致。
  * ------------------------------------------------------------------ */
 
-static uint32_t *g_map_rows = NULL; /* 目标行 → 源行 */
-static uint32_t *g_map_cols = NULL; /* 目标列 → 源列 */
-static uint32_t g_map_sw = 0, g_map_sh = 0, g_map_dw = 0, g_map_dh = 0;
+struct portal_scale_maps {
+    uint32_t *rows; /* 目标行 → 源行 */
+    uint32_t *cols; /* 目标列 → 源列 */
+    uint32_t sw, sh, dw, dh;
+};
+/*
+ * **两份缓存**（0=亮度，1=色度）。踩过的坑：一开始只做一份，而亮度用 (sw,sh→w,h)、
+ * 色度用 (sw/2,sh/2→w/2,h/2) —— 每帧两次调用互相作废对方的缓存，
+ * 于是**每帧都重建两张映射表**（日志里 `缩放映射已建立` 每帧刷屏就是证据）。
+ */
+static struct portal_scale_maps g_scale[2];
 
-static bool portal_build_maps(uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh) {
-    if (g_map_rows != NULL && g_map_sw == sw && g_map_sh == sh && g_map_dw == dw &&
-        g_map_dh == dh) {
+static bool portal_build_maps(int slot, uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh) {
+    struct portal_scale_maps *m = &g_scale[slot & 1];
+    if (m->rows != NULL && m->sw == sw && m->sh == sh && m->dw == dw && m->dh == dh) {
         return true;
     }
-    free(g_map_rows);
-    free(g_map_cols);
-    g_map_rows = NULL;
-    g_map_cols = NULL;
+    free(m->rows);
+    free(m->cols);
+    m->rows = NULL;
+    m->cols = NULL;
     if (sw == 0 || sh == 0 || dw == 0 || dh == 0) return false;
 
     uint32_t *rows = (uint32_t *)malloc(sizeof(uint32_t) * dh);
@@ -1480,6 +1505,7 @@ static bool portal_build_maps(uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh
         free(cols);
         return false;
     }
+    (void)0;
     /* cover：取较大的放大倍率（宽主导 / 高主导），另一维居中裁剪 */
     if ((uint64_t)dw * sh >= (uint64_t)dh * sw) {
         for (uint32_t dx = 0; dx < dw; dx++) {
@@ -1506,13 +1532,14 @@ static bool portal_build_maps(uint32_t sw, uint32_t sh, uint32_t dw, uint32_t dh
             cols[dx] = (sx < sw) ? sx : sw - 1;
         }
     }
-    g_map_rows = rows;
-    g_map_cols = cols;
-    g_map_sw = sw;
-    g_map_sh = sh;
-    g_map_dw = dw;
-    g_map_dh = dh;
-    LOGI("缩放映射已建立：%ux%u → %ux%u（cover + 居中裁剪）", sw, sh, dw, dh);
+    m->rows = rows;
+    m->cols = cols;
+    m->sw = sw;
+    m->sh = sh;
+    m->dw = dw;
+    m->dh = dh;
+    LOGI("缩放映射已建立[%s]：%ux%u → %ux%u（cover + 居中裁剪）", (slot & 1) ? "色度" : "亮度", sw,
+         sh, dw, dh);
     return true;
 }
 
@@ -1552,12 +1579,14 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
         return true;
     }
 
-    if (!portal_build_maps(sw, sh, w, h)) return false;
+    if (!portal_build_maps(0, sw, sh, w, h)) return false;
+    const uint32_t *map_rows = g_scale[0].rows;
+    const uint32_t *map_cols = g_scale[0].cols;
     /* 亮度：逐行按列映射取源字节（查表，无分支计算） */
     for (uint32_t r = 0; r < h; r++) {
-        const uint8_t *srow = src + (size_t)g_map_rows[r] * sy;
+        const uint8_t *srow = src + (size_t)map_rows[r] * sy;
         uint8_t *drow = dy + (size_t)r * dystride;
-        for (uint32_t x = 0; x < w; x++) drow[x] = srow[g_map_cols[x]];
+        for (uint32_t x = 0; x < w; x++) drow[x] = srow[map_cols[x]];
     }
     if (dcb == NULL || dcstride == 0 || suv == 0) return true;
     if (!interleaved) {
@@ -1567,12 +1596,14 @@ static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uin
     }
     /* 色度：半分辨率，每元素 2 字节（U,V）一起搬，省一半访存 */
     uint32_t cw = w / 2, ch = h / 2;
-    if (!portal_build_maps(sw / 2, sh / 2, cw, ch)) return true;
+    if (!portal_build_maps(1, sw / 2, sh / 2, cw, ch)) return true;
+    const uint32_t *cmap_rows = g_scale[1].rows;
+    const uint32_t *cmap_cols = g_scale[1].cols;
     for (uint32_t r = 0; r < ch; r++) {
-        const uint8_t *srow = suvp + (size_t)g_map_rows[r] * suv;
+        const uint8_t *srow = suvp + (size_t)cmap_rows[r] * suv;
         uint8_t *drow = dcb + (size_t)r * dcstride;
         for (uint32_t x = 0; x < cw; x++) {
-            const uint8_t *sp = srow + (size_t)g_map_cols[x] * 2;
+            const uint8_t *sp = srow + (size_t)cmap_cols[x] * 2;
             if (g_opt_swap_uv) {
                 drow[x * 2] = sp[1];
                 drow[x * 2 + 1] = sp[0];
@@ -1881,6 +1912,8 @@ static bool inject_into_buffer(const camera3_stream_buffer_t *sb, uint32_t frame
     }
     uint32_t w = st->width, h = st->height;
     if (w == 0 || h == 0 || w > 8192u || h > 8192u) return false;
+    /* 录像编码器流不写：见 PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER 的注释 */
+    if ((st->usage & PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0) return false;
 
     if (!portal_cpu_writable(st)) {
         /* 保命门：HW-only 的流绝不尝试 CPU 映射（会 abort 掉 provider，实测） */
