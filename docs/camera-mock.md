@@ -1369,3 +1369,150 @@ Begin CONFIG=2   逐帧出流=562   provider 稳定（pid 未变）   tombstone 
 余下的两个已知坑（都在本节新加）：
 1. 跳回中部必须用 `ret`（见 22.8）；
 2. 外壳序言与重放槽偏移必须对齐（见 22.9 第三条）——写错的表现是"挂上就崩、且没有 tombstone 说明"。
+
+## 23. **M1 达成**：系统层把相机画面换掉，目标 App 零注入（2026-09-13）
+
+一句话结论：在 ACE5 上，**不碰任何目标应用**，只在 vendor/odm 侧把相机 HAL 的输出缓冲内容换成我们自己的
+像素 —— 预览整片变成我们填的颜色与图案，相机 App 的界面完全不受影响。这是 M1。
+
+下面按"先纠正一个会误导全部分析的算术错误，再给实测路径，再给两条硬规矩"的顺序记。
+
+### 23.1 先纠正：`portal_where` 打印的不是 vaddr
+
+`portal_where` 输出的是"地址 − **所在映射**起始"，而 vendor 模块的文本段往往不是从 vaddr 0 开始的。
+所以拿日志里的 `oemlayer+0xNNNN` 直接去反汇编文件是**错的**，正确换算：
+
+| 模块 | 文本段映射 | 文件 vaddr 换算 |
+| --- | --- | --- |
+| `camera.oemlayer.so`（/odm） | `r-xp 0005e000` | 文件 vaddr = 打印值 **+ 0x5E000** |
+| `camera.qcom.so`（/vendor，真件） | `r-xp 0030f000` | 文件 vaddr = 打印值 **+ 0x30F000** |
+| `camera.qcom.so`（/odm，我们的 shim） | `r-xp 00000000` | 文件 vaddr = 打印值 |
+
+踩过的表现：把 `oemlayer+0x6fb30` 当文件 vaddr 一查，落在一张分辨率常量表里（`bti c; nop; adr …; mov w1,#0xf00; mov w2,#0x870; b …`），
+于是"调用者是谁"整段结论都是错的。加上 0x5E000 之后是 `0xCDB30`，正是上一轮离线分析里那个"调 CamX
+`configure_streams` 的包装"，对上了。
+
+### 23.2 实测出来的 ACE5 请求路径（每一级都有调用者与符号）
+
+```
+com.oplus.camera（目标 App，**完全没被碰**）
+  └─ camera provider（AIDL）
+      └─ camx.device-impl.so  CameraDeviceSession::configureStreams_Impl / ::processOneCaptureRequest
+          └─ camera.oemlayer.so +0x6c554 / +0x6cadc      ← OPPO HAL3 层入口
+              └─ camera.qcom.so +0x1e46f60 / +0x1e49ca0  ← CamX HAL3 层入口
+```
+
+命中计数是同一次会话里对齐的，两侧**逐一相等**：
+
+```
+零调用钩子[2] camera.oemlayer.so+0x6cadc   命中 215 次  caller=camx.device-impl.so processOneCaptureRequest
+请求快照：      real+0x1e49ca0             命中 215 次  （同一会话）
+零调用钩子[3] camera.oemlayer.so+0x6c554   命中   1 次  caller=camx.device-impl.so configureStreams_Impl
+零调用钩子[0] real+0x1e46f60               命中   1 次  caller=oemlayer+0x6fb30
+```
+
+入口身份的确认方式不是猜，是**读它们自己引用的字符串**：把 `adrp/add` 对解出来，`0x1e49ca0`
+引用了 `SCOPEEventHAL3ProcessCaptureRequest`、`process_capture_request`、
+`camxhal3.cpp:1929 Invalid argument(s) for process_capture_request()`；`0x1e46f60` 引用 `configure_streams`。
+（同一个技巧可继续给那 18 个"同序言"候选取名。）
+
+顺带纠正上一轮的一条记录：`0x1e49ca0` **不是**"从没命中"——之前一次会话没命中是因为那次相机会话没跑起来，
+不是地址不对。现在它是命中最多、最热的那条路。
+
+### 23.3 CamX 看到的 HAL3 请求结构：**不是** AOSP `camera3.h` 那套
+
+直接从 CamX 自己的日志点（`camxhal3.cpp:1845/1888`）反汇编它读的偏移，得到真布局：
+
+| 偏移 | 含义 |
+| --- | --- |
+| `+0x00` | `frame_number` |
+| `+0x08` | `settings`（`camera_metadata_t*`，实测 `size=9248 version=1`） |
+| `+0x18` | `num_output_buffers` |
+| `+0x20` | `output_buffers`（数组，每个条目 **0x28 字节**） |
+| `+0x48` | `priv_settings` |
+| `+0x58` | `priv_result` |
+| `+0x68` | `num_priv_result` |
+
+条目（`0x28` 字节）：`+0x00 stream`、`+0x08 buffer`、`+0x10 status`、`+0x14 acquire_fence`、
+`+0x18 release_fence`、`+0x20 priv`。
+
+实测快照（帧号 268）：`settings=0xb4000079cf396000  输出缓冲数=3  数组=0x7fe38269e8  priv_result=0xb40000799e6d3c00`，
+三条流分别是 `2136x1200 format=0x23`（YUV_420_888，预览/录像）、`4096x3072 format=0x25`（RAW10）、
+`640x358 format=0x23`（小图/分析）。
+
+> 教训：**别照抄 `camera3.h`**。按 AOSP 顺序解这个结构，`settings` 会读成 `3`、`num_output_buffers` 会读成 `0`。
+
+### 23.4 零调用请求快照钩子：形态 + 两条硬规矩
+
+形态：3 条 `mov` 抄 `x30/x0/x1` → `+12` 重放被顶掉的 4 条 → 只抄 `req[0..23]` 共 192 字节 → `ret` 回 `entry+16`。
+全程零 `call`（理由见 22.9）。
+
+**规矩一：热路径里只许做"契约保证有效"的一级解引用。**
+第一版按"标准布局"继续往下解（`req[+8]` → 缓冲数组 → `[+8]` → gralloc handle），当场 SIGSEGV：
+
+```
+signal 11 (SIGSEGV), fault addr 0x0000007700000000
+#00 pc 0x12910  /odm/lib64/hw/camera.qcom.so (portal_hook_req0+132)
+```
+
+provider 与相机 App 一起死（相机 App 是连带受害者）。**"我以为布局是这样"的解引用不能放在钩子里。**
+
+**规矩二：线程侧解析一切指针都走 `/proc/self/mem` + `pread`。**
+坏地址只返回 `EFAULT/EIO`，**不可能崩**。配上"先看映射再读"，把"读异步快照里的脏指针"从致命变成无害 ——
+这是"零调用钩子 + 线程侧解析"这套结构的正确读法。
+
+汇报与记账解耦：钩子里一条 I/O 都不能有，`report_period=<秒>` 的线程负责把 `.bss` 里的账与快照打出来。
+
+### 23.5 真正把画面换掉的那条路：fd 表里的 dmabuf
+
+- provider 进程 `/proc/self/fd` 里实测 236 个 dmabuf；**相机输出缓冲是其中名字为 `MAP_UNKNOWN`、
+  尺寸 `4038656` 的那 10 块**（按尺寸选靶，因为 fd 号每次 provider 重启都会变）。
+- 在**我们自己的线程**里 `mmap(len, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0)` 之后就是普通内存写 ——
+  不需要 call 进 vendor 的任何锁，钩子也不需要做重活。
+- **必须跑赢 ISP**：相机以 ~30fps 把新帧 DMA 进同一批缓冲。实测三种写法的结果：
+
+| 写法 | 结果 |
+| --- | --- |
+| 逐字节 `for` 循环写渐变（≈10 倍慢于 memcpy） | **输**：预览仍是实时画面 |
+| `memset` 纯色 + `inject_us=25000` 间隔 | **输**：预览仍是实时画面 |
+| `memset` 纯色 / 预生成模板 `memcpy`，紧循环（`inject_us=0`） | **赢**：预览整片是我们的内容 |
+
+  推论：图案必须**预先算好**放在我们自己的内存里，热循环只剩 `memset`/`memcpy`。
+
+视觉证据（截图取自设备，`screencap`）：
+
+- 全 `0x00` 填充 → 预览整片**绿色**（Y=U=V=0 这条管线的呈现），相机 UI（快门、模式、EV）完全正常；
+- 预生成渐变模板 `memcpy` → 预览整片**细条纹**（渐变周期 64 字节 < 一行的像素跨度）。
+
+两条都证明：**这块缓冲的每一个字节都由我们决定**，而目标 App 一行代码都没被注入。
+
+### 23.6 部署脚本的修正（v3）
+
+`/tmp/ace5_deploy3.sh` 相对 v2 只改一件事：**cfg 在挂载 overlay 之后"透过挂载点"写**
+（`> /odm/lib64/hw/portal.cfg`）。直接写 upperdir 会绕过 overlayfs 缓存，让 shim 读到旧配置 ——
+这个坑上一轮已经让一整轮 A/B 结论作废。
+
+### 23.7 现在的开关一览（都在 `/vendor/lib64/hw/portal.cfg`）
+
+| 键 | 作用 |
+| --- | --- |
+| `hook_rec_vaddrs=` | 零调用记账钩子（真件，逗号分隔 vaddr，最多 32 个） |
+| `hook_rec_ol_vaddrs=` | 同上，oemlayer |
+| `req_vaddrs=` | 请求快照钩子（挂 `process_capture_request`） |
+| `req_probe=1` | 汇报线程顺带列出进程内的 dmabuf |
+| `report_period=<秒>` | 记账/快照的周期汇报（与热路径解耦） |
+| `inject_size=<字节>` | 按尺寸选定注入靶（多块一起填） |
+| `inject_fd=<fd>` | 指定单个 dmabuf |
+| `inject_byte=0xNN` | 纯色填充字节 |
+| `inject_us=<微秒>` | 填充间隔，`0` = 紧循环（要赢 ISP 基本得用 0） |
+| `inject_pattern=1` | 不纯色，用预生成的渐变模板（证明逐像素可控） |
+
+### 23.8 下一步（M2/M3）
+
+M0（入口接管、不改行为）与 M1（系统层改输出缓冲、目标 App 零注入）都已在 ACE5 上跑通。剩下的是"内容"：
+
+1. **定出这块缓冲的平面布局与几何**：`2136x1200` 的 YUV_420_888 无论按什么 stride 都乘不出 `4038656`
+   （`4096×986` 倒是整除），说明有对齐/附加平面 —— 用"大周期图案 + 截图反推"就能定出来；
+2. **照片**走的是另一条流（`4096x3072` BLOB/RAW），注入点要单独确认；
+3. **视频**与预览同源，M1 的通道直接可用，缺的是"逐帧喂内容"；
+4. 之后才是模块化：把"预生成图案/图像/视频帧"做成可配置的注入源。
