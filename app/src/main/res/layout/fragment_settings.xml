@@ -555,7 +555,7 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="模拟期间用一个前台服务把 App 钉在前台档，防止被系统冻结\n（冻结期间位置会停住，跑步应用上就是一段异常配速）"
+                        android:text="仅在**无人值守仍在走**时启用（自动播放 / 摇杆锁定后继续走）：\n用前台服务把 App 钉住，防止被系统冻结导致位置停住；空闲时按系统默认省电"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial

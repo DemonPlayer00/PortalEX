@@ -268,14 +268,15 @@ var Context.sensorNoiseReport: String
     }
 
 /**
- * 会话期间**保持后台活跃**（默认开）：
+ * **无人值守推进时**保持后台活跃（默认开）：
  * 起一个自己的前台服务 + partial wake lock，把 `:app` 进程钉在 FOREGROUND_SERVICE 档。
  *
- * 为什么默认开：App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结 ——
- * 冻结期间运动循环整段停摆（实测 25.6s / 47.7s 空洞），system_server 仍在按保活节奏推帧
- * （位置不动、vel≈0），目标跑步应用看到"原地不动"。
+ * 触发条件**不是"会话开着"**，而是"没有人操作但位置还在走"：自动播放、摇杆锁定后继续走。
+ * 空闲（会话开着但没动）、手指按着摇杆、关掉本项时都不占前台、不持锁 —— 遵循系统省电策略。
  *
- * 关闭后行为与改造前一致：不占前台、不持锁（靠悬浮窗时的 perceptible 档维持）。
+ * 为什么这几条需要它：App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结 ——
+ * 冻结期间运动循环整段停摆（实测灭屏/后台场景下 tick 空洞 25.6s/47.7s），而 system_server
+ * 仍在按保活节奏推帧（位置不动、vel≈0），目标跑步应用看到"原地不动"。
  */
 var Context.keepAliveInBackground: Boolean
     get() = sharedPrefs.getBoolean("keepAliveInBackground", true)

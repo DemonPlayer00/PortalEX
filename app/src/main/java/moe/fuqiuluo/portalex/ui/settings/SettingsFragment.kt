@@ -201,9 +201,9 @@ class SettingsFragment : Fragment() {
             requireContext().keepAliveInBackground = isChecked
             val ctx = requireContext()
             if (isChecked) {
-                val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
-                    as? android.location.LocationManager
-                if (lm != null && MockServiceHelper.isMockStart(lm)) {
+                // 只有"无人值守仍在推进"（自动播放）才需要立刻起服务；
+                // 仅仅开着会话不算 —— 空闲时保持系统默认省电行为
+                if (mockServiceViewModel.isAutoPlaying) {
                     MockKeepAliveService.start(ctx)
                 }
                 showToast("已开启后台保活")
