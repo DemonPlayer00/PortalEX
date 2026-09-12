@@ -40,6 +40,8 @@ object PortalDiag {
         CONFIG_APPLY("配置应用"),
         /** 某个 hook 族安装失败（缺类/反射失败）⇒ 该族不生效，其余 hook 继续（ROM 差异是常态） */
         HOOK_INSTALL("hook 安装"),
+        /** 摄像头模拟：清单拉取/素材打开/播放/排水面等任一环失败 ⇒ 本次不拦截（应用看真实摄像头） */
+        CAMERA_MOCK("摄像头模拟"),
     }
 
     private val counters = ConcurrentHashMap<Area, AtomicLong>()
