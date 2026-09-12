@@ -1729,3 +1729,50 @@ F = desired_upright.transpose(Image.FLIP_LEFT_RIGHT).transpose(Image.TRANSPOSE)
   2. **照片逆 ISP**：RAW 域校准（黑电平/CFA/增益）才能喂任意图片；
      短路径是 `raw_dump` 取真帧后局部改写；
   3. 1080p30 全黑是设备侧问题，记下来免得下一轮又误判成自己的锅。
+
+## 27. 想从"结果投递"那一刻写缓冲：设计做完了，落点被两件事挡住（2026-09-13）
+
+### 27.1 为什么要换落点
+
+录像拿不到干净画面的原因是**时序**（§26.3 已排掉带宽）：编码器是"ISP 写完 → 立刻读"，
+盲目死循环的写入要么早于 ISP（随后被覆盖）、要么晚于编码器读完。唯一正确的做法是
+**在结果投递那一刻写**，并且**写完再放行**。
+
+### 27.2 已经做出来的东西
+
+- `PORTAL_HOOK_STUB_RES` 外壳：零调用，除记账外只做三件事 —— 存结果指针、代次 +1、
+  把 `g_res_done` 清零后**有限自旋**（`movz/movk` 拼出的 2,000,000 次上限，约 2~4 毫秒）
+  等写手完成，超时也放行（绝不把 HAL 线程挂死；顺带记一笔：`mov x17, #2000000` 这种
+  立即数在 AArch64 上根本编码不了，必须 `movz`+`movk`，编译器报的是
+  "expected compatible register or logical immediate"）。
+- `res_writer=1` 写手线程：按 `gen` 代次触发，解析 `camera3_capture_result_t`
+  （+0 帧号 / +4 输出路数 / +8 输出缓冲数组），逐路取出 `buffer_handle_t`，
+  解出 native_handle 的 fd → `fstat` 尺寸 → 在 `mock_map` 里找模板 → `mmap` + `memcpy`，
+  然后置 `g_res_done` 放行；找不到模板就立刻放行（不拖慢预览）。
+
+### 27.3 两个挡住落点的实测事实
+
+1. **`camx.device-impl.so` 的结果投递函数是跳板，挂不上。**
+   `sProcessCaptureResult` / `sNotify` / `sProcessCaptureRequest` 三个符号的头两条指令都是
+   `bti c; b <实现>` —— 其中的 `b` 是 PC 相对，**不能搬到我们的外壳里重放**，
+   安装器直接按规矩拒绝（`前 4 条指令里有 PC 相对指令，不能重放，跳过`）。
+   这是"重放式入口钩子"的固有边界：**跳板类入口不可挂**。
+2. **挂上这套函数会让相机 App 起不来。** 改成挂六个可重放的候选
+   （`constructCaptureResult` `ResultBatcher::processCaptureResult/processOneCaptureResult/
+   invokeProcessCaptureResultCallback` `processCaptureRequest` `processCaptureRequest_Impl`）之后，
+   相机 App **两次启动都当场死掉**（`app died, no saved state`），一次命中都没有。
+   把钩子撤掉、只留请求路径那几个，相机会话立刻恢复正常。
+
+   ⇒ 经验规则（记下来）：**在 `camx.device-impl.so` 的会话函数上挂钩，无论"看起来多安全"，
+   都必须先做一次"能不能开机"的对照**；本项目目前的可用落点仍然只有
+   `camera.qcom.so` 的 HAL3 入口（`0x1e49ca0` 等）与 `camera.oemlayer.so` 的两个入口。
+
+### 27.4 这一轮之后的诚实状态
+
+- 已经**稳定可用**的：照片模式预览（任意图像、几何正确）、录像模式预览（1920×1080 那一路）。
+- **尚未拿下**的：存下来的照片（RAW 域可控，颜色由 ISP 决定）、存下来的 4K 录像（能写进去但撕裂）。
+- 这一轮没有把上面两件事做完，原因写清楚了：正确的落点（结果投递）在本机是一个
+  **不可挂的跳板**，而绕道挂它的实现函数会把相机 App 打死。下一步要么找
+  **可挂的结果路径**（例如 `camx.device-impl.so` 里别的、非跳板的结果函数，或
+  oemlayer 侧的 `process_capture_result` 回调），要么改从
+  **写时序**入手（把盲目循环换成"跟着请求节拍写一轮"）。
