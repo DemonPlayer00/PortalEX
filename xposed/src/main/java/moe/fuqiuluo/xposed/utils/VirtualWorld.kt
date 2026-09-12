@@ -241,8 +241,16 @@ internal object VirtualWorld {
      */
     private const val SPEED_WINDOW_NANOS = 2_000_000_000L
 
-    /** 单次坐标跳变超过该距离（米）视为瞬移（手动设点/路线跳点），不计入速度推算 */
-    private const val TELEPORT_THRESHOLD_METERS = 50.0
+    /**
+     * 瞬移判定阈值（m/s）：**按隐含速度判，而不是按绝对距离**。
+     *
+     * 为什么不能再用"单次跳变 > 50m"：位置推进现在按**真实经过时间**补偿（见 App 侧
+     * `MockServiceViewModel.ensureMotionLoop`），后台被节流后必然出现"Δt 大、Δd 也大"的
+     * **合法**大位移（冻结 20s → 70m）。用绝对距离阈值会把它误判成瞬移并返回 (0,false)，
+     * 该帧 speed 落 0、再被 speedFloor 抬到 ~0.3m/s —— 正是跑步软件配速曲线上的"尖峰"。
+     * 手动设点/路线跳点是"位移巨大而 Δt 极小"，用速度判据照样拦得住。
+     */
+    private const val TELEPORT_SPEED_MPS = 80.0
 
     /** 注入速度上限（m/s，288km/h）：防止异常位移产生荒谬速度 */
     private const val MAX_MEASURED_SPEED = 80.0
@@ -283,11 +291,12 @@ internal object VirtualWorld {
                 } else break
             }
             val distM = WorldMath.haversine(startLat, startLon, curLat, curLon)
-            // 瞬移（手动设点/路线跳点）不算速度
-            if (distM > TELEPORT_THRESHOLD_METERS) return 0.0 to false
             // 实际覆盖时长：采样历史比窗口短时用真实时长，否则按窗口计
             val spanSec = minOf(now - startNanos, winNanos).coerceAtLeast(1_000_000L) / 1e9
-            val speed = (distM / spanSec).coerceIn(0.0, MAX_MEASURED_SPEED)
+            val rawSpeed = distM / spanSec
+            // 瞬移（手动设点/路线跳点）：位移对应的**速度**荒谬才算，见 TELEPORT_SPEED_MPS
+            if (rawSpeed > TELEPORT_SPEED_MPS) return 0.0 to false
+            val speed = rawSpeed.coerceIn(0.0, MAX_MEASURED_SPEED)
             return speed to (speed > 0.05)
         }
     }
@@ -300,11 +309,15 @@ internal object VirtualWorld {
         val now = System.nanoTime()
         synchronized(moveSamples) {
             val last = moveSamples.lastOrNull()
-            if (last != null &&
-                WorldMath.haversine(last.lat, last.lon, lat, lon) > TELEPORT_THRESHOLD_METERS
-            ) {
-                // 瞬移（手动设点/路线跳点）：重置窗口，避免算出虚高速度
-                moveSamples.clear()
+            if (last != null) {
+                // 瞬移判定同样按**速度**（见 TELEPORT_SPEED_MPS）：手动设点/路线跳点是
+                // "巨大位移 + 极小 Δt"；而被系统冻结后按真实时间补偿的正常推进是
+                // "大位移 + 大 Δt"，不能被当成瞬移清窗口（那会让随后几帧速度归 0）。
+                val dtSec = ((now - last.timeNanos) / 1e9).coerceAtLeast(1e-3)
+                val jumpSpeed = WorldMath.haversine(last.lat, last.lon, lat, lon) / dtSec
+                if (jumpSpeed > TELEPORT_SPEED_MPS) {
+                    moveSamples.clear()
+                }
             }
             moveSamples.addLast(MoveSample(now, lat, lon))
             val cutoff = now - SPEED_WINDOW_NANOS
