@@ -1191,3 +1191,138 @@ ACE5 上现在既能走 HAL 路线（对目标应用零注入），也能走注�
 `post-fs-data.sh` + `sepolicy.rule`，并把 overlay 的 upper 目录准备步骤一起带上。）
 
 
+
+---
+
+## 22. ACE5 的接管面：从 `device->ops` 一路查到"只能在函数入口挂钩"（2026-09-13）
+
+§21 之后的目标是"在 ACE5 上把 M0 接管做出来"。这一节把**接管面到底在哪**查清楚了，
+并且做出了一个**确实能命中**的入口钩子；但同时也测出：钩子一开，会话就撑不到
+`configure_streams` 走完。下面全是实测数据，含失败路径 —— 失败的那部分是下次的起点。
+
+### 22.1 `device->ops` 为什么永远是 NULL（结构性原因）
+
+调用链（`ra0/ra1` 是钩子/包装层实测，不是推测）：
+
+```
+camx.provider-impl.so :: android::hardware::camera::common::V1_0::helper::CameraModule::open
+  └─ camera.oemlayer.so+0xcdb30 区域（OPPO oemhal3.cpp 的 open，vaddr 0x6b908–0x6bd9c）
+       └─ camera.oemlayer.so 在 0x6bb74 处 `blr x19`：
+            x19 = 全局(0x14c718 的 .bss 槽) → hw_module_t* → [+0x20] methods → [0] open
+       └─ /odm/lib64/hw/camera.qcom.so（我们的 shim）→ /vendor/lib64/hw/camera.qcom.so（真件）
+```
+
+真件的 `open()` 返回的 `camera3_device_t` 头是合法的（`tag=0x48574454`、`version=0x305`、
+`module` 有效），但 **`ops`（偏移 +64）是 0**：open 返回后 50ms 内为 0，其后 500ms 内仍为 0。
+原因是 OPPO 那层只是**借真件的设备指针用一下**：
+
+- `oemlayer+0x1229dc`：`operator new(0x1b8)` 造一个 OemCamera3Device，把内层设备头
+  （0x78=120B，含 +0x40 的 ops 字段）**拷进它自己的 +0x08**；构造器里**没有任何**写 +0x40 的指令。
+- `oemlayer+0x795dc` 是**纯 getter**：`ldr x0,[x0,#0x8]; ret` —— 于是 `oemlayer+0x6bc7c`
+  把 `*device` 又换回**内层那个原始指针**，包装对象只在那几行里活着。
+
+⇒ provider 拿到的就是真件对象，而真件自己不填 `ops`；vendor 栈是**用它自己的接口表**驱动
+CamX 的，不经过 `camera3_device_ops`。
+
+### 22.2 那张"接口表"在运行时长什么样（读出来的，不是猜的）
+
+`oemlayer+0xcdb30` 处的调用序列是
+`ldur x8,[x29,#-0x8] → ldr x19,[x8,#0x8] → blr x19`（前面带 CFI 检查：`adr x8,0x141b30; cmp x19,x8`）。
+照这个约定从**调用者栈帧**里把表读出来（实测，映射相对偏移）：
+
+```
+调用者帧里的指针 = 0x76f54475e8
+  [ 0] +0  → /vendor/lib64/hw/camera.qcom.so+0x15170  [_ZN4CamX24CreateImageBufferManagerE…]
+  [ 1] +8  → +0x13a60        ← configure_streams 走的就是这一格
+  [ 3] +24 → +0x15998        [_ZN4CamX16HAL3MetadataUtil12FreeMetadataEPv]
+  [ 4] +32 → +0x15e50
+  [ 5] +40 → +0x14610
+  [ 7]/[8]/[9]/[11] …
+```
+
+（上表偏移是**映射相对**的，加 0x30f000 才是文件 vaddr。这些是 CamX 内部的 HAL3 工具/入口表，
+**不是** `camera3_device_ops`。）
+
+### 22.3 `camera3_device_ops` 静态表不存在（三路独立证据）
+
+1. **文件里没有任何 8 字节引用**：`0x1e46f60`/`0x1e49ca0`/`0x1e41a7c` 等在 36MB 文件里
+   0 命中（唯一命中 `0x1e41a40` 的是 `.init_array`，构造器数组）。
+2. **候选 run 全是 C++ vtable / CamX 内部桩**：`.rodata`/`.data.rel.ro`/`.data` 里所有 ≥12 连排
+   指针 run 逐一验过，slot0 都是 `bti c; …ldr w0,[x0,x8]; ret` 这类 vtable thunk。
+3. **运行时全地址空间探针也搜不到**：`/proc/self/mem` 扫 344MB（含只读 GOT），
+   三个入口地址一处都没被存下来过（唯一命中是探针自己的栈变量）。
+
+⇒ 结论：指针不落地、表不存在 ⇒ **唯一可行的接管面是函数入口本身**。
+
+### 22.4 入口钩子（可用的机制 + 两个必须绕开的政策坑）
+
+挂在 `真件基址 + vaddr`（`process_capture_request` = `0x1e49ca0`，
+`configure_streams` = `0x1e46f60`，`open` = `0x1e41a7c`；`base` 必须用
+**`dladdr(g_real_module)`**，`dladdr(&HMI)` 给的是我们 shim 自己的基址 —— 这个坑让前面
+所有"搜不到表"的扫描都是在找垃圾地址）。
+
+- **不能 `mprotect(PROT_WRITE|PROT_EXEC)`**：ACE5 上被 SELinux 直接拒，
+  `avc: denied { execmem } for scontext=u:r:hal_camera_default`（Android 的 W^X）。
+- **改走 `/proc/self/mem` + `pwrite`**（调试器插断点的同一条路，内核 `FOLL_FORCE` 只对私有映射
+  生效）：不触发 mmap/mprotect 上的策略检查，页权限位也不变，依旧是 r-x。
+- **CFI 安全**：改的是函数**体内**的字节，调用目标地址没变 ⇒ 调用方的
+  `__cfi_slowpath` 校验照旧通过（这也解释了 §19 那次 `__cfi_slowpath` 崩溃：那次是拿
+  借来的槽位当调用目标，地址本身就在 CFI 表外）。
+- 桩的形态：入口前 16 字节换成 `ldr x16,#8; br x16; .quad 钩子`，钩子外壳 = 
+  「5 条 mov 先把 x30/x0/x1/x29/sp 抄进 x9..x13」+「**运行时写入**的被顶掉的 4 条指令」
+  + 记账调用 + 「跳回 entry+16」。被顶掉的 4 条先验证过**非 PC 相对**（adrp/adr/b/bl/b.cond/
+  ldr-literal/cbz/tbz 一律拒绝），并且不许写 x9..x13。
+
+### 22.5 结果：钩子**命中了**，但会话撑不住
+
+命中（实测，钩子只记一次账）：
+
+```
+入口挂钩[0] real+0x1e46f60 第 1 次：调用者=0x7d19ee5b30（/odm/lib64/hw/camera.oemlayer.so+0x6fb30）
+             a0=0xb400007cb0bd18d0（device）a1=0x7ffe…（stream_list）
+```
+
+即：**CamX 的 `configure_streams` 是被 OPPO 的 oemlayer 直接调的**（不是 provider 直接调）。
+
+但把钩子打开后，会话会在 `configure_streams` 里挂掉：
+
+| 配置 | Begin OPEN | Begin CONFIG | 逐帧出流 | provider |
+|---|---|---|---|---|
+| 原厂（无 shim） | 1 | 1 | 245 | 稳定 |
+| shim，**无钩子** | 1 | 1 | 245 | 稳定 |
+| shim，**开钩子** | 1 | **0** | 0–14 | ~1.5s 后被 init 重启，**无 tombstone** |
+
+已排除的嫌疑：`mprotect`/execmem（已绕开）、CFI（地址未变）、`x8`/`x18` 未保存（已补上，
+症状不变）、参数顺序写反（已修，日志正常了）、诊断线程（已改成 `open_probe=1` 才开，
+默认关；关掉后症状依旧）。
+
+下一步的几个具体方向（按代价从低到高）：
+1. **改成"只顶掉 1 条指令"**：入口第 1 条是 `paciasp`，把它单独换成 `b` 到邻近的桩、
+   桩里只重放 `paciasp` 再跳 entry+4 —— 这样若函数对"前 4 条必须连续执行"有隐含依赖
+   （例如 vendor 的 SCS / PAC 记账），影响面就小得多；`b` 的 ±128MB 够不够要实测
+   （或退回 `/proc/self/mem` 写 16 字节桩但要能证明 4 条重放等价）。
+2. **挂在调用方而不是被调方**：oemlayer 的包装函数（`0x6c554`/`0x6cadc`/`0xcd94c`）
+   序言不同（`paciasp; sub sp,#0x30; …`），钩子外壳已支持运行时填指令，可直接试。
+3. **找 `process_capture_request` 在 ACE5 上的真实入口**：教科书的
+   `0x1e49ca0` 这一格**从未被调用**（钩子挂上后一次都没响）——请求路径显然走的是
+   CamX 的另一条路（候选：`0x1e4adc0` 那个函数、或经 CHI/CamX 内部 API）。
+
+### 22.6 这一轮踩到的操作坑（都会伪装成"结论"，务必记住）
+
+1. **别直接往 overlay 的 upper 目录写文件**：overlayfs 会继续供旧的缓存内容 ——
+   表现是"改了 `portal.cfg` 却毫无效果"。**必须经挂载点写**（`> /vendor/lib64/hw/portal.cfg`）。
+   这一条把"钩子疑似把相机搞坏"整整误导了一轮。
+2. **`dladdr(&HMI)` 给的是 shim 自己的基址**，真件基址只能从 `dladdr(g_real_module)` 取。
+3. **不能假定 `x29` 是栈帧指针**：有一次拿它当 FP 去读"调用者栈里的表"，结果 x29 里是
+   oemlayer 的 .rodata 地址，读字符串字节再当指针解引用，直接把 provider 打死
+   （`tombstone_03`：`SIGSEGV fault addr 0xf8a0`，回溯 `#01 portal_hook_01+72`）。
+   现在有三重门槛：必须落在入口 SP 之上 1MB 内、所在映射可写、且不是文件映射。
+4. **诊断必须在独立开关后面**：`open_probe=1` 才开（出参观察线程、读调用者帧、全地址空间探针）。
+   这些动辄调用 `dladdr()`（拿 linker 全局锁）与读上千行的 `/proc/self/maps`，默认开着
+   会把 provider 拖到被 init 重启。
+
+### 22.7 当前设备状态（本轮收尾时）
+
+dev 侧留的是**能用的形态**：overlay + shim（`/odm/lib64/hw/camera.qcom.so`）+ 真件原地不动
++ `portal.cfg` 里**没有** `hook_vaddrs`（钩子默认关）。实测 `Begin OPEN=1 / Begin CONFIG=1`、
+逐帧出流、provider 稳定、tombstone 未增。全部改动都是运行期的，重启即回原厂。

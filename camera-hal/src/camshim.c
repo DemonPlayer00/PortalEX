@@ -32,6 +32,13 @@
  * ## 里程碑
  *
  *  M0（当前）：接管 + 转发 + 计数（`已接管 process_capture_request（ops[N]）`），相机行为不变。
+ *
+ * ## ACE5（AIDL / ColorOS 16）与 MI6 的差别（2026-09-13 实测，详见 docs/camera-mock.md §22）
+ *
+ *  · provider 拿到的 `camera3_device_t` 的 `ops` **恒为 NULL**（真件不填、OPPO oemlayer 也不填）；
+ *  · 真件里**不存在** `camera3_device_ops` 静态表，运行时全地址空间也搜不到那几个入口地址；
+ *  · CamX 的 HAL3 入口是 OPPO 的 oemlayer **直接按函数地址调用**的 ——
+ *    所以 ACE5 上唯一可行的接管面是 `hook_vaddrs=` 这套**入口钩子**（默认关，见 g_opt_inline_hook）。
  *  M1：在 [shim_process_capture_request] 里把解码后的视频帧写进
  *      `request->output_buffers[i].buffer`（gralloc 句柄，格式/stride 按 stream 元数据）。
  *
@@ -57,6 +64,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -399,6 +408,57 @@ static unsigned g_opt_real_hmi_bytes = 0;
  */
 static int g_opt_ops_index = 0;
 /**
+ * 开关 ops_scan=1：**扫描并接管真件自己的 `camera3_device_ops` 表**（ACE5 需要这条路）。
+ *
+ * 为什么需要（ACE5 实测）：provider 拿到的 device 对象 `ops` 字段始终是 NULL ——
+ * 真件 open 返回时不填、oemlayer 换上的外层对象也不填。可 27ms 后 CamX 的
+ * `configure_streams` 照样被调用，说明调用方是**从别处**拿到那批函数指针的。
+ * 真件里 `camxhal3.cpp` 的 HAL3 入口是：
+ *   process_capture_request = 基址+0x1e49cc0、configure_streams = 基址+0x1e46f80、
+ *   open = 基址+0x1e41a90（用 "HalOp: Begin CONFIG/Begin OPEN" 这两条日志字符串反查出来的）。
+ * 于是最省事的接管方式变成：在**进程内存里找出这张表**（含该函数指针的可写数据段），
+ * 直接改它 —— 不碰代码、不需要 trampoline、也就没有 CFI 与多线程自改代码的风险。
+ */
+static int g_opt_ops_scan = 0;
+/** 真件里 process_capture_request 的 vaddr（按版本可配；默认按本机实测值） */
+static unsigned long g_opt_pcr_vaddr = 0x1e49cc0ul;
+/**
+ * 开关 inline_hook=1 / inline_hook_cfg=1：**直接挂钩真件 HAL3 入口**。
+ *
+ * 为什么最后落到这条路（ACE5 全套实测）：
+ *   · provider 拿到的 device 对象 `ops` 恒为 NULL（真件不填、oemlayer 换上的外层也不填）；
+ *   · 真件里**没有** `camera3_device_ops` 静态表：三个 HAL3 入口地址（pcr 0x1e49ca0 /
+ *     configure_streams 0x1e46f60 / open 0x1e41a7c）在整个 36MB 文件里没有任何 8 字节指针引用，
+ *     也没有 `str xT,[xN,#0x40]` 写 ops 的代码；
+ *   · 运行时全地址空间（344MB，含只读 GOT）也搜不到这些地址被存下来过。
+ * 既然指针不落地、表不存在，就只能在**函数入口**上挂 —— 这也顺带回答"到底是谁在调它"。
+ *
+ * 实现（AArch64 最小挂钩）：入口前 16 字节替换成 `ldr x16,#8; br x16; .quad 钩子`，
+ * 钩子里重放被顶掉的 4 条指令（paciasp + 3 条 stp，全是非 PC 相对的）再跳回 entry+16。
+ * 不动调用目标地址 ⇒ 不触发 CFI；不改映射权限（页本来就可执行）⇒ 不碰 execmem 策略。
+ */
+static int g_opt_inline_hook = 0;
+static int g_opt_inline_hook_cfg = 0;
+/** 入口 vaddr（本机实测：pcr=0x1e49ca0、configure_streams=0x1e46f60） */
+static unsigned long g_opt_hook_pcr_vaddr = 0x1e49ca0ul;
+static unsigned long g_opt_hook_cfg_vaddr = 0x1e46f60ul;
+/** `hook_vaddrs=0x1e41a70,0x1e46f60,...`：一次挂一片 HAL3 入口，让日志说出谁在跑 */
+static char g_opt_hook_vaddrs[512] = {0};
+/**
+ * 开关 open_probe=1：open 之后的那些**诊断**（出参观察线程、调用者帧读表、全地址空间探针）。
+ *
+ * 默认**关**：实测（2026-09-13，ACE5）这套诊断开着时，相机会话会在 `open` 之后、
+ * `configure_streams` 之前就崩掉 —— 对照实验很干净：
+ *   原厂（无 shim）：Begin OPEN=1，Begin CONFIG=1，逐帧出流；
+ *   挂了诊断的 shim：Begin OPEN=1，Begin CONFIG=0，provider 随即被 init 重启。
+ * 头号嫌疑是这些诊断在热路径上疯狂调用 `dladdr()`（它要拿 linker 的全局锁）与读
+ * `/proc/self/maps`（该进程有上千条映射），把 provider 自己的 dlopen/dlsym 拖死。
+ * 所以：诊断必须显式打开、用完就关；**默认部署走的是"零诊断"的形态**。
+ */
+static int g_opt_open_probe = 0;
+/** `hook_ol_vaddrs=...`：同一套钩子挂在 **oemlayer** 上的目标（基址按 maps 里的模块路径取） */
+static char g_opt_hook_ol_vaddrs[512] = {0};
+/**
  * 照片是否**预镜像**（水平翻转）。
  *
  * 为什么需要它（实测）：相机 app 给"真 HAL 那张 JPEG"写 EXIF Orientation=**7**（镜像+旋转），
@@ -410,6 +470,18 @@ static int g_opt_ops_index = 0;
 static int g_opt_photo_mirror = 0;
 
 /**
+ * 抹掉 arm64 Android 指针的**顶字节标签**。
+ *
+ * 实测（ACE5 / Android 16）：堆指针形如 `0xb400007cfdde4450`，而 `/proc/self/maps` 里列的是
+ * **去掉标签**的地址（`7cf00b0000-...`）。不抹标签去查 maps 会一条都匹配不上 ——
+ * 这个坑曾经让我们得出"对象已释放"的错误结论（探针自检才发现：连已知在映射里的对象都报"不在映射"）。
+ * 硬件本身忽略顶字节（TBI），所以解引用时用原指针即可，只有"查 maps"必须抹。
+ */
+static uintptr_t portal_untag(const void *addr) {
+    return (uintptr_t)addr & 0x00FFFFFFFFFFFFFFULL;
+}
+
+/**
  * 该地址是否落在**可执行**的已映射区间里（读 `/proc/self/maps`）。
  *
  * 用途：按 ops 索引取真实函数指针时的兜底校验 —— 拿错一格就是"把数据当函数调用"，
@@ -419,7 +491,7 @@ static bool portal_is_exec_addr(const void *addr, const char **out_where) {
     if (addr == NULL) return false;
     FILE *f = fopen("/proc/self/maps", "re");
     if (f == NULL) return false;
-    uintptr_t target = (uintptr_t)addr;
+    uintptr_t target = portal_untag(addr);
     char line[512];
     bool ok = false;
     while (fgets(line, sizeof(line), f) != NULL) {
@@ -532,6 +604,24 @@ static void load_options(void) {
             g_opt_real_hmi_bytes = (unsigned)atoi(val);
         } else if (strcmp(key, "ops_index") == 0) {
             g_opt_ops_index = atoi(val);
+        } else if (strcmp(key, "ops_scan") == 0) {
+            g_opt_ops_scan = atoi(val);
+        } else if (strcmp(key, "ops_pcr_vaddr") == 0) {
+            g_opt_pcr_vaddr = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "inline_hook") == 0) {
+            g_opt_inline_hook = atoi(val);
+        } else if (strcmp(key, "inline_hook_cfg") == 0) {
+            g_opt_inline_hook_cfg = atoi(val);
+        } else if (strcmp(key, "hook_pcr_vaddr") == 0) {
+            g_opt_hook_pcr_vaddr = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "hook_cfg_vaddr") == 0) {
+            g_opt_hook_cfg_vaddr = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "hook_vaddrs") == 0) {
+            snprintf(g_opt_hook_vaddrs, sizeof(g_opt_hook_vaddrs), "%s", val);
+        } else if (strcmp(key, "open_probe") == 0) {
+            g_opt_open_probe = atoi(val);
+        } else if (strcmp(key, "hook_ol_vaddrs") == 0) {
+            snprintf(g_opt_hook_ol_vaddrs, sizeof(g_opt_hook_ol_vaddrs), "%s", val);
         } else if (strcmp(key, "src_file") == 0) {
             snprintf(g_opt_src_file, sizeof(g_opt_src_file), "%s", val);
         } else if (strcmp(key, "cam") == 0) {
@@ -539,9 +629,9 @@ static void load_options(void) {
         }
     }
     fclose(f);
-    LOGI("开关：dump=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d photo_mirror=%d cam=%s src=%s",
-         g_opt_dump, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze, g_opt_pattern,
-         g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
+    LOGI("开关：dump=%d ops_index=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d photo_mirror=%d cam=%s src=%s",
+         g_opt_dump, g_opt_ops_index, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze,
+         g_opt_pattern, g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
          g_opt_src_file[0] ? g_opt_src_file : "(图案)");
 }
 
@@ -654,7 +744,7 @@ static int page_protection(const void *addr) {
     FILE *f = fopen("/proc/self/maps", "re");
     if (f == NULL) return -1;
     char line[512];
-    uintptr_t target = (uintptr_t)addr;
+    uintptr_t target = portal_untag(addr);
     int result = -1;
     while (fgets(line, sizeof(line), f) != NULL) {
         unsigned long start = 0, end = 0;
@@ -2361,6 +2451,714 @@ static void patch_configure_streams(const struct camera3_device *dev) {
                        "configure_streams");
 }
 
+/**
+ * 该地址所在映射的权限串（找不到返回 false）。与 [portal_is_exec_addr] 分开写：
+ * 观察别人对象时可能撞上已释放的指针，先确认"仍在某个映射里"再解引用，别把诊断变成崩溃。
+ */
+static bool portal_map_perm(const void *addr, char *out, size_t n) {
+    if (addr == NULL) return false;
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f == NULL) return false;
+    uintptr_t target = portal_untag(addr);
+    bool ok = false;
+    char line[512];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        unsigned long start = 0, end = 0;
+        char perms[8] = {0};
+        if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) != 3) continue;
+        if (target < start || target >= end) continue;
+        if (out != NULL) snprintf(out, n, "%s", perms);
+        ok = true;
+        break;
+    }
+    fclose(f);
+    return ok;
+}
+
+/**
+ * 该地址落在哪个映射里（"路径+偏移"），顺带带出 dladdr 能给的符号名。
+ *
+ * 用途：ACE5 的 `open()` 是**谁**调的。实测调用链是
+ * `camx.provider-impl.so :: CameraModule::open` → `camera.oemlayer.so+0xdb78` → 我们 → 真件，
+ * 也就是说 OPPO 的 oemlayer 是"provider 之上再包一层"的角色，它会在我们的 open 返回**之后**
+ * 才把 device 的 ops 表换成自己的 —— 这决定了接管时序（见 portal_binder_thread）。
+ */
+static bool portal_where(const void *addr, char *out, size_t n) {
+    if (out == NULL || n == 0) return false;
+    out[0] = '\0';
+    if (addr == NULL) return false;
+    uintptr_t target = portal_untag(addr);
+    bool found = false;
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f != NULL) {
+        char line[512];
+        while (fgets(line, sizeof(line), f) != NULL) {
+            unsigned long start = 0, end = 0;
+            if (sscanf(line, "%lx-%lx", &start, &end) != 2) continue;
+            if (target < start || target >= end) continue;
+            char *q = strchr(line, '/');
+            if (q != NULL) {
+                size_t m = strlen(q);
+                if (m > 0 && q[m - 1] == '\n') q[m - 1] = '\0';
+                snprintf(out, n, "%s+0x%lx", q, (unsigned long)(target - start));
+            } else {
+                snprintf(out, n, "(anon)+0x%lx", (unsigned long)(target - start));
+            }
+            found = true;
+            break;
+        }
+        fclose(f);
+    }
+    Dl_info di;
+    if (dladdr(addr, &di) != 0 && di.dli_sname != NULL) {
+        size_t m = strlen(out);
+        snprintf(out + m, n - m, " [%s]", di.dli_sname);
+    }
+    return found;
+}
+
+/**
+ * "绑定探测"线程：`open()` 返回后**极短间隔**地盯住 `device->ops`，看它什么时候被填上、
+ * 填成哪个表。
+ *
+ * 为什么必须这么测（ACE5 实测）：真件 `open()` 返回的那一刻，device 对象前 96 字节只有
+ * `tag=HWDT / version=0x305 / module`，**`ops` 是 NULL**；可 27 ms 后 CamX 就拿着同一个
+ * device 指针进了 `configure_streams` —— 说明 ops 是**在 open 返回之后**由上层（OPPO oemlayer）
+ * 补上的。所以"按 ops 索引接管"能不能在 ACE5 成立，取决于这张表被填的**时刻与位置**：
+ *   · 若表落在 oemlayer 的静态数据段 ⇒ 可离线定点改，随时接管；
+ *   · 若表是每次 open 现搭的堆副本 ⇒ 只能在填表与首次调用之间抢，时序很窄。
+ * 两种结论对应两种完全不同的实现，所以先把这个事实测出来，再写代码。
+ */
+/**
+ * 在进程内存里找出**真件自己的** `camera3_device_ops` 表，并接管 `process_capture_request`。
+ *
+ * 为什么不是"改 device 对象的 ops 字段"（MI6 那条路，ACE5 上走不通）：
+ * ACE5 上 provider 拿到的 device 对象，`ops` 字段**始终是 NULL** —— 真件 `open` 返回时不填
+ * （实测 50ms 内不变），OPPO `camera.oemlayer.so` 在返回前换上的那个外层对象也不填
+ * （实测 500ms 内不变）。可 CamX 的 `configure_streams`/`process_capture_request` 照样被调用，
+ * 说明调用方是从**别处**拿到那批函数指针的 —— 那张表就在本进程的可写数据段里。
+ *
+ * 所以这里改成：按真件 HAL3 入口的 vaddr（`ops_pcr_vaddr`，默认本机实测值）在**可写映射**里
+ * 找那张表，命中就地改写。优点是不碰代码段：没有 trampoline、没有指令重定位、
+ * 也不会和 CFI 校验打架（调用目标地址没变）。
+ *
+ * 风险控制：只扫可写、非设备、小于 64MB 的映射；总扫描量封顶 256MB；
+ * 只认"表里有多数指针落在真件可执行段"的候选；找不到就什么都不做（相机行为不变）。
+ *
+ * @return 实际改写的表数量（0 = 没找到/没改）
+ */
+static int portal_scan_ops_table_ex(int min_in_hal, int skip_stack, int do_patch) {
+    if (g_real_handle == NULL) return 0;
+    Dl_info di;
+    /* ⚠️ 必须用**真件模块**的地址去问基址：`&HMI` 是我们 shim 自己的 HMI，
+     * dladdr 会给出 /odm/.../camera.qcom.so（我们）的基址 —— 之前拿它加 vaddr，
+     * 算出来的是"我们基址+偏移"的垃圾地址，全地址空间当然一处都找不到。
+     * 真件的基址只能从 dlopen 出来的句柄符号取。 */
+    if (g_real_module == NULL || dladdr((const void *)g_real_module, &di) == 0 ||
+        di.dli_fbase == NULL) {
+        LOGE("ops 扫描：拿不到真件基址，放弃");
+        return 0;
+    }
+    uintptr_t base = (uintptr_t)di.dli_fbase;
+    uintptr_t pcr = base + (uintptr_t)g_opt_pcr_vaddr;
+    LOGI("ops 扫描：真件基址=%p，目标 process_capture_request=%p（门槛 %d，跳栈=%d，改写=%d）",
+         (void *)base, (void *)pcr, min_in_hal, skip_stack, do_patch);
+
+    /*
+     * **必须用 /proc/self/mem 读，不能直接解引用**：
+     * 直接读那些 perms 写着 r 的共享段（DMA / 图形缓冲）会 SIGBUS 或卡死几十秒 ——
+     * 实测直接在主机上读，provider 每次都在 ~5 秒后被 hwservicemanager 判死重启（无 tombstone）。
+     * pread 走内核的 fault 处理，读不了就返回错误，不会把 HAL 进程带走。
+     */
+    int memfd = open("/proc/self/mem", O_RDWR);
+    if (memfd < 0) {
+        LOGE("ops 扫描：打不开 /proc/self/mem");
+        return 0;
+    }
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f == NULL) {
+        LOGE("ops 扫描：读不到 maps");
+        close(memfd);
+        return 0;
+    }
+    static unsigned char sbuf[256 * 1024];
+    char line[512];
+    unsigned long long budget = 192ull << 20, done = 0, next_report = 32ull << 20;
+    long regions = 0, patched = 0;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        unsigned long start = 0, end = 0;
+        char perms[8] = {0}, path[256] = {0};
+        if (sscanf(line, "%lx-%lx %7s %*s %*s %*s %255[^\n]", &start, &end, perms, path) < 3) continue;
+        if (perms[0] != 'r') continue;                       /* 只扫读得到的 */
+        if (perms[3] == 's') continue;                       /* 共享段=多半是 DMA/设备内存 */
+        unsigned long long len = (unsigned long long)(end - start);
+        if (len == 0 || len > (64ull << 20) || len > budget) continue;
+        if (skip_stack && strstr(path, "[stack") != NULL) continue;
+        if (strstr(path, "/dev/") != NULL || strstr(path, "kgsl") != NULL ||
+            strstr(path, "dmabuf") != NULL || strstr(path, "gralloc") != NULL ||
+            strstr(path, "ion") != NULL || strstr(path, "mali") != NULL ||
+            strstr(path, "memfd:") != NULL) {
+            continue;
+        }
+        regions++;
+        budget -= len;
+        for (uintptr_t off = start; off < end; off += sizeof(sbuf)) {
+            size_t want = (size_t)(end - off);
+            if (want > sizeof(sbuf)) want = sizeof(sbuf);
+            ssize_t n = pread(memfd, sbuf, want, (off_t)off);
+            if (n >= 8) {
+                for (ssize_t i = 0; i + 8 <= n; i += 8) {
+                    if (*(uint64_t *)(sbuf + i) != (uint64_t)pcr) continue;
+                    uintptr_t p = off + (uintptr_t)i;
+                    uint64_t slots[20] = {0};
+                    ssize_t m = pread(memfd, slots, sizeof(slots), (off_t)p);
+                    if (m < 8) continue;
+                    int in_hal = 0, hit_idx = -1;
+                    for (int k = 0; k < 20 && (ssize_t)(k * 8 + 8) <= m; k++) {
+                        if (slots[k] == 0) continue;
+                        if (slots[k] == (uint64_t)pcr) hit_idx = k;
+                        char w[256] = {0};
+                        portal_where((const void *)(uintptr_t)slots[k], w, sizeof(w));
+                        if (strstr(w, "camera.qcom.so") != NULL) in_hal++;
+                        if (k < 8) LOGI("  候选 %p 槽[%2d] = %p  %s", (void *)p, k,
+                                        (void *)(uintptr_t)slots[k], w);
+                    }
+                    LOGI("  候选 %p：落在真件里的指针 %d 个，命中槽 %d（门槛 %d）", (void *)p, in_hal,
+                         hit_idx, min_in_hal);
+                    if (hit_idx < 0 || in_hal < min_in_hal) continue;
+                    if (!do_patch) continue;
+                    long page = sysconf(_SC_PAGESIZE);
+                    if (page <= 0) page = 4096;
+                    uintptr_t slot = p + (uintptr_t)hit_idx * 8;
+                    int prot = page_protection((void *)slot);
+                    if (mprotect((void *)(slot & ~(uintptr_t)(page - 1)), (size_t)page,
+                                 PROT_READ | PROT_WRITE) != 0) {
+                        LOGE("  槽 %p 所在页不可写，跳过", (void *)slot);
+                        continue;
+                    }
+                    uint64_t ours = (uint64_t)(uintptr_t)&shim_process_capture_request;
+                    ssize_t wr = pwrite(memfd, &ours, sizeof(ours), (off_t)slot);
+                    mprotect((void *)(slot & ~(uintptr_t)(page - 1)), (size_t)page,
+                             prot > 0 ? prot : (PROT_READ | PROT_WRITE));
+                    if (wr == (ssize_t)sizeof(ours)) {
+                        g_real_process_capture_request =
+                            (int (*)(const struct camera3_device *, camera3_capture_request_t *))pcr;
+                        LOGI("  已接管：把 %p（真件 ops 表里第 %d 格）换成我们的包装", (void *)slot,
+                             hit_idx);
+                        patched++;
+                    } else {
+                        LOGE("  写 %p 失败（pwrite=%zd）", (void *)slot, wr);
+                    }
+                }
+            }
+            done += (unsigned long long)want;
+            if (done >= next_report) {
+                LOGI("ops 扫描进度：%llu MB（段 %ld，命中改写 %ld）", done >> 20, regions, patched);
+                next_report += 32ull << 20;
+            }
+        }
+    }
+    fclose(f);
+    close(memfd);
+    LOGI("ops 扫描结束：扫了 %ld 段 / %llu MB，改写 %ld 处", regions, done >> 20, patched);
+    return (int)patched;
+}
+
+/* 前置声明：状态落盘函数定义在本段之后（见 portal_write_state） */
+static void portal_write_state(const char *fmt, ...);
+
+/**
+ * 多目标探针：把若干个"真件里的 vaddr"一次性在全地址空间里搜一遍，只报告命中位置。
+ *
+ * 用在"这张表到底存不存在"这种是非题上：只要有一个函数指针被**任何**地方存下来过，
+ * 就会在这里现形。全部落空 ⇒ 调用方不是从内存里取这个指针的（那就得改成挂函数入口）。
+ */
+static void portal_probe_vaddrs(const unsigned long *vaddrs, int count, unsigned long long budget_mb) {
+    Dl_info di;
+    if (g_real_module == NULL || dladdr((const void *)g_real_module, &di) == 0 ||
+        di.dli_fbase == NULL) return;
+    uintptr_t base = (uintptr_t)di.dli_fbase;
+    int memfd = open("/proc/self/mem", O_RDWR);
+    if (memfd < 0) return;
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f == NULL) { close(memfd); return; }
+    static unsigned char pbuf[512 * 1024];
+    char line[512];
+    unsigned long long budget = budget_mb << 20, done = 0;
+    long regions = 0, hits = 0;
+    LOGI("多目标探针：真件基址=%p，目标 %d 个，预算 %llu MB", (void *)base, count, budget_mb);
+    while (fgets(line, sizeof(line), f) != NULL) {
+        unsigned long start = 0, end = 0;
+        char perms[8] = {0}, path[256] = {0};
+        if (sscanf(line, "%lx-%lx %7s %*s %*s %*s %255[^\n]", &start, &end, perms, path) < 3) continue;
+        if (perms[0] != 'r' || perms[3] == 's') continue;
+        if (strstr(path, "[stack") != NULL || strstr(path, "[vvar") != NULL ||
+            strstr(path, "[vdso") != NULL) continue;
+        if (strstr(path, "/dev/") != NULL || strstr(path, "kgsl") != NULL ||
+            strstr(path, "dmabuf") != NULL || strstr(path, "gralloc") != NULL) continue;
+        unsigned long long len = (unsigned long long)(end - start);
+        if (len == 0 || len > budget) continue;
+        regions++;
+        budget -= len;
+        for (uintptr_t off = start; off < end; off += sizeof(pbuf)) {
+            size_t want = (size_t)(end - off);
+            if (want > sizeof(pbuf)) want = sizeof(pbuf);
+            ssize_t n = pread(memfd, pbuf, want, (off_t)off);
+            if (n >= 8) {
+                for (int t = 0; t < count; t++) {
+                    uint64_t want_v = (uint64_t)(base + (uintptr_t)vaddrs[t]);
+                    for (ssize_t i = 0; i + 8 <= n; i += 8) {
+                        if (*(uint64_t *)(pbuf + i) != want_v) continue;
+                        char w[256] = {0};
+                        portal_where((const void *)(off + (uintptr_t)i), w, sizeof(w));
+                        LOGI("  探针命中：真件 vaddr 0x%lx 存在 %p（%s）", vaddrs[t],
+                             (void *)(off + (uintptr_t)i), w);
+                        hits++;
+                    }
+                }
+            }
+            done += (unsigned long long)want;
+        }
+    }
+    fclose(f);
+    close(memfd);
+    LOGI("多目标探针结束：%ld 段 / %llu MB，命中 %ld 处", regions, done >> 20, hits);
+}
+
+/** 载入期扫描线程：门槛高（要像整张 ops 表）、在可写段里找 */
+static void *portal_load_scan_thread(void *arg) {
+    (void)arg;
+    int n = portal_scan_ops_table_ex(6, 0, 1);
+    portal_write_state("ops_scan(载入期) 改写 %d 处", n);
+    return NULL;
+}
+
+#if defined(__aarch64__)
+/* ------------------------------------------------------------------ *
+ * 函数入口挂钩（inline hook）—— 见 g_opt_inline_hook 的注释
+ * ------------------------------------------------------------------ */
+
+#define PORTAL_HOOK_MAX 20
+/** 每个挂钩位的"返回点"（安装时填成 entry+16） */
+__attribute__((used)) static volatile unsigned long g_hook_resume[PORTAL_HOOK_MAX];
+static char g_hook_name_buf[PORTAL_HOOK_MAX][64];
+static const char *g_hook_name[PORTAL_HOOK_MAX];
+
+/*
+ * 钩子外壳（**通用版**）：开头 4 条指令是占位 nop，安装时被替换成目标函数被顶掉的
+ * 那 4 条真实指令（安装器会先验证它们与 PC 无关），然后记账，再跳回 entry+16。
+ *
+ * 为什么做成"可运行时填指令"：本机至少要挂两类函数，序言并不一样 ——
+ *   CamX HAL3 入口：`paciasp; stp x29,x30,[sp,#-0x60]!; stp x28,x27,[sp,#0x10]; stp x26,x25,[sp,#0x20]`
+ *   OPPO oemlayer：`paciasp; sub sp,sp,#0x30; stp x29,x30,[sp,#0x10]; str x19,[sp,#0x20]`
+ * 写死一套就挂不上另一套；而"重放前 4 条"这个思路对两者都成立（都是非 PC 相对指令）。
+ * 占位区是我们**自己 .so 的代码段**，用 /proc/self/mem（FOLL_FORCE）写 —— 同样绕开 W^X。
+ *
+ * 寄存器约定：x0/x1 = 参数；x9..x17 调用者可挥霍；x19..x28 由被调函数保存；x18 = 平台寄存器。
+ * 顺序关键：**先**抄干净的 x30 与入口 SP，**再**重放（重放里可能就有 paciasp 与改 SP 的指令）。
+ */
+/* 除了 x0..x7，钩子还必须自己保存 **x8 与 x18**：
+ * x8 是"间接结果指针"（结构体返回用），x18 在 AAPCS64 里是**平台保留**寄存器 ——
+ * 带 SCS（影子调用栈）的 vendor 代码把返回地址链挂在 x18 上，而我们不开 SCS 的编译器
+ * 只把 x18 当普通临时寄存器，调用 C 记账函数时会被改掉；之后 vendor 代码 `ret` 就从错的
+ * 影子栈里弹返回地址，跳到野地址。实测症状：钩子只来得及打第一条日志，
+ * provider 几秒后被 init 重启、**没有 tombstone**（不是段错误，是被守护逻辑收走）。 */
+/* 参数先用 x9..x13 抄好、**再**执行重放：重放里的 paciasp 会改 x30，
+ * 而重放本身（paciasp / stp / sub sp）不碰 x9..x13，所以这样安排是安全的。
+ * 这一段曾经漏掉过 —— 结果是记账函数拿到一堆垃圾参数，provider 当场被打死。 */
+#define PORTAL_HOOK_STUB(NAME, OFF, IDX)                                          \
+    __attribute__((naked)) static void NAME(void) {                               \
+        __asm__ volatile(                                                         \
+            "mov x9, x30\n"                                                      \
+            "mov x10, x0\n"                                                      \
+            "mov x11, x1\n"                                                      \
+            "mov x12, x29\n"                                                     \
+            "mov x13, sp\n"                                                      \
+            "nop\n" "nop\n" "nop\n" "nop\n"   /* ← +20 处：安装时写成被顶掉的 4 条 */ \
+            "sub sp, sp, #0x60\n"                                                \
+            "stp x0, x1, [sp, #0x00]\n"                                          \
+            "stp x2, x3, [sp, #0x10]\n"                                          \
+            "stp x4, x5, [sp, #0x20]\n"                                          \
+            "stp x6, x7, [sp, #0x30]\n"                                          \
+            "stp x8, x18, [sp, #0x40]\n"                                         \
+            "mov x0, x9\n"                                                       \
+            "mov x1, x10\n"                                                      \
+            "mov x2, x11\n"                                                      \
+            "mov x3, x12\n"                                                      \
+            "mov x4, #" #IDX "\n"                                                \
+            "mov x5, x13\n"                                                      \
+            "bl portal_hook_any_c\n"                                             \
+            "ldp x0, x1, [sp, #0x00]\n"                                          \
+            "ldp x2, x3, [sp, #0x10]\n"                                          \
+            "ldp x4, x5, [sp, #0x20]\n"                                          \
+            "ldp x6, x7, [sp, #0x30]\n"                                          \
+            "ldp x8, x18, [sp, #0x40]\n"                                         \
+            "add sp, sp, #0x60\n"                                                \
+            "adrp x16, g_hook_resume\n"                                          \
+            "ldr x16, [x16, #" #OFF "]\n"                                        \
+            "br x16\n");                                                         \
+    }
+
+PORTAL_HOOK_STUB(portal_hook_00, 0, 0)
+PORTAL_HOOK_STUB(portal_hook_01, 8, 1)
+PORTAL_HOOK_STUB(portal_hook_02, 16, 2)
+PORTAL_HOOK_STUB(portal_hook_03, 24, 3)
+PORTAL_HOOK_STUB(portal_hook_04, 32, 4)
+PORTAL_HOOK_STUB(portal_hook_05, 40, 5)
+PORTAL_HOOK_STUB(portal_hook_06, 48, 6)
+PORTAL_HOOK_STUB(portal_hook_07, 56, 7)
+PORTAL_HOOK_STUB(portal_hook_08, 64, 8)
+PORTAL_HOOK_STUB(portal_hook_09, 72, 9)
+PORTAL_HOOK_STUB(portal_hook_10, 80, 10)
+PORTAL_HOOK_STUB(portal_hook_11, 88, 11)
+PORTAL_HOOK_STUB(portal_hook_12, 96, 12)
+PORTAL_HOOK_STUB(portal_hook_13, 104, 13)
+PORTAL_HOOK_STUB(portal_hook_14, 112, 14)
+PORTAL_HOOK_STUB(portal_hook_15, 120, 15)
+PORTAL_HOOK_STUB(portal_hook_16, 128, 16)
+PORTAL_HOOK_STUB(portal_hook_17, 136, 17)
+PORTAL_HOOK_STUB(portal_hook_18, 144, 18)
+PORTAL_HOOK_STUB(portal_hook_19, 152, 19)
+
+static void *const g_hook_fns[PORTAL_HOOK_MAX] = {
+    (void *)portal_hook_00, (void *)portal_hook_01, (void *)portal_hook_02, (void *)portal_hook_03,
+    (void *)portal_hook_04, (void *)portal_hook_05, (void *)portal_hook_06, (void *)portal_hook_07,
+    (void *)portal_hook_08, (void *)portal_hook_09, (void *)portal_hook_10, (void *)portal_hook_11,
+    (void *)portal_hook_12, (void *)portal_hook_13, (void *)portal_hook_14, (void *)portal_hook_15,
+    (void *)portal_hook_16, (void *)portal_hook_17, (void *)portal_hook_18, (void *)portal_hook_19,
+};
+
+/** 路径里带 `sub` 的第一个映射的起始地址（= 该 ELF 的 vaddr 0）。找不到返回 0。 */
+static uintptr_t portal_module_base(const char *sub) {
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f == NULL) return 0;
+    char line[512];
+    uintptr_t best = 0;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (strstr(line, sub) == NULL) continue;
+        unsigned long start = 0;
+        if (sscanf(line, "%lx-", &start) != 1) continue;
+        if (best == 0 || (uintptr_t)start < best) best = (uintptr_t)start;
+    }
+    fclose(f);
+    return best;
+}
+
+/**
+ * 所有挂钩共用的记账函数。
+ *
+ * 参数顺序**必须**与钩子外壳里的 `mov x0..x5` 一致（x0=caller、x1=a0、x2=a1、x3=fp、
+ * x4=kind、x5=entry_sp）—— 这一处曾经写反过，结果是 kind 收到一个代码地址、
+ * 记账函数第一行就 `>= PORTAL_HOOK_MAX` 直接返回，钩子静默失效。
+ *
+ * @param caller   调用者的**干净**返回地址（PAC 位已在钩子里避开）
+ * @param a0/a1    被挂函数头两个参数（CamX HAL3 一律是 device + 结构体指针）
+ * @param fp       调用者的 x29
+ * @param kind     挂钩位下标（名字在 g_hook_name 里）
+ * @param entry_sp 钩子入口时的 SP —— 用来判断 fp 是不是**真的**调用者栈帧
+ *
+ * ⚠️ 教训（本机实测踩过）：**不能**假定 x29 一定是栈帧指针。踩中的那次，x29 里是
+ * oemlayer 的 .rodata 地址，照着它去读"调用者栈里的表指针"读出了字符串字节，
+ * 再按表解引用直接把 provider 打死（SIGSEGV 0xf8a0，tombstone_03）。
+ * 所以这里用"必须落在入口 SP 之上、且所在映射可写、且不是文件映射"三重门槛卡死。
+ */
+__attribute__((used)) static void portal_hook_any_c(unsigned long caller, unsigned long a0,
+                               unsigned long a1, unsigned long fp, unsigned long kind,
+                               unsigned long entry_sp) {
+    static unsigned long cnt[PORTAL_HOOK_MAX];
+    if (kind >= PORTAL_HOOK_MAX) return;
+    unsigned long c = __atomic_add_fetch(&cnt[kind], 1, __ATOMIC_RELAXED);
+    if (c > 4 && c % 240 != 0) return;
+
+    char w[256] = {0};
+    portal_where((const void *)caller, w, sizeof(w));
+    LOGI("入口挂钩[%lu] %s 第 %lu 次：调用者=%p（%s）a0=%p a1=%p", kind,
+         g_hook_name[kind] ? g_hook_name[kind] : "?", c, (void *)caller, w, (void *)a0,
+         (void *)a1);
+
+    if (c != 1 || !g_opt_open_probe) return;   /* 读调用者栈帧属于诊断，默认关 */
+    /* 只有"确实像调用者栈帧"时才去读它 —— 见上面那段教训 */
+    if (fp < entry_sp || fp > entry_sp + (1u << 20)) return;
+    char perms[8] = {0};
+    if (!portal_map_perm((const void *)fp, perms, sizeof(perms))) return;
+    if (perms[0] != 'r' || perms[1] != 'w') return;
+    char where_fp[256] = {0};
+    portal_where((const void *)fp, where_fp, sizeof(where_fp));
+    if (where_fp[0] == '/') return;   /* 文件映射 ⇒ 不是栈 */
+
+    void **tbl = *(void ***)(fp - 8);
+    if (tbl == NULL) return;
+    char wt0[256] = {0};
+    portal_where((const void *)tbl, wt0, sizeof(wt0));
+    LOGI("  调用者 fp=%p（%s）里的指针 = %p（%s）", (void *)fp, where_fp, (void *)tbl, wt0);
+    char perms2[8] = {0};
+    if (!portal_map_perm((const void *)tbl, perms2, sizeof(perms2)) || perms2[0] != 'r') return;
+    for (int i = 0; i < 12; i++) {
+        if (tbl[i] == NULL) continue;
+        char wt[256] = {0};
+        portal_where(tbl[i], wt, sizeof(wt));
+        LOGI("  表[%2d]（偏移 +%2d）= %p  %s", i, i * 8, tbl[i], wt);
+    }
+}
+
+/** 这 4 条指令能不能"搬到别处执行"（不能有 PC 相对指令） */
+static int portal_replayable(const uint32_t *w) {
+    for (int i = 0; i < 4; i++) {
+        uint32_t x = w[i];
+        /* x9..x13 是我们要带给记账函数的参数，重放不许把它们当目标寄存器写掉。
+         * 保守判断：取 Rd/Rt 字段（bit4:0），落在 9..13 就放弃这次挂钩。 */
+        uint32_t dest = x & 0x1Fu;
+        if (dest >= 9u && dest <= 13u) return 0;
+        if ((x & 0x9F000000u) == 0x90000000u) return 0;  /* adrp */
+        if ((x & 0x9F000000u) == 0x10000000u) return 0;  /* adr */
+        if ((x & 0x7C000000u) == 0x14000000u) return 0;  /* b / bl */
+        if ((x & 0xFF000010u) == 0x54000000u) return 0;  /* b.cond */
+        if ((x & 0x7E000000u) == 0x36000000u) return 0;  /* tbz / tbnz */
+        if ((x & 0xFF000000u) == 0x58000000u) return 0;  /* ldr (literal) */
+        if ((x & 0x7E000000u) == 0x34000000u) return 0;  /* cbz / cbnz */
+        if ((x & 0x3B000000u) == 0x18000000u) return 0;  /* ldrsw/prfm literal 等 */
+        if (x == 0xD65F03C0u || x == 0xD65F0BFFu) return 0; /* ret */
+    }
+    return 1;
+}
+
+/**
+ * 在 `base + vaddr` 处装一个入口挂钩（前 16 字节换绝对跳转桩 + 把被顶掉的 4 条指令
+ * 写进我们自己的钩子外壳开头）。
+ *
+ * 全程不 mprotect：写目标代码段与写**我们自己的**代码段都走 `/proc/self/mem` + `pwrite`
+ * （内核 FOLL_FORCE，只对私有映射生效）—— ACE5 上 `mprotect(PROT_WRITE|PROT_EXEC)` 会被
+ * SELinux `execmem` 直接拒（实测 AVC），这条路是唯一不碰策略又能改代码的写法。
+ */
+static int portal_inline_hook(int slot, uintptr_t base, unsigned long target_vaddr, const char *name) {
+    if (slot < 0 || slot >= PORTAL_HOOK_MAX || base == 0) return 0;
+    uint32_t *code = (uint32_t *)(base + (uintptr_t)target_vaddr);
+    uint32_t orig[4];
+    memcpy(orig, code, sizeof(orig));
+    if (!portal_replayable(orig)) {
+        LOGE("挂钩 %s（base=%p vaddr=0x%lx）：前 4 条指令里有 PC 相对指令，不能重放，跳过",
+             name, (void *)base, target_vaddr);
+        return 0;
+    }
+    int memfd = open("/proc/self/mem", O_RDWR);
+    if (memfd < 0) {
+        LOGE("挂钩 %s：打不开 /proc/self/mem（errno=%d）", name, errno);
+        return 0;
+    }
+    /* 1) 把被顶掉的 4 条指令写进钩子外壳开头（我们自己的代码段），写完**读回验证**：
+     *    这一步失败而继续挂，等于把目标函数的前 4 条指令直接抹掉 —— 那是必崩的写法。 */
+    /* 重放槽在钩子外壳 **+20 字节**处：前 5 条 mov 负责先把 x9..x13 抄好
+     * （必须在重放之前 —— 重放里的 paciasp 会改 x30；SP 也会被重放改掉）。 */
+    uint32_t *slot_code = (uint32_t *)((char *)g_hook_fns[slot] + 20);
+    ssize_t w1 = pwrite(memfd, orig, sizeof(orig), (off_t)(uintptr_t)slot_code);
+    uint32_t back[4] = {0};
+    ssize_t r1 = pread(memfd, back, sizeof(back), (off_t)(uintptr_t)slot_code);
+    if (w1 != (ssize_t)sizeof(orig) || r1 != (ssize_t)sizeof(back) ||
+        memcmp(back, orig, sizeof(orig)) != 0) {
+        LOGE("挂钩 %s：钩子外壳写入/回读失败（w=%zd r=%zd errno=%d，读到 %08x %08x %08x %08x）",
+             name, w1, r1, errno, back[0], back[1], back[2], back[3]);
+        close(memfd);
+        return 0;
+    }
+    /* 2) 目标入口换成绝对跳转桩 */
+    uint32_t stub[4] = {0x58000050u /*ldr x16,#8*/, 0xD61F0200u /*br x16*/,
+                        (uint32_t)((uintptr_t)g_hook_fns[slot] & 0xFFFFFFFFu),
+                        (uint32_t)((uintptr_t)g_hook_fns[slot] >> 32)};
+    g_hook_name[slot] = name;
+    g_hook_resume[slot] = (unsigned long)(uintptr_t)code + 16;
+    if (pwrite(memfd, stub, sizeof(stub), (off_t)(uintptr_t)code) != (ssize_t)sizeof(stub)) {
+        LOGE("挂钩 %s：写目标入口失败（errno=%d）", name, errno);
+        close(memfd);
+        g_hook_resume[slot] = 0;
+        return 0;
+    }
+    close(memfd);
+    __builtin___clear_cache((char *)slot_code, (char *)slot_code + 16);
+    __builtin___clear_cache((char *)g_hook_fns[slot], (char *)g_hook_fns[slot] + 36);
+    __builtin___clear_cache((char *)code, (char *)code + 16);
+    LOGI("已挂钩[%d] %s：入口 %p → 钩子 %p（重放 %08x %08x %08x %08x，返回点 %p）", slot, name,
+         (void *)code, g_hook_fns[slot], orig[0], orig[1], orig[2], orig[3],
+         (void *)g_hook_resume[slot]);
+    return 1;
+}
+
+/** 解析 `a,b,c` 形式的 vaddr 列表并逐个挂钩 */
+static void portal_hook_list(const char *list, const char *module_sub) {
+    uintptr_t base = 0;
+    if (module_sub != NULL) {
+        base = portal_module_base(module_sub);
+        if (base == 0) {
+            LOGE("挂钩：找不到模块映射 %s", module_sub);
+            return;
+        }
+        LOGI("挂钩：模块 %s 基址 = %p", module_sub, (void *)base);
+    } else if (g_real_module != NULL) {
+        Dl_info di;
+        if (dladdr((const void *)g_real_module, &di) != 0) base = (uintptr_t)di.dli_fbase;
+    }
+    if (base == 0) {
+        LOGE("挂钩：拿不到基址");
+        return;
+    }
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s", list);
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL; tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') tok++;
+        unsigned long v = strtoul(tok, NULL, 0);
+        if (v == 0) continue;
+        int slot = -1;
+        for (int i = 0; i < PORTAL_HOOK_MAX; i++) {
+            if (g_hook_resume[i] == 0 && g_hook_name[i] == NULL) { slot = i; break; }
+        }
+        if (slot < 0) {
+            LOGE("挂钩：位置用完了");
+            return;
+        }
+        /* ⚠️ 名字要存进**静态**缓冲：之前把栈上 nm 的地址存进 g_hook_name，
+         * 出函数就悬空，日志里打出来是乱码。 */
+        snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "%s+0x%lx",
+                 module_sub ? module_sub : "real", v);
+        portal_inline_hook(slot, base, v, g_hook_name_buf[slot]);
+    }
+}
+#else
+static void portal_hook_list(const char *list, const char *module_sub) {
+    (void)list; (void)module_sub;
+    LOGE("入口挂钩只有 arm64 实现：本机是 32 位，跳过");
+}
+#endif
+
+struct portal_bind_arg {
+    const struct camera3_device *inner; /**< 真件 open 返回的对象 */
+    void **out;                         /**< 出参地址（oemlayer 会在返回前改写它） */
+};
+
+static void *portal_binder_thread(void *arg) {
+    struct portal_bind_arg *ba = (struct portal_bind_arg *)arg;
+    const struct camera3_device *dev = ba->inner;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    {
+        /* 探针自检：已知在映射里的对象必须被认出来，否则后面所有"不在映射里"的结论都不算数 */
+        char p[8] = {0};
+        bool m = portal_map_perm((const void *)dev, p, sizeof(p));
+        LOGI("探针自检：真件对象 %p 读到映射=%d perms=%s", (const void *)dev, (int)m, p);
+    }
+
+    /*
+     * 第一段：等真件填 ops（ACE5 实测：**永远不会填** —— 真件返回的那一刻 ops 是 NULL，
+     * 之后也没人再动它。这一格在 ACE5 上不是接管点，但先测出来，免得以后误判）。
+     */
+    void *ops = NULL;
+    long waited_us = -1;
+    for (int i = 0; i < 200; i++) {
+        ops = (void *)dev->ops;
+        if (ops != NULL) {
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            waited_us = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_nsec - t0.tv_nsec) / 1000L;
+            break;
+        }
+        sched_yield();
+    }
+    if (ops == NULL) {
+        LOGI("绑定探测：真件 device=%p 的 ops 在 50ms 内仍是 NULL（真件自己不填这一格）",
+             (const void *)dev);
+        /* 载入期扫描时 provider 的会话对象还没建，pcr 指针自然找不到；这里 open 之后 50ms
+         * 再扫一遍**全地址空间**（含只读 GOT），看调用方到底把那个函数指针存在哪儿。 */
+        if (g_opt_ops_scan) {
+            static const unsigned long probe[] = {0x1e46f80ul, 0x1e49cc0ul, 0x1e41a90ul};
+            portal_probe_vaddrs(probe, 3, 2048);
+        }
+    } else {
+        char where[256] = {0};
+        portal_where(ops, where, sizeof(where));
+        LOGI("绑定探测：open 返回后 %ldus，真件 device->ops = %p（%s）", waited_us, ops, where);
+    }
+
+    /*
+     * 第二段：盯 **出参**。oemlayer 的 open 在返回之前会把 `*device` 换成它自己的包装对象
+     * （反汇编 /odm/lib64/hw/camera.oemlayer.so+0x6bc7c 处 `str x0, [x8]`，x8 就是出参）。
+     * provider 最终拿到、并调用 configure_streams 的，是**它**。所以真正的接管面在这里。
+     */
+    void **out = ba->out;
+    void *prev = (void *)dev;
+    void *first_other = NULL;
+    long first_other_us = -1;
+    unsigned changes = 0;
+    for (int i = 0; i < 20000; i++) {
+        void *cur = *out;
+        if (cur != prev) {
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            long us = (t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_nsec - t0.tv_nsec) / 1000L;
+            char w[256] = {0};
+            portal_where(cur, w, sizeof(w));
+            /* 新对象：先把 ops 读出来（先确认它还在映射里，别把诊断变成崩溃） */
+            char oinfo[256] = {0};
+            char perms[8] = {0};
+            if (cur != NULL && portal_map_perm(cur, perms, sizeof(perms))) {
+                const uint64_t *q = (const uint64_t *)cur;
+                void *oops = (void *)q[8];
+                char w2[256] = {0};
+                portal_where(oops, w2, sizeof(w2));
+                snprintf(oinfo, sizeof(oinfo),
+                         " 前16字节=%016llx %016llx perms=%s ops(+64)=%p %s",
+                         (unsigned long long)q[0], (unsigned long long)q[1], perms, oops, w2);
+            } else {
+                snprintf(oinfo, sizeof(oinfo), "（不在映射里，未解引用）");
+            }
+            LOGI("出参第 %u 次变化 +%ldus：%p -> %p（%s）%s", changes + 1, us, prev, cur, w, oinfo);
+            changes++;
+            if (first_other == NULL && cur != (void *)dev) {
+                first_other = cur;
+                first_other_us = us;
+            }
+            prev = cur;
+        }
+        if (i < 200) {
+            sched_yield();
+        } else {
+            struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000};
+            nanosleep(&ts, NULL);
+        }
+    }
+    LOGI("出参观察结束：共 %u 次变化，首个非真件对象=%p（+%ldus），末值=%p",
+         changes, first_other, first_other_us, prev);
+
+    if (first_other == NULL) return NULL;
+
+    /*
+     * 收尾：把那个对象盯满 500ms，看它的 ops 会不会被补上；补上了就顺带把整张表打出来 ——
+     * provider 真正调用的是它，接管点也只能在它身上。
+     */
+    void *outer = first_other;
+    for (int i = 0; i < 2500; i++) {
+        char perms[8] = {0};
+        if (!portal_map_perm(outer, perms, sizeof(perms))) {
+            LOGI("外层对象 %p 已释放，停止观察", outer);
+            return NULL;
+        }
+        void *oops = (void *)((const uint64_t *)outer)[8];
+        if (oops != NULL) {
+            char w2[256] = {0};
+            portal_where(oops, w2, sizeof(w2));
+            LOGI("外层对象 %p 的 ops 出现了：%p（%s）", outer, oops, w2);
+            const uint64_t *tbl = (const uint64_t *)oops;
+            for (int k = 0; k < 24; k++) {
+                if (tbl[k] == 0) continue;
+                char w[256] = {0};
+                portal_where((const void *)(uintptr_t)tbl[k], w, sizeof(w));
+                LOGI("  outer ops[%2d] = %p  %s", k, (void *)(uintptr_t)tbl[k], w);
+            }
+            return NULL;
+        }
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 200000};
+        nanosleep(&ts, NULL);
+    }
+    LOGI("外层对象 %p 的 ops 在 500ms 内始终为 NULL", outer);
+    return NULL;
+}
+
 static int shim_open(const struct hw_module_t *module, const char *id,
                      struct hw_device_t **device) {
     (void)module;
@@ -2370,10 +3168,58 @@ static int shim_open(const struct hw_module_t *module, const char *id,
         LOGE("真实 HAL 未加载，open 失败");
         return -1;
     }
+    /* 判定日志：provider 是否真的**经我们的 methods->open** 开设备。
+     * 这条线与"我们的 HMI 被 dlopen 到了"（banner）是两件事 —— ACE5 上必须分别证实，
+     * 因为若 provider 绕过 open 自行 dlopen 真件，整个 ops 接管面就根本不会被走到。 */
+    LOGI("shim_open 被调用：id=%s device=%p —— provider 走的是我们的 methods->open",
+         id ? id : "(null)", (void *)device);
+    {
+        char w0[256] = {0}, w1[256] = {0};
+        const void *r0 = __builtin_return_address(0);
+        const void *r1 = __builtin_return_address(1);
+        portal_where(r0, w0, sizeof(w0));
+        portal_where(r1, w1, sizeof(w1));
+        LOGI("open 的调用者：ra0=%p %s | ra1=%p %s", r0, w0, r1, w1);
+    }
     /* hw_get_module 会把我们的 HMI.dso 设成"我们自己的句柄"，而我们要以**真实模块**的身份
      * 去开设备：指回真实句柄，免得 vendor 实现拿它 dlsym 自己的符号时找不到 */
     HMI.common.dso = g_real_handle;
     int rc = g_real_open(g_real_module, id, device);
+    /* 诊断（bring-up 期）：open 返回时 device/ops 长什么样。ACE5 实测 ops 在这里是 NULL，
+     * 由 oemlayer 在返回之后补上 —— 所以下面挂一个高频盯表线程（见 portal_binder_thread）。 */
+    {
+        const struct camera3_device *d0 =
+            (rc == 0 && device != NULL) ? (const struct camera3_device *)*device : NULL;
+        void **tbl = (d0 != NULL && d0->ops != NULL) ? (void **)d0->ops : NULL;
+        const char *w = NULL;
+        int e0 = tbl ? (int)portal_is_exec_addr(tbl[0], &w) : 0;
+        int e4 = tbl ? (int)portal_is_exec_addr(tbl[4], NULL) : 0;
+        LOGI("真实 open：rc=%d device=%p ops=%p 槽位 [0]=%p(exec=%d) [4]=%p(exec=%d) 首槽所在=%s",
+             rc, (void *)d0, (void *)(d0 ? d0->ops : NULL), tbl ? tbl[0] : NULL, e0,
+             tbl ? tbl[4] : NULL, e4, w ? w : "?");
+        if (d0 != NULL) {
+            const uint64_t *q = (const uint64_t *)d0;
+            LOGI("device 前 96 字节：%016llx %016llx %016llx | %016llx %016llx %016llx | %016llx %016llx %016llx",
+                 (unsigned long long)q[0], (unsigned long long)q[1], (unsigned long long)q[2],
+                 (unsigned long long)q[3], (unsigned long long)q[4], (unsigned long long)q[5],
+                 (unsigned long long)q[6], (unsigned long long)q[7], (unsigned long long)q[8]);
+            LOGI("device.common: tag=0x%08x version=0x%08x module=%p priv=%p",
+                 d0->common.tag, d0->common.version, (void *)d0->common.module, d0->priv);
+            if (!g_opt_open_probe) return rc;
+            pthread_t th;
+            struct portal_bind_arg *ba = malloc(sizeof(*ba));
+            if (ba != NULL) {
+                ba->inner = d0;
+                ba->out = (void **)device;
+                if (pthread_create(&th, NULL, portal_binder_thread, ba) == 0) {
+                    pthread_detach(th);
+                } else {
+                    LOGE("绑定探测线程创建失败");
+                    free(ba);
+                }
+            }
+        }
+    }
     if (rc == 0 && device != NULL && *device != NULL) {
         const struct camera3_device *cam_dev = (const struct camera3_device *)*device;
         /* initialize 的真实实现：优先用导出符号，拿不到就用 ops[0] 的当前值兜底 */
@@ -2553,6 +3399,34 @@ static void load_real_hal(void) {
                        (void *)g_real_open, (void *)g_real_process_capture_request,
                        (void *)g_real_initialize, (void *)g_real_configure_streams,
                        (void *)g_real_oplus_info_cb);
+    /* 可选：直接在真件 HAL3 入口上挂钩（ACE5 唯一可行的接管面，理由见 g_opt_inline_hook） */
+    if (g_opt_hook_vaddrs[0] != '\0') {
+        portal_hook_list(g_opt_hook_vaddrs, NULL);
+    } else if (g_opt_inline_hook || g_opt_inline_hook_cfg) {
+        char tmp[128];
+        if (g_opt_inline_hook && g_opt_inline_hook_cfg) {
+            snprintf(tmp, sizeof(tmp), "0x%lx,0x%lx", g_opt_hook_pcr_vaddr, g_opt_hook_cfg_vaddr);
+        } else if (g_opt_inline_hook) {
+            snprintf(tmp, sizeof(tmp), "0x%lx", g_opt_hook_pcr_vaddr);
+        } else {
+            snprintf(tmp, sizeof(tmp), "0x%lx", g_opt_hook_cfg_vaddr);
+        }
+        portal_hook_list(tmp, NULL);
+    }
+    if (g_opt_hook_ol_vaddrs[0] != '\0') {
+        portal_hook_list(g_opt_hook_ol_vaddrs, "camera.oemlayer.so");
+    }
+    /* 可选：扫描并接管真件自己的 ops 表（ACE5 的 device->ops 是 NULL，只能走这条） */
+    if (g_opt_ops_scan) {
+        /* 关键：**放到独立线程**。构造函数是在 provider 主线程里跑的，扫描一旦占住它，
+         * hwservicemanager 5 秒就会把这个服务判死 —— 实测直接读共享段时正是如此（无 tombstone）。 */
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_load_scan_thread, NULL) == 0) {
+            pthread_detach(th);
+        } else {
+            LOGE("载入期扫描线程创建失败");
+        }
+    }
 }
 
 __attribute__((constructor)) static void on_load(void) {
