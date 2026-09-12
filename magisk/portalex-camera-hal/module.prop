@@ -1,6 +1,6 @@
 id=portalex-camera-hal
 name=PortalEX Camera HAL Shim
-version=0.3.0-M2
+version=0.4.0-M3
 versionCode=1
 author=PortalEX
-description=把 vendor 摄像头 HAL 换成 PortalEX 包装层：摄像头模拟的数据面（把 app 解码出来的视频帧写进相机输出 buffer，应用零注入）。开关见 /vendor/lib/hw/portal.cfg；停用本模块即可完全回退。
+description=把 vendor 摄像头 HAL 换成 PortalEX 包装层：摄像头模拟的数据面（预览/录像/拍照的虚拟帧，应用零注入）。支持画面替换、照片跟随相机几何与 camera3_jpeg_blob 长度；录像编码器流不接管（退回真实相机）。开关见 /vendor/lib/hw/portal.cfg；停用本模块即可完全回退。

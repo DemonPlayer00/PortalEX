@@ -20,6 +20,17 @@ object CameraMockProtocol {
     /** provider 授权名（AndroidManifest 必须一致） */
     const val AUTHORITY = "moe.fuqiuluo.portalex.cameramock"
 
+    /**
+     * 本应用自己的包名。
+     *
+     * **用途**：摄像头模拟的模块侧钩子**绝不能装进本应用自己的进程**。
+     * 实测踩过：本应用在 LSPosed 作用域内，钩子会先把应用的输出面换成排水面、
+     * 再去起 GL 播放器；GL 一旦失败（本机就是 shader 编译失败），应用自己的相机就**一张帧都收不到** ——
+     * 表现是"探针/录制页什么都抓不到"，而日志里只有一句 GL 警告。
+     * 而且对本应用做内容替换本身也没有意义：调试探针要读的正是**真实相机 + HAL 注入**的结果。
+     */
+    const val OWN_PACKAGE = "moe.fuqiuluo.portalex"
+
     /** 清单 URI：`content://<AUTHORITY>/manifest` */
     const val PATH_MANIFEST = "manifest"
 

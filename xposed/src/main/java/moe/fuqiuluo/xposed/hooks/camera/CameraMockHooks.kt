@@ -21,6 +21,12 @@ import moe.fuqiuluo.xposed.utils.PortalDiag
 internal object CameraMockHooks {
 
     fun install(classLoader: ClassLoader, packageName: String) {
+        /* **对本应用自己一律不装**：见 CameraMockProtocol.OWN_PACKAGE 的注释 ——
+         * 旧的内容替换钩子会先把输出面换成排水面，GL 失败时应用自己的相机会一张帧都收不到。 */
+        if (packageName == moe.fuqiuluo.xposed.camera.CameraMockProtocol.OWN_PACKAGE) {
+            Logger.info("摄像头模拟：跳过本应用自身进程（它要读真实相机 + HAL 注入的结果）")
+            return
+        }
         step("Camera2") { Camera2MockHook.install(classLoader, packageName) }
         // Camera1（android.hardware.Camera）：老应用仍在用，作为下一阶段接入。
         // 这里先只在调试模式下留一句，免得用户以为"装了就该全平台生效"。

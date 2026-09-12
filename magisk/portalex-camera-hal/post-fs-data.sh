@@ -24,7 +24,12 @@ MP=/data/adb/magisk/magiskpolicy
 # ---------------------------------------------------------------------------
 SHARED_DIR=/data/local/tmp/portalex
 FRAME_FILE=$SHARED_DIR/cammock.frames
-FRAME_BYTES=16777216   # 16 MiB：3 槽 × 5.2 MiB ⇒ 单帧 1920x1080 NV12 有余量
+# 16 MiB 是**协议要求的最小值**（2026-09-12 协议 v2 起）：
+#   头部 4096 + 3 个亮度槽位 × 4 MiB + 照片区
+# 照片区 = 文件长 − (4096 + 3×4MiB) ≈ 4 MiB —— 拍照的 JPEG 由 app 编码后放这里，HAL 只负责搬运。
+# 槽位大小**必须正好 4 MiB**（app 侧 CameraFrameSink.SLOT_BYTES 固定值），不能再"从文件长度反推"，
+# 否则槽位会把整份文件吃干、照片区长度为 0。
+FRAME_BYTES=16777216
 
 mkdir -p "$SHARED_DIR"
 chmod 0777 "$SHARED_DIR"
