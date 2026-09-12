@@ -167,6 +167,17 @@ abstract class BaseLocationHook: BaseDivineService() {
         return location
     }
 
+    /**
+     * NMEA 用的坐标：**与 Location 帧同源的保护性抖动**。
+     *
+     * 为什么不能直接用 `FakeLoc.latitude/longitude`：那是配置点本身，NMEA 会变成
+     * "每一句都精确相同的坐标"——真机 GNSS 的 GGA/RMC 从不会这样，而且它与同一时刻
+     * Location API 给出的（带抖动的）坐标会差 ~0.1~0.3m，两条通道对不上账。
+     * 每句语句取**一次**采样，句内经纬度自然一致。
+     */
+    private fun jitteredCoordinate(): Pair<Double, Double> =
+        FakeLoc.jitterLocation(FakeLoc.latitude, FakeLoc.longitude)
+
     fun injectNMEA(nmeaStr: String): String {
         // 未启用模拟时，直接返回原始字符串
         if (!FakeLoc.enable) return nmeaStr
@@ -178,19 +189,22 @@ abstract class BaseLocationHook: BaseDivineService() {
                     // 无效数据不修改，保留原始字符串
                     if (value.latitude == null || value.longitude == null) return nmeaStr
                     if (value.fixQuality == 0) return nmeaStr
-                    updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
+                    val (jLat, jLon) = jitteredCoordinate()
+                    updateLatLon(value, jLat, jLon)
                     value.toNmeaString()
                 }
                 is NmeaValue.GNS -> {
                     if (value.latitude == null || value.longitude == null) return nmeaStr
                     if (value.mode == "N") return nmeaStr
-                    updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
+                    val (jLat, jLon) = jitteredCoordinate()
+                    updateLatLon(value, jLat, jLon)
                     value.toNmeaString()
                 }
                 is NmeaValue.RMC -> {
                     if (value.latitude == null || value.longitude == null) return nmeaStr
                     if (value.status == "V") return nmeaStr
-                    updateLatLon(value, FakeLoc.latitude, FakeLoc.longitude)
+                    val (jLat, jLon) = jitteredCoordinate()
+                    updateLatLon(value, jLat, jLon)
                     // 同步速度和航向（m/s → 节，1 m/s = 1.94384 knots）
                     // 与注入帧统一口径：窗口平均（旧实现用瞬时 measuredSpeed，两条链对不上账）
                     value.speedKnots = FakeLoc.averageSpeedOverWindow(1000L).first * 1.94384
