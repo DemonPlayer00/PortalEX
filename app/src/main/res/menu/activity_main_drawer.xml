@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  抽屉菜单：**一个列表**。工具页（校准/诊断）放最后，两组之间的细分隔线由
+  `DrawerGroupDivider`（ItemDecoration）画 —— 菜单 XML 本身表达不了组间距，
+  而拆成两个 NavigationView 会变成"两个各自滚动的列表"（已实测，用户反馈要合并）。
+-->
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     tools:showIn="navigation_view">
 
-    <!-- 日常入口（工具页单独放在 nav_view_tools：见 activity_main.xml 的 12dp 间隔） -->
     <group android:checkableBehavior="single">
         <item
             android:id="@+id/nav_home"
@@ -25,5 +29,13 @@
             android:id="@+id/nav_settings"
             android:icon="@drawable/baseline_settings_24"
             android:title="@string/menu_setting" />
+        <item
+            android:id="@+id/nav_calibration"
+            android:icon="@drawable/baseline_adjust_24"
+            android:title="@string/menu_calibration" />
+        <item
+            android:id="@+id/nav_test"
+            android:icon="@drawable/baseline_info_outline_24"
+            android:title="@string/menu_test" />
     </group>
 </menu>
