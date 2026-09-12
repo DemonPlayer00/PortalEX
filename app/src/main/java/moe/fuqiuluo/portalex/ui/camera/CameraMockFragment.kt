@@ -98,6 +98,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
                 }
             )
         )
+        /* 页面回到前台时对齐一次产帧线程：开关可能是在别处（或上一次进程）打开的，
+         * 而"开着的开关"必须对应一个真的在产帧的线程，否则 HAL 那边会一直发最后一帧 */
+        CameraMockVideoSource.sync(requireContext())
         refresh()
     }
 
@@ -215,6 +218,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
         val context = requireContext()
         val next = !context.cameraMockEnabled
         context.cameraMockEnabled = next
+        /* 开关直接决定产帧线程的启停：关掉即让 HAL 停止接管（露出真实相机） */
+        CameraMockVideoSource.sync(context)
         updateSwitch()
         updateStatus(CameraMockStore.points(context))
         val hint = if (next) {

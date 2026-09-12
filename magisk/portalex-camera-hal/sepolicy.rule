@@ -7,3 +7,16 @@
 # shim 里 dlopen 原件会报 "couldn't map ... segment 1: Permission denied"。
 allow hal_camera_default system_file file { read open getattr map execute }
 allow hal_camera_default magisk_file file { read open getattr map execute }
+
+# --- 摄像头模拟共享帧通道（详见 post-fs-data.sh 的注释与 docs/camera-mock.md §12）---
+type portalex_frame_file { mlstrustedobject }
+allow portalex_frame_file labeledfs filesystem associate
+allow magisk portalex_frame_file dir { relabelfrom relabelto search write add_name read open getattr }
+allow magisk portalex_frame_file file { relabelfrom relabelto read write open getattr create unlink map }
+allow magisk shell_data_file dir { relabelfrom }
+allow magisk shell_data_file file { relabelfrom }
+allow untrusted_app portalex_frame_file dir { search read open getattr write add_name remove_name }
+allow untrusted_app portalex_frame_file file { read write open getattr map create unlink }
+allow hal_camera_default portalex_frame_file dir { search read open getattr }
+allow hal_camera_default portalex_frame_file file { read write open getattr map }
+allow untrusted_app shell_data_file dir { search getattr }
