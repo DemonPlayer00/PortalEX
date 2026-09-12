@@ -12,9 +12,10 @@ import com.google.android.material.color.MaterialColors
  * 传感器波形图：把**采集期间的实时波动**画出来（校准 dialog 用）。
  *
  * 设计取舍：
- *  · 两条曲线 = 加速度模长、陀螺模长，**各自独立自动量程** —— 两者单位不同
- *    （m/s² vs rad/s），共用一根 Y 轴只会得到一条压成直线的曲线；各自量程并把区间
- *    标在左上角，读数才是诚实的。
+ *  · 两条曲线 = 加速度模长、陀螺模长，**同色、只有线条**（无填充、无端点标记）；
+ *    两者单位不同（m/s² vs rad/s），各自独立自动量程并把区间标在左上角 —— 读数才是诚实的。
+ *  · **横轴固定为采集窗口**（默认 8s）：曲线从左侧开始向右生长，纵轴形状不会被"样本数"
+ *    拉伸变形；每 2s 一条浅竖线作为时间刻度。
  *  · 只画模长：这正是"静止判定"用的量（见 `SensorNoiseCalibrator` 的 `normSigma()`），
  *    所以图上看到的就是决定成败的那条线，而不是另一套好看但无关的数字。
  *  · 配色全部取自主题（`colorPrimary` / `colorTertiary` / `colorOutlineVariant` /
@@ -29,8 +30,14 @@ class SensorTraceChart @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attributeSet, defStyleAttr) {
 
-    private var accel: FloatArray = EMPTY
-    private var gyro: FloatArray = EMPTY
+    /** 一条曲线：时间轴（ms，相对采集起点）+ 数值 */
+    class Series(val timeMs: FloatArray, val value: FloatArray) {
+        val size: Int get() = minOf(timeMs.size, value.size)
+    }
+
+    private var accel: Series? = null
+    private var gyro: Series? = null
+    private var windowMs: Float = 8000f
 
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -41,8 +48,8 @@ class SensorTraceChart @JvmOverloads constructor(
     private val grid = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
-    private val colorAccel = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary)
-    private val colorGyro = MaterialColors.getColor(this, com.google.android.material.R.attr.colorTertiary)
+    /** 两条曲线**同一个颜色**（用户口径）；不引入第二种强调色 */
+    private val colorLine = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary)
     private val colorGrid = withAlpha(
         MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant), 0x66
     )
@@ -61,14 +68,22 @@ class SensorTraceChart @JvmOverloads constructor(
         label.textSize = dp(10f)
     }
 
-    /** 提交两条模长序列（自旧到新）。空数组表示"该路暂无数据"。 */
-    fun submit(accelNorm: FloatArray, gyroNorm: FloatArray) {
+    /**
+     * 提交两条模长曲线（自旧到新，带相对时间戳）。
+     * @param windowMs 横轴固定跨度（ms）：曲线的 x = t / windowMs，超出部分贴右边缘。
+     */
+    fun submit(accelNorm: Series, gyroNorm: Series, windowMs: Float = 8000f) {
         accel = accelNorm
         gyro = gyroNorm
+        this.windowMs = windowMs.coerceAtLeast(1f)
         invalidate()
     }
 
-    fun clear() = submit(EMPTY, EMPTY)
+    fun clear() {
+        accel = null
+        gyro = null
+        invalidate()
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -85,32 +100,39 @@ class SensorTraceChart @JvmOverloads constructor(
             canvas.drawLine(left, y, right, y, grid)
         }
 
-        if (accel.size < 2 && gyro.size < 2) {
+        // 竖向时间刻度：每 2s 一条（横轴固定为采集窗口，刻度让"固定"这件事看得见）
+        val stepMs = 2000f
+        var t = stepMs
+        while (t < windowMs) {
+            val x = left + (right - left) * (t / windowMs)
+            canvas.drawLine(x, top, x, bottom, grid)
+            t += stepMs
+        }
+
+        val accelSeries = accel
+        val gyroSeries = gyro
+        if ((accelSeries?.size ?: 0) < 2 && (gyroSeries?.size ?: 0) < 2) {
             label.color = colorLabel
             label.textSize = dp(11f)
-            canvas.drawText(
-                "等待传感器数据…",
-                left + dp(4f),
-                (top + bottom) / 2f,
-                label
-            )
+            canvas.drawText("等待传感器数据…", left + dp(4f), (top + bottom) / 2f, label)
             return
         }
 
-        drawSeries(canvas, accel, colorAccel, left, top, right, bottom, withFill = true)
-        drawSeries(canvas, gyro, colorGyro, left, top, right, bottom, withFill = false)
+        // 两条曲线**同色**（用户口径：一张图一根颜色）；区分靠左上角的量程标注
+        drawSeries(canvas, accelSeries, left, top, right, bottom)
+        drawSeries(canvas, gyroSeries, left, top, right, bottom)
 
-        // 左上角量程标注（每路一条，颜色与曲线一致）
         label.textSize = dp(10f)
+        label.color = colorLabel
         var y = top + dp(10f)
-        if (accel.size >= 2) {
-            label.color = colorAccel
-            canvas.drawText(rangeText("加速度模长", accel), left + dp(2f), y, label)
-            y += dp(12f)
+        accelSeries?.let {
+            if (it.size >= 2) {
+                canvas.drawText(rangeText("加速度模长", it.value), left + dp(2f), y, label)
+                y += dp(12f)
+            }
         }
-        if (gyro.size >= 2) {
-            label.color = colorGyro
-            canvas.drawText(rangeText("陀螺模长", gyro), left + dp(2f), y, label)
+        gyroSeries?.let {
+            if (it.size >= 2) canvas.drawText(rangeText("陀螺模长", it.value), left + dp(2f), y, label)
         }
     }
 
@@ -121,49 +143,35 @@ class SensorTraceChart @JvmOverloads constructor(
     }
 
     /**
-     * 画一条序列：按自身 [min,max] 自动量程映射到绘图区。
-     * 常数序列（max≈min）画在中线，避免除零变成贴边直线（那会被误读成"没有噪声"）。
+     * 画一条曲线：x 由**相对时间 / 固定窗口**决定（所以早段只占左侧、随采集向右生长），
+     * y 按该序列自身的 [min,max] 自动量程。常数序列画在中线，避免除零变成贴边直线
+     * （那会被误读成"没有噪声"）。只画线：没有填充、没有端点标记。
      */
     private fun drawSeries(
         canvas: Canvas,
-        data: FloatArray,
-        color: Int,
+        series: Series?,
         left: Float,
         top: Float,
         right: Float,
         bottom: Float,
-        withFill: Boolean,
     ) {
-        if (data.size < 2) return
-        val lo = data.minOrNull() ?: 0f
-        val hi = data.maxOrNull() ?: 0f
+        if (series == null || series.size < 2) return
+        val lo = series.value.minOrNull() ?: 0f
+        val hi = series.value.maxOrNull() ?: 0f
         val span = hi - lo
         val path = Path()
-        var lastY = 0f
-        data.forEachIndexed { i, v ->
-            val x = left + (right - left) * i / (data.size - 1).toFloat()
+        for (i in 0 until series.size) {
+            val x = left + (right - left) * (series.timeMs[i] / windowMs).coerceIn(0f, 1f)
             val y = if (span < 1e-6f) {
                 (top + bottom) / 2f
             } else {
-                bottom - (bottom - top) * ((v - lo) / span)
+                bottom - (bottom - top) * ((series.value[i] - lo) / span)
             }
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            lastY = y
         }
-        if (withFill) {
-            val area = Path(path)
-            area.lineTo(right, bottom)
-            area.lineTo(left, bottom)
-            area.close()
-            fill.color = withAlpha(color, 0x33)
-            canvas.drawPath(area, fill)
-        }
-        stroke.color = color
+        stroke.color = colorLine
         stroke.strokeWidth = dp(2f)
         canvas.drawPath(path, stroke)
-        // 末点高亮：一眼看出"现在"在哪
-        fill.color = color
-        canvas.drawCircle(right, lastY, dp(2.5f), fill)
     }
 
     private companion object {

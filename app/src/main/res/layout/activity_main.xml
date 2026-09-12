@@ -14,12 +14,45 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <com.google.android.material.navigation.NavigationView
-        android:id="@+id/nav_view"
+    <!--
+      抽屉 = 两个 NavigationView：
+        · 上面是日常入口（含 header）；
+        · 下面是工具页（校准/诊断），与上面隔开 **1/4 个按钮高度**。
+      为什么不用一个菜单里的 subheader 占位：subheader 的行高被 Material 固定成
+      ?attr/listPreferredItemHeightSmall（本机 48dp）——那正好是"一个按钮"的高度，
+      改它又会连带把 menu item 的 minHeight 一起改掉。分成两个视图后间距就是 margin，
+      精确可控。容器背景取 M3 抽屉容器色（?attr/colorSurfaceContainerLow），
+      让那 12dp 缝隙看起来仍是同一块抽屉面。
+    -->
+    <LinearLayout
+        android:id="@+id/drawer_container"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_gravity="start"
-        app:headerLayout="@layout/nav_header_main"
-        app:menu="@menu/activity_main_drawer" />
+        android:orientation="vertical"
+        android:background="?attr/colorSurfaceContainerLow">
+
+        <com.google.android.material.navigation.NavigationView
+            android:id="@+id/nav_view"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:headerLayout="@layout/nav_header_main"
+            app:itemVerticalPadding="0dp"
+            app:menu="@menu/activity_main_drawer" />
+
+        <!--
+          间距 = 1/4 个按钮（按钮 = 一个菜单项 = ?attr/listPreferredItemHeightSmall = 48dp ⇒ 12dp）。
+          实测两个 NavigationView 各自在菜单容器里带了 8dp 上下留白（itemVerticalPadding 归零
+          也去不掉），固有间距是 16dp；所以这里不设 margin，而是把整块上移 4dp ⇒ 可见间距正好 12dp。
+        -->
+        <com.google.android.material.navigation.NavigationView
+            android:id="@+id/nav_view_tools"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:translationY="-4dp"
+            app:itemVerticalPadding="0dp"
+            app:menu="@menu/activity_main_drawer_tools" />
+
+    </LinearLayout>
 
 </androidx.drawerlayout.widget.DrawerLayout>
