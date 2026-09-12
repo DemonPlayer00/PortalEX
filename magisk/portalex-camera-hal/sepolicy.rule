@@ -1,8 +1,9 @@
-# Magisk 的 sepolicy.rule 用的是 magiskpolicy 语法：`allow <s> <t>:<class> <perm>,<perm>`
-#（**不支持** sepolicy.conf 的 `{ a b c }` 花括号写法 —— 写成那样会静默不生效，实测踩过）。
+# magiskpolicy 的语句格式是「allow <source> <target> <class> { perms }」——
+# **不是** sepolicy.conf 的 `target:class perm,perm`（写成那样会报
+# "Syntax error ... Hint: allow *source_type *target_type *class *perm_set"）。
 #
-# 为什么需要：Magisk 把模块里**新增**的文件挂进 /vendor 时，若源路径是 system/**，
+# 为什么需要这条：Magisk 把模块里**新增**的文件挂进 /vendor 时，若源路径是 system/**，
 # 该文件被标成 system_file；而 hal_camera_default 对 system_file 没有 execute，
-# dlopen 报 "couldn't map segment 1: Permission denied"。
-allow hal_camera_default system_file:file read,open,getattr,map,execute
-allow hal_camera_default magisk_file:file read,open,getattr,map,execute
+# shim 里 dlopen 原件会报 "couldn't map ... segment 1: Permission denied"。
+allow hal_camera_default system_file file { read open getattr map execute }
+allow hal_camera_default magisk_file file { read open getattr map execute }
