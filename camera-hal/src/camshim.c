@@ -458,6 +458,15 @@ static char g_opt_hook_vaddrs[512] = {0};
 static int g_opt_open_probe = 0;
 /** `hook_ol_vaddrs=...`：同一套钩子挂在 **oemlayer** 上的目标（基址按 maps 里的模块路径取） */
 static char g_opt_hook_ol_vaddrs[512] = {0};
+/** `hook_null_vaddrs=0x1e46f60`：装**空钩子**（只重放、不调用 C），用于隔离机制本身 */
+static char g_opt_hook_null_vaddrs[256] = {0};
+/** `hook_touch_vaddrs=0x1e46f60`：带一次调用、但被调者只 `ret` 的钩子 */
+static char g_opt_hook_touch_vaddrs[256] = {0};
+/** `hook_rec_vaddrs=` / `hook_rec_ol_vaddrs=`：**零调用钩子**（正式形态，只记账不 call） */
+static char g_opt_hook_rec_vaddrs[512] = {0};
+/** `hook_nrec_vaddrs=`：touch 形态外壳 + 裸汇编记录器（最多 2 个） */
+static char g_opt_hook_nrec_vaddrs[256] = {0};
+static char g_opt_hook_rec_ol_vaddrs[512] = {0};
 /**
  * 照片是否**预镜像**（水平翻转）。
  *
@@ -620,6 +629,16 @@ static void load_options(void) {
             snprintf(g_opt_hook_vaddrs, sizeof(g_opt_hook_vaddrs), "%s", val);
         } else if (strcmp(key, "open_probe") == 0) {
             g_opt_open_probe = atoi(val);
+        } else if (strcmp(key, "hook_nrec_vaddrs") == 0) {
+            snprintf(g_opt_hook_nrec_vaddrs, sizeof(g_opt_hook_nrec_vaddrs), "%s", val);
+        } else if (strcmp(key, "hook_rec_vaddrs") == 0) {
+            snprintf(g_opt_hook_rec_vaddrs, sizeof(g_opt_hook_rec_vaddrs), "%s", val);
+        } else if (strcmp(key, "hook_rec_ol_vaddrs") == 0) {
+            snprintf(g_opt_hook_rec_ol_vaddrs, sizeof(g_opt_hook_rec_ol_vaddrs), "%s", val);
+        } else if (strcmp(key, "hook_touch_vaddrs") == 0) {
+            snprintf(g_opt_hook_touch_vaddrs, sizeof(g_opt_hook_touch_vaddrs), "%s", val);
+        } else if (strcmp(key, "hook_null_vaddrs") == 0) {
+            snprintf(g_opt_hook_null_vaddrs, sizeof(g_opt_hook_null_vaddrs), "%s", val);
         } else if (strcmp(key, "hook_ol_vaddrs") == 0) {
             snprintf(g_opt_hook_ol_vaddrs, sizeof(g_opt_hook_ol_vaddrs), "%s", val);
         } else if (strcmp(key, "src_file") == 0) {
@@ -649,6 +668,8 @@ static camera3_callback_ops_t g_our_callbacks = {
 /* 前置声明（g_methods 要用） */
 static int shim_open(const struct hw_module_t *module, const char *id,
                      struct hw_device_t **device);
+/* 前置声明：钩子命中计数汇报（实现见下方"函数入口挂钩"段） */
+static void portal_hook_report_counts(void);
 
 /**
  * 惰性兜底回调：原件没打开时，任何被点名调用的 `camera_module_t` 回调都落到这里。
@@ -2741,6 +2762,25 @@ static void *portal_load_scan_thread(void *arg) {
 #define PORTAL_HOOK_MAX 20
 /** 每个挂钩位的"返回点"（安装时填成 entry+16） */
 __attribute__((used)) static volatile unsigned long g_hook_resume[PORTAL_HOOK_MAX];
+/** 每个挂钩位的命中计数（钩子体只自增；汇报在 open 时做） */
+__attribute__((used)) static unsigned long g_hook_cnt[PORTAL_HOOK_MAX];
+
+/**
+ * 钩子**在内核态之外能干的全部事情**：计数 + 记下第一次调用的现场（调用者、两个参数）。
+ *
+ * 为什么不用 C 函数记账（ACE5 实测）：钩子是从 vendor 代码**持着自己的加载锁**的路径里
+ * 进来的，而 C 函数的第一条 libc/原子调用会触发**首次 PLT 惰性绑定**（要拿 linker 锁）
+ * ⇒ ABBA 死锁。对照实验：调"裸 `ret`"的钩子完全透明（CONFIG=1、229 帧），
+ * 调我们那个编译出来的 C 记账函数就必死。所以钩子里**一条 call 都不许有** ——
+ * 全部用内联汇编直接读写我们自己的 .bss，汇报留到 open 时（非热路径）再做。
+ */
+struct portal_hook_rec {
+    unsigned long cnt;    /**< 命中次数 */
+    unsigned long caller; /**< 第一次调用时的返回地址（干净，PAC 已在桩里避开） */
+    unsigned long a0;     /**< 第一次调用时的第一个参数 */
+    unsigned long a1;     /**< 第一次调用时的第二个参数 */
+};
+__attribute__((used)) static struct portal_hook_rec g_hook_rec[PORTAL_HOOK_MAX];
 static char g_hook_name_buf[PORTAL_HOOK_MAX][64];
 static const char *g_hook_name[PORTAL_HOOK_MAX];
 
@@ -2757,6 +2797,10 @@ static const char *g_hook_name[PORTAL_HOOK_MAX];
  * 寄存器约定：x0/x1 = 参数；x9..x17 调用者可挥霍；x19..x28 由被调函数保存；x18 = 平台寄存器。
  * 顺序关键：**先**抄干净的 x30 与入口 SP，**再**重放（重放里可能就有 paciasp 与改 SP 的指令）。
  */
+/* ⚠️ 跳回函数中部**不能**用 `br`：ACE5 上真件 .text 带 BTI，间接分支落到非 bti/非 paciasp
+ * 的指令上会直接 SIGILL（`ILL_ILLOPC`，fault addr 就是那个返回点 —— 实测 tombstone 抓到过）。
+ * `RET` 不受 BTI 约束，所以返回点写进 x30 再 `ret`；x30 的原始（已签名）值早已由重放的
+ * `stp x29,x30,[sp,#-0x60]!` 存进函数自己的栈帧，函数收尾时会自己恢复，不冲突。 */
 /* 除了 x0..x7，钩子还必须自己保存 **x8 与 x18**：
  * x8 是"间接结果指针"（结构体返回用），x18 在 AAPCS64 里是**平台保留**寄存器 ——
  * 带 SCS（影子调用栈）的 vendor 代码把返回地址链挂在 x18 上，而我们不开 SCS 的编译器
@@ -2795,8 +2839,10 @@ static const char *g_hook_name[PORTAL_HOOK_MAX];
             "ldp x8, x18, [sp, #0x40]\n"                                         \
             "add sp, sp, #0x60\n"                                                \
             "adrp x16, g_hook_resume\n"                                          \
+            "add x16, x16, #:lo12:g_hook_resume\n"                               \
             "ldr x16, [x16, #" #OFF "]\n"                                        \
-            "br x16\n");                                                         \
+            "mov x30, x16\n"                                                      \
+            "ret\n");                                                         \
     }
 
 PORTAL_HOOK_STUB(portal_hook_00, 0, 0)
@@ -2820,6 +2866,173 @@ PORTAL_HOOK_STUB(portal_hook_17, 136, 17)
 PORTAL_HOOK_STUB(portal_hook_18, 144, 18)
 PORTAL_HOOK_STUB(portal_hook_19, 152, 19)
 
+/**
+ * **空钩子**：只重放被顶掉的 4 条指令，然后跳回 entry+16 —— 不调用任何 C 代码。
+ * 用来把"补丁机制本身是否透明"与"C 记账函数有没有副作用"彻底分开。
+ */
+__attribute__((used)) static volatile unsigned long g_hook_resume_null[2];
+
+#define PORTAL_HOOK_STUB_NULL(NAME, OFF)                                          \
+    __attribute__((naked)) static void NAME(void) {                               \
+        __asm__ volatile(                                                         \
+            "nop\n" "nop\n" "nop\n" "nop\n"   /* +0 处：安装时写成被顶掉的 4 条 */ \
+            "adrp x16, g_hook_resume_null\n"                                     \
+            "add x16, x16, #:lo12:g_hook_resume_null\n"                          \
+            "ldr x16, [x16, #" #OFF "]\n"                                        \
+            "mov x30, x16\n"                                                      \
+            "ret\n");                                                         \
+    }
+
+PORTAL_HOOK_STUB_NULL(portal_hook_null0, 0)
+PORTAL_HOOK_STUB_NULL(portal_hook_null1, 8)
+
+/**
+ * **裸 ret 被调者**：没有任何序言、不碰 TLS/栈/其它寄存器。
+ * 配合下面的 touch 外壳，用来分辨"从钩子里发起一次调用"与"我们的 C 函数内部做了什么"
+ * 这两件事里到底是哪一件打断了会话。
+ */
+__attribute__((naked, used)) static void portal_hook_touch_c(void) {
+    __asm__ volatile("ret\n");
+}
+
+__attribute__((used)) static volatile unsigned long g_hook_resume_touch[2];
+
+#define PORTAL_HOOK_STUB_TOUCH(NAME, OFF)                                          \
+    __attribute__((naked)) static void NAME(void) {                                \
+        __asm__ volatile(                                                          \
+            "mov x9, x30\n" "mov x10, x0\n" "mov x11, x1\n"                     \
+            "mov x12, x29\n" "mov x13, sp\n"                                     \
+            "nop\n" "nop\n" "nop\n" "nop\n"   /* +20：被顶掉的 4 条 */          \
+            "sub sp, sp, #0x60\n"                                                 \
+            "stp x0, x1, [sp, #0x00]\n" "stp x2, x3, [sp, #0x10]\n"              \
+            "stp x4, x5, [sp, #0x20]\n" "stp x6, x7, [sp, #0x30]\n"              \
+            "stp x8, x18, [sp, #0x40]\n"                                          \
+            "bl portal_hook_touch_c\n"                                            \
+            "ldp x0, x1, [sp, #0x00]\n" "ldp x2, x3, [sp, #0x10]\n"              \
+            "ldp x4, x5, [sp, #0x20]\n" "ldp x6, x7, [sp, #0x30]\n"              \
+            "ldp x8, x18, [sp, #0x40]\n"                                          \
+            "add sp, sp, #0x60\n"                                                 \
+            "adrp x16, g_hook_resume_touch\n"                                     \
+            "add x16, x16, #:lo12:g_hook_resume_touch\n"                          \
+            "ldr x16, [x16, #" #OFF "]\n"                                         \
+            "mov x30, x16\n"                                                      \
+            "ret\n");                                                          \
+    }
+
+PORTAL_HOOK_STUB_TOUCH(portal_hook_touch0, 0)
+PORTAL_HOOK_STUB_TOUCH(portal_hook_touch1, 8)
+
+/*
+ * **nrec** = "naked record"：外壳用**已被证明透明**的 touch 形态（5 条 mov + 重放 +
+ * 压栈保存 x0..x7/x8/x18 + 一次 `bl` + 恢复），只是把被调者换成**手写的裸汇编记录器**。
+ * 这样既不触发 C 编译器生成的那些调用（可能引发 PLT 惰性绑定死锁），又真的把
+ * 调用者/参数记下来。x9/x10/x11 由外壳在重放前就抄好（caller / a0 / a1）。
+ */
+__attribute__((naked, used)) static void portal_hook_nrec0_c(void) {
+    __asm__ volatile(
+        "adrp x16, g_hook_rec\n" "add x16, x16, #:lo12:g_hook_rec\n"
+        "ldr x17, [x16]\n" "add x17, x17, #1\n" "str x17, [x16]\n"
+        "cmp x17, #1\n" "b.ne 1f\n"
+        "str x9, [x16, #8]\n" "str x10, [x16, #16]\n" "str x11, [x16, #24]\n"
+        "1:\n" "ret\n");
+}
+__attribute__((naked, used)) static void portal_hook_nrec1_c(void) {
+    __asm__ volatile(
+        "adrp x16, (g_hook_rec + 32)\n" "add x16, x16, #:lo12:g_hook_rec\n"
+        "add x16, x16, #32\n"
+        "ldr x17, [x16]\n" "add x17, x17, #1\n" "str x17, [x16]\n"
+        "cmp x17, #1\n" "b.ne 1f\n"
+        "str x9, [x16, #8]\n" "str x10, [x16, #16]\n" "str x11, [x16, #24]\n"
+        "1:\n" "ret\n");
+}
+
+__attribute__((used)) static volatile unsigned long g_hook_resume_nrec[2];
+
+#define PORTAL_HOOK_STUB_NREC(NAME, OFF, CALLEE)                                   \
+    __attribute__((naked)) static void NAME(void) {                                \
+        __asm__ volatile(                                                          \
+            "mov x9, x30\n" "mov x10, x0\n" "mov x11, x1\n"                     \
+            "mov x12, x29\n" "mov x13, sp\n"                                     \
+            "nop\n" "nop\n" "nop\n" "nop\n"                                    \
+            "sub sp, sp, #0x60\n"                                                 \
+            "stp x0, x1, [sp, #0x00]\n" "stp x2, x3, [sp, #0x10]\n"              \
+            "stp x4, x5, [sp, #0x20]\n" "stp x6, x7, [sp, #0x30]\n"              \
+            "stp x8, x18, [sp, #0x40]\n"                                          \
+            "bl " #CALLEE "\n"                                                    \
+            "ldp x0, x1, [sp, #0x00]\n" "ldp x2, x3, [sp, #0x10]\n"              \
+            "ldp x4, x5, [sp, #0x20]\n" "ldp x6, x7, [sp, #0x30]\n"              \
+            "ldp x8, x18, [sp, #0x40]\n"                                          \
+            "add sp, sp, #0x60\n"                                                 \
+            "adrp x16, g_hook_resume_nrec\n"                                      \
+            "add x16, x16, #:lo12:g_hook_resume_nrec\n"                           \
+            "ldr x16, [x16, #" #OFF "]\n"                                         \
+            "mov x30, x16\n"                                                      \
+            "ret\n");                                                          \
+    }
+
+PORTAL_HOOK_STUB_NREC(portal_hook_nrec0, 0, portal_hook_nrec0_c)
+PORTAL_HOOK_STUB_NREC(portal_hook_nrec1, 8, portal_hook_nrec1_c)
+
+/**
+ * **零调用钩子**（正式形态）：重放被顶掉的 4 条 → 内联汇编里计数并记下首次现场 → 跳回。
+ * 全程没有任何 `bl`，因此不会在 vendor 的锁里触发 PLT 惰性绑定。
+ */
+#define PORTAL_HOOK_STUB_REC(NAME, ROFF, DOFF)                                     \
+    __attribute__((naked)) static void NAME(void) {                                \
+        __asm__ volatile(                                                          \
+            "mov x9, x30\n" "mov x10, x0\n" "mov x11, x1\n"                     \
+            "nop\n" "nop\n" "nop\n" "nop\n"   /* +20：被顶掉的 4 条 */          \
+            "adrp x16, g_hook_rec\n"                                              \
+            "add x16, x16, #:lo12:g_hook_rec\n"                                   \
+            "add x16, x16, #" #DOFF "\n"                                          \
+            "ldr x17, [x16]\n"                                                    \
+            "add x17, x17, #1\n"                                                  \
+            "str x17, [x16]\n"                                                    \
+            "cmp x17, #1\n"                                                       \
+            "b.ne 1f\n"                                                           \
+            "str x9, [x16, #8]\n"                                                 \
+            "str x10, [x16, #16]\n"                                               \
+            "str x11, [x16, #24]\n"                                               \
+            "1:\n"                                                                \
+            "adrp x16, g_hook_resume_rec\n"                                       \
+            "add x16, x16, #:lo12:g_hook_resume_rec\n"                            \
+            "ldr x16, [x16, #" #ROFF "]\n"                                        \
+            "mov x30, x16\n"                                                      \
+            "ret\n");                                                          \
+    }
+
+__attribute__((used)) static volatile unsigned long g_hook_resume_rec[PORTAL_HOOK_MAX];
+PORTAL_HOOK_STUB_REC(portal_hook_rec00, 0, 0)
+PORTAL_HOOK_STUB_REC(portal_hook_rec01, 8, 32)
+PORTAL_HOOK_STUB_REC(portal_hook_rec02, 16, 64)
+PORTAL_HOOK_STUB_REC(portal_hook_rec03, 24, 96)
+PORTAL_HOOK_STUB_REC(portal_hook_rec04, 32, 128)
+PORTAL_HOOK_STUB_REC(portal_hook_rec05, 40, 160)
+PORTAL_HOOK_STUB_REC(portal_hook_rec06, 48, 192)
+PORTAL_HOOK_STUB_REC(portal_hook_rec07, 56, 224)
+PORTAL_HOOK_STUB_REC(portal_hook_rec08, 64, 256)
+PORTAL_HOOK_STUB_REC(portal_hook_rec09, 72, 288)
+PORTAL_HOOK_STUB_REC(portal_hook_rec10, 80, 320)
+PORTAL_HOOK_STUB_REC(portal_hook_rec11, 88, 352)
+PORTAL_HOOK_STUB_REC(portal_hook_rec12, 96, 384)
+PORTAL_HOOK_STUB_REC(portal_hook_rec13, 104, 416)
+PORTAL_HOOK_STUB_REC(portal_hook_rec14, 112, 448)
+PORTAL_HOOK_STUB_REC(portal_hook_rec15, 120, 480)
+PORTAL_HOOK_STUB_REC(portal_hook_rec16, 128, 512)
+PORTAL_HOOK_STUB_REC(portal_hook_rec17, 136, 544)
+PORTAL_HOOK_STUB_REC(portal_hook_rec18, 144, 576)
+PORTAL_HOOK_STUB_REC(portal_hook_rec19, 152, 608)
+
+static void *const g_hook_rec_fns[PORTAL_HOOK_MAX] = {
+    (void *)portal_hook_rec00, (void *)portal_hook_rec01, (void *)portal_hook_rec02,
+    (void *)portal_hook_rec03, (void *)portal_hook_rec04, (void *)portal_hook_rec05,
+    (void *)portal_hook_rec06, (void *)portal_hook_rec07, (void *)portal_hook_rec08,
+    (void *)portal_hook_rec09, (void *)portal_hook_rec10, (void *)portal_hook_rec11,
+    (void *)portal_hook_rec12, (void *)portal_hook_rec13, (void *)portal_hook_rec14,
+    (void *)portal_hook_rec15, (void *)portal_hook_rec16, (void *)portal_hook_rec17,
+    (void *)portal_hook_rec18, (void *)portal_hook_rec19,
+};
+
 static void *const g_hook_fns[PORTAL_HOOK_MAX] = {
     (void *)portal_hook_00, (void *)portal_hook_01, (void *)portal_hook_02, (void *)portal_hook_03,
     (void *)portal_hook_04, (void *)portal_hook_05, (void *)portal_hook_06, (void *)portal_hook_07,
@@ -2827,6 +3040,24 @@ static void *const g_hook_fns[PORTAL_HOOK_MAX] = {
     (void *)portal_hook_12, (void *)portal_hook_13, (void *)portal_hook_14, (void *)portal_hook_15,
     (void *)portal_hook_16, (void *)portal_hook_17, (void *)portal_hook_18, (void *)portal_hook_19,
 };
+
+/** 把各入口的累计命中打出来 —— 只在 open 这种非热路径上调用，钩子体自身不做 I/O */
+static void portal_hook_report_counts(void) {
+    for (int k = 0; k < PORTAL_HOOK_MAX; k++) {
+        unsigned long c = g_hook_rec[k].cnt;
+        if (c != 0) {
+            char w[192] = {0};
+            portal_where((const void *)g_hook_rec[k].caller, w, sizeof(w));
+            LOGI("零调用钩子[%d] %s 命中 %lu 次；首次：caller=%p（%s）a0=%p a1=%p", k,
+                 g_hook_name[k] ? g_hook_name[k] : "?", c, (void *)g_hook_rec[k].caller, w,
+                 (void *)g_hook_rec[k].a0, (void *)g_hook_rec[k].a1);
+        }
+        unsigned long c2 = __atomic_load_n(&g_hook_cnt[k], __ATOMIC_RELAXED);
+        if (c2 != 0) {
+            LOGI("钩子累计：入口[%d] %s 命中 %lu 次", k, g_hook_name[k] ? g_hook_name[k] : "?", c2);
+        }
+    }
+}
 
 /** 路径里带 `sub` 的第一个映射的起始地址（= 该 ELF 的 vaddr 0）。找不到返回 0。 */
 static uintptr_t portal_module_base(const char *sub) {
@@ -2862,21 +3093,37 @@ static uintptr_t portal_module_base(const char *sub) {
  * 再按表解引用直接把 provider 打死（SIGSEGV 0xf8a0，tombstone_03）。
  * 所以这里用"必须落在入口 SP 之上、且所在映射可写、且不是文件映射"三重门槛卡死。
  */
+/**
+ * 钩子体（**默认路径：零副作用**）。
+ *
+ * 只用一次原子自增记账，然后立刻返回 —— **不打印、不取锁、不做任何 I/O**。
+ *
+ * 为什么必须这么干净（ACE5 实测，见 docs/camera-mock.md §22）：
+ * 我们是被 vendor 代码在**它自己的调用路径里**调进来的（OPPO oemlayer 在会话建立期
+ * 正持着自己的加载锁做 dlopen/dlsym）。此刻只要我们去碰别的共享资源 ——
+ * `__android_log_print`（logd 的 socket/锁）、`dladdr`（linker 全局锁）、
+ * `/proc/self/maps` —— 就可能与该锁构成 ABBA 死锁：症状是**没有 tombstone**、
+ * 会话恰好死在 `configure_streams` 里、provider 被 init 判死后重启。
+ * 实测对照：同一个入口，"只重放不调用 C"的空钩子完全透明（CONFIG=1、262 帧稳定），
+ * 而带一条 LOGI 的极简钩子就会打断会话 —— 所以记账与汇报必须分开：
+ * **钩子里只自增，汇报交给 portal_hook_report_thread**。
+ */
 __attribute__((used)) static void portal_hook_any_c(unsigned long caller, unsigned long a0,
                                unsigned long a1, unsigned long fp, unsigned long kind,
                                unsigned long entry_sp) {
-    static unsigned long cnt[PORTAL_HOOK_MAX];
     if (kind >= PORTAL_HOOK_MAX) return;
-    unsigned long c = __atomic_add_fetch(&cnt[kind], 1, __ATOMIC_RELAXED);
-    if (c > 4 && c % 240 != 0) return;
+    __atomic_add_fetch(&g_hook_cnt[kind], 1, __ATOMIC_RELAXED);
+    if (!g_opt_open_probe) return;   /* ← 默认在这里就回去了，一行 I/O 都没有 */
 
+    static unsigned long logged[PORTAL_HOOK_MAX];
+    unsigned long c = __atomic_add_fetch(&logged[kind], 1, __ATOMIC_RELAXED);
+    if (c > 4 && c % 240 != 0) return;
     char w[256] = {0};
     portal_where((const void *)caller, w, sizeof(w));
     LOGI("入口挂钩[%lu] %s 第 %lu 次：调用者=%p（%s）a0=%p a1=%p", kind,
          g_hook_name[kind] ? g_hook_name[kind] : "?", c, (void *)caller, w, (void *)a0,
          (void *)a1);
-
-    if (c != 1 || !g_opt_open_probe) return;   /* 读调用者栈帧属于诊断，默认关 */
+    if (c != 1) return;
     /* 只有"确实像调用者栈帧"时才去读它 —— 见上面那段教训 */
     if (fp < entry_sp || fp > entry_sp + (1u << 20)) return;
     char perms[8] = {0};
@@ -2930,7 +3177,9 @@ static int portal_replayable(const uint32_t *w) {
  * （内核 FOLL_FORCE，只对私有映射生效）—— ACE5 上 `mprotect(PROT_WRITE|PROT_EXEC)` 会被
  * SELinux `execmem` 直接拒（实测 AVC），这条路是唯一不碰策略又能改代码的写法。
  */
-static int portal_inline_hook(int slot, uintptr_t base, unsigned long target_vaddr, const char *name) {
+static int portal_inline_hook_ex(int slot, uintptr_t base, unsigned long target_vaddr, const char *name,
+                                 void *hook_fn, volatile unsigned long *resume_slot,
+                                 unsigned replay_off) {
     if (slot < 0 || slot >= PORTAL_HOOK_MAX || base == 0) return 0;
     uint32_t *code = (uint32_t *)(base + (uintptr_t)target_vaddr);
     uint32_t orig[4];
@@ -2949,7 +3198,7 @@ static int portal_inline_hook(int slot, uintptr_t base, unsigned long target_vad
      *    这一步失败而继续挂，等于把目标函数的前 4 条指令直接抹掉 —— 那是必崩的写法。 */
     /* 重放槽在钩子外壳 **+20 字节**处：前 5 条 mov 负责先把 x9..x13 抄好
      * （必须在重放之前 —— 重放里的 paciasp 会改 x30；SP 也会被重放改掉）。 */
-    uint32_t *slot_code = (uint32_t *)((char *)g_hook_fns[slot] + 20);
+    uint32_t *slot_code = (uint32_t *)((char *)hook_fn + replay_off);
     ssize_t w1 = pwrite(memfd, orig, sizeof(orig), (off_t)(uintptr_t)slot_code);
     uint32_t back[4] = {0};
     ssize_t r1 = pread(memfd, back, sizeof(back), (off_t)(uintptr_t)slot_code);
@@ -2962,24 +3211,141 @@ static int portal_inline_hook(int slot, uintptr_t base, unsigned long target_vad
     }
     /* 2) 目标入口换成绝对跳转桩 */
     uint32_t stub[4] = {0x58000050u /*ldr x16,#8*/, 0xD61F0200u /*br x16*/,
-                        (uint32_t)((uintptr_t)g_hook_fns[slot] & 0xFFFFFFFFu),
-                        (uint32_t)((uintptr_t)g_hook_fns[slot] >> 32)};
-    g_hook_name[slot] = name;
-    g_hook_resume[slot] = (unsigned long)(uintptr_t)code + 16;
+                        (uint32_t)((uintptr_t)hook_fn & 0xFFFFFFFFu),
+                        (uint32_t)((uintptr_t)hook_fn >> 32)};
+    if (slot >= 0) g_hook_name[slot] = name;
+    *resume_slot = (unsigned long)(uintptr_t)code + 16;
     if (pwrite(memfd, stub, sizeof(stub), (off_t)(uintptr_t)code) != (ssize_t)sizeof(stub)) {
         LOGE("挂钩 %s：写目标入口失败（errno=%d）", name, errno);
         close(memfd);
-        g_hook_resume[slot] = 0;
+        *resume_slot = 0;
         return 0;
     }
     close(memfd);
     __builtin___clear_cache((char *)slot_code, (char *)slot_code + 16);
-    __builtin___clear_cache((char *)g_hook_fns[slot], (char *)g_hook_fns[slot] + 36);
+    __builtin___clear_cache((char *)hook_fn, (char *)hook_fn + 36);
     __builtin___clear_cache((char *)code, (char *)code + 16);
     LOGI("已挂钩[%d] %s：入口 %p → 钩子 %p（重放 %08x %08x %08x %08x，返回点 %p）", slot, name,
-         (void *)code, g_hook_fns[slot], orig[0], orig[1], orig[2], orig[3],
-         (void *)g_hook_resume[slot]);
+         (void *)code, hook_fn, orig[0], orig[1], orig[2], orig[3], (void *)*resume_slot);
     return 1;
+}
+
+/** 常规入口钩子（带 C 记账） */
+static int portal_inline_hook(int slot, uintptr_t base, unsigned long target_vaddr, const char *name) {
+    return portal_inline_hook_ex(slot, base, target_vaddr, name, g_hook_fns[slot],
+                                 &g_hook_resume[slot], 20);
+}
+
+/** 空钩子：只重放、只跳回，用来单独验证"补丁+重放+返回"这条路径是否透明 */
+static int portal_inline_hook_null(int idx, uintptr_t base, unsigned long target_vaddr,
+                                   const char *name) {
+    if (idx < 0 || idx > 1) return 0;
+    void *fn = idx == 0 ? (void *)portal_hook_null0 : (void *)portal_hook_null1;
+    return portal_inline_hook_ex(-1, base, target_vaddr, name, fn, &g_hook_resume_null[idx], 0);
+}
+
+/** nrec 钩子：touch 形态的外壳 + 裸汇编记录器（最多 2 个） */
+static void portal_hook_nrec_list(const char *list) {
+    uintptr_t base = 0;
+    Dl_info di;
+    if (g_real_module != NULL && dladdr((const void *)g_real_module, &di) != 0)
+        base = (uintptr_t)di.dli_fbase;
+    if (base == 0) { LOGE("nrec 钩子：拿不到基址"); return; }
+    void *fns[2] = {(void *)portal_hook_nrec0, (void *)portal_hook_nrec1};
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", list);
+    char *save = NULL;
+    int idx = 0;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && idx < 2;
+         tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') tok++;
+        unsigned long v = strtoul(tok, NULL, 0);
+        if (v == 0) continue;
+        snprintf(g_hook_name_buf[idx], sizeof(g_hook_name_buf[idx]), "real+0x%lx", v);
+        portal_inline_hook_ex(idx, base, v, g_hook_name_buf[idx], fns[idx],
+                              &g_hook_resume_nrec[idx], 20);
+        idx++;
+    }
+}
+
+/** 零调用钩子：真件与 oemlayer 都可挂 */
+static void portal_hook_rec_list(const char *list, const char *module_sub) {
+    uintptr_t base = 0;
+    if (module_sub != NULL) {
+        base = portal_module_base(module_sub);
+    } else if (g_real_module != NULL) {
+        Dl_info di;
+        if (dladdr((const void *)g_real_module, &di) != 0) base = (uintptr_t)di.dli_fbase;
+    }
+    if (base == 0) { LOGE("零调用钩子：拿不到基址"); return; }
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s", list);
+    char *save = NULL;
+    int slot = 0;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && slot < PORTAL_HOOK_MAX;
+         tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') tok++;
+        unsigned long v = strtoul(tok, NULL, 0);
+        if (v == 0) continue;
+        snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "%s+0x%lx",
+                 module_sub ? module_sub : "real", v);
+        /* ⚠️ 重放槽必须在**这个外壳自己的**占位 nop 处：rec 外壳的序言只有 3 条 mov
+         * （12 字节），写 20 会把它后面的计数指令整段覆盖掉 —— 实测就是"挂上就崩"。 */
+        portal_inline_hook_ex(slot, base, v, g_hook_name_buf[slot], g_hook_rec_fns[slot],
+                              &g_hook_resume_rec[slot], 12);
+        slot++;
+    }
+}
+
+/** touch 钩子：带一次调用，但被调者只 `ret`（隔离"C 函数内部"与"发起调用"） */
+static int portal_inline_hook_touch(int idx, uintptr_t base, unsigned long target_vaddr,
+                                    const char *name) {
+    if (idx < 0 || idx > 1) return 0;
+    void *fn = idx == 0 ? (void *)portal_hook_touch0 : (void *)portal_hook_touch1;
+    return portal_inline_hook_ex(-1, base, target_vaddr, name, fn, &g_hook_resume_touch[idx], 20);
+}
+
+static void portal_hook_touch_list(const char *list) {
+    uintptr_t base = 0;
+    Dl_info di;
+    if (g_real_module != NULL && dladdr((const void *)g_real_module, &di) != 0)
+        base = (uintptr_t)di.dli_fbase;
+    if (base == 0) { LOGE("touch 钩子：拿不到真件基址"); return; }
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", list);
+    char *save = NULL;
+    int idx = 0;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && idx < 2;
+         tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') tok++;
+        unsigned long v = strtoul(tok, NULL, 0);
+        if (v == 0) continue;
+        char nm[48];
+        snprintf(nm, sizeof(nm), "real+0x%lx", v);
+        portal_inline_hook_touch(idx++, base, v, nm);
+    }
+}
+
+/** 空钩子列表（最多 2 个） */
+static void portal_hook_null_list(const char *list) {
+    uintptr_t base = 0;
+    Dl_info di;
+    if (g_real_module != NULL && dladdr((const void *)g_real_module, &di) != 0)
+        base = (uintptr_t)di.dli_fbase;
+    if (base == 0) { LOGE("空钩子：拿不到真件基址"); return; }
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", list);
+    char *save = NULL;
+    int idx = 0;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && idx < 2;
+         tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ') tok++;
+        unsigned long v = strtoul(tok, NULL, 0);
+        if (v == 0) continue;
+        char nm[48];
+        snprintf(nm, sizeof(nm), "real+0x%lx", v);
+        portal_inline_hook_null(idx++, base, v, nm);
+    }
 }
 
 /** 解析 `a,b,c` 形式的 vaddr 列表并逐个挂钩 */
@@ -3027,6 +3393,23 @@ static void portal_hook_list(const char *list, const char *module_sub) {
     (void)list; (void)module_sub;
     LOGE("入口挂钩只有 arm64 实现：本机是 32 位，跳过");
 }
+static void portal_hook_null_list(const char *list) {
+    (void)list;
+    LOGE("空钩子只有 arm64 实现：本机是 32 位，跳过");
+}
+static void portal_hook_touch_list(const char *list) {
+    (void)list;
+    LOGE("touch 钩子只有 arm64 实现：本机是 32 位，跳过");
+}
+static void portal_hook_rec_list(const char *list, const char *module_sub) {
+    (void)list; (void)module_sub;
+    LOGE("零调用钩子只有 arm64 实现：本机是 32 位，跳过");
+}
+static void portal_hook_nrec_list(const char *list) {
+    (void)list;
+    LOGE("nrec 钩子只有 arm64 实现：本机是 32 位，跳过");
+}
+static void portal_hook_report_counts(void) {}
 #endif
 
 struct portal_bind_arg {
@@ -3164,6 +3547,8 @@ static int shim_open(const struct hw_module_t *module, const char *id,
     (void)module;
     load_options();
     if (id != NULL) snprintf(g_cur_cam, sizeof(g_cur_cam), "%s", id);
+    /* 钩子累计命中：在 open 这条**非 vendor 热路径**上汇报，钩子体自己只自增、不做 I/O */
+    portal_hook_report_counts();
     if (g_real_open == NULL) {
         LOGE("真实 HAL 未加载，open 失败");
         return -1;
@@ -3415,6 +3800,21 @@ static void load_real_hal(void) {
     }
     if (g_opt_hook_ol_vaddrs[0] != '\0') {
         portal_hook_list(g_opt_hook_ol_vaddrs, "camera.oemlayer.so");
+    }
+    if (g_opt_hook_null_vaddrs[0] != '\0') {
+        portal_hook_null_list(g_opt_hook_null_vaddrs);
+    }
+    if (g_opt_hook_touch_vaddrs[0] != '\0') {
+        portal_hook_touch_list(g_opt_hook_touch_vaddrs);
+    }
+    if (g_opt_hook_nrec_vaddrs[0] != '\0') {
+        portal_hook_nrec_list(g_opt_hook_nrec_vaddrs);
+    }
+    if (g_opt_hook_rec_vaddrs[0] != '\0') {
+        portal_hook_rec_list(g_opt_hook_rec_vaddrs, NULL);
+    }
+    if (g_opt_hook_rec_ol_vaddrs[0] != '\0') {
+        portal_hook_rec_list(g_opt_hook_rec_ol_vaddrs, "camera.oemlayer.so");
     }
     /* 可选：扫描并接管真件自己的 ops 表（ACE5 的 device->ops 是 NULL，只能走这条） */
     if (g_opt_ops_scan) {
