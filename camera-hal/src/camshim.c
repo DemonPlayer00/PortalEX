@@ -482,6 +482,10 @@ static int g_opt_inject_pattern = 0;
 /** `mock_file=<路径>`：把文件内容当作**要注入的整帧原始数据**（尺寸 = 目标缓冲的平面大小）。
  *  优先于 inject_byte/inject_pattern。文件读一次、模板化，热循环只做 memcpy。 */
 static char g_opt_mock_file[192] = {0};
+/** `mock_map=<尺寸>:<路径>[,<尺寸>:<路径>…]`：**按缓冲尺寸分别给模板**。
+ *  为什么需要：预览/录像是不同尺寸的流（实测预览 4,038,656、录像 3,194,880），
+ *  一个模板套不了两张画面 —— 图片与视频必须各给一份。 */
+static char g_opt_mock_map[512] = {0};
 /** `stride_probe=1`：用"行间相关性"实测目标缓冲的**行 stride**（不猜布局） */
 static int g_opt_stride_probe = 0;
 /** `bufmap=1`：按段打印目标缓冲的内容分布（先知道数据在哪，再谈布局） */
@@ -587,11 +591,19 @@ static void load_options(void) {
      *  4) `/data/local/tmp/portal.cfg`（最老的 bring-up 位置，需要额外一条对 `shell_data_file`
      *     的 allow，只留给"资料目录还没建起来"的场合）。
      *
+     * 0) **`/data/vendor/camera/portal.cfg`（ACE5 上的首选）**：`vendor_camera_data_file`，
+     *     相机 HAL 本来就在读写这个目录 ⇒ **不需要任何 sepolicy 补丁、也不需要 overlay**。
+     *     （踩过：把 cfg 放 `/data/local/tmp/portalex/` 即使 chcon 正确也读不到 ——
+     *     路径中间那层 `/data/local/tmp` 是 `shell_data_file`，`hal_camera_default` 没有 dir search。
+     *     而 `/vendor/lib64/hw` 那条路要用 overlay 才能写，overlay 又会打死 `media.swcodec`
+     *     的 gralloc-mapper，连带把拍照弄坏 —— 所以"cfg 放相机自己的数据目录"才是对的。）
+     *
      * ⚠️ 为什么值得为"多找一个地方"写这么多注释：ACE5 上模块文件根本没被挂载（KernelSU 的
      * 这台机器不挂模块树），于是 1/2 都不存在 —— 而旧代码在"找不到 cfg"时会退化到硬编码的
      * MI6 原件路径，接着就是 §19 那场 provider 崩溃。多一个可达的候选路径，就少一次那种失败。
      */
-    static const char *cands[] = {"/vendor/lib64/hw/portal.cfg",
+    static const char *cands[] = {"/data/vendor/camera/portal.cfg",
+                                  "/vendor/lib64/hw/portal.cfg",
                                   PORTAL_CFG_PATH,
                                   "/data/local/tmp/portalex/portal.cfg",
                                   "/data/local/tmp/portal.cfg"};
@@ -602,9 +614,8 @@ static void load_options(void) {
         if (f != NULL) used = cands[i];
     }
     if (f == NULL) {
-        LOGI("四个开关文件都不存在（%s / %s / /data/local/tmp/portalex/portal.cfg / "
-             "/data/local/tmp/portal.cfg）：全部开关按关闭处理",
-             cands[0], cands[1]);
+        LOGI("五个开关文件都不存在（/data/vendor/camera /vendor/lib64/hw /vendor/lib/hw "
+             "/data/local/tmp/portalex /data/local/tmp）：全部开关按关闭处理");
         return;
     }
     LOGI("开关文件：%s", used);
@@ -678,6 +689,8 @@ static void load_options(void) {
             g_opt_inject_us = atoi(val);
         } else if (strcmp(key, "inject_pattern") == 0) {
             g_opt_inject_pattern = atoi(val);
+        } else if (strcmp(key, "mock_map") == 0) {
+            snprintf(g_opt_mock_map, sizeof(g_opt_mock_map), "%s", val);
         } else if (strcmp(key, "mock_file") == 0) {
             snprintf(g_opt_mock_file, sizeof(g_opt_mock_file), "%s", val);
         } else if (strcmp(key, "stride_probe") == 0) {
@@ -3461,9 +3474,82 @@ static void portal_dmabuf_report(void) {
  * 进 vendor 的任何锁，也不需要钩子做重活。热路径只负责把"哪块缓冲、多大"记下来。
  */
 #define PORTAL_INJECT_MAX 24
+#define PORTAL_MOCK_MAX 6
 
-/** 按大小把该尺寸的 dmabuf 全部映射下来；返回映射块数 */
-static int portal_inject_map_by_size(void *maps[], size_t sizes[], int cap) {
+/** `mock_map=<尺寸>:<路径>[,<尺寸>:<路径>…]`：**按缓冲尺寸分别给模板**。
+ *  为什么需要：预览/录像是不同尺寸的流（实测预览 4,038,656、录像 3,194,880），
+ *  一个模板套不了两张画面 —— 图片与视频必须各给一份。 */
+
+typedef struct {
+    unsigned long size;
+    char path[176];
+    unsigned char *tpl;
+    size_t tlen;
+} portal_mock_entry;
+static portal_mock_entry g_mock[PORTAL_MOCK_MAX];
+static int g_mock_n = 0;
+
+/** 解析 mock_map（只解析一次，在 load_options 之后） */
+static void portal_mock_parse(void) {
+    if (g_opt_mock_map[0] == '\0' || g_mock_n != 0) return;
+    char buf[sizeof(g_opt_mock_map)];
+    snprintf(buf, sizeof(buf), "%s", g_opt_mock_map);
+    char *save = NULL;
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && g_mock_n < PORTAL_MOCK_MAX;
+         tok = strtok_r(NULL, ",", &save)) {
+        char *colon = strchr(tok, ':');
+        if (colon == NULL) continue;
+        *colon = '\0';
+        unsigned long sz = strtoul(tok, NULL, 0);
+        if (sz == 0) continue;
+        g_mock[g_mock_n].size = sz;
+        snprintf(g_mock[g_mock_n].path, sizeof(g_mock[g_mock_n].path), "%s", colon + 1);
+        g_mock_n++;
+    }
+}
+
+/** 每个模板只读一次 */
+static void portal_mock_load(void) {
+    for (int i = 0; i < g_mock_n; i++) {
+        if (g_mock[i].tpl != NULL) continue;
+        int fd = open(g_mock[i].path, O_RDONLY);
+        if (fd < 0) {
+            LOGE("注入：打不开模板 %s（errno=%d）", g_mock[i].path, errno);
+            continue;
+        }
+        struct stat st;
+        if (fstat(fd, &st) == 0 && st.st_size > 0) {
+            unsigned char *t = (unsigned char *)malloc((size_t)st.st_size);
+            if (t != NULL && read(fd, t, (size_t)st.st_size) == st.st_size) {
+                g_mock[i].tpl = t;
+                g_mock[i].tlen = (size_t)st.st_size;
+                LOGI("注入：模板[%lu] ← %s（%zu 字节）", g_mock[i].size, g_mock[i].path,
+                     g_mock[i].tlen);
+            } else {
+                free(t);
+                LOGE("注入：读模板失败 %s", g_mock[i].path);
+            }
+        }
+        close(fd);
+    }
+}
+
+/** 预生成的纯色/渐变模板（旧路径：inject_pattern / inject_byte） */
+static unsigned char *g_inject_tpl = NULL;
+static size_t g_inject_tpl_size = 0;
+
+typedef struct {
+    void *p;
+    size_t size;
+    const unsigned char *tpl;   /* NULL ⇒ 用 inject_byte 纯色填 */
+    size_t tlen;
+} portal_target;
+
+/**
+ * 扫 /proc/self/fd，把"尺寸能在 mock_map 里找到模板"（或等于 inject_size）的 dmabuf 全部映射下来。
+ * 只读罗列 → 按尺寸选靶，是"图片"与"视频"两条流能同时被接管的关键。
+ */
+static int portal_build_targets(portal_target t[], int cap) {
     int n = 0;
     DIR *d = opendir("/proc/self/fd");
     if (d == NULL) return 0;
@@ -3479,16 +3565,32 @@ static int portal_inject_map_by_size(void *maps[], size_t sizes[], int cap) {
         link[r] = '\0';
         if (strstr(link, "dmabuf") == NULL) continue;
         struct stat st;
-        if (fstat(fd, &st) != 0) continue;
-        if ((unsigned long)st.st_size != g_opt_inject_size) continue;
-        void *m = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (fstat(fd, &st) != 0 || st.st_size <= 0) continue;
+        unsigned long sz = (unsigned long)st.st_size;
+        const unsigned char *tpl = NULL;
+        size_t tlen = 0;
+        for (int i = 0; i < g_mock_n; i++) {
+            if (g_mock[i].size == sz && g_mock[i].tpl != NULL) {
+                tpl = g_mock[i].tpl;
+                tlen = g_mock[i].tlen;
+                break;
+            }
+        }
+        if (tpl == NULL) {
+            if (g_mock_n != 0) continue;                 /* 有映射表时：没模板的尺寸不动 */
+            if (g_opt_inject_size == 0 || sz != g_opt_inject_size) continue;
+            if (g_inject_tpl != NULL) { tpl = g_inject_tpl; tlen = g_inject_tpl_size; }
+        }
+        void *m = mmap(NULL, (size_t)sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED) {
-            LOGI("注入：fd=%d size=%ld mmap 失败（errno=%d）", fd, (long)st.st_size, errno);
+            LOGI("注入：fd=%d size=%lu mmap 失败（errno=%d）", fd, sz, errno);
             continue;
         }
-        maps[n] = m;
-        sizes[n] = (size_t)st.st_size;
-        LOGI("注入：fd=%d size=%ld → %p（%s）", fd, (long)st.st_size, m, link);
+        t[n].p = m;
+        t[n].size = (size_t)sz;
+        t[n].tpl = tpl;
+        t[n].tlen = tlen;
+        LOGI("注入：fd=%d size=%lu → %p（模板 %s）", fd, sz, m, tpl ? "有" : "纯色");
         n++;
     }
     closedir(d);
@@ -3496,115 +3598,59 @@ static int portal_inject_map_by_size(void *maps[], size_t sizes[], int cap) {
 }
 
 /**
- * 注入线程：把目标缓冲**持续**填成同一个字节。
+ * 注入线程：把目标缓冲**持续**填成模板内容。
  *
- * 为什么按大小选靶：fd 号每次 provider 重启都会变，写死 fd 不是可复现的做法；
- * 相机输出缓冲在 fd 表里就是 `MAP_UNKNOWN` + 一个固定尺寸（实测 2136x1200 YUV420 ⇒ 4038656）。
- * 为什么要"持续"填：相机以 30fps 往同一批缓冲里写新帧，只填一次在 33ms 后就没了。
+ * 为什么按尺寸选靶：fd 号每次 provider 重启都会变，写死 fd 不是可复现的做法。
+ * 为什么要"持续"填：相机以 30fps（录像 60fps）往同一批缓冲里写新帧，只填一次 33ms 后就没了。
+ * 为什么必须 memcpy/memset：逐字节循环跑不赢 ISP 的 DMA（实测）。
  */
-/** 预生成的注入图案（只算一次，热循环只做 memcpy） */
-static unsigned char *g_inject_tpl = NULL;
-static size_t g_inject_tpl_size = 0;
-
 static void *portal_inject_thread(void *arg) {
     (void)arg;
-    void *maps[PORTAL_INJECT_MAX];
-    size_t sizes[PORTAL_INJECT_MAX];
-    int nmap = 0;
-    unsigned long rounds = 0;
-    int since_scan = 0;
+    static portal_target t[PORTAL_INJECT_MAX];
+    int n = 0;
     int announced = 0;
+    /* ⚠️ 重扫必须用**真实时钟**：早先按"每轮 8 微秒"估算，而每轮其实要 memcpy 40MB（≈10ms），
+     * 于是 15 秒的重扫窗口要 5 小时才到 —— 模式一切换（预览→录像换缓冲尺寸）就再也跟不上。
+     * 实测症状：切到录像后注入线程仍抱着旧的一批缓冲，预览恢复成实时画面。 */
+    time_t last_scan = time(NULL);
 
-    if (g_opt_inject_size == 0 && g_opt_inject_fd >= 0) {
-        struct stat st;
-        if (fstat(g_opt_inject_fd, &st) != 0 || st.st_size <= 0) {
-            LOGE("注入线程：fd=%d 取不到大小（errno=%d）", g_opt_inject_fd, errno);
-            return NULL;
+    if (g_opt_inject_size != 0 && g_mock_n == 0 && g_opt_inject_pattern != 0) {
+        g_inject_tpl = (unsigned char *)malloc((size_t)g_opt_inject_size);
+        if (g_inject_tpl != NULL) {
+            for (size_t o = 0; o < (size_t)g_opt_inject_size; o++)
+                g_inject_tpl[o] = (unsigned char)((o >> 6) & 0xFFu);
+            g_inject_tpl_size = (size_t)g_opt_inject_size;
+            LOGI("注入：渐变模板已生成（%zu 字节）", g_inject_tpl_size);
         }
-        void *m = mmap(NULL, (size_t)st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                       g_opt_inject_fd, 0);
-        if (m == MAP_FAILED) {
-            LOGE("注入线程：fd=%d mmap 失败（errno=%d）", g_opt_inject_fd, errno);
-            return NULL;
-        }
-        maps[0] = m;
-        sizes[0] = (size_t)st.st_size;
-        nmap = 1;
     }
+    portal_mock_parse();
+    portal_mock_load();
 
     for (;;) {
-        if (nmap == 0) {
-            if (g_opt_inject_size != 0) {
-                nmap = portal_inject_map_by_size(maps, sizes, PORTAL_INJECT_MAX);
-            }
-            if (nmap == 0) {
+        if (n == 0) {
+            n = portal_build_targets(t, PORTAL_INJECT_MAX);
+            if (n == 0) {
                 sleep(2);
                 continue;
             }
             size_t total = 0;
-            for (int i = 0; i < nmap; i++) total += sizes[i];
-            LOGI("注入线程：%d 块缓冲，共 %zu 字节，每 %d 微秒填 0x%02x", nmap, total,
-                 g_opt_inject_us, g_opt_inject_byte);
+            for (int i = 0; i < n; i++) total += t[i].size;
+            LOGI("注入线程：%d 块缓冲，共 %zu 字节（%d 个模板）", n, total, g_mock_n);
             announced = 1;
         }
-        /* ⚠️ 关键（实测）：相机以 ~30fps 把新帧 DMA 进同一批缓冲，
-         * 所以"写进去"必须**跑赢 ISP**。逐字节 for 循环（≈10 倍慢于 memcpy）就会输 ——
-         * 实测此时预览仍是实时画面、注入完全不生效。正确做法：图案在我们自己的内存里
-         * **预先算好**，热循环只剩 memcpy/memset。 */
-        if (g_inject_tpl == NULL &&
-            (g_opt_mock_file[0] != '\0' || g_opt_inject_pattern != 0)) {
-                if (g_opt_mock_file[0] != '\0') {
-                    /* 载入"整帧原始数据"当模板：这是 M2 的内容源 —— 图像就是文件里的字节 */
-                    int mf = open(g_opt_mock_file, O_RDONLY);
-                    if (mf < 0) {
-                        LOGE("注入：打不开 %s（errno=%d）", g_opt_mock_file, errno);
-                    } else {
-                        struct stat mst;
-                        if (fstat(mf, &mst) == 0 && mst.st_size > 0) {
-                            g_inject_tpl = (unsigned char *)malloc((size_t)mst.st_size);
-                            if (g_inject_tpl != NULL) {
-                                ssize_t got = read(mf, g_inject_tpl, (size_t)mst.st_size);
-                                if (got == mst.st_size) {
-                                    g_inject_tpl_size = (size_t)mst.st_size;
-                                    LOGI("注入：模板来自 %s（%zu 字节）", g_opt_mock_file,
-                                         g_inject_tpl_size);
-                                } else {
-                                    LOGE("注入：只读到 %zd/%lld 字节", got, (long long)mst.st_size);
-                                    free(g_inject_tpl);
-                                    g_inject_tpl = NULL;
-                                }
-                            }
-                        }
-                        close(mf);
-                    }
-                }
-                if (g_inject_tpl == NULL && g_opt_inject_pattern != 0) {
-                    g_inject_tpl = (unsigned char *)malloc(sizes[0]);
-                    if (g_inject_tpl == NULL) {
-                        LOGE("注入：图案模板分配失败（%zu 字节）", sizes[0]);
-                        return NULL;
-                    }
-                    for (size_t o = 0; o < sizes[0]; o++)
-                        g_inject_tpl[o] = (unsigned char)((o >> 6) & 0xFFu);
-                    g_inject_tpl_size = sizes[0];
-                    LOGI("注入：渐变模板已生成（%zu 字节）", g_inject_tpl_size);
-                }
-        }
-        if (g_inject_tpl == NULL) {
-            for (int i = 0; i < nmap; i++) memset(maps[i], g_opt_inject_byte, sizes[i]);
-        } else {
-            for (int i = 0; i < nmap; i++)
-                memcpy(maps[i], g_inject_tpl, sizes[i] < g_inject_tpl_size ? sizes[i]
-                                                                          : g_inject_tpl_size);
+        for (int i = 0; i < n; i++) {
+            if (t[i].tpl != NULL) {
+                memcpy(t[i].p, t[i].tpl, t[i].tlen < t[i].size ? t[i].tlen : t[i].size);
+            } else {
+                memset(t[i].p, g_opt_inject_byte, t[i].size);
+            }
         }
         if (g_opt_inject_us > 0) usleep((useconds_t)g_opt_inject_us);
-        /* 每 ~15 秒重扫一次：会话重建后 fd/缓冲都会换一批 */
-        since_scan += (g_opt_inject_us > 0) ? g_opt_inject_us : 8;
-        (void)rounds;
-        if (announced && since_scan >= 15000000) {
-            since_scan = 0;
-            for (int i = 0; i < nmap; i++) munmap(maps[i], sizes[i]);
-            nmap = 0;
+        time_t now = time(NULL);
+        if (announced && now - last_scan >= 5) {   /* 每 5 秒重扫：换模式/重建会话都会换一批缓冲 */
+            last_scan = now;
+            for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
+            n = 0;
         }
     }
     return NULL;
@@ -4470,7 +4516,7 @@ static void load_real_hal(void) {
 __attribute__((constructor)) static void on_load(void) {
     load_options();
     load_real_hal();
-    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0) {
+    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0') {
         pthread_t th;
         if (pthread_create(&th, NULL, portal_inject_thread, NULL) == 0) {
             pthread_detach(th);
