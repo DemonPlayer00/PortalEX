@@ -342,7 +342,7 @@ object RemoteCommandHandler {
                 val disableRequestGeofence = rely.getBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
                 val disableGetFromLocation = rely.getBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
                 val loopBroadcastLocation = rely.getBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
-                // 实验性开关：读不到键时保持当前值（旧版 App 不下发该键 → 行为不变）
+                // 开关：读不到键时保持当前值（= 模块默认，现为开；旧版 App 不下发该键也不改变结论）
                 val binderSensorMock = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 // 注入栅格分辨率（Hz，0=自动）：读不到键时保持当前值（旧版 App 不下发）
                 val sensorGridHz = rely.getInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)

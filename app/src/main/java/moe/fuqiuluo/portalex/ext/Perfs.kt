@@ -218,19 +218,6 @@ var Context.loopBroadcastlocation: Boolean
     }
 
 /**
- * Binder 外周传感器模拟（实验性）。默认关闭：
- * 关闭时模块只在应用进程做传感器改写（旧行为，逐位不变）；
- * 打开后由 system_server 侧原生 hook 在系统框架层接管外周传感器
- * （步频 / 加速度 / 角度 / 指南针），**不 hook 目标应用**。
- */
-/**
- * 注入栅格分辨率（Hz）。**0 = 自动**（跟随框架采用值，上限 400Hz）。
- *
- * 语义：栅格只是"能表现出来的最快速率"——调细**不会**改变任何传感器自己的采用速率
- * （每个通道仍按框架仲裁后的周期发数据），只是让更快的档位能落地；调粗则会把它压慢。
- * 钳在 20~400Hz。（原生层还会再钳一次 2.5~50ms，防手滑。）
- */
-/**
  * 步频倍率（微调"步频 ↔ 速度"关系）。默认 1.0；可填整数或小数。
  * 1.0 = 逐位保持原公式；>1 = 同速度下步频更高，<1 = 更低。钳在 0.2~3.0 防手滑。
  */
@@ -240,6 +227,13 @@ var Context.cadenceScale: Float
         putFloat("cadenceScale", if (value <= 0f) 1.0f else value.coerceIn(0.2f, 3.0f))
     }
 
+/**
+ * 注入栅格分辨率（Hz）。**0 = 自动**（跟随框架采用值，上限 400Hz）。
+ *
+ * 语义：栅格只是"能表现出来的最快速率"——调细**不会**改变任何传感器自己的采用速率
+ * （每个通道仍按框架仲裁后的周期发数据），只是让更快的档位能落地；调粗则会把它压慢。
+ * 钳在 20~400Hz。（原生层还会再钳一次 2.5~50ms，防手滑。）
+ */
 var Context.sensorGridHz: Int
     get() = sharedPrefs.getInt("sensorGridHz", 0)
     set(value) = sharedPrefs.edit(commit = true) {
@@ -273,15 +267,19 @@ var Context.sensorNoiseReport: String
         putString("sensorNoiseReport", value)
     }
 
+/**
+ * Binder 外周传感器模拟。**默认开启**：
+ * 打开后由 system_server 侧原生 hook 在系统框架层接管外周传感器
+ * （步频 / 加速度 / 角度 / 指南针），**不 hook 目标应用**；
+ * 关闭时这条路径完全不装载（不加载 .so、不起线程），即旧行为逐位不变。
+ *
+ * 注意默认值只在**偏好里还没有这个键**时生效：用户手动关掉过，就以存下来的值为准。
+ */
 var Context.binderSensorMock: Boolean
-    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, false)
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, true)
     set(value) = sharedPrefs.edit {
         putBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, value)
     }
-
-/**
- * 传感器模拟开关（默认开 = 客户端主动注入步数/朝向；关闭 = 禁用传感器模拟）
- */
 
 /**
  * 是否允许横屏。默认关闭（锁竖屏）——横屏下部分界面尚未完全适配，

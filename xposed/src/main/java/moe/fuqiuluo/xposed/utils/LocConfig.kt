@@ -45,13 +45,14 @@ internal object LocConfig {
     var enableMockWifi = false
 
     /**
-     * Binder 外周传感器模拟（实验性，默认关）：
+     * Binder 外周传感器模拟（**默认开**）：
      * 由 system_server 侧原生 hook（[moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock]）
      * 在系统框架层接管外周传感器——**不向目标应用注入任何 hook**。
-     * 关闭（默认）时该路径完全不安装，行为与旧版本逐位一致。
+     * 关闭时该路径完全不安装（不加载 .so、不起线程），行为与旧版本逐位一致；
+     * 打开时只按需装载，装载失败也只是让这条实验路径静默降级（真实事件原样放行）。
      */
     @Volatile
-    var enableBinderSensorMock = false
+    var enableBinderSensorMock = true
 
     /** 注入栅格分辨率（Hz）：0 = 自动跟随框架采用值；非 0 时固定为 1e9/该值（原生层钳 2.5~50ms） */
     var sensorGridHz = 0
