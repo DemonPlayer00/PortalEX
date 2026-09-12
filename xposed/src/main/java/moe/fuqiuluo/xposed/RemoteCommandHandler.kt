@@ -216,6 +216,12 @@ object RemoteCommandHandler {
                 FusedStatus.logIfDebug()
                 return true
             }
+            Cmd.GET_CAMERA_EVENTS -> {
+                // 摄像头控制面（system_server 侧观测）：谁在什么时候开了哪个摄像头。
+                // 视频流不经 system_server，这里给的是"何时该喂、喂给谁"的依据 + 观测。
+                moe.fuqiuluo.xposed.hooks.camera.CameraWatch.fill(rely)
+                return true
+            }
             Cmd.GET_SENSOR_STATUS -> {
                 // 诊断页数值总览：注入层/运动学/步频意图 vs 实际的原始数值
                 BinderSensorMock.fillStatus(rely)
