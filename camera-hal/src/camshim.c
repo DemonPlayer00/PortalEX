@@ -351,6 +351,25 @@ static char g_opt_src_file[160] = {0};
 /** 色度 U/V 是否互换（NV12 ↔ NV21）：这种错只有看图才认得出，故做运行期开关 */
 static int g_opt_swap_uv = 0;
 /**
+ * 真实 HAL 的路径与"照抄多少字节"。
+ *
+ * 为什么做成开关：不同机器的 HAL 库名与 `camera_module_t` 大小都不同 ——
+ * MI6 是 `/vendor/lib/hw/camera.msm8998.orig.so` + **176 字节**；
+ * 一加 ACE5（pineapple / ColorOS 16）是 `/vendor/lib64/hw/camera.qcom.so` 的副本 + **376 字节**（实测）。
+ * 写死一个值就等于只支持一台机器。
+ */
+static char g_opt_real_hal[192] = {0};
+static unsigned g_opt_real_hmi_bytes = 0;
+/**
+ * 按 **AOSP ops 索引**取真实函数指针（而不是 dlsym）。
+ *
+ * 为什么需要：ACE5 的 `camera.qcom.so` **不导出** `QCamera3HardwareInterface::*`
+ * （实测 dynsym 里只有 `HMI`），dlsym 必然失败；而 ops 表里的那一格就是真实地址。
+ * 取之前先过一道"该地址落在可执行映射里"的校验（见 portal_is_exec_addr），
+ * 免得把数据当函数指针调用 —— 在 HAL 进程里那是必崩。
+ */
+static int g_opt_ops_index = 0;
+/**
  * 照片是否**预镜像**（水平翻转）。
  *
  * 为什么需要它（实测）：相机 app 给"真 HAL 那张 JPEG"写 EXIF Orientation=**7**（镜像+旋转），
@@ -360,6 +379,41 @@ static int g_opt_swap_uv = 0;
  * **只有看图才认得出这类错**，所以按项目惯例做成运行期开关（默认关：别的设备/别的 app 未必一样）。
  */
 static int g_opt_photo_mirror = 0;
+
+/**
+ * 该地址是否落在**可执行**的已映射区间里（读 `/proc/self/maps`）。
+ *
+ * 用途：按 ops 索引取真实函数指针时的兜底校验 —— 拿错一格就是"把数据当函数调用"，
+ * 在 HAL 进程里必崩。宁可这次不接管，也不赌。
+ */
+static bool portal_is_exec_addr(const void *addr, const char **out_where) {
+    if (addr == NULL) return false;
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f == NULL) return false;
+    uintptr_t target = (uintptr_t)addr;
+    char line[512];
+    bool ok = false;
+    while (fgets(line, sizeof(line), f) != NULL) {
+        unsigned long start = 0, end = 0;
+        char perms[8] = {0};
+        if (sscanf(line, "%lx-%lx %7s", &start, &end, perms) != 3) continue;
+        if (target < start || target >= end) continue;
+        if (perms[2] == 'x') {
+            ok = true;
+            if (out_where != NULL) {
+                char *q = strchr(line, '/');
+                if (q != NULL) {
+                    size_t n = strlen(q);
+                    if (n > 0 && q[n - 1] == '\n') q[n - 1] = '\0';
+                    *out_where = q;
+                }
+            }
+        }
+        break;
+    }
+    fclose(f);
+    return ok;
+}
 
 /** 当前 open 的相机 id；`cam=` 定向就靠它 */
 static char g_cur_cam[16] = {0};
@@ -379,11 +433,27 @@ static void load_options(void) {
     if (tried) return;
     tried = true;
 
-    FILE *f = fopen(PORTAL_CFG_PATH, "re");
+    /*
+     * 开关文件按顺序找：
+     *  1) `/vendor/lib64/hw/portal.cfg`（64 位设备的正式位置，模块挂进去的）；
+     *  2) `/vendor/lib/hw/portal.cfg`（32 位设备的正式位置）；
+     *  3) `/data/local/tmp/portal.cfg`（**bring-up 用**：/vendor 是只读挂载，bind mount 又无法新建文件，
+     *     所以在还没装模块的设备上，开关只能放这里 —— 需要一条 sepolicy 允许 HAL 域读它）。
+     */
+    static const char *cands[] = {"/vendor/lib64/hw/portal.cfg", PORTAL_CFG_PATH,
+                                  "/data/local/tmp/portal.cfg"};
+    FILE *f = NULL;
+    const char *used = NULL;
+    for (unsigned i = 0; i < sizeof(cands) / sizeof(cands[0]) && f == NULL; i++) {
+        f = fopen(cands[i], "re");
+        if (f != NULL) used = cands[i];
+    }
     if (f == NULL) {
-        LOGI("没有 %s：全部开关按关闭处理（纯 M0 转发）", PORTAL_CFG_PATH);
+        LOGI("三个开关文件都不存在（%s / %s / /data/local/tmp/portal.cfg）：全部开关按关闭处理",
+             cands[0], cands[1]);
         return;
     }
+    LOGI("开关文件：%s", used);
     char line[256];
     while (fgets(line, sizeof(line), f) != NULL) {
         char *p = line;
@@ -416,6 +486,12 @@ static void load_options(void) {
             g_opt_swap_uv = atoi(val);
         } else if (strcmp(key, "photo_mirror") == 0) {
             g_opt_photo_mirror = atoi(val);
+        } else if (strcmp(key, "real_hal") == 0) {
+            snprintf(g_opt_real_hal, sizeof(g_opt_real_hal), "%s", val);
+        } else if (strcmp(key, "real_hmi_bytes") == 0) {
+            g_opt_real_hmi_bytes = (unsigned)atoi(val);
+        } else if (strcmp(key, "ops_index") == 0) {
+            g_opt_ops_index = atoi(val);
         } else if (strcmp(key, "src_file") == 0) {
             snprintf(g_opt_src_file, sizeof(g_opt_src_file), "%s", val);
         } else if (strcmp(key, "cam") == 0) {
@@ -2203,6 +2279,32 @@ static int shim_open(const struct hw_module_t *module, const char *id,
                                          const camera3_callback_ops_t *))((void **)cam_dev->ops)[0];
             LOGI("initialize 改由 ops[0] 兜底取得：%p", (void *)g_real_initialize);
         }
+        /*
+         * 导出符号拿不到时（ACE5 的 camera.qcom.so 就不导出 QCamera3HardwareInterface::*），
+         * 按 **AOSP ops 索引**从表里取真实指针：0=initialize、1=configure_streams、4=process_capture_request。
+         * 取之前逐个过"落在可执行映射里"的校验；拿不准就放弃接管（相机行为不变）。
+         */
+        if (g_opt_ops_index && cam_dev->ops != NULL) {
+            void **table = (void **)cam_dev->ops;
+            const char *where = NULL;
+            if (g_real_process_capture_request == NULL &&
+                portal_is_exec_addr(table[4], &where)) {
+                g_real_process_capture_request =
+                    (int (*)(const struct camera3_device *, camera3_capture_request_t *))table[4];
+                LOGI("真实 process_capture_request 取自 ops[4]=%p（%s）", table[4],
+                     where ? where : "?");
+            }
+            if (g_real_initialize == NULL && portal_is_exec_addr(table[0], &where)) {
+                g_real_initialize = (int (*)(const struct camera3_device *,
+                                             const camera3_callback_ops_t *))table[0];
+                LOGI("真实 initialize 取自 ops[0]=%p", table[0]);
+            }
+            if (g_real_configure_streams == NULL && portal_is_exec_addr(table[1], &where)) {
+                g_real_configure_streams =
+                    (int (*)(const struct camera3_device *, void *))table[1];
+                LOGI("真实 configure_streams 取自 ops[1]=%p", table[1]);
+            }
+        }
         /* M0 基线：只换 process_capture_request 做计数 —— 这一处已被实测证明不破坏画面 */
         patch_process_capture_request(cam_dev);
         /*
@@ -2226,9 +2328,10 @@ static int shim_open(const struct hw_module_t *module, const char *id,
 static void load_real_hal(void) {
     if (g_real_handle != NULL) return;
 
-    g_real_handle = dlopen(REAL_HAL_PATH, RTLD_NOW | RTLD_LOCAL);
+    const char *path = g_opt_real_hal[0] ? g_opt_real_hal : REAL_HAL_PATH;
+    g_real_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (g_real_handle == NULL) {
-        LOGE("dlopen 原件失败（%s）：%s", REAL_HAL_PATH, dlerror());
+        LOGE("dlopen 原件失败（%s）：%s", path, dlerror());
         return;
     }
     g_real_module = (struct hw_module_t *)dlsym(g_real_handle, "HMI");
@@ -2241,7 +2344,9 @@ static void load_real_hal(void) {
 
     /* 整块照抄：tag / 版本 / id / name / author / methods / dso，
      * 以及 camera_module_t 那一串回调（少抄一个都可能被 provider 当成垃圾指针调用） */
-    memcpy(&HMI, g_real_module, REAL_HMI_BYTES);
+    unsigned copy_bytes = g_opt_real_hmi_bytes ? g_opt_real_hmi_bytes : REAL_HMI_BYTES;
+    if (copy_bytes > sizeof(HMI)) copy_bytes = sizeof(HMI);
+    memcpy(&HMI, g_real_module, copy_bytes);
 
     /* 只改这一处：open 走我们的（接管 camera3_device_ops 的入口） */
     HMI.common.methods = &g_methods;
@@ -2277,9 +2382,9 @@ static void load_real_hal(void) {
         LOGI("configure_streams 没有导出符号：usage_patch 那条路不可用");
     }
 
-    LOGI("真实 HAL 已加载并整块接管：%s（tag=0x%08x id=%s name=%s api=0x%04x）",
-         REAL_HAL_PATH, HMI.common.tag, HMI.common.id, HMI.common.name,
-         HMI.common.module_api_version);
+    LOGI("真实 HAL 已加载并整块接管：%s（tag=0x%08x id=%s name=%s api=0x%04x，照抄 %u 字节）",
+         path, HMI.common.tag, HMI.common.id, HMI.common.name, HMI.common.module_api_version,
+         copy_bytes);
 }
 
 __attribute__((constructor)) static void on_load(void) {
