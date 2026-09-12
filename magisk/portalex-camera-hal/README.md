@@ -1,7 +1,14 @@
 # PortalEX Camera HAL Shim
 
-**状态（2026-09-12）：M0 已在真机验证通过并保持启用** —— shim 跑在 camera provider 进程里、
-帧真的经过我们手里、相机行为不变。**画面替换（M1）尚未实现**：当前只接管与转发。
+> **状态（2026-09-12）：冻结归档。** 完整的设计、实测事实表、卡点与"从哪接着做"见
+> [`docs/camera-mock.md`](../../docs/camera-mock.md)。
+> **线上当前配置是安全的**：模块启用中，但挂的是 `camshim.so`（外层包住 vendor HAL、无注入），
+> 真实相机直通、provider 稳定。`vcam.so`（自建虚拟摄像头）会产帧但会话链路未走通。
+
+## camshim（当前挂载的这个）
+
+shim 跑在 camera provider 进程里、帧真的经过我们手里、相机行为不变；
+**画面替换未实现**（在这批 buffer 上被证明既不能 CPU 写也不能 EGL 画，见归档文档 §5.2）。
 
 ## 它是什么
 

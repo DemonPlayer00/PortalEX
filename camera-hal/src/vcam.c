@@ -472,12 +472,23 @@ static int vcam_configure_streams(const struct camera3_device *dev,
     return 0;
 }
 
+/**
+ * 请求模板：转发真 device 的。**这里必须打日志** ——
+ * "配流成功但请求一直不来"最可能的原因就是应用/框架拿不到模板而静默不发请求。
+ * 打印 template_id 与返回指针（NULL 就是问题本身）。
+ */
 static const void *vcam_default_settings(const struct camera3_device *dev, int template_id) {
     (void)dev;
-    if (g_real_default_settings != NULL) {
-        return g_real_default_settings((const struct camera3_device *)g_real_device, template_id);
+    const void *out = NULL;
+    if (g_real_default_settings != NULL && g_real_device != NULL) {
+        out = g_real_default_settings((const struct camera3_device *)g_real_device, template_id);
     }
-    return NULL;
+    static unsigned long n = 0;
+    unsigned long c = __atomic_add_fetch(&n, 1, __ATOMIC_RELAXED);
+    if (c <= 6 || c % 100 == 0) {
+        LOGI("construct_default_request_settings #%lu：template=%d → %p", c, template_id, out);
+    }
+    return out;
 }
 
 /** 往一个输出 buffer 画合成条纹。成功返回 true */
@@ -670,6 +681,7 @@ static void vcam_dump(const struct camera3_device *dev, int fd) {
 
 static int vcam_flush(const struct camera3_device *dev) {
     (void)dev;
+    LOGI("flush 被调用（累计请求=%lu 产帧=%lu）", g_reqs, g_frames);
     return 0;
 }
 
@@ -697,7 +709,7 @@ static void slot_probe_8(const struct camera3_device *d, void *a) { (void)d; (vo
 static int vcam_close(struct hw_device_t *device) {
     (void)device;
     g_framework_cb = NULL;
-    LOGI("device closed");
+    LOGI("device closed（累计请求=%lu 产帧=%lu）", g_reqs, g_frames);
     return 0;
 }
 
