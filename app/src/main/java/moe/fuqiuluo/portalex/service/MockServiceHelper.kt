@@ -219,6 +219,21 @@ object MockServiceHelper {
         return if (ok) rely else null
     }
 
+    /**
+     * 摄像头控制面回读：system_server 侧观测到的相机活动（谁、何时、前后摄、开关）。
+     *
+     * 这条链路**不经过目标应用**（对应用零注入）：AppOps 与 CameraServiceProxy 都在
+     * system_server 里，视频流本身不经它 —— 所以这里拿到的是"何时该喂、喂给谁"的依据。
+     * 未握手/系统侧无应答返回 null（调用方按"暂无数据"显示）。
+     */
+    fun getCameraEvents(locationManager: LocationManager): String? {
+        if (!::randomKey.isInitialized) return null
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.GET_CAMERA_EVENTS)
+        if (!locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) return null
+        return rely.getString(Key.CAMERA_EVENTS)
+    }
+
     fun getLocationListenerSize(locationManager: LocationManager): Int? {
         if (!::randomKey.isInitialized) {
             return null

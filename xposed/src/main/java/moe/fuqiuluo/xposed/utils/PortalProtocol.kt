@@ -26,6 +26,7 @@ object PortalProtocol {
         const val BROADCAST_LOCATION = "broadcast_location"
         const val GET_ALTITUDE       = "get_altitude"
         const val GET_BEARING        = "get_bearing"
+        const val GET_CAMERA_EVENTS  = "get_camera_events"
         const val GET_FUSED_STATE    = "get_fused_state"
         const val GET_LISTENER_SIZE  = "get_listener_size"
         const val GET_LOCATION       = "get_location"
@@ -62,6 +63,8 @@ object PortalProtocol {
         const val BEARING                   = "bearing"
         const val BINDER_SENSOR_MOCK        = "binder_sensor_mock"
         const val CADENCE_SCALE             = "cadence_scale"
+        // 摄像头控制面（system_server 侧观测到的活动；见 hooks/camera/CameraWatch）
+        const val CAMERA_EVENTS             = "camera_events"
         const val COMMAND_ID                = "command_id"
         const val DISABLE_FUSED_LOCATION    = "disable_fused_location"
         const val DISABLE_GET_FROM_LOCATION = "disable_get_from_location"

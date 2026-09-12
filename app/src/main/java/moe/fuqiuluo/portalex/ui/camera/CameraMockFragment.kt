@@ -10,7 +10,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.os.bundleOf
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
+import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.button.MaterialButton
@@ -49,6 +49,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
     private val binding get() = _binding!!
 
     private lateinit var adapter: CameraPointAdapter
+
+    private val mockServiceViewModel by activityViewModels<moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel>()
 
     /** 重建筛选胶囊时抑制回调：先清空再填充会触发一次"全部取消勾选"，不该被当成用户操作 */
     private var rebuildingFilter = false
@@ -183,7 +185,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
 
     }
 
-    /** ⓘ：玩法说明 + 当前目标应用（页面顶部只留"一眼要看"的三行） */
+    /** ⓘ：玩法说明 + 当前目标应用 + 系统侧观测到的摄像头活动（页面顶部只留"一眼要看"的三行） */
     private fun showInfoDialog() {
         val context = requireContext()
         val targets = context.cameraMockTargets
@@ -192,9 +194,18 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
         } else {
             getString(R.string.camera_mock_targets_value, targets.joinToString("、"))
         }
+        // 控制面回读：system_server 侧（AppOps + CameraServiceProxy）看到的相机活动，
+        // 对目标应用零注入 —— 拦截尚未接入时，这块就是"能不能看见"的全部依据
+        val events = runCatching {
+            val lm = mockServiceViewModel.locationManager
+            if (lm == null) null else moe.fuqiuluo.portalex.service.MockServiceHelper.getCameraEvents(lm)
+        }.getOrNull()
         MaterialAlertDialogBuilder(context)
             .setTitle(R.string.camera_mock)
-            .setMessage(getString(R.string.camera_mock_hint) + "\n\n" + targetLine)
+            .setMessage(
+                getString(R.string.camera_mock_hint) + "\n\n" + targetLine +
+                        "\n\n最近摄像头活动（系统侧观测，零应用注入）：\n" + (events ?: "（暂无：模拟未运行或系统服务未就绪）")
+            )
             .setPositiveButton(R.string.got_it, null)
             .create()
             .also { it.setCanceledOnTouchOutside(false); it.show() }
