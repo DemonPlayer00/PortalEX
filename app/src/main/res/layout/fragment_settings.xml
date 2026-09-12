@@ -68,6 +68,7 @@
                     android:text="@string/altitude"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/altitude_value"
                     app:layout_constraintTop_toTopOf="parent"/>
 
                 <com.google.android.material.textview.MaterialTextView
@@ -77,12 +78,14 @@
                     android:text="@string/altitude_desc"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/altitude_value"
                     app:layout_constraintTop_toBottomOf="@id/altitude_title"/>
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/altitude_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
+                    android:gravity="end"
                     android:text="80.0米"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/altitude_title"
@@ -106,6 +109,7 @@
                     android:text="@string/rocker_speed"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/speed_value"
                     app:layout_constraintTop_toTopOf="parent"/>
 
                 <com.google.android.material.textview.MaterialTextView
@@ -115,12 +119,14 @@
                     android:text="@string/rocker_speed_desc"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/speed_value"
                     app:layout_constraintTop_toBottomOf="@id/speed_title"/>
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/speed_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
+                    android:gravity="end"
                     android:text="3.05米/秒"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/speed_title"
@@ -162,7 +168,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/cadence_scale_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
                     android:minWidth="52dp"
                     android:gravity="end"
@@ -188,6 +194,7 @@
                     android:text="@string/accuracy"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/accuracy_value"
                     app:layout_constraintTop_toTopOf="parent"/>
 
                 <com.google.android.material.textview.MaterialTextView
@@ -197,12 +204,14 @@
                     android:text="@string/accuracy_desc"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/accuracy_value"
                     app:layout_constraintTop_toBottomOf="@id/accuracy_title"/>
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/accuracy_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
+                    android:gravity="end"
                     android:text="25.0米"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/accuracy_title"
@@ -276,8 +285,9 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/dfused_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
+                    android:gravity="end"
                     android:text="伪装"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/dfused_title"
@@ -334,6 +344,7 @@
                     android:text="@string/item_report_duration_title"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/report_duration_value"
                     app:layout_constraintTop_toTopOf="parent"/>
 
                 <com.google.android.material.textview.MaterialTextView
@@ -343,12 +354,14 @@
                     android:text="@string/item_report_duration_desc"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/report_duration_value"
                     app:layout_constraintTop_toBottomOf="@id/report_duration_title"/>
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/report_duration_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
+                    android:gravity="end"
                     android:text="@string/item_report_duration_value"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/report_duration_title"
@@ -390,7 +403,7 @@
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/sensor_grid_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
                     android:minWidth="52dp"
                     android:gravity="end"
@@ -417,6 +430,7 @@
                     android:text="模拟最少卫星数量"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/satellite_count_value"
                     app:layout_constraintTop_toTopOf="parent"/>
 
                 <com.google.android.material.textview.MaterialTextView
@@ -426,12 +440,14 @@
                     android:text="最少模拟的卫星数量（只支持北斗）"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/satellite_count_value"
                     app:layout_constraintTop_toBottomOf="@id/satellite_count_title"/>
 
                 <com.google.android.material.textview.MaterialTextView
                     android:id="@+id/satellite_count_value"
-                    android:layout_width="wrap_content"
+                    android:layout_width="96dp"
                     android:layout_height="wrap_content"
+                    android:gravity="end"
                     android:text="12颗"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/satellite_count_title"
