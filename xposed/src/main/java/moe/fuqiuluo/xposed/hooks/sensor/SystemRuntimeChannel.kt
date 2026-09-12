@@ -111,11 +111,14 @@ internal object SystemRuntimeChannel {
             // 所以按候选列表逐个试，取第一个真能看见目标类的。
             val cl = loader ?: findLoader(hintLoader)
             if (cl == null) {
-                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
                 resolveError = "no ClassLoader can see $CLS_SERVICE"
                 phase = "unresolved"
                 nextAttemptNanos = System.nanoTime() + RESOLVE_RETRY_NANOS
-                Logger.error("SystemRuntimeChannel: 没有任何类加载器能看到 $CLS_SERVICE")
+                // 不在这里记账/报错：本方法会在**开机阶段**被调用，而"本机看不到这个类"
+                // 是设备属性、不是每次重试的新故障——每次重试都 count 一次会让
+                // Test 页的静默失败计数失去意义（实测 MI6/LineageOS 15 每 10s 刷一条）。
+                // 真正需要通道时（装载原生层）由 BinderSensorMock 记一次账。
+                Logger.debug("SystemRuntimeChannel: 候选类加载器都看不到 $CLS_SERVICE")
                 return
             }
             loader = cl
@@ -164,11 +167,11 @@ internal object SystemRuntimeChannel {
                 mPtrField = ptrField
             }
             r.onFailure {
-                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL, it)
                 resolveError = "$step: ${it.javaClass.simpleName}: ${it.message}"
                 phase = "unresolved"
                 nextAttemptNanos = System.nanoTime() + RESOLVE_RETRY_NANOS
-                Logger.error("SystemRuntimeChannel: 解析失败，运行时通道不生效：$resolveError", it)
+                // 同上：解析失败是"本机不支持"的属性，重试不重复记账（记账在真正用到通道时）
+                Logger.debug("SystemRuntimeChannel: 解析失败，运行时通道不生效：$resolveError", it)
                 return
             }
             resolved = true
@@ -197,7 +200,7 @@ internal object SystemRuntimeChannel {
                 return cl
             }
         }
-        Logger.error(
+        Logger.debug(
             "SystemRuntimeChannel: 候选类加载器都看不到 $CLS_SERVICE：" +
                     candidates.joinToString { it.javaClass.name }
         )

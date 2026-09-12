@@ -6,7 +6,7 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
 
 /**
- * Binder 外周传感器模拟（**默认关**）—— system_server 侧调度。
+ * Binder 外周传感器模拟（**默认开**）—— system_server 侧调度。
  *
  * 与 app 端 [SystemSensorManagerHook] 的分工：
  * - [SystemSensorManagerHook]：**应用进程内**改写真实回调（旧路径，只在 LSPosed
@@ -16,12 +16,14 @@ import moe.fuqiuluo.xposed.utils.PortalDiag
  *   真实值。目标应用**一个 hook 都不装**也能拿到模拟数据，且不依赖底层传感器是否
  *   在工作。
  *
- * 生命周期：开关打开（或模拟启动）时装载原生层并开始推流；关闭时立刻停推并把注入层
- * 置为 inactive（真实事件原样放行）。开关关闭时本类**不做任何事**——不加载 .so、
- * 不起线程，旧行为逐位不变。
- * ⚠️ 开关**必须默认关**：`handleLoadPackage("android")` 阶段会无条件调用
- * [onConfigChanged]，默认开 = 每次开机都在 system_server 里改写 `libsensorservice.so`，
- * 实测会让开机卡死（详见 `LocConfig.enableBinderSensorMock` 的注释）。
+ * 生命周期：**装机后默认开，但开机阶段什么都不做**（[registerAtBoot] 只登记开关）；
+ * 真正的装载发生在**模拟会话启动**时（[onSimulationChanged]），装载后开始推流；
+ * 开关关闭时立刻停推并把注入层置为 inactive（真实事件原样放行），下次开会话复用已装载的层。
+ *
+ * ⚠️ 红线：**不要在 `handleLoadPackage("android")` 阶段装载**。那段代码跑在开机途中，
+ * 在 system_server 里 dlopen 并改写 `libsensorservice.so` 会让部分 ROM 永久卡在
+ * `Waiting for service 'sensorservice'`（2026-09-12 在 MI6/LineageOS 15 上开机动画永不结束，
+ * A/B 已证）。要动这条链路，先读 [registerAtBoot] 与 `LocConfig.enableBinderSensorMock`。
  */
 object BinderSensorMock {
 
@@ -67,46 +69,94 @@ object BinderSensorMock {
     private var lastTickNanos = 0L
     private var failTicks = 0
 
+    /** 运行时通道不可用是否已记账（每进程一次，见 [reportRuntimeChannelUnavailable]） */
+    private var runtimeChannelWarned = false
+
     /** 原生注入层是否已就绪（诊断/给 UI 用） */
     val isNativeReady: Boolean get() = nativeReady
 
     /**
-     * 开关变化（put_config 已写入 [FakeLoc.enableBinderSensorMock] 后调用）。
+     * 开机登记：**只记状态，不做任何装载**。
+     *
+     * ⚠️ 这条路径是这条功能最危险的地方，务必保持"什么都不做"：
+     * 它跑在 system_server 的 `handleLoadPackage("android")` 阶段（开机途中），而
+     * `dlopen` 后改写 `libsensorservice.so` 在部分 ROM 上会让 system_server 永久卡在
+     * `Waiting for service 'sensorservice'` —— 实测 MI6/LineageOS 15 上开机永远停在
+     * 开机动画（2026-09-12 事故，A/B 已证）。装载统一推迟到**模拟会话真正启动**时
+     * （[onSimulationChanged]）。
+     */
+    fun registerAtBoot() {
+        if (!FakeLoc.isSystemServerProcess) return
+        Logger.info(
+            "BinderSensorMock: 开机登记 flag=${FakeLoc.enableBinderSensorMock}" +
+                    "（装载推迟到模拟会话启动；开机阶段不碰传感器 HAL）"
+        )
+    }
+
+    /**
+     * 开关/配置变化（`put_config` 已写入 [FakeLoc.enableBinderSensorMock] 后调用）。
      * 只在 system_server 内生效；其它进程只镜像开关值。
-     * @return 开关要求开启时，原生注入层是否已就绪；关闭时为 true
+     *
+     * **只有在模拟会话已经跑着的时候才装载**：`put_config` 既可能来自开机阶段，
+     * 也可能来自应用启动时——都不该成为"往 system_server 里 dlopen 传感器 HAL"的理由。
+     * @return 开关要求开启时，原生注入层是否已就绪；关闭/暂不装载时为 true
      */
     fun onConfigChanged(): Boolean {
         if (!FakeLoc.isSystemServerProcess) return true
         Logger.info(
             "BinderSensorMock: onConfigChanged flag=${FakeLoc.enableBinderSensorMock} " +
-                    "supervisor=$supervisorStarted native=$nativeReady fail=$failTicks"
+                    "session=${FakeLoc.enable} supervisor=$supervisorStarted native=$nativeReady fail=$failTicks"
         )
-        if (FakeLoc.enableBinderSensorMock) {
-            ensureSupervisor()
-            // 用户刚刚改的开关：不受退避影响，必须当场给出结论
-            val ok = ensureNative(force = true)
-            // S1 探针：只解析 + 读 mPtr，不注册任何东西（零副作用；解析可重试）
-            Logger.info("BinderSensorMock: ${SystemRuntimeChannel.probe()}")
-            SystemRuntimeChannel.resolveFailure?.let {
-                PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
-                Logger.error("BinderSensorMock: 运行时通道解析失败：$it")
-            }
-            return ok
+        if (!FakeLoc.enableBinderSensorMock) {
+            deactivate()
+            SystemRuntimeChannel.releaseCarrier()
+            return true
         }
-        deactivate()
-        SystemRuntimeChannel.releaseCarrier()
-        return true
+        if (!FakeLoc.enable) {
+            Logger.info("BinderSensorMock: 开关已开但会话未启动 —— 不装载（等会话启动）")
+            return true
+        }
+        return load()
     }
 
-    /** 模拟会话启停（start/stop 命令）：开关打开时才需要动作。 */
+    /**
+     * 装载原生层 + 探针：**唯一**会把注入层装进 system_server 的入口。
+     * 调用点只有两个：模拟会话启动、以及"会话已在跑时配置到达"。
+     */
+    private fun load(): Boolean {
+        ensureSupervisor()
+        // 用户刚改开关/刚开会话：不受退避影响，必须当场给出结论
+        val ok = ensureNative(force = true)
+        // S1 探针：只解析 + 读 mPtr，不注册任何东西（零副作用；解析可重试）
+        Logger.info("BinderSensorMock: ${SystemRuntimeChannel.probe()}")
+        reportRuntimeChannelUnavailable()
+        return ok
+    }
+
+    /**
+     * 运行时通道不可用**每进程只记一次账**。
+     *
+     * 它是设备/ROM 属性（本机看不到 `com.android.server.sensors.SensorService`），
+     * 不是每次会话的新故障；按次记账会把 Test 页的"静默失败计数"变成噪声。
+     */
+    private fun reportRuntimeChannelUnavailable() {
+        val failure = SystemRuntimeChannel.resolveFailure ?: return
+        if (runtimeChannelWarned) return
+        runtimeChannelWarned = true
+        PortalDiag.fail(PortalDiag.Area.RT_CHANNEL)
+        Logger.error("BinderSensorMock: 运行时通道解析失败：$failure（本机不支持，仅记账一次）")
+    }
+
+    /** 模拟会话启停（start/stop 命令）：**会话启动是装载原生层的正常时机**。 */
     fun onSimulationChanged() {
         if (!FakeLoc.isSystemServerProcess) return
-        if (FakeLoc.enableBinderSensorMock) {
-            ensureSupervisor()
-            ensureNative()
-        } else {
+        if (FakeLoc.enableBinderSensorMock && FakeLoc.enable) {
+            load()
+        } else if (!FakeLoc.enableBinderSensorMock) {
             deactivate()
         }
+        // 会话停止但开关仍开：保留已装载的注入层（投递泵自己会因 !FakeLoc.enable 退出），
+        // 下次开会话直接复用，不再重复 dlopen。
     }
 
     /**
