@@ -2501,3 +2501,72 @@ python3 rawedit.py real.raw mod.raw "2048,1523,0.10"     # 把 (2048,1523) 改�
 sh ace5_deploy4.sh '…;mock_map=15728640:/data/vendor/camera/mod.raw;inject_us=0'
 # 4) 拍完用 PIL 校验能解码，不能就重拍
 ```
+
+## 42. 持久化：把运行期部署固化进模块（ACE5 走 /odm，**永不碰 /vendor**）（2026-09-13，第 21 轮）
+
+### 42.1 一个关键发现：`/odm/lib64/hw` 上**本来没有** `camera.qcom.so`
+
+卸掉运行期 overlay 之后看原始状态：`/odm/lib64/hw/` 里只有 `camera.oemlayer.so` 等，
+**没有** `camera.qcom.so`；真件在 `/vendor/lib64/hw/camera.qcom.so`（36 MB）。
+
+那为什么我们的 shim 放进 `/odm/lib64/hw/` 就会被加载？因为 **HAL 加载器按目录顺序找**
+（`/odm/lib64/hw` 在 `/vendor/lib64/hw` 之前）。于是这条路线**只是"往前面的目录里加一个文件"**，
+`/vendor` 一个字节都不用动 —— 这正是它既生效、又不会像 §25.1 那样把 `media.swcodec` 弄坏的原因。
+
+### 42.2 模块新增的 ACE5 路线（`post-fs-data.sh`）
+
+1. 探测 `payload/odm/camera.qcom.so` 是否随包发下来；探到了就 **`SKIP_VENDOR=1`，整段不动 `/vendor`**
+   （老脚本那条 bind 路线在 ACE5 上是多余的，而且属于"没量过的风险路径"，直接跳过）；
+2. 挂 tmpfs 到 `/data/local/tmp/odmtmp` → **再**建 `upper/`、`work/`（顺序见 42.3）；
+3. shim 拷进 `upper/`，`mount -t overlay` 叠到 `/odm/lib64/hw`；
+4. 开关文件写 **`/data/vendor/camera/portal.cfg`**（`vendor_camera_data_file`，无需任何 sepolicy 补丁）；
+   先 `rm` 再建（`: >` 会留旧标签 —— 踩过），`chmod 666` + `chcon`；
+5. `payload/odm/mock/` 里随包的素材搬到 `/data/vendor/camera/` 并打同标签，cfg 里可直接引用。
+
+随包发的默认 `portal.cfg` = 我们一直用的"干净态"（只装钩子、不开注入）：
+
+```
+real_hal=/vendor/lib64/hw/camera.qcom.so
+real_hmi_bytes=376
+ops_index=1
+dump=1
+report_period=20
+req_vaddrs=0x1e49ca0
+hook_rec_vaddrs=0x1e46f60
+hook_rec_ol_vaddrs=0x6cadc
+```
+
+### 42.3 写这条路线时踩到的三个坑（都已修，脚本里留了注释）
+
+| 坑 | 症状 | 修法 |
+| --- | --- | --- |
+| 判据写成"目标文件存在" | `[ -s /odm/lib64/hw/camera.qcom.so ]` **永远为假**（那正是我们要加的文件，本来不存在）⇒ 整段不执行 | 判 **目录在** + "我们有载荷" |
+| **先建 upper/work 再挂 tmpfs** | 目录被新挂的 tmpfs 盖住 ⇒ `cp ... upper/camera.qcom.so: No such file or directory`，overlay 挂不上 | **先挂 tmpfs，再 mkdir** |
+| 老脚本的 `/vendor` bind 路线在 ACE5 上也会跑 | 属于未测量的风险路径（§25.1 那条 overlay 就是在这里把拍照弄坏的） | 探到 `/odm` 载荷即 `SKIP_VENDOR=1` |
+
+### 42.4 验证（不用重启，手动跑模块脚本）
+
+把打好的 zip 解到 `/data/local/tmp/modtest`，**先卸掉运行期部署**，再 `sh post-fs-data.sh`：
+
+```
+portalex: 检测到 /odm 路线可用 ⇒ 本次**不碰 /vendor**
+portalex: 已在 /odm/lib64/hw 叠上我们的 shim（/vendor 未被触碰）
+portalex: 开关文件 = /data/vendor/camera/portal.cfg
+```
+核对：`/odm/lib64/hw/camera.qcom.so` = 232,800 字节（我们的 shim）、
+`/data/vendor/camera/portal.cfg` 内容正确且标签 `vendor_camera_data_file`、
+`mount` 里能看到 tmpfs + overlay 两条。随后 `setprop ctl.start vendor.camera-provider`：
+
+```
+PortalCamShim: 开关文件：/data/vendor/camera/portal.cfg
+PortalCamShim: 真实 HAL 已加载并整块接管：/vendor/lib64/hw/camera.qcom.so（api=0x0205）
+PortalCamShim: 已挂钩[0]/[1]/[2] …
+```
+**并且拍照仍然正常**（落盘 2304×4096 JPEG 可解码、无新增 tombstone）⇒ 这条路线不碰 swcodec。
+
+### 42.5 还差最后一步（需要用户点头）
+
+模块当前在设备上是**已安装但被禁用**（`/data/adb/modules/portalex-camera-hal/disable` 存在）。
+要让它开机自动部署，需要：把新 zip 装进 KernelSU（或把新文件覆盖到已安装目录）→ **重启一次**。
+重启是设备级动作、且有"开机后相机被脚本弄坏"的小概率风险（脚本已实测通过，但没在冷启动路径上跑过），
+所以这一步留给用户决定，不代劳。
