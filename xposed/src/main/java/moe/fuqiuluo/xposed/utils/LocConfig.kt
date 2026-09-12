@@ -45,14 +45,18 @@ internal object LocConfig {
     var enableMockWifi = false
 
     /**
-     * Binder 外周传感器模拟（**默认开**）：
+     * Binder 外周传感器模拟（**默认关**）：
      * 由 system_server 侧原生 hook（[moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock]）
      * 在系统框架层接管外周传感器——**不向目标应用注入任何 hook**。
-     * 关闭时该路径完全不安装（不加载 .so、不起线程），行为与旧版本逐位一致；
-     * 打开时只按需装载，装载失败也只是让这条实验路径静默降级（真实事件原样放行）。
+     * 关闭（默认）时该路径完全不安装（不加载 .so、不起线程），行为与旧版本逐位一致。
+     * ⚠️ 不能默认开：system_server 在 `handleLoadPackage("android")` 时会**无条件**调用
+     * `BinderSensorMock.onConfigChanged()`，默认开等于每次开机都往 system_server 里
+     * dlopen 并改写 `libsensorservice.so` —— 实测 MI6/LineageOS15 上会让 system_server
+     * 卡在等待 `sensorservice` binder 服务，开机永远停在开机动画（见 2026-09-12 记录）。
+     * 要默认开，必须先做到「只在模拟会话真正启动后才装载」。
      */
     @Volatile
-    var enableBinderSensorMock = true
+    var enableBinderSensorMock = false
 
     /** 注入栅格分辨率（Hz）：0 = 自动跟随框架采用值；非 0 时固定为 1e9/该值（原生层钳 2.5~50ms） */
     var sensorGridHz = 0

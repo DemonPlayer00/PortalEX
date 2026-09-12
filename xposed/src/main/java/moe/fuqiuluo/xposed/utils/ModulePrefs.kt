@@ -42,14 +42,14 @@ internal object ModulePrefs {
      * 读取开关 `binderSensorMock`。进程内缓存一次（开关语义是"下一个应用进程
      * 启动周期生效"，与其它需要重启的配置项一致）。
      *
-     * 默认值必须与 [moe.fuqiuluo.portalex.ext.binderSensorMock] 一致（同为 true）：
+     * 默认值必须与 [moe.fuqiuluo.portalex.ext.binderSensorMock] 一致（同为 false）：
      * 这条通道读的是同一份偏好，缺键时给出的结论不能和 App 侧相反。
      * @return true/false = 读到了；null = 读不到（调用方必须按"未开启"处理）
      */
     fun binderSensorMockEnabled(): Boolean? = cachedBinderSensorMock
 
     private val cachedBinderSensorMock: Boolean? by lazy {
-        readBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, def = true)
+        readBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, def = false)
     }
 
     private fun readBoolean(key: String, def: Boolean): Boolean? {

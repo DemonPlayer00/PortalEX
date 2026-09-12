@@ -268,7 +268,7 @@ var Context.sensorNoiseReport: String
     }
 
 /**
- * Binder 外周传感器模拟。**默认开启**：
+ * Binder 外周传感器模拟。**默认关闭**：
  * 打开后由 system_server 侧原生 hook 在系统框架层接管外周传感器
  * （步频 / 加速度 / 角度 / 指南针），**不 hook 目标应用**；
  * 关闭时这条路径完全不装载（不加载 .so、不起线程），即旧行为逐位不变。
@@ -276,7 +276,7 @@ var Context.sensorNoiseReport: String
  * 注意默认值只在**偏好里还没有这个键**时生效：用户手动关掉过，就以存下来的值为准。
  */
 var Context.binderSensorMock: Boolean
-    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, true)
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, false)
     set(value) = sharedPrefs.edit {
         putBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, value)
     }

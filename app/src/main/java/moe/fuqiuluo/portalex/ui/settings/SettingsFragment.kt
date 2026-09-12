@@ -165,7 +165,7 @@ class SettingsFragment : Fragment() {
         // 「传感器模拟」开关已移除：传感器 hook 恒安装（仅由 LSPosed 作用域决定是否注入），
         // 偏好项从未被模块读取——留着就是一个骗人的开关。
         //
-        // 「Binder 外周传感器模拟」（**默认开**）：打开后模拟改由 system_server 侧的
+        // 「Binder 外周传感器模拟」（默认关）：打开后模拟改由 system_server 侧的
         // 原生注入层在系统框架层完成——目标应用一个 hook 都不装，也不依赖底层传感器是
         // 否在工作。开关下发到系统侧失败（原生层挂不上）时会明确提示，不做假成功。
         binding.binderSensorMockSwitch.isChecked = requireContext().binderSensorMock
