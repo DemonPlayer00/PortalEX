@@ -6,7 +6,7 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
 
 /**
- * Binder 外周传感器模拟（实验性，默认关）—— system_server 侧调度。
+ * Binder 外周传感器模拟（**默认开**）—— system_server 侧调度。
  *
  * 与 app 端 [SystemSensorManagerHook] 的分工：
  * - [SystemSensorManagerHook]：**应用进程内**改写真实回调（旧路径，只在 LSPosed
@@ -17,8 +17,9 @@ import moe.fuqiuluo.xposed.utils.PortalDiag
  *   在工作。
  *
  * 生命周期：开关打开（或模拟启动）时装载原生层并开始推流；关闭时立刻停推并把注入层
- * 置为 inactive（真实事件原样放行）。开关关闭（默认）时本类**不做任何事**——不加载
- * .so、不起线程，旧行为逐位不变。
+ * 置为 inactive（真实事件原样放行）。开关关闭时本类**不做任何事**——不加载 .so、
+ * 不起线程，旧行为逐位不变。开关**默认开**（见 `LocConfig.enableBinderSensorMock`），
+ * 装载失败只是让这条路径静默降级，不会影响真实传感器数据。
  */
 object BinderSensorMock {
 
