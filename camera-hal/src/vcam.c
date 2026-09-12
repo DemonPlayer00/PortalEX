@@ -301,6 +301,11 @@ static const camera3_callback_ops_t *g_framework_cb = NULL;
 static camera3_device_ops_t g_ops;
 static struct camera3_device g_device;
 static unsigned long g_frames = 0;
+/* 诊断计数：把"没收到请求"与"收到了但锁失败"分开（上轮就是被 once-per-process 日志坑了） */
+static unsigned long g_reqs = 0;
+static unsigned long g_paint_ok = 0;
+static unsigned long g_lock_ycbcr_fail = 0;
+static unsigned long g_lock_raw_fail = 0;
 
 static bool load_real(void) {
     if (g_real_handle != NULL) return true;
@@ -463,6 +468,7 @@ static int vcam_configure_streams(const struct camera3_device *dev,
         LOGI("configure_streams[%u]：%ux%u format=0x%x usage=0x%x max_buffers=%u stream_type=%d", i,
              st->width, st->height, st->format, st->usage, st->max_buffers, st->stream_type);
     }
+    LOGI("配流时总账：请求=%lu 产帧=%lu", g_reqs, g_frames);
     return 0;
 }
 
@@ -504,9 +510,15 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
          * 只写开头若干行、以 width 当 stride 上界，绝不越界。 */
         if (g_gbm_lock != NULL) {
             void *vaddr = NULL;
-            if (g_gbm_lock(g_gbm_self, handle, USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN, &r,
-                           &vaddr) == 0 &&
-                vaddr != NULL) {
+            int lrc = g_gbm_lock(g_gbm_self, handle, USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN,
+                                 &r, &vaddr);
+            if (lrc != 0 || vaddr == NULL) {
+                unsigned long n2 = __atomic_add_fetch(&g_lock_raw_fail, 1, __ATOMIC_RELAXED);
+                if (n2 == 1 || n2 % 100 == 0) {
+                    LOGE("lock() 也失败 #%lu rc=%d（%ux%u）", n2, lrc, w, h);
+                }
+            }
+            if (lrc == 0 && vaddr != NULL) {
                 uint8_t *b = (uint8_t *)vaddr;
                 uint32_t rows = h < 32 ? h : 32;
                 for (uint32_t y = 0; y < rows; y++) {
@@ -516,10 +528,9 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
                 }
                 int f = -1;
                 g_gbm_unlock(g_gbm_self, handle, &f);
-                static bool logged = false;
-                if (!logged) {
-                    logged = true;
-                    LOGI("已用 lock() 兜底写入（lockYCbCr 不可用）");
+                unsigned long ok = __atomic_add_fetch(&g_paint_ok, 1, __ATOMIC_RELAXED);
+                if (ok == 1 || ok % 100 == 0) {
+                    LOGI("已用 lock() 兜底写入 #%lu（%ux%u）", ok, w, h);
                 }
                 return true;
             }
@@ -604,13 +615,25 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
         if (sb->stream == NULL || sb->buffer == NULL || (uintptr_t)(*sb->buffer) < 0x1000u) {
             continue;
         }
+        static bool logged_first_stream = false;
+        if (!logged_first_stream) {
+            logged_first_stream = true;
+            LOGI("首个请求的流：%ux%u format=0x%x usage=0x%x", sb->stream->width, sb->stream->height,
+                 sb->stream->format, sb->stream->usage);
+        }
         if (paint(*sb->buffer, sb->stream->width, sb->stream->height, req->frame_number)) {
             painted = true;
         }
     }
+    unsigned long rn = __atomic_add_fetch(&g_reqs, 1, __ATOMIC_RELAXED);
     if (painted) {
         unsigned long n = __atomic_add_fetch(&g_frames, 1, __ATOMIC_RELAXED);
         if (n == 1 || n % 120 == 0) LOGI("虚拟相机已产出帧：#%lu (frame=%u)", n, req->frame_number);
+    }
+    /* 周期性总账：请求数 / 成功数 / 两种锁失败数 —— 一眼看出断在哪一环 */
+    if (rn == 1 || rn % 120 == 0) {
+        LOGI("总账：请求=%lu 产帧=%lu lockYCbCr失败=%lu lock失败=%lu", rn, g_frames,
+             g_lock_ycbcr_fail, g_lock_raw_fail);
     }
 
     if (g_framework_cb == NULL) return 0;
@@ -649,6 +672,27 @@ static int vcam_flush(const struct camera3_device *dev) {
     (void)dev;
     return 0;
 }
+
+/*
+ * **槽位探针**：本机已确认"结构布局 ≠ AOSP 头文件"（camera3_capture_request 就是反的），
+ * 所以 ops 表的索引也未必与头文件一致 —— 如果 provider 把 `process_capture_request` 读在
+ * 别的槽上，我们这里就是 NULL，它会安静地"不给我们发请求"（实测现象：配流成功、请求恒为 0）。
+ *
+ * 桩函数只记一条日志、零解引用、返回 0，用来把真实槽位问出来。
+ */
+static int slot_probe(const char *name) {
+    static bool logged[8] = {false};
+    int idx = (int)(name[4] - '0');
+    if (idx >= 0 && idx < 8 && !logged[idx]) {
+        logged[idx] = true;
+        LOGE("槽位探针：ops[%d] 被调用了（provider 对这张表的索引与 AOSP 头文件不一致）", idx);
+    }
+    return 0;
+}
+static int slot_probe_5(const struct camera3_device *d, const void *a) { (void)d; (void)a; return slot_probe("slot5"); }
+static int slot_probe_6(const struct camera3_device *d, int a) { (void)d; (void)a; return slot_probe("slot6"); }
+static int slot_probe_7(const struct camera3_device *d) { (void)d; return slot_probe("slot7"); }
+static void slot_probe_8(const struct camera3_device *d, void *a) { (void)d; (void)a; slot_probe("slot8"); }
 
 static int vcam_close(struct hw_device_t *device) {
     (void)device;
@@ -723,9 +767,11 @@ static int vcam_open(const struct hw_module_t *module, const char *id, struct hw
     g_ops.register_stream_buffers = NULL;
     g_ops.construct_default_request_settings = vcam_default_settings;
     g_ops.process_capture_request = vcam_process_capture_request;
-    g_ops.get_metadata_vendor_tag_ops = NULL;
-    g_ops.dump = vcam_dump;
-    g_ops.flush = vcam_flush;
+    /* 5/6/7/8 槽先放探针（只记日志、不解引用），把 provider 的真实索引问出来；
+     * 探针被证明不是 process_capture_request 之后再换回真正的实现。 */
+    g_ops.get_metadata_vendor_tag_ops = (void (*)(const struct camera3_device *, void *))slot_probe_8;
+    g_ops.dump = (void (*)(const struct camera3_device *, int))slot_probe_6;
+    g_ops.flush = slot_probe_7;
 
     memset(&g_device, 0, sizeof(g_device));
     g_device.common.tag = HARDWARE_DEVICE_TAG;
