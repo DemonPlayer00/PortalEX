@@ -215,6 +215,9 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
+                // 抽屉下部的工具页是**另一个** NavigationView（为了精确控制组间间距）
+                val navViewTools: NavigationView = binding.navViewTools
+                navViewTools.setupWithNavController(navController)
 
                 navController.addOnDestinationChangedListener(object: OnDestinationChangedListener {
                     override fun onDestinationChanged(
@@ -223,6 +226,18 @@ class MainActivity : AppCompatActivity() {
                         arguments: Bundle?
                     ) {
                         applyMenuVisibility(destination.id)
+
+                        // 两个 NavigationView 各管一半菜单：跳到另一半时要把这边的选中态清掉，
+                        // 否则两处会同时高亮（NavigationUI 只负责点亮匹配的那一项）
+                        val inTools = destination.id == R.id.nav_calibration ||
+                                destination.id == R.id.nav_test
+                        val staleMenu = if (inTools) navView.menu else navViewTools.menu
+                        for (i in 0 until staleMenu.size()) staleMenu.getItem(i).isChecked = false
+
+                        // 关抽屉：NavigationUI 关抽屉靠 `navigationView.parent is DrawerLayout`，
+                        // 而这里两个 NavigationView 的外层是容器 LinearLayout（为了精确控制组间间距）
+                        // ⇒ 它关不掉。改为"目的地一变就关"，语义一样且与层级无关。
+                        drawerLayout.closeDrawers()
 
                         // 悬浮胶囊单实例：仅主界面/路线回放页/路线模拟页注册功能集
                         // （各自 Fragment onResume 中 setActions），其余目的地统一隐藏
