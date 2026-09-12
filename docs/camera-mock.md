@@ -14,7 +14,8 @@
 | 模块侧 app hook 内容替换（Camera2 换面 + GL 喂帧） | ✅ 已实现并真机验证（**当前停用**，见 §4） |
 | HAL 数据面：**改应用 buffer 的像素**（camshim 路线） | ✅ **已打通**（2026-09-12）：应用预览画面 100% 由 HAL 内 shim 写入，3–7 ms/帧，见 §9 |
 | HAL 数据面：自建虚拟摄像头（vcam 路线） | ⛔ 仍冻结（§5.3 的会话链路问题未动；camshim 路线已够用） |
-| 真实视频帧喂进 HAL（解码 + 帧通道） | ⛔ 未做：app 侧解码 + 共享内存通道，设计见 §10 |
+| 真实视频帧喂进 HAL：HAL 侧「帧文件」通道 | ✅ 已打通并验证（2026-09-12）：HAL 从共享文件取帧写进相机 buffer，预览里就是视频画面，4.8 ms/帧（§12） |
+| app 侧把解码结果写进该通道 | ⛔ 未做（app 代码待写，§10/§12.4） |
 | 线上配置 | 模块**启用**，挂 `camshim.so` 的**纯 M0**（只换 `process_capture_request` 做计数）：实测相机预览正常、帧计数在涨（`#240`） |
 
 ## 1. 三条路线与各自结论（为什么最后冻结在 HAL 这一层）
@@ -303,3 +304,84 @@ adb shell su -c 'echo "dump=0" > \
   `lock` 这类会 abort 的必须先过"流的 usage 有 SW 位"这道门。
 - 实验条件尽量做成**运行期开关**（`portal.cfg`）：HAL 实验的重编-部署-复现成本高，
   而"改文件 + kill provider"是秒级；出问题也能立刻清零回退。
+
+
+## 12. 帧通道（app 解码 → HAL 取帧）：协议、MLS 墙与实测
+
+### 12.1 结论先行
+
+HAL 侧的"帧文件"通道**已打通并验证**：把一个 NV12 帧序列文件放到 HAL 读得到的位置，
+`src_file=<路径>` 一开，Aperture 预览里出现的就是**视频画面本身**（不是合成图案），
+写帧 4.8 ms/帧。缺的只剩 app 侧把解码结果写进这个文件。
+
+### 12.2 为什么是"共享文件"而不是 socket
+
+原本想用 abstract socket + SCM_RIGHTS。实测否掉了 app 私有目录这条路：
+
+```
+avc: denied { search } for name="data" scontext=u:r:hal_camera_default:s0
+             tcontext=u:object_r:system_data_file:s0:c512,c768 tclass=dir
+```
+
+`/data/data/**` 带 **MLS 类别**（`s0:c512,c768`，app 自己还多带一组），而 vendor HAL 跑在
+**`s0`（无类别）**。MLS 的支配关系是单方向的（`s0:c197` ⊒ `s0`，反之不成立）⇒ **app 私有目录
+对 vendor HAL 是结构性不可达**，加多少条 `allow` 都没用。这是本轮最有价值的一条教训：
+**"app ↔ vendor 域"之间共享数据，不能走文件路径，除非给共享对象打上 `mlstrustedobject`。**
+
+于是方案定为：**共享文件 + 自定义类型 + `mlstrustedobject`**（绕过 MLS 约束），
+放进一个两域都能到达的目录（本机用 `/data/local/tmp/portalex/`，标签换成自定义类型）。
+
+### 12.3 让这条路生效需要的四条（缺一条都不行）
+
+| # | 需要什么 | 命令/规则 | 实测现象 |
+|---|---|---|---|
+| 1 | 自定义类型 + `mlstrustedobject` | `type portalex_frame_file { mlstrustedobject }` | 只有类型不够：写侧的 MLS 约束要求 `t2 == mlstrustedobject` |
+| 2 | **类型与文件系统关联** | `allow portalex_frame_file labeledfs filesystem associate` | 少了它 `chcon` 直接 `Permission denied`，AVC 是 `denied { associate } ... tclass=filesystem` |
+| 3 | 生产侧（app）能写 | `allow untrusted_app portalex_frame_file dir { write add_name search }` + `file { create write open map }` | —— |
+| 4 | 消费侧（HAL）能读 | `allow hal_camera_default portalex_frame_file dir { search }` + `file { read open map }` | 生效后日志出现 `帧文件已挂上：…` |
+
+**坑**：`magiskpolicy --apply <文件>` 里 `type_transition … "name"`（带 object_name 的那两行）
+会让 magiskpolicy **段错误**；类型/属性/allow 都正常。所以本轮改成"**预建文件 + chcon**"，
+不依赖 type_transition。（另一个坑：`--live` 语句里带引号会被 su→sh 吃掉，用 `--apply` 文件最稳。）
+
+### 12.4 帧文件协议（HAL 与 app 共用，`camera-hal/src/camshim.c` 里是权威定义）
+
+```
+偏移 0  头 80 字节（小端）：
+  0  magic 'PEXF'=0x46584550   4  version=1
+  8  width        12 height    16 y_stride   20 uv_stride
+  24 format(0=NV12)            28 slot_bytes
+  32 slots        36 enabled   40 seq        44 write_idx
+  48 flags        52 reserved
+  56 timestamp_ns (u64)
+  64 consumer_w   68 consumer_h  72 producer_state  76 reserved2
+偏移 4096 起是槽位数据：第 i 槽 = 4096 + i*slot_bytes，槽内先 Y 后交织 UV（NV12）
+```
+
+- **生产者（app）**：写数据 → 更新 `write_idx` → `seq++`（顺序不能反）。`enabled=0` 是总开关，
+  HAL 见到就完全不接管（露出真实相机）。
+- **消费者（HAL）**：只在 `seq` 变化时换槽；**没新帧就重发上一帧**（绝不能"没新帧就不写"，
+  否则画面会在真图/假图之间闪）。
+- `flags & 1` = "HAL 自行轮转槽位"：**不需要 app**，用于离线验证/演示（本轮就是这么验的）。
+- `consumer_w/h` 由 HAL 回写它实际的流尺寸，app 据此配置解码器（Surface 上的缩放是免费的）。
+
+### 12.5 本轮验证方式（离线可复现）
+
+```sh
+# 1) 从设备上已有的录制素材里抽 24 帧，缩到相机流尺寸（1600×1200），转 NV12
+ffmpeg -i v.mp4 -vf "fps=8,scale=1600:1200" -pix_fmt nv12 -frames:v 24 -f image2 -c:v rawvideo f%03d.nv12
+# 2) 按上面的协议拼成帧文件（头 + 24 槽，flags=1）
+# 3) 放进共享目录 + 打标签 + 下规则（见 §12.3 四条）
+# 4) portal.cfg: usage_patch=2 / init_wrap=1 / inject=1 / src_file=<路径>
+```
+验收：日志 `帧文件已挂上：…（1600x1200 stride=1600/1600 槽=24 … flags=1）`、
+`写帧耗时：… 平均 4.80 ms`，截图里是**视频画面**（本轮是录像里的灯光场景，颜色正确 ⇒
+"目标色度是 NV12 U 在前"这一条同时被证实：`cb=0xd308f000 cr=0xd308f001（NV12(U前)）`）。
+
+### 12.6 app 侧待办（下一步）
+
+1. `CameraFrameSink`：`FileChannel.map` 共享文件，写头、按 §12.4 发布帧（`VarHandle` 做 release 写）；
+2. `CameraMockVideoSource`：`MediaExtractor` + `MediaCodec`（输出到 **ImageReader**，
+   尺寸取 `consumer_w/h`，**缩放交给 Surface/GPU**）+ 按 PTS 节流 + 播完回起点循环；
+3. 接现有选片引擎（最近命中点 + 标签全含 + 随机起播秒）；
+4. 模块化：`post-fs-data.sh` 建目录/打标签/预建文件，`sepolicy.rule` 收 §12.3 的四条规则。

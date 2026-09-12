@@ -45,12 +45,15 @@
 
 #include <android/log.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -343,6 +346,10 @@ static int g_opt_inject = 0;
 static int g_opt_freeze = 0;
 static int g_opt_pattern = 0;
 static char g_opt_cam[16] = {0};
+/** 外源帧文件（app 侧解码后写进来的像素通道）；空 = 用合成图案 */
+static char g_opt_src_file[160] = {0};
+/** 色度 U/V 是否互换（NV12 ↔ NV21）：这种错只有看图才认得出，故做运行期开关 */
+static int g_opt_swap_uv = 0;
 
 /** 当前 open 的相机 id；`cam=` 定向就靠它 */
 static char g_cur_cam[16] = {0};
@@ -395,14 +402,18 @@ static void load_options(void) {
             g_opt_freeze = atoi(val);
         } else if (strcmp(key, "pattern") == 0) {
             g_opt_pattern = atoi(val);
+        } else if (strcmp(key, "swap_uv") == 0) {
+            g_opt_swap_uv = atoi(val);
+        } else if (strcmp(key, "src_file") == 0) {
+            snprintf(g_opt_src_file, sizeof(g_opt_src_file), "%s", val);
         } else if (strcmp(key, "cam") == 0) {
             snprintf(g_opt_cam, sizeof(g_opt_cam), "%s", val);
         }
     }
     fclose(f);
-    LOGI("开关：dump=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d cam=%s",
+    LOGI("开关：dump=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d cam=%s src=%s",
          g_opt_dump, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze, g_opt_pattern,
-         g_opt_cam[0] ? g_opt_cam : "(全部)");
+         g_opt_cam[0] ? g_opt_cam : "(全部)", g_opt_src_file[0] ? g_opt_src_file : "(图案)");
 }
 
 /* 我们交给 HAL 的回调表（定义在这里，实现见下方 M1a 段）—— 先声明后引用 */
@@ -1209,10 +1220,163 @@ static const uint8_t *portal_template(uint32_t w, uint32_t h, uint32_t frame) {
     return g_tpl;
 }
 
+/* ------------------------------------------------------------------ *
+ * 外源帧（"帧文件"）：真实视频像素进 HAL 的通道
+ *
+ * 为什么用**文件**而不是 socket/SCM_RIGHTS：HAL 只读得到它有权读的路径，app 只写得进自己的目录；
+ * 两边都能碰的只有一个"约定格式的文件"。让 app 把解码结果按下面的头写进文件、HAL mmap 只读，
+ * 是三边（SELinux / 依赖 / 代码量）成本最低的做法，也不需要把编解码器搬进 HAL 进程。
+ *
+ * 头 64 字节，槽位数据从 4096 起；每槽 slot_bytes。取帧两种模式：
+ *   · `flags & 1`（HAL 自行循环）：按相机帧序轮转槽位 —— 离线验证/演示用，不需要 app；
+ *   · 否则读 volatile `seq`/`write_idx`：生产者"先写数据、再更新 write_idx、最后 seq++"，
+ *     消费者只在 seq 变化时换槽 ⇒ 永远读已写完的槽（多缓冲无锁；没新帧就重发上一帧，
+ *     **绝不能"没新帧就不写"**，否则画面会在真图与假图之间闪）。
+ * 头里的 `enabled=0` 是生产者的总开关：HAL 见到就完全不接管（露出真实相机）。
+ * ------------------------------------------------------------------ */
+
+#define PORTAL_FRAME_MAGIC 0x46584550u /* 'PEXF' */
+#define PORTAL_FRAME_HDR_BYTES 4096u
+#define PORTAL_FRAME_FLAG_CYCLE 1u
+
+struct portal_frame_hdr {
+    uint32_t magic, version, width, height, y_stride, uv_stride, format, slot_bytes;
+    uint32_t slots, enabled, seq, write_idx, flags, reserved;
+    uint64_t timestamp_ns;
+};
+
+static int g_fsrc_fd = -1;
+static uint8_t *g_fsrc_map = NULL;
+static size_t g_fsrc_len = 0;
+static const uint8_t *g_fsrc_cur = NULL; /* 当前使用的槽位（没新帧就沿用） */
+static uint32_t g_fsrc_sw = 0, g_fsrc_sh = 0, g_fsrc_sy = 0, g_fsrc_suv = 0;
+static uint32_t g_fsrc_seq = 0;
+static uint32_t g_fsrc_cycle = 0;
+
+static bool portal_fsrc_open(void) {
+    if (g_fsrc_map != NULL) return true;
+    if (g_opt_src_file[0] == '\0') return false;
+    int fd = open(g_opt_src_file, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        PORTAL_LOG_ONCE(LOGE, "帧文件打不开：%s（errno=%d）→ 本流继续用图案", g_opt_src_file, errno);
+        return false;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || (size_t)st.st_size < PORTAL_FRAME_HDR_BYTES) {
+        PORTAL_LOG_ONCE(LOGE, "帧文件太小或取不到大小：%s", g_opt_src_file);
+        close(fd);
+        return false;
+    }
+    void *m = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    if (m == MAP_FAILED) {
+        PORTAL_LOG_ONCE(LOGE, "帧文件 mmap 失败（errno=%d）", errno);
+        close(fd);
+        return false;
+    }
+    const struct portal_frame_hdr *h = (const struct portal_frame_hdr *)m;
+    if (h->magic != PORTAL_FRAME_MAGIC || h->version != 1) {
+        PORTAL_LOG_ONCE(LOGE, "帧文件魔数/版本不对（0x%08x v%u）→ 不接管", h->magic, h->version);
+        munmap(m, (size_t)st.st_size);
+        close(fd);
+        return false;
+    }
+    g_fsrc_fd = fd;
+    g_fsrc_map = (uint8_t *)m;
+    g_fsrc_len = (size_t)st.st_size;
+    LOGI("帧文件已挂上：%s（%ux%u stride=%u/%u 槽=%u 槽字节=%u 总长=%zu flags=%u）",
+         g_opt_src_file, h->width, h->height, h->y_stride, h->uv_stride, h->slots, h->slot_bytes,
+         g_fsrc_len, h->flags);
+    return true;
+}
+
+/** 取当前该用的源槽；没有可用帧返回 NULL */
+static const uint8_t *portal_fsrc_pick(void) {
+    if (!portal_fsrc_open()) return NULL;
+    const struct portal_frame_hdr *h = (const struct portal_frame_hdr *)g_fsrc_map;
+    if (h->enabled == 0) return NULL; /* 生产者要求不接管 */
+    uint32_t slots = h->slots, slot_bytes = h->slot_bytes;
+    if (slots == 0 || slots > 256 || slot_bytes < 4096) return NULL;
+    if (PORTAL_FRAME_HDR_BYTES + (size_t)slots * slot_bytes > g_fsrc_len) return NULL;
+
+    uint32_t idx;
+    if (h->flags & PORTAL_FRAME_FLAG_CYCLE) {
+        idx = g_fsrc_cycle++ % slots;
+    } else {
+        uint32_t seq = h->seq;
+        if (seq != g_fsrc_seq) {
+            g_fsrc_seq = seq;
+            idx = h->write_idx;
+            if (idx >= slots) idx = 0;
+        } else if (g_fsrc_cur != NULL) {
+            return g_fsrc_cur; /* 没有新帧：重发上一帧，避免真假画面交替闪 */
+        } else {
+            return NULL;
+        }
+    }
+    g_fsrc_sw = h->width;
+    g_fsrc_sh = h->height;
+    g_fsrc_sy = h->y_stride;
+    g_fsrc_suv = h->uv_stride;
+    g_fsrc_cur = g_fsrc_map + PORTAL_FRAME_HDR_BYTES + (size_t)idx * slot_bytes;
+    return g_fsrc_cur;
+}
+
+/**
+ * 把外源帧拷进目标平面。几何/布局不一致时**只拷重叠区**（左上对齐）并记一条，
+ * 不做缩放 —— 缩放应该由 app 侧的解码器在 Surface 上完成（那是免费的 GPU 缩放）。
+ */
+static bool portal_copy_external(uint8_t *dy, size_t dystride, uint8_t *dcb, uint8_t *dcr,
+                                 size_t dcstride, size_t dstep, uint32_t w, uint32_t h) {
+    const uint8_t *src = portal_fsrc_pick();
+    const struct portal_frame_hdr *hdr = (const struct portal_frame_hdr *)g_fsrc_map;
+    if (src == NULL || hdr == NULL) return false;
+    uint32_t sw = hdr->width, sh = hdr->height, sy = hdr->y_stride, suv = hdr->uv_stride;
+    if (sw == 0 || sh == 0 || sy < sw) return false;
+    if (sw != w || sh != h) {
+        PORTAL_LOG_ONCE(LOGI, "源帧 %ux%u 与流 %ux%u 不同：只拷重叠区（不做缩放）", sw, sh, w, h);
+    }
+    uint32_t cw = (sw < w) ? sw : w;
+    uint32_t ch = (sh < h) ? sh : h;
+    for (uint32_t r = 0; r < ch; r++) {
+        memcpy(dy + (size_t)r * dystride, src + (size_t)r * sy, cw);
+    }
+    /* 色度：目标若是 NV12/NV21（cb/cr 相邻、step=2），整行原样搬即可 */
+    if (dcb == NULL || dcstride == 0 || suv == 0) return true;
+    bool interleaved = (dstep == 2 && (dcr == dcb + 1 || dcb == dcr + 1));
+    if (!interleaved) {
+        PORTAL_LOG_ONCE(LOGE, "目标色度不是 NV12/NV21 交织布局（step=%zu cb=%p cr=%p）→ 只写亮度",
+                        dstep, dcb, dcr);
+        return true;
+    }
+    const uint8_t *suvp = src + (size_t)sy * sh;
+    /*
+     * U/V 顺序：源（ffmpeg/MediaCodec 的 NV12）是 U 在前；目标若是 NV21（V 在前）会红蓝互换。
+     * 由 `swap_uv=1` 开关决定 —— 这种错**只有看图才认得出**，所以做成运行期开关而不是赌。
+     */
+    for (uint32_t r = 0; r < (ch + 1) / 2; r++) {
+        uint8_t *drow = dcb + (size_t)r * dcstride;
+        const uint8_t *srow = suvp + (size_t)r * suv;
+        if (g_opt_swap_uv) {
+            for (uint32_t x = 0; x + 1 < cw; x += 2) {
+                drow[x] = srow[x + 1];
+                drow[x + 1] = srow[x];
+            }
+        } else {
+            memcpy(drow, srow, cw);
+        }
+    }
+    return true;
+}
+
 /** 按 ystride 写整幅 Y；有 cb/cr 时顺带把色度抹平（否则叠在真图色彩上会花） */
 static void portal_fill_frame(uint8_t *y, size_t ystride, uint8_t *cb, uint8_t *cr, size_t cstride,
                               size_t chroma_step, uint32_t w, uint32_t h, uint32_t frame) {
     if (y == NULL || ystride < w) return;
+    /* 有外源帧就用外源帧（真实视频）；没有才退回合成图案 */
+    if (g_opt_src_file[0] != '\0' &&
+        portal_copy_external(y, ystride, cb, cr, cstride, chroma_step, w, h)) {
+        return;
+    }
     const uint8_t *tpl = portal_template(w, h, frame);
     if (tpl != NULL) {
         for (uint32_t r = 0; r < h; r++) {
@@ -1275,8 +1439,12 @@ static struct portal_map *portal_get_map(void *handle, uint32_t w, uint32_t h) {
         memset(&yc, 0, sizeof(yc));
         int rc = g_gbm_lock_ycbcr(g_gbm_self, handle, lock_usage, &bounds, &yc);
         if (rc == 0 && yc.y != NULL && yc.ystride >= w) {
-            PORTAL_LOG_ONCE(LOGI, "lockYCbCr 成功：ystride=%zu cstride=%zu step=%zu → 写整幅",
-                            yc.ystride, yc.cstride, yc.chroma_step);
+            PORTAL_LOG_ONCE(LOGI,
+                            "lockYCbCr 成功：ystride=%zu cstride=%zu step=%zu cb=%p cr=%p（%s）",
+                            yc.ystride, yc.cstride, yc.chroma_step, yc.cb, yc.cr,
+                            (yc.chroma_step == 2 && yc.cr == (uint8_t *)yc.cb + 1) ? "NV12(U前)"
+                            : (yc.chroma_step == 2 && yc.cb == (uint8_t *)yc.cr + 1) ? "NV21(V前)"
+                                                                                     : "其它");
             free_slot->handle = handle;
             free_slot->y = (uint8_t *)yc.y;
             free_slot->cb = (uint8_t *)yc.cb;
