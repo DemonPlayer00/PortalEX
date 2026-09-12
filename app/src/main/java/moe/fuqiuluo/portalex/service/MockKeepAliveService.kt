@@ -60,8 +60,20 @@ class MockKeepAliveService : Service() {
         @Volatile
         private var wanted = false
 
+        /**
+         * 摄像头模拟的**产帧侧**是否也需要保活。
+         *
+         * 为什么要有第二个需求方：产帧线程解码视频写共享帧文件，一旦被冻结就停止发布，
+         * HAL 侧的心跳兜底会把画面切回真实相机 —— 表现就是"点开相机过几秒又变回真画面"。
+         * 而定位侧的保活判定是"空闲就撤"，两者语义不同，不能共用一个布尔量互相踩。
+         */
+        @Volatile
+        private var cameraWanted = false
+
+        private val needKeepAlive: Boolean get() = wanted || cameraWanted
+
         /** 当前是否需要保活（诊断/日志用） */
-        val isWanted: Boolean get() = wanted
+        val isWanted: Boolean get() = needKeepAlive
 
         /** 启动（幂等）。只在**无人值守仍在推进**时由调用方触发。 */
         fun start(context: Context) {
@@ -70,10 +82,26 @@ class MockKeepAliveService : Service() {
             runCatching { ContextCompat.startForegroundService(context, intent) }
         }
 
+        /** 摄像头模拟产帧期间的保活（幂等）；与定位侧的 [start]/[stop] 互不干扰 */
+        fun startCamera(context: Context) {
+            cameraWanted = true
+            val intent = Intent(context, MockKeepAliveService::class.java)
+            runCatching { ContextCompat.startForegroundService(context, intent) }
+        }
+
+        fun stopCamera(context: Context) {
+            cameraWanted = false
+            if (!wanted) {
+                runCatching { context.stopService(Intent(context, MockKeepAliveService::class.java)) }
+            }
+        }
+
         /** 停止（幂等）：撤前台、放锁。空闲时必须调，遵循系统省电策略。 */
         fun stop(context: Context) {
             wanted = false
-            runCatching { context.stopService(Intent(context, MockKeepAliveService::class.java)) }
+            if (!cameraWanted) {
+                runCatching { context.stopService(Intent(context, MockKeepAliveService::class.java)) }
+            }
         }
     }
 
@@ -90,7 +118,7 @@ class MockKeepAliveService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // 系统按 START_STICKY 拉起（标记为 false）/ 已经不需要了 / 用户关了开关
         // ⇒ 立刻退出，不做常驻幽灵
-        if (!wanted || !applicationContext.keepAliveInBackground) {
+        if (!needKeepAlive || !applicationContext.keepAliveInBackground) {
             stopSelf()
             return START_NOT_STICKY
         }

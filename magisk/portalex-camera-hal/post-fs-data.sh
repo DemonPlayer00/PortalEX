@@ -10,3 +10,46 @@ MP=/data/adb/magisk/magiskpolicy
 [ -x "$MP" ] || MP=magiskpolicy
 "$MP" --live "allow hal_camera_default system_file file { read open getattr map execute }"
 "$MP" --live "allow hal_camera_default magisk_file file { read open getattr map execute }"
+
+# ---------------------------------------------------------------------------
+# 摄像头模拟的**共享帧通道**（app 解码 → HAL 取帧）
+#
+# 为什么需要这么一套（每条都是实测结论，见 docs/camera-mock.md §12）：
+#  1) app 私有目录（/data/data/**）带 MLS 类别（s0:c512,c768），而 vendor HAL 跑在 s0（无类别）
+#     ⇒ **app 私有目录对 HAL 结构性不可达**，加多少条 allow 都没用；
+#  2) 所以共享对象必须放在双方都能到达的路径（/data/local/tmp），并给它一个
+#     **带 mlstrustedobject 的自定义类型**（靠它绕过 MLS 约束）；
+#  3) 新类型还必须与文件系统关联（`allow <t> labeledfs filesystem associate`），
+#     否则 chcon 直接 Permission denied（AVC: denied { associate } ... tclass=filesystem）。
+# ---------------------------------------------------------------------------
+SHARED_DIR=/data/local/tmp/portalex
+FRAME_FILE=$SHARED_DIR/cammock.frames
+FRAME_BYTES=16777216   # 16 MiB：3 槽 × 5.2 MiB ⇒ 单帧 1920x1080 NV12 有余量
+
+mkdir -p "$SHARED_DIR"
+chmod 0777 "$SHARED_DIR"
+
+# 规则逐条打（也写进 sepolicy.rule，两条路都留着防静默失效）
+"$MP" --live "type portalex_frame_file { mlstrustedobject }"
+"$MP" --live "allow portalex_frame_file labeledfs filesystem associate"
+"$MP" --live "allow magisk portalex_frame_file dir { relabelfrom relabelto search write add_name read open getattr }"
+"$MP" --live "allow magisk portalex_frame_file file { relabelfrom relabelto read write open getattr create unlink map }"
+"$MP" --live "allow magisk shell_data_file dir { relabelfrom }"
+"$MP" --live "allow magisk shell_data_file file { relabelfrom }"
+"$MP" --live "allow untrusted_app portalex_frame_file dir { search read open getattr write add_name remove_name }"
+"$MP" --live "allow untrusted_app portalex_frame_file file { read write open getattr map create unlink }"
+"$MP" --live "allow hal_camera_default portalex_frame_file dir { search read open getattr }"
+"$MP" --live "allow hal_camera_default portalex_frame_file file { read write open getattr map }"
+"$MP" --live "allow untrusted_app shell_data_file dir { search getattr }"
+
+# 预建帧文件（**app 不建文件**：新建文件的标签由创建者决定，会落在 app 域的类型上；
+# 由模块建好并打标签，app 只负责打开写、HAL 只负责读）
+if [ ! -f "$FRAME_FILE" ]; then
+    truncate -s "$FRAME_BYTES" "$FRAME_FILE"
+fi
+chmod 0666 "$FRAME_FILE"
+chcon u:object_r:portalex_frame_file:s0 "$SHARED_DIR" 2>/dev/null
+chcon u:object_r:portalex_frame_file:s0 "$FRAME_FILE" 2>/dev/null
+# 文件属主给 PortalEX（装了就给，没装就留给 0666 —— 安装后再重启一次即可）
+APP_UID=$(stat -c %u /data/data/moe.fuqiuluo.portalex 2>/dev/null)
+[ -n "$APP_UID" ] && chown "$APP_UID:$APP_UID" "$FRAME_FILE"
