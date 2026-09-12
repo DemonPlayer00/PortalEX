@@ -2,8 +2,10 @@
 
 > **状态（2026-09-12）：冻结归档。** 完整的设计、实测事实表、卡点与"从哪接着做"见
 > [`docs/camera-mock.md`](../../docs/camera-mock.md)。
-> **线上当前配置是安全的**：模块启用中，但挂的是 `camshim.so`（外层包住 vendor HAL、无注入），
-> 真实相机直通、provider 稳定。`vcam.so`（自建虚拟摄像头）会产帧但会话链路未走通。
+> **线上当前配置（已实测）**：模块启用，挂 `camshim.so` 的**纯 M0** —— 只把
+> `process_capture_request` 换掉做帧计数，其余一切保持 vendor HAL 原样；
+> 相机预览正常、帧计数在涨。`vcam.so`（自建虚拟摄像头）会产帧但会话链路未走通。
+> ⚠️ 别再把 `initialize`/`configure_streams` 的接管加回来：实测那两处会让应用黑屏。
 
 ## camshim（当前挂载的这个）
 
