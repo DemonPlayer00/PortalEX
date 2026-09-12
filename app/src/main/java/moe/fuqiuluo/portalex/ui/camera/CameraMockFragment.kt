@@ -2,6 +2,7 @@ package moe.fuqiuluo.portalex.ui.camera
 
 import android.content.res.Configuration
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -23,7 +24,18 @@ import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.android.widget.FabBarView
 import moe.fuqiuluo.portalex.databinding.FragmentCameraMockBinding
+import com.baidu.mapapi.map.BaiduMap
+import com.baidu.mapapi.map.BitmapDescriptorFactory
+import com.baidu.mapapi.map.MapStatusUpdateFactory
+import com.baidu.mapapi.map.MarkerOptions
+import com.baidu.mapapi.map.Overlay
+import com.baidu.mapapi.map.OverlayOptions
+import moe.fuqiuluo.portalex.ext.gcj02
+import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
+import moe.fuqiuluo.portalex.ui.MapControlsHost
+import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
+import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 
 
 
@@ -39,10 +51,13 @@ import moe.fuqiuluo.xposed.utils.WorldMath
  * 自己的进程里**（模块侧 hook），因此这里额外显示"预计命中哪个点"，让用户不装测试应用
  * 也能看出规则有没有按预期工作。
  */
-class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
+class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     companion object {
         const val ARG_POINT_ID = "pointId"
+
+        /** 地图标记的附加数据键（点击标记 → 打开该点的编辑页） */
+        private const val EXTRA_POINT_ID = "cameraPointId"
     }
 
     private var _binding: FragmentCameraMockBinding? = null
@@ -51,6 +66,12 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
     private lateinit var adapter: CameraPointAdapter
 
     private val mockServiceViewModel by activityViewModels<moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel>()
+
+    /** 与路线编辑页共用同一个地图实例（同一 Activity 内只有一张地图是"活着"的） */
+    private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
+
+    /** 点位覆盖物：刷新时整层重建，避免"删了点位地图上还留着" */
+    private var pointOverlays: List<Overlay> = emptyList()
 
     /** 重建筛选胶囊时抑制回调：先清空再填充会触发一次"全部取消勾选"，不该被当成用户操作 */
     private var rebuildingFilter = false
@@ -71,7 +92,27 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
         binding.cameraPointList.layoutManager = LinearLayoutManager(requireContext())
         binding.cameraPointList.adapter = adapter
 
+        /* MapView 需要自己的一套生命周期（onCreate/onResume/onPause/onDestroy），
+         * 不转发的话地图不会初始化、恢复渲染 —— 与路线编辑页同一套写法 */
+        binding.cameraMockMap.onCreate(requireContext(), savedInstanceState)
+        binding.cameraMockMap.showZoomControls(false)
+        binding.cameraMockMap.showScaleControl(false)
+        with(baiduMapViewModel) { baiduMap = binding.cameraMockMap.map }
+        binding.cameraMockMap.map.mapType = context?.mapType ?: BaiduMap.MAP_TYPE_NORMAL
+        /* 点标记 → 直接进这个点的编辑页：地图上看到的和列表里点的是同一个东西 */
+        binding.cameraMockMap.map.setOnMarkerClickListener { marker ->
+            val id = marker.extraInfo?.getString(EXTRA_POINT_ID)
+            if (id != null) {
+                findNavController().navigate(
+                    R.id.nav_camera_point_edit,
+                    bundleOf(ARG_POINT_ID to id)
+                )
+            }
+            true
+        }
+
         binding.switchCameraMock.setOnClickListener { toggleMock() }
+        binding.cameraMockMapToggle.setOnClickListener { toggleMap() }
         // 说明与目标应用放进对话框：它们"读一次就够"，留在页面上会把视频点列表挤没
         binding.cameraMockInfo.setOnClickListener { showInfoDialog() }
 
@@ -80,6 +121,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
 
     override fun onResume() {
         super.onResume()
+        binding.cameraMockMap.onResume()
         avoidFabBar()
         (activity as? MainActivity)?.fabBar?.setActions(
             listOf(
@@ -104,15 +146,105 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
         refresh()
     }
 
+    override fun onPause() {
+        binding.cameraMockMap.onPause()
+        super.onPause()
+    }
+
     override fun onDestroyView() {
+        binding.cameraMockMap.onDestroy()
         super.onDestroyView()
         _binding = null
+    }
+
+    /**
+     * 展开/收起地图。
+     *
+     * 为什么默认收起：地图 180dp 是"固定高度"，展开时会把列表卡（0dp/weight=1）挤到只剩一条缝
+     * （实测点位的名字/坐标/标签全看不见）。所以把选择权交给用户：要"参照地图操作"时点一下展开。
+     */
+    private fun toggleMap() {
+        val card = binding.cameraMockMapCard
+        val show = card.visibility != View.VISIBLE
+        card.visibility = if (show) View.VISIBLE else View.GONE
+        binding.cameraMockMapToggle.setText(
+            if (show) R.string.camera_mock_hide_map else R.string.camera_mock_show_map
+        )
+        if (show) {
+            /* 从 GONE 变 VISIBLE 后要让它重新走一遍恢复流程，否则纹理可能是白的 */
+            runCatching { binding.cameraMockMap.onResume() }
+            drawPoints(CameraMockStore.points(requireContext()).sortedBy { it.name })
+        } else {
+            runCatching { binding.cameraMockMap.onPause() }
+        }
+    }
+
+    // ---- 地图操作（MapControlsHost：三点展开栏的"卫星图/普通图"共用同一套） ----
+
+    override fun isSatellite(): Boolean =
+        runCatching { binding.cameraMockMap.map.mapType == BaiduMap.MAP_TYPE_SATELLITE }
+            .getOrDefault(false)
+
+    override fun toggleSatellite() {
+        val target =
+            if (isSatellite()) BaiduMap.MAP_TYPE_NORMAL else BaiduMap.MAP_TYPE_SATELLITE
+        runCatching { binding.cameraMockMap.map.mapType = target }
+        context?.mapType = target
+    }
+
+    /**
+     * 把「视频点」与「当前表象位置」画到地图上。
+     *
+     * 为什么要画：选片规则是"**距当前表象位置最近的命中点**" —— 只给列表的话，
+     * 用户没法判断"现在到底会播哪一个"。地图上"我在这、点在那边"是一眼的事。
+     */
+    private fun drawPoints(points: List<CameraVideoPoint>) {
+        val map = runCatching { binding.cameraMockMap.map }.getOrNull() ?: return
+        val pointIcon = BitmapDescriptorFactory.fromResource(R.drawable.icon_selected_location_16)
+        val hereIcon = BitmapDescriptorFactory.fromResource(R.drawable.icon_my_location)
+        pointOverlays.forEach { runCatching { it.remove() } }
+        pointOverlays = emptyList()
+        val options = ArrayList<OverlayOptions>(points.size + 1)
+
+        points.forEach { point ->
+            val bundle = android.os.Bundle().apply { putString(EXTRA_POINT_ID, point.id) }
+            options += MarkerOptions()
+                .position((point.lat to point.lon).gcj02)
+                /* 图标必须显式给：百度 SDK 对 MarkerOptions 的硬性要求，
+                 * 不给会抛 BDMapSDKException（实测被 runCatching 吞掉 → 地图上一个点都没有） */
+                .icon(pointIcon)
+                .title("${point.name}（${point.videos.size} 段）")
+                .extraInfo(bundle)
+        }
+        /* 当前表象位置：没有位置模拟时不画（**不猜坐标** —— 猜错会让人以为选片错了） */
+        val here = CameraMockRuntime.position()
+        if (here != null) {
+            options += MarkerOptions()
+                .position((here.first to here.second).gcj02)
+                .icon(hereIcon)
+                .title(getString(R.string.camera_mock_current_position))
+        }
+        if (options.isNotEmpty()) {
+            pointOverlays = runCatching { map.addOverlays(options) }
+                .onFailure { Log.w("CameraMockFragment", "addOverlays 失败（地图标记没画出来）", it) }
+                .getOrDefault(emptyList())
+        }
+        Log.i(
+            "CameraMockFragment",
+            "地图标记：点位 ${points.size} 个 / 覆盖物 ${pointOverlays.size} 个 / 有表象位置 ${here != null}"
+        )
+        val focus = here?.let { (it.first to it.second).gcj02 }
+            ?: points.firstOrNull()?.let { (it.lat to it.lon).gcj02 }
+        if (focus != null) {
+            runCatching { map.setMapStatus(MapStatusUpdateFactory.newLatLng(focus)) }
+        }
     }
 
     private fun refresh() {
         val context = requireContext()
         val points = CameraMockStore.points(context).sortedBy { it.name }
         adapter.replaceAll(points)
+        drawPoints(points)
         rebuildFilterChips()
         updateSwitch()
         updateStatus(points)
