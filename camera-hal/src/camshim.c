@@ -497,6 +497,13 @@ static int g_opt_inject_sync = 0;
  *  只写"刚变的"那几块，写入量立刻降到跟帧率同量级（30 帧/秒 × 12.59MB ≈ 378MB/s）；
  *  连写 N 遍是为了覆盖 ISP 那一帧写入的**尾巴**（写晚了才不会又被 ISP 盖掉）。 */
 static int g_opt_inject_burst = 3;
+/** `inject_stop_after=<秒>`：注入线程跑够这么多秒就**自行退出**（0 = 不退出）。
+ *
+ *  为什么需要它：照片链路的几何标定要"同一场景、同一曝光、开/注入与关注入两张"求差 ——
+ *  而改 cfg 必须重启 provider，重启就会丢掉场景/曝光状态，于是差分里混进曝光漂移
+ *  （实测整帧中位差 +15.3，把标记的 +74 都冲淡了）。有了这个开关，
+ *  **同一个会话里**先拍"有标记"、等线程自己停、再拍"纯实景"，两张只差我们的注入。 */
+static int g_opt_inject_stop_after = 0;
 /** `inject_delay_us=<微秒>`：模式 3 里"探测到重填之后、真正写入之前"等的这段时间。
  *
  *  为什么要等：实测（burst=1）我们只在**左侧一条竖带**里赢下画面，带宽随运气在 0~30% 之间变。
@@ -755,6 +762,8 @@ static void load_options(void) {
             g_opt_inject_burst = atoi(val);
         } else if (strcmp(key, "inject_delay_us") == 0) {
             g_opt_inject_delay_us = atoi(val);
+        } else if (strcmp(key, "inject_stop_after") == 0) {
+            g_opt_inject_stop_after = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
             g_opt_live_probe = atoi(val);
         } else if (strcmp(key, "mock_map") == 0) {
@@ -3855,7 +3864,13 @@ static void *portal_inject_thread(void *arg) {
     portal_mock_parse();
     portal_mock_load();
 
+    time_t started = time(NULL);
     for (;;) {
+        if (g_opt_inject_stop_after > 0 && time(NULL) - started >= g_opt_inject_stop_after) {
+            LOGI("注入线程：已按 inject_stop_after=%d 秒退出（此后相机输出不再被我们改写）",
+                 g_opt_inject_stop_after);
+            return NULL;
+        }
         if (n == 0) {
             n = portal_build_targets(t, PORTAL_INJECT_MAX);
             if (n == 0) {
