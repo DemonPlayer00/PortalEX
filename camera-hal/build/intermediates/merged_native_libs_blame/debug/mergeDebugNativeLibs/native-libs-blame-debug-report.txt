@@ -1,2 +1,0 @@
-lib/armeabi-v7a/camshim.so->Project
-lib/armeabi-v7a/vcam.so->Project
