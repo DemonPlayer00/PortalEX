@@ -36,6 +36,18 @@
         tools:layout="@layout/fragment_route_edit" />
 
     <fragment
+        android:id="@+id/nav_camera_mock"
+        android:name="moe.fuqiuluo.portalex.ui.camera.CameraMockFragment"
+        android:label="@string/menu_camera_mock"
+        tools:layout="@layout/fragment_camera_mock" />
+
+    <fragment
+        android:id="@+id/nav_camera_point_edit"
+        android:name="moe.fuqiuluo.portalex.ui.camera.CameraPointEditFragment"
+        android:label="@string/menu_camera_mock"
+        tools:layout="@layout/fragment_camera_point_edit" />
+
+    <fragment
         android:id="@+id/nav_calibration"
         android:name="moe.fuqiuluo.portalex.ui.calibration.CalibrationFragment"
         android:label="@string/menu_calibration"
