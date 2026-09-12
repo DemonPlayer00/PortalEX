@@ -210,6 +210,9 @@ class SettingsFragment : Fragment() {
                 context.debug = isChecked
                 showToast(if (isChecked) "已开启调试模式" else "已关闭调试模式")
                 updateRemoteConfig()
+                // 融合处置那一行的说明位在调试模式下显示 hook 状态诊断 ⇒ 开关一变就要重画，
+                // 否则会停在旧文案上（看着像"状态没变"）
+                refreshFusedState()
             }
         })
 
