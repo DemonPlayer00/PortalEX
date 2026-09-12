@@ -58,6 +58,21 @@ class MockServiceViewModel : ViewModel() {
     /** 切线前视距离（米）：朝向取路径上向前该距离处的方向，短距离不会乱跳 */
     private val TANGENT_LOOKAHEAD_M = 2.0
 
+    /** 上一次运动推进的时刻（nanoTime）。0 = 无锚点（循环刚起 / 刚重置），首个 tick 用名义间隔 */
+    private var lastMotionNanos = 0L
+
+    companion object {
+        /**
+         * 单 tick 最大推进时长（ms）。超过就丢掉多余时长（模拟"那段时间没在跑"）。
+         *
+         * 为什么不无限补：位置推进按真实 Δt 补偿后，一次长冻结会产生一个大位移；
+         * 模块侧的瞬移判定（帧内隐含速度 > 80 m/s 才算瞬移）虽然放行合法大位移，
+         * 但目标应用自己的"跳点/空洞"过滤未必放行 —— 3s（≈10.5m）是"足够补偿抖动、
+         * 又不至于被读成跳点"的折中。
+         */
+        private const val MAX_ADVANCE_MS = 3_000.0
+    }
+
     /** 自动播放中：手动摇杆不得写位置/朝向（避免与路线播放器双写互相打断） */
     val isAutoPlaying: Boolean
         get() = ::rocker.isInitialized && rocker.autoStatus
@@ -291,15 +306,39 @@ class MockServiceViewModel : ViewModel() {
         // 漂移，手动移动一次才恢复」。此处恢复该语义；自动播放走 [advanceRoutePlayback]
         // 分支，不经过暂停门，故不受影响。
         rockerCoroutineController.pause()
+        lastMotionNanos = 0L
         motionJob = viewModelScope.launch {
             while (isActive) {
                 // 间隔每次重新读：设置页改完立即生效，且钳制下限 1ms（避免 delay(0) 空转与除零）
                 val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
                 delay(delayTime)
+                // ★ 位移按**真实经过时间**推进，不按名义间隔。
+                //
+                // 为什么（实测数据，2026-09-12 MI6）：delay(名义 100ms) + 每 tick 一次同步
+                // binder 往返，实测 tick 周期 124ms（jitter ±10%）⇒ 每 tick 只推 0.35m，
+                // 交付速度 = 0.35/0.124 = **2.82 m/s，而设定是 3.50 m/s（−19%）**。
+                // 跑步软件看到的配速因此系统性偏慢，且主线程任何抖动/节流都 1:1 变成配速误差
+                // （后台被限流时就是「每 ~25s 一次尖峰」）。按真实 Δt 推进后，delivered 速度
+                // 与设定速度无关地被调度影响：慢了就一次多走一点，快了就少走一点。
+                //
+                // 上限 + 重锚：长时间冻结（后台）后不补出一个 >50m 的跳变——那在模块侧会被
+                // 瞬移判定拦下、该帧速度归 0，反而制造尖峰。超限就丢掉多余时长（模拟"那段时间没在跑"）。
+                val now = System.nanoTime()
+                val dtMs = if (lastMotionNanos == 0L) delayTime.toDouble()
+                else (now - lastMotionNanos) / 1_000_000.0
+                lastMotionNanos = now
+                val advanceMs = dtMs.coerceIn(1.0, MAX_ADVANCE_MS)
+                if (dtMs > MAX_ADVANCE_MS) {
+                    // 只报一次级别：这是"模拟会话被系统冻结过"的证据，排查时要能看到
+                    Log.w(
+                        "MockServiceViewModel",
+                        "运动循环被阻塞 ${"%.0f".format(dtMs)}ms（上限 ${MAX_ADVANCE_MS.toInt()}ms），本 tick 按上限推进"
+                    )
+                }
                 if (isAutoPlaying) {
-                    advanceRoutePlayback(activity, delayTime)
+                    advanceRoutePlayback(activity, advanceMs)
                 } else {
-                    advanceRockerMove(delayTime)
+                    advanceRockerMove(advanceMs)
                 }
             }
         }
@@ -313,19 +352,19 @@ class MockServiceViewModel : ViewModel() {
      * 路线播放永远推进不了（就停在原地）。旧实现是两个独立协程，路线播放不受摇杆暂停影响，
      * 合并后必须保住这一点。
      */
-    private fun advanceRockerMove(delayTime: Long) {
+    private fun advanceRockerMove(advanceMs: Double) {
         if (rockerCoroutineController.consume()) return
         val lm = locationManager ?: return   // 定位服务未就绪：本 tick 跳过，下次自动重试
-        // 每 tick 位移 = 速度 × 本 tick 时长（浮点）。
+        // 每 tick 位移 = 速度 × **本 tick 的真实时长**（见 ensureMotionLoop 的说明）。
         // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
         // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、0 → 除零崩溃。
-        if (!MockServiceHelper.move(lm, FakeLoc.speed * delayTime / 1000.0, FakeLoc.bearing)) {
+        if (!MockServiceHelper.move(lm, FakeLoc.speed * advanceMs / 1000.0, FakeLoc.bearing)) {
             Log.e("MockServiceViewModel", "Failed to move")
         }
     }
 
     /** 自动模式：按速度推进弧长，在路线上插值出位置并下发切线朝向 */
-    private fun advanceRoutePlayback(activity: Activity, delayTime: Long) {
+    private fun advanceRoutePlayback(activity: Activity, advanceMs: Double) {
         val lm = locationManager ?: return
         val selected = selectedRoute
         if (selected == null || selected.route.size < 2) return
@@ -345,7 +384,7 @@ class MockServiceViewModel : ViewModel() {
 
         // 按速度推进弧长，直接在路线上插值出本 tick 的目标点并设置位置：
         // 不再盲推 + 距离检测（盲推在曲线密集采样点上会失准、批量跳点）。
-        val advanceMeters = FakeLoc.speed * (delayTime / 1000.0)
+        val advanceMeters = FakeLoc.speed * (advanceMs / 1000.0)
         routeTravelled += advanceMeters
 
         if (routeTravelled >= routeDistance) {
