@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -346,6 +347,80 @@ static void load_mapper(void) {
     }
 }
 
+/* ------------------------------------------------------------------ *
+ * 异步结果投递
+ *
+ * camera3 的约定是 HAL 在**另一个线程**里回调 `process_capture_result`；
+ * 在 `process_capture_request` 里同步回调会把框架卷进自己的锁里（实测表现是应用只发
+ * 一个请求就报错放弃，`code 3 RECOVERABLE` → 重配流 `code 4 CRITICAL`）。
+ * 这里用一个 16 深的环形队列 + 一条工作线程，把"填帧"（快）与"投递结果"解耦。
+ * ------------------------------------------------------------------ */
+
+struct pending_result {
+    uint32_t frame_number;
+    const camera3_stream_buffer_t *output_buffers;
+    uint32_t num_output_buffers;
+    int64_t timestamp_ns;
+};
+
+static pthread_mutex_t g_q_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_q_cond = PTHREAD_COND_INITIALIZER;
+static struct pending_result g_queue[16];
+static int g_q_head = 0, g_q_tail = 0;
+static pthread_t g_worker;
+static bool g_worker_started = false;
+
+static void *result_worker(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_q_lock);
+        while (g_q_head == g_q_tail) {
+            pthread_cond_wait(&g_q_cond, &g_q_lock);
+        }
+        struct pending_result item = g_queue[g_q_tail];
+        g_q_tail = (g_q_tail + 1) % 16;
+        pthread_mutex_unlock(&g_q_lock);
+
+        const camera3_callback_ops_t *cb = g_framework_cb;
+        if (cb == NULL) continue;
+
+        camera3_notify_msg_t msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.type = 0; /* CAMERA3_MSG_SHUTTER */
+        msg.message.shutter.frame_number = item.frame_number;
+        msg.message.shutter.timestamp = item.timestamp_ns;
+        if (cb->notify != NULL) cb->notify(cb, &msg);
+
+        camera3_capture_result_t res;
+        memset(&res, 0, sizeof(res));
+        res.frame_number = item.frame_number;
+        res.result = build_result_meta(item.timestamp_ns); /* 所有权交给框架 */
+        res.num_output_buffers = item.num_output_buffers;
+        res.output_buffers = item.output_buffers;
+        res.partial_result = 0;
+        cb->process_capture_result(cb, &res);
+    }
+    return NULL;
+}
+
+static void enqueue_result(uint32_t frame_number, const camera3_stream_buffer_t *bufs,
+                           uint32_t num, int64_t ts) {
+    if (!g_worker_started) {
+        g_worker_started = true;
+        if (pthread_create(&g_worker, NULL, result_worker, NULL) != 0) {
+            g_worker_started = false; /* 起不来就退化为同步投递（宁可慢也别不投） */
+        }
+    }
+    pthread_mutex_lock(&g_q_lock);
+    int next = (g_q_head + 1) % 16;
+    if (next != g_q_tail) { /* 丢帧优于阻塞请求线程 */
+        g_queue[g_q_head] = (struct pending_result){frame_number, bufs, num, ts};
+        g_q_head = next;
+        pthread_cond_signal(&g_q_cond);
+    }
+    pthread_mutex_unlock(&g_q_lock);
+}
+
 /* ---------------- camera3_device_ops 实现 ---------------- */
 
 static int vcam_initialize(const struct camera3_device *dev, const camera3_callback_ops_t *cb) {
@@ -366,17 +441,12 @@ static int vcam_configure_streams(const struct camera3_device *dev,
          * 于是拿到的就是"我们自己能写的"buffer（这正是外包一层做不到的事）。 */
         if (st->stream_type == 0 /* OUTPUT */) {
             /*
-             * **把 IMPLEMENTATION_DEFINED 落成具体的 YUV 格式**（0x22 → 0x23）。
-             *
-             * 为什么必须这么做：`GraphicBufferMapper::lockYCbCr` 只认具体 YUV 格式，
-             * 对 IMPLEMENTATION_DEFINED 直接返回错误（实测 `lockYCbCr 失败（1600x1200）`），
-             * 于是我们拿不到平面指针、也就写不进帧。相机 HAL 本来就有权为
-             * IMPLEMENTATION_DEFINED 选定实际格式，选 YUV_420_888 既让我们能 CPU 写，
-             * 也仍能被 GPU 当纹理采样（HW_TEXTURE 在），预览显示不受影响。
+             * **格式保持原样**（曾经把 0x22 改成 0x23，实测应用第二次配流就
+             * `onConfigureFailed` —— 现在改为不动格式：反正 `lockYCbCr` 在本机对这些
+             * buffer 本来就不可用，我们走的是 `lock()` 裸指针路径，不需要具体 YUV 格式）。
+             * 少改一处，就少一处与应用侧 consumer 的耦合。
              */
-            if (st->format == 0x22 /* IMPLEMENTATION_DEFINED */) {
-                st->format = 0x23; /* YCbCr_420_888 */
-            }
+            (void)0;
             st->usage |= USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN;
             /*
              * **max_buffers 必须由 HAL 填**：框架传进来的是 0，不填就会在
@@ -545,25 +615,28 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
 
     if (g_framework_cb == NULL) return 0;
 
-    /* 通知快门，然后交结果。buffer 已写好，release_fence 置 -1 表示"已就绪" */
-    camera3_notify_msg_t msg;
-    memset(&msg, 0, sizeof(msg));
-    msg.type = 0; /* CAMERA3_MSG_SHUTTER */
-    msg.message.shutter.frame_number = req->frame_number;
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    msg.message.shutter.timestamp = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-    if (g_framework_cb->notify != NULL) g_framework_cb->notify(g_framework_cb, &msg);
+    int64_t now_ns = (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 
-    camera3_capture_result_t res;
-    memset(&res, 0, sizeof(res));
-    res.frame_number = req->frame_number;
-    /* 每帧一份合法元数据 + 时间戳（所有权交给框架） */
-    res.result = build_result_meta(msg.message.shutter.timestamp);
-    res.num_output_buffers = num;
-    res.output_buffers = sbs;
-    res.partial_result = 0;
-    g_framework_cb->process_capture_result(g_framework_cb, &res);
+    /* **异步**投递（见 result_worker 的注释）：先入队，请求线程立刻返回 */
+    enqueue_result(req->frame_number, sbs, num, now_ns);
+    if (!g_worker_started) {
+        /* 工作线程没起来：同步投递，虽然不合规范但总比让应用等不到结果好 */
+        camera3_notify_msg_t msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.type = 0;
+        msg.message.shutter.frame_number = req->frame_number;
+        msg.message.shutter.timestamp = now_ns;
+        if (g_framework_cb->notify != NULL) g_framework_cb->notify(g_framework_cb, &msg);
+        camera3_capture_result_t res;
+        memset(&res, 0, sizeof(res));
+        res.frame_number = req->frame_number;
+        res.result = build_result_meta(now_ns);
+        res.num_output_buffers = num;
+        res.output_buffers = sbs;
+        g_framework_cb->process_capture_result(g_framework_cb, &res);
+    }
     return 0;
 }
 
