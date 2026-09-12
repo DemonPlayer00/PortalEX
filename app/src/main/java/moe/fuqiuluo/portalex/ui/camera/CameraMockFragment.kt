@@ -70,6 +70,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
         binding.cameraPointList.adapter = adapter
 
         binding.switchCameraMock.setOnClickListener { toggleMock() }
+        // 说明与目标应用放进对话框：它们"读一次就够"，留在页面上会把视频点列表挤没
+        binding.cameraMockInfo.setOnClickListener { showInfoDialog() }
 
         return binding.root
     }
@@ -179,12 +181,23 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost {
             }
         }
 
+    }
+
+    /** ⓘ：玩法说明 + 当前目标应用（页面顶部只留"一眼要看"的三行） */
+    private fun showInfoDialog() {
+        val context = requireContext()
         val targets = context.cameraMockTargets
-        binding.cameraMockTargets.text = if (targets.isEmpty()) {
+        val targetLine = if (targets.isEmpty()) {
             getString(R.string.camera_mock_targets_unset)
         } else {
             getString(R.string.camera_mock_targets_value, targets.joinToString("、"))
         }
+        MaterialAlertDialogBuilder(context)
+            .setTitle(R.string.camera_mock)
+            .setMessage(getString(R.string.camera_mock_hint) + "\n\n" + targetLine)
+            .setPositiveButton(R.string.got_it, null)
+            .create()
+            .also { it.setCanceledOnTouchOutside(false); it.show() }
     }
 
     private fun toggleMock() {

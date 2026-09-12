@@ -132,16 +132,26 @@ object CameraMockStore {
         )
     }
 
-    /** 录制结束后登记一个新视频（文件已由录制页写在库目录里） */
+    /**
+     * 录制结束后登记一个新视频（文件已由录制页写在库目录里）。
+     *
+     * 默认名取**拍摄时间**而不是文件名：文件名是 uuid，列表里看到一串十六进制
+     * 既认不出是哪一段，也没法在选素材时判断先后。
+     */
     fun registerRecorded(context: Context, file: File, name: String?, tags: List<String> = emptyList()): CameraVideo =
         CameraVideo(
             id = file.nameWithoutExtension,
-            name = name?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension,
+            name = name?.takeIf { it.isNotBlank() } ?: defaultRecordName(),
             file = file.name,
             durationMs = probeDurationMs(file),
             tags = CameraTags.sanitize(tags),
             addedAt = System.currentTimeMillis()
         )
+
+    /** 默认录制名：`录制 09-12 17:34`（月-日 时:分，够用且不跨年歧义） */
+    private fun defaultRecordName(): String =
+        java.text.SimpleDateFormat("录制 MM-dd HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date())
 
     private fun displayName(context: Context, uri: Uri): String? = runCatching {
         val cursor: Cursor? = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)

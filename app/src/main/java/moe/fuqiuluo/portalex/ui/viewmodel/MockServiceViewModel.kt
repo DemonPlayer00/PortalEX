@@ -281,7 +281,20 @@ class MockServiceViewModel : ViewModel() {
                 // 且已握手的地方）注册一个取值函数。握手未完成/模拟未启动时它返回 null，
                 // provider 如实回"位置未知"，模块侧退化为"在全部匹配素材里随机取"。
                 moe.fuqiuluo.portalex.ui.camera.CameraMockRuntime.positionSupplier = {
-                    MockServiceHelper.getLocation(value)
+                    // "表象位置"= 目标应用此刻看到的位置，两种情况要分开：
+                    //  · 位置模拟在跑 ⇒ 系统侧那个模拟坐标就是它看到的（也是唯一正确的答案）；
+                    //  · 没在跑 ⇒ 目标应用看到的是**真实定位**，此时系统侧残留的模拟值是个
+                    //    过期数字（实测：模拟会话关着却报出 1840 公里外的一个旧坐标，
+                    //    会让"最近的视频点"选错），改为读本机真实最后已知位置；
+                    //    连真实位置都拿不到（无权限/无定位）就当"未知"，模块侧会退化为随机取。
+                    val simulated = if (MockServiceHelper.isMockStart(value)) {
+                        MockServiceHelper.getLocation(value)
+                    } else null
+                    simulated ?: runCatching {
+                        (value.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                            ?: value.getLastKnownLocation(LocationManager.NETWORK_PROVIDER))
+                            ?.let { it.latitude to it.longitude }
+                    }.getOrNull()
                 }
             }
         }
