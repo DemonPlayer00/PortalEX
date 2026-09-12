@@ -22,13 +22,17 @@ import java.util.Collections
 import kotlin.random.Random
 
 object LocationProviderManagerHook {
-    /** 逐条注入（保留批次长度与顺序）：返回可直接写回 mLocations 的列表 */
-    private fun injectAll(locations: List<*>): ArrayList<Location> {
-        val injected = ArrayList<Location>(maxOf(1, locations.size))
-        locations.forEach { item -> (item as? Location)?.let { injected.add(injectLocation(it)) } }
-        if (injected.isEmpty()) {
-            injected.add(injectLocation(Location(LocationManager.GPS_PROVIDER)))
-        }
+    /**
+     * 逐条注入：**保留批次长度、顺序与空批次**。
+     *
+     * 融合/provider 路径只做「拦截-修改-转发」，**不凭空生成**：
+     * 空 LocationResult 是合法语义（这次没有位置），旧实现在这里补一帧 `Location("gps")`——
+     * 那是造了一次并不存在的定位，既违背口径，也可能被上层当成真实 fix。
+     * 非 Location 元素原样保留（不改长度）。
+     */
+    private fun injectAll(locations: List<*>): ArrayList<Any?> {
+        val injected = ArrayList<Any?>(locations.size)
+        locations.forEach { item -> injected.add(if (item is Location) injectLocation(item) else item) }
         return injected
     }
 

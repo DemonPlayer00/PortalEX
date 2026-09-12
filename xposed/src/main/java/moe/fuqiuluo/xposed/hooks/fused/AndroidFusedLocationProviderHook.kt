@@ -12,7 +12,8 @@ object AndroidFusedLocationProviderHook: BaseLocationHook() {
     operator fun invoke(classLoader: ClassLoader) {
         val cFusedLocationProvider = "com.android.location.fused.FusedLocationProvider".toClass(classLoader)
         if (cFusedLocationProvider == null) {
-            Logger.warn("Failed to find FusedLocationProvider")
+            // 缺类是**正常情况**（无融合定位的 ROM）：静默跳过，调试模式才留痕
+            if (FakeLoc.enableDebugLog) Logger.debug("本机没有 FusedLocationProvider，跳过融合层")
             return
         }
 
@@ -21,6 +22,7 @@ object AndroidFusedLocationProviderHook: BaseLocationHook() {
             return
         }
 
+        Logger.info("AndroidFusedLocationProvider: 已挂 chooseBestLocation（拦截-修改-转发）")
         cFusedLocationProvider.hookMethodAfter("chooseBestLocation", Location::class.java, Location::class.java) {
             if (result == null) return@hookMethodAfter
 
@@ -35,7 +37,7 @@ object AndroidFusedLocationProviderHook: BaseLocationHook() {
 
         val cChildLocationListener = "com.android.location.fused.FusedLocationProvider\$ChildLocationListener".toClass(classLoader)
         if (cChildLocationListener == null) {
-            Logger.warn("Failed to find ChildLocationListener")
+            if (FakeLoc.enableDebugLog) Logger.debug("本机没有 ChildLocationListener，跳过")
             return
         }
 

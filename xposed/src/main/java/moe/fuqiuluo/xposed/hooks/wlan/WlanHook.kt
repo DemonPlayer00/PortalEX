@@ -19,7 +19,7 @@ object WlanHook {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val cSystemServerClassLoaderFactory = XposedHelpers.findClassIfExists("com.android.internal.os.SystemServerClassLoaderFactory", classLoader)
             if (cSystemServerClassLoaderFactory == null) {
-                Logger.warn("Failed to find SystemServerClassLoaderFactory")
+                if (FakeLoc.enableDebugLog) Logger.debug("本机没有 SystemServerClassLoaderFactory，跳过 WiFi 层")
                 return
             }
             val sLoadedPaths = XposedHelpers.getStaticObjectField(cSystemServerClassLoaderFactory, "sLoadedPaths") as ArrayMap<String, PathClassLoader>
@@ -27,19 +27,19 @@ object WlanHook {
                 if (it.key.contains("service-wifi.jar")) it.value else null
             }
             if (wifiClassLoader == null) {
-                Logger.warn("Failed to find wifiClassLoader")
+                if (FakeLoc.enableDebugLog) Logger.debug("没找到 service-wifi.jar 的 classloader，跳过 WiFi 层")
                 return
             }
             val wifiClazz = "com.android.server.wifi.WifiServiceImpl".toClass(wifiClassLoader)
             if (wifiClazz == null) {
-                Logger.warn("Failed to find WifiServiceImpl class")
+                if (FakeLoc.enableDebugLog) Logger.debug("本机没有 WifiServiceImpl，跳过")
                 return
             }
             hookWifiServiceImpl(wifiClazz)
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val cSystemServiceManager = XposedHelpers.findClassIfExists("com.android.server.SystemServiceManager", classLoader)
             if (cSystemServiceManager == null) {
-                Logger.warn("Failed to find SystemServiceManager")
+                if (FakeLoc.enableDebugLog) Logger.debug("本机没有 SystemServiceManager，跳过")
                 return
             }
             cSystemServiceManager.hookAllMethods("loadClassFromLoader", afterHook {
