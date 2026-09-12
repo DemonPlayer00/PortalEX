@@ -1,5 +1,0 @@
-/home/DemonPlayer/Android/Sdk/cmake/3.22.1/bin/ninja \
-  -C \
-  /var/www/PortalEX/camera-hal/.cxx/Debug/4r1u4l52/armeabi-v7a \
-  camshim \
-  vcam
