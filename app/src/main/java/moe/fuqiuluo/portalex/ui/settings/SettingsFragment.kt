@@ -52,43 +52,60 @@ class SettingsFragment : Fragment() {
     private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
 
     @SuppressLint("SetTextI18n")
+    /** 本机是否有融合定位（`refreshFusedState` 查得；无则整行禁用） */
+    private var fusedAvailable = true
+
     /**
-     * 查询系统侧的融合定位状态，并据此**启用/禁用**三态滑块。
+     * 查询系统侧的融合定位状态：决定本行**是否可用**，并把当前处置写在右侧（与其它设置项一致）。
      *
-     * · 没有融合定位的机型（少见）⇒ 整块禁用 + 明确说明，不做"看着能点其实没用"的假设置；
-     * · 有融合定位 ⇒ 可用；调试模式打开时把 hook 状态单行诊断显示出来（否则只显示当前模式）。
+     * · 没有融合定位的机型 ⇒ 整行置灰 + 显示"不适用"，不做"看着能点其实没用"的假设置；
+     * · 有 ⇒ 右侧显示当前档位（拒绝 / 放行（不推荐） / 伪装）；调试模式打开时把系统侧的
+     *   hook 状态单行诊断显示在标题下（同时系统侧也会打一条 debug 日志）。
      */
     private fun refreshFusedState() {
         val ctx = context ?: return
         val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
             as? android.location.LocationManager
         if (lm == null) {
-            binding.dfusedSlider.isEnabled = false
-            binding.dfusedState.text = "定位服务不可用"
+            setFusedRow(enabled = false, value = "不适用", desc = null)
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
             val state = withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching { MockServiceHelper.getFusedState(lm) }.getOrNull()
             }
-            val b = _binding ?: return@launch
+            if (_binding == null) return@launch
             if (state == null) {
-                // 系统侧没应答（模块未生效/未重启）：保持可用但如实说明
-                b.dfusedSlider.isEnabled = true
-                b.dfusedState.text = "系统侧未应答（模块需重启生效）· 当前：${FusedMode.label(ctx.fusedMode)}"
+                // 系统侧没应答（模块未生效/未重启）：保持可用，但如实说明
+                setFusedRow(
+                    enabled = true,
+                    value = FusedMode.label(ctx.fusedMode),
+                    desc = "系统侧未应答（模块需重启生效）"
+                )
                 return@launch
             }
-            val available = state.getBoolean(PortalProtocol.Key.FUSED_AVAILABLE, false)
-            b.dfusedSlider.isEnabled = available
-            b.dfusedState.text = if (!available) {
-                "本机无融合定位，此项不适用"
-            } else if (ctx.debug) {
-                // 调试模式：把系统侧的 hook 状态原样显示（同时系统侧也会打一条 debug 日志）
-                state.getString(PortalProtocol.Key.FUSED_STATUS) ?: FusedMode.label(ctx.fusedMode)
-            } else {
-                "已检测到融合定位 · 当前：${FusedMode.label(ctx.fusedMode)}"
-            }
+            fusedAvailable = state.getBoolean(PortalProtocol.Key.FUSED_AVAILABLE, false)
+            val mode = FusedMode.sanitize(
+                state.getInt(PortalProtocol.Key.FUSED_MODE, ctx.fusedMode)
+            )
+            setFusedRow(
+                enabled = fusedAvailable,
+                value = if (fusedAvailable) FusedMode.label(mode) else "不适用",
+                desc = if (!fusedAvailable) "本机无融合定位，此项不适用"
+                else if (ctx.debug) state.getString(PortalProtocol.Key.FUSED_STATUS)
+                else null
+            )
         }
+    }
+
+    /** 更新本行的可用性/右侧值/说明（说明为空则用默认文案） */
+    private fun setFusedRow(enabled: Boolean, value: String, desc: String?) {
+        val b = _binding ?: return
+        b.dfusedLayout.isEnabled = enabled
+        b.dfusedLayout.isClickable = enabled
+        b.dfusedLayout.alpha = if (enabled) 1f else 0.5f
+        b.dfusedValue.text = value
+        b.dfusedDesc.text = desc ?: getString(R.string.dfused_desc)
     }
 
     override fun onResume() {
@@ -202,16 +219,28 @@ class SettingsFragment : Fragment() {
         // 允许注册位置监听器：语义已定为「允许并注入」——持续拒绝回调在真机上不存在，
         // 本身就是特征；开关保留在设置页仅作说明（布局里 checked=true / enabled=false）。
 
-        // 「融合定位处置」：三态互斥滑块（0=拒绝 1=放行（不推荐） 2=伪装）。
-        // 默认伪装；本机没有融合定位时整块禁用（由 refreshFusedState 查询系统侧决定）。
-        binding.dfusedSlider.value = context.fusedMode.toFloat()
-        binding.dfusedSlider.addOnChangeListener { _, value, fromUser ->
-            if (!fromUser) return@addOnChangeListener
-            val mode = FusedMode.sanitize(value.toInt())
-            context.fusedMode = mode
-            showToast("融合定位处置：${FusedMode.label(mode)}")
-            updateRemoteConfig()
-            refreshFusedState()
+        // 「融合定位处置」：与其它设置项同一交互 —— 点一行，弹三选一（拒绝 / 放行 / 伪装）。
+        binding.dfusedLayout.setOnClickListener {
+            if (!fusedAvailable) {
+                showToast("本机无融合定位，此项不适用")
+                return@setOnClickListener
+            }
+            val modes = intArrayOf(FusedMode.REJECT, FusedMode.ALLOW, FusedMode.DISGUISE)
+            val labels = modes.map { FusedMode.label(it) }.toTypedArray()
+            val checked = modes.indexOf(requireContext().fusedMode).coerceAtLeast(0)
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle("融合定位处置")
+                .setSingleChoiceItems(labels, checked) { dialog, which ->
+                    val mode = modes[which]
+                    requireContext().fusedMode = mode
+                    binding.dfusedValue.text = FusedMode.label(mode)
+                    showToast("融合定位处置：${FusedMode.label(mode)}")
+                    updateRemoteConfig()
+                    refreshFusedState()
+                    dialog.dismiss()
+                }
+                .setNegativeButton("取消", null)
+                .show()
         }
         refreshFusedState()
 
