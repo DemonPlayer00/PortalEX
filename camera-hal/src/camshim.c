@@ -479,6 +479,27 @@ static int g_opt_inject_us = 15000;
 /** `inject_pattern=1`：不做纯色填充，改成**逐字节渐变** —— 用来证明"逐像素可控"
  *  （纯色只能证明"写进去了"，渐变才能证明每个字节都由我们决定）。 */
 static int g_opt_inject_pattern = 0;
+/** `inject_sync=1`：**跟着 ISP 的节拍写**，不再是盲目死循环。
+ *
+ *  做法：每轮只把目标缓冲的**头部 16 字节**与"我们上次写进去的那 16 字节"比一次 ——
+ *  相同 ⇒ 没人动过（还是我们的帧，什么都不用做）；不同 ⇒ ISP 刚重填完这一帧，
+ *  立刻整块写一遍模板，然后立即停手等下一次。
+ *
+ *  为什么：录像花屏的机理是**撕裂**（§26.3 已用 mock_map 把每轮 302MB 压到 41MB 后花屏依旧，
+ *  排掉了带宽）。编码器的输入面就是相机输出面，ISP 写完立刻读；盲目循环每帧要写好几十遍，
+ *  其中必然有几遍正落在 ISP 的 DMA 中间，编码器读到的就是"半新半旧"。
+ *  只写"ISP 刚写完"那一次，撕裂窗口就从"每帧几十遍"缩到"每帧一遍"。 */
+static int g_opt_inject_sync = 0;
+/** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
+ *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
+ *
+ *  为什么需要它：这一整轮的教训是"按尺寸猜哪块缓冲喂给编码器"根本不成立 ——
+ *  12,591,104 那一类（34 块 MAP_UNKNOWN）注进去只会让画面顶部多一条绿带（污染了 HAL 内部面），
+ *  12,443,648（MPG_139_Buffer1，尺寸最接近 3840×2160 NV12）整个录像期间**一次都没被重填**。
+ *  尺寸这个键不可靠，那就换成"谁在动"这个键：录像时活着的那几块，才是 ISP/编码器真正在用的面。 */
+static int g_opt_live_probe = 0;
+/** 同步判定用的头部长度：够短（比较代价≈0）又够长（误判概率可忽略）。 */
+#define PORTAL_SYNC_HEAD 16
 /** `mock_file=<路径>`：把文件内容当作**要注入的整帧原始数据**（尺寸 = 目标缓冲的平面大小）。
  *  优先于 inject_byte/inject_pattern。文件读一次、模板化，热循环只做 memcpy。 */
 static char g_opt_mock_file[192] = {0};
@@ -714,6 +735,10 @@ static void load_options(void) {
             g_opt_inject_us = atoi(val);
         } else if (strcmp(key, "inject_pattern") == 0) {
             g_opt_inject_pattern = atoi(val);
+        } else if (strcmp(key, "inject_sync") == 0) {
+            g_opt_inject_sync = atoi(val);
+        } else if (strcmp(key, "live_probe") == 0) {
+            g_opt_live_probe = atoi(val);
         } else if (strcmp(key, "mock_map") == 0) {
             snprintf(g_opt_mock_map, sizeof(g_opt_mock_map), "%s", val);
         } else if (strcmp(key, "mock_file") == 0) {
@@ -3518,31 +3543,60 @@ static void portal_dmabuf_report(void) {
     DIR *d = opendir("/proc/self/fd");
     if (d == NULL) return;
     struct dirent *e;
-    int found = 0, shown = 0;
-    unsigned long long biggest = 0;
+    /* ⚠️ 这里必须打印**直方图**，不能"只列前 N 条"：进程里有 400+ 个 dmabuf，
+     * 按 readdir 顺序取前 40 个 ⇒ 每次打印的都是同一批，真正想看的那一类（录像面）
+     * 可能**永远轮不到被打印**（实测踩过：据此以为"4K 那类只有 MAP_UNKNOWN"）。
+     * 直方图与遍历顺序无关，一次就能看全：尺寸 × 名字 × 个数。 */
+    struct {
+        unsigned long long size;
+        char name[40];
+        int count;
+    } h[64];
+    int hn = 0, total = 0;
     while ((e = readdir(d)) != NULL) {
         int fd = atoi(e->d_name);
         if (fd < 3) continue;
-        char path[64];
+        char p2[64];
         char link[192] = {0};
-        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
-        ssize_t n = readlink(path, link, sizeof(link) - 1);
+        snprintf(p2, sizeof(p2), "/proc/self/fd/%d", fd);
+        ssize_t n = readlink(p2, link, sizeof(link) - 1);
         if (n <= 0) continue;
         link[n] = '\0';
-        if (strstr(link, "dmabuf") == NULL && strstr(link, "dma-buf") == NULL) continue;
+        if (strstr(link, "dmabuf") == NULL) continue;
         struct stat st;
         memset(&st, 0, sizeof(st));
-        if (fstat(fd, &st) != 0) continue;
-        /* 只要"像帧缓冲"的：小对象（传感器/元数据 4K 那些）全部略过，日志才有用 */
-        if (st.st_size >= 524288 && shown < 40) {
-            LOGI("  dmabuf fd=%d size=%lld link=%s", fd, (long long)st.st_size, link);
-            shown++;
+        if (fstat(fd, &st) != 0 || st.st_size < 524288) continue;   /* 小对象（IQ/命令缓冲）不看 */
+        total++;
+        const char *nm = strrchr(link, ':');
+        nm = (nm != NULL) ? nm + 1 : link;
+        int hit = 0;
+        for (int i = 0; i < hn; i++) {
+            if (h[i].size == (unsigned long long)st.st_size && strncmp(h[i].name, nm, 39) == 0) {
+                h[i].count++;
+                hit = 1;
+                break;
+            }
         }
-        if ((unsigned long long)st.st_size > biggest) biggest = (unsigned long long)st.st_size;
-        found++;
+        if (hit) continue;
+        if (hn < 64) {
+            h[hn].size = (unsigned long long)st.st_size;
+            snprintf(h[hn].name, sizeof(h[hn].name), "%s", nm);
+            h[hn].count = 1;
+            hn++;
+        }
     }
     closedir(d);
-    LOGI("  dmabuf 合计 %d 个，最大 %llu 字节，上面列的是 ≥512KB 的（最多 40 个）", found, biggest);
+    for (int i = 1; i < hn; i++) {   /* 按尺寸降序：大片在前，日志一眼能扫 */
+        for (int j = i; j > 0 && h[j].size > h[j - 1].size; j--) {
+            typeof(h[0]) tmp = h[j];
+            h[j] = h[j - 1];
+            h[j - 1] = tmp;
+        }
+    }
+    LOGI("  dmabuf 直方图：≥512KB 共 %d 个，%d 类%s", total, hn, hn >= 64 ? "（**已截断**）" : "");
+    for (int i = 0; i < hn; i++) {
+        LOGI("    %llu 字节 ×%d  %s", h[i].size, h[i].count, h[i].name);
+    }
 }
 
 /**
@@ -3621,10 +3675,17 @@ static void portal_mock_parse(void) {
     char buf[sizeof(g_opt_mock_map)];
     snprintf(buf, sizeof(buf), "%s", g_opt_mock_map);
     char *save = NULL;
-    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && g_mock_n < PORTAL_MOCK_MAX;
-         tok = strtok_r(NULL, ",", &save)) {
+    int skipped = 0;
+    /* ⚠️ 条目分隔符是 **`|`** 而不是逗号：条目里要写 dmabuf 名字，而高通堆的名字**本身就带逗号**
+     * （`qcom,system`）。用逗号分隔时 `12591104@qcom,system:/path` 会被切成两个 token，
+     * 两个都解析不出尺寸 ⇒ **静默全部丢弃**（实测踩过：注入线程起来了、一条日志都没有）。 */
+    for (char *tok = strtok_r(buf, "|", &save); tok != NULL && g_mock_n < PORTAL_MOCK_MAX;
+         tok = strtok_r(NULL, "|", &save)) {
         char *colon = strchr(tok, ':');
-        if (colon == NULL) continue;
+        if (colon == NULL) {
+            skipped++;
+            continue;
+        }
         *colon = '\0';
         char *at = strchr(tok, '@');
         if (at != NULL) {
@@ -3632,10 +3693,18 @@ static void portal_mock_parse(void) {
             snprintf(g_mock[g_mock_n].name, sizeof(g_mock[g_mock_n].name), "%s", at + 1);
         }
         unsigned long sz = strtoul(tok, NULL, 0);
-        if (sz == 0) continue;
+        if (sz == 0) {
+            skipped++;
+            continue;
+        }
         g_mock[g_mock_n].size = sz;
         snprintf(g_mock[g_mock_n].path, sizeof(g_mock[g_mock_n].path), "%s", colon + 1);
         g_mock_n++;
+    }
+    LOGI("mock_map：解析到 %d 条（分隔符 '|'，名字用 '@'），丢弃 %d 条", g_mock_n, skipped);
+    for (int i = 0; i < g_mock_n; i++) {
+        LOGI("  mock_map[%d] size=%lu 名字=%s → %s", i, g_mock[i].size,
+             g_mock[i].name[0] ? g_mock[i].name : "(不限)", g_mock[i].path);
     }
 }
 
@@ -3740,6 +3809,8 @@ static void *portal_inject_thread(void *arg) {
     static portal_target t[PORTAL_INJECT_MAX];
     int n = 0;
     int announced = 0;
+    unsigned long rounds = 0, writes = 0;
+    time_t stat_last = time(NULL);
     /* ⚠️ 重扫必须用**真实时钟**：早先按"每轮 8 微秒"估算，而每轮其实要 memcpy 40MB（≈10ms），
      * 于是 15 秒的重扫窗口要 5 小时才到 —— 模式一切换（预览→录像换缓冲尺寸）就再也跟不上。
      * 实测症状：切到录像后注入线程仍抱着旧的一批缓冲，预览恢复成实时画面。 */
@@ -3766,18 +3837,38 @@ static void *portal_inject_thread(void *arg) {
             }
             size_t total = 0;
             for (int i = 0; i < n; i++) total += t[i].size;
-            LOGI("注入线程：%d 块缓冲，共 %zu 字节（%d 个模板）", n, total, g_mock_n);
+            LOGI("注入线程：%d 块缓冲，共 %zu 字节（%d 个模板，同步=%d）", n, total, g_mock_n,
+                 g_opt_inject_sync);
             announced = 1;
         }
         for (int i = 0; i < n; i++) {
+            size_t len = t[i].tlen < t[i].size ? t[i].tlen : t[i].size;
+            if (g_opt_inject_sync) {
+                /* 头部还是我们上次写进去的内容 ⇒ ISP 尚未重填 ⇒ 让开，一个字节都不碰。
+                 * 这一条就是"跟着 ISP 节拍写"的全部实现：把写入压到每帧**一次**。 */
+                unsigned char ref[PORTAL_SYNC_HEAD];
+                if (len < PORTAL_SYNC_HEAD) continue;
+                if (t[i].tpl != NULL) memcpy(ref, t[i].tpl, PORTAL_SYNC_HEAD);
+                else memset(ref, g_opt_inject_byte, PORTAL_SYNC_HEAD);
+                if (memcmp(t[i].p, ref, PORTAL_SYNC_HEAD) == 0) continue;
+            }
             if (t[i].tpl != NULL) {
-                memcpy(t[i].p, t[i].tpl, t[i].tlen < t[i].size ? t[i].tlen : t[i].size);
+                memcpy(t[i].p, t[i].tpl, len);
             } else {
                 memset(t[i].p, g_opt_inject_byte, t[i].size);
             }
+            writes++;
         }
-        if (g_opt_inject_us > 0) usleep((useconds_t)g_opt_inject_us);
+        /* 同步模式必须**低延迟**：轮询间隔要远小于一帧（33ms），否则"ISP 刚写完"这个窗口就错过了。
+         * inject_us 在同步模式下被夹到 ≤200 微秒（0 表示不让出 CPU，最紧的轮询）。 */
+        int sl = g_opt_inject_sync ? (g_opt_inject_us < 200 ? g_opt_inject_us : 200) : g_opt_inject_us;
+        if (sl > 0) usleep((useconds_t)sl);
+        rounds++;
         time_t now = time(NULL);
+        if (g_opt_inject_sync && now != stat_last) {
+            stat_last = now;
+            LOGI("同步注入：%lu 轮 / %lu 次写（%d 块缓冲）", rounds, writes, n);
+        }
         if (announced && now - last_scan >= 5) {   /* 每 5 秒重扫：换模式/重建会话都会换一批缓冲 */
             last_scan = now;
             for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
@@ -3819,6 +3910,134 @@ static void portal_req_report(void) {
     portal_bufmap();
 }
 
+/** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
+ *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
+ *
+ *  为什么需要它：这一整轮的教训是"按尺寸猜哪块缓冲喂给编码器"根本不成立 ——
+ *  12,591,104 那一类（34 块 MAP_UNKNOWN）注进去只会让画面顶部多一条绿带（污染了 HAL 内部面），
+ *  12,443,648（MPG_139_Buffer1，尺寸最接近 3840×2160 NV12）整个录像期间**一次都没被重填**。
+ *  尺寸这个键不可靠，那就换成"谁在动"这个键：录像时活着的那几块，才是 ISP/编码器真正在用的面。 */
+#define PORTAL_LIVE_MAX 160
+
+static unsigned long long portal_hash64(const unsigned char *p) {
+    unsigned long long h = 1469598103934665603ull;
+    for (int i = 0; i < 64; i++) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+typedef struct {
+    int fd;
+    unsigned long long size;
+    unsigned long long h;
+    char name[40];
+} portal_live_ent;
+
+static portal_live_ent g_live[PORTAL_LIVE_MAX];
+static int g_live_n = 0;
+
+static void *portal_live_probe_thread(void *arg) {
+    (void)arg;
+    int period = g_opt_live_probe > 0 ? g_opt_live_probe : 1;
+    static portal_live_ent cur[PORTAL_LIVE_MAX];
+    for (;;) {
+        sleep((unsigned)period);
+        int cn = 0;
+        DIR *d = opendir("/proc/self/fd");
+        if (d != NULL) {
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL && cn < PORTAL_LIVE_MAX) {
+                int fd = atoi(e->d_name);
+                if (fd < 3) continue;
+                char p2[64];
+                char link[192] = {0};
+                snprintf(p2, sizeof(p2), "/proc/self/fd/%d", fd);
+                ssize_t r = readlink(p2, link, sizeof(link) - 1);
+                if (r <= 0) continue;
+                link[r] = '\0';
+                if (strstr(link, "dmabuf") == NULL) continue;
+                struct stat st;
+                memset(&st, 0, sizeof(st));
+                if (fstat(fd, &st) != 0) continue;
+                unsigned long long sz = (unsigned long long)st.st_size;
+                if (sz < 524288) continue;
+                unsigned char *m =
+                    (unsigned char *)mmap(NULL, (size_t)sz, PROT_READ, MAP_SHARED, fd, 0);
+                if (m == MAP_FAILED) continue;
+                unsigned long long h = portal_hash64(m) ^ (portal_hash64(m + sz / 2) << 1) ^
+                                       (portal_hash64(m + sz - 64) << 2);
+                munmap(m, (size_t)sz);
+                const char *nm = strrchr(link, ':');
+                nm = (nm != NULL) ? nm + 1 : link;
+                cur[cn].fd = fd;
+                cur[cn].size = sz;
+                cur[cn].h = h;
+                snprintf(cur[cn].name, sizeof(cur[cn].name), "%s", nm);
+                cn++;
+            }
+            closedir(d);
+        }
+        int changed = 0, shown = 0;
+        for (int i = 0; i < cn; i++) {
+            unsigned long long old = 0;
+            int found = 0;
+            for (int j = 0; j < g_live_n; j++) {
+                if (g_live[j].fd == cur[i].fd && g_live[j].size == cur[i].size) {
+                    old = g_live[j].h;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found || old == cur[i].h) continue;
+            changed++;
+            if (shown < 24) {
+                LOGI("  活缓冲：%llu 字节 %s（fd=%d，内容在变）", cur[i].size, cur[i].name, cur[i].fd);
+                shown++;
+            }
+        }
+        LOGI("存活探针：≥512KB 共 %d 块，其中 %d 块内容在变", cn, changed);
+        memcpy(g_live, cur, sizeof(cur[0]) * (size_t)cn);
+        g_live_n = cn;
+    }
+    return NULL;
+}
+
+/**
+ * 经验式找出"请求条目里哪个字段是缓冲 fd"。
+ *
+ * 为什么不用结构体定义去读：这条链上跑的是 **AIDL** 的 `StreamBuffer`（不是老的
+ * `camera3_stream_buffer_t`），字段布局与内存排布都没有保证 —— 实测直接按"第 2 个 qword
+ * 是 buffer_handle"去读，读出来的是个落在 `camx.device-impl.so` 里的地址（明显不是句柄）。
+ * 既然猜不准，就**扫**：把条目当成 10 个 32 位字，逐个当 fd 去 readlink，能被认成 dmabuf
+ * 的那个就是答案 —— 顺带把"落在第几个字"也记下来，这本身就是布局证据。
+ */
+static void portal_entry_fd_scan(unsigned long entry, int *fd_out, long *size_out, int *word_out) {
+    *fd_out = -1;
+    *size_out = -1;
+    *word_out = -1;
+    unsigned int w[10] = {0};
+    if (entry < 0x1000 || portal_peek(entry, w, sizeof(w)) != 0) return;
+    for (int k = 0; k < 10; k++) {
+        int fd = (int)w[k];
+        if (fd < 3 || fd > 65535) continue;
+        char p2[48];
+        char link[128] = {0};
+        snprintf(p2, sizeof(p2), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(p2, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0) continue;
+        *fd_out = fd;
+        *size_out = (long)st.st_size;
+        *word_out = k;
+        return;
+    }
+}
+
 /**
  * 请求观察线程：2 毫秒一轮，只在"输出流集合"变化时打印，并顺手把每路流的几何解出来。
  * 目的是回答一个是非题：**静止/快照请求到底会不会出现在 HAL3 请求路径上**，
@@ -3839,17 +4058,20 @@ static void *portal_req_watch_thread(void *arg) {
         if (nout != last_nout || s0 != last_stream) {
             last_nout = nout;
             last_stream = s0;
-            if (logged < 40) {
+            if (logged < 200) {
                 LOGI("请求流集合变化：帧号=%lu 输出路数=%lu 数组=%p 首流=%p", f, nout, (void *)ob,
                      (void *)s0);
-                unsigned long arr[16] = {0};
-                if (nout > 0 && nout <= 3 && portal_untag((const void *)ob) >= 0x1000 &&
+                unsigned long arr[24] = {0};
+                if (nout > 0 && nout <= 4 && portal_untag((const void *)ob) >= 0x1000 &&
                     portal_peek(ob, arr, sizeof(arr)) == 0) {
                     for (unsigned i = 0; i < nout; i++) {
                         unsigned int st[12] = {0};
+                        int bfd = -1, bword = -1;
+                        long bsz = -1;
+                        portal_entry_fd_scan(ob + i * 40, &bfd, &bsz, &bword);
                         if (portal_peek(arr[i * 5], st, sizeof(st)) == 0) {
-                            LOGI("   流[%u] %ux%u format=%d usage=0x%x", i, st[1], st[2], (int)st[3],
-                                 st[4]);
+                            LOGI("   流[%u] %ux%u format=%d usage=0x%x | 缓冲 fd=%d size=%ld 字段#%d", i,
+                                 st[1], st[2], (int)st[3], st[4], bfd, bsz, bword);
                         }
                     }
                 }
@@ -3861,7 +4083,13 @@ static void *portal_req_watch_thread(void *arg) {
     return NULL;
 }
 
-/** 现场帧落盘：睡一会儿等预览跑起来，然后把该尺寸的第一块缓冲整块写到文件 */
+/**
+ * 现场帧落盘：`raw_dump=<尺寸>[|<尺寸>…]:<路径>`，每个尺寸落**一块"活的"缓冲**。
+ *
+ * ⚠️ 为什么必须挑"活的"：同一尺寸往往有 30+ 块缓冲（池化的），第一次实现按 readdir 顺序取第一块
+ * —— 实测抓到的是一块**全零的闲置缓冲**，据此分析布局等于分析空气。
+ * 活着的判据：三个采样窗口的内容在 100 毫秒里变了（有硬件在往里写）。没有活的就退回第一块。
+ */
 static void *portal_raw_dump_thread(void *arg) {
     (void)arg;
     char spec[sizeof(g_opt_raw_dump)];
@@ -3869,45 +4097,82 @@ static void *portal_raw_dump_thread(void *arg) {
     char *colon = strchr(spec, ':');
     if (colon == NULL) return NULL;
     *colon = '\0';
-    unsigned long want = strtoul(spec, NULL, 0);
     const char *path = colon + 1;
-    sleep(8);   /* 等预览把 RAW 帧写起来 */
-    for (int attempt = 0; attempt < 20; attempt++) {
-        DIR *d = opendir("/proc/self/fd");
-        if (d == NULL) break;
-        struct dirent *e;
-        int done = 0;
-        while ((e = readdir(d)) != NULL && !done) {
-            int fd = atoi(e->d_name);
-            if (fd < 3) continue;
-            char p2[64];
-            char link[192] = {0};
-            snprintf(p2, sizeof(p2), "/proc/self/fd/%d", fd);
-            ssize_t r = readlink(p2, link, sizeof(link) - 1);
-            if (r <= 0) continue;
-            link[r] = '\0';
-            if (strstr(link, "dmabuf") == NULL) continue;
-            struct stat st;
-            if (fstat(fd, &st) != 0 || (unsigned long)st.st_size != want) continue;
-            unsigned char *m = (unsigned char *)mmap(NULL, (size_t)st.st_size, PROT_READ,
-                                                     MAP_SHARED, fd, 0);
-            if (m == MAP_FAILED) continue;
-            int of = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            if (of >= 0) {
-                ssize_t wr = write(of, m, (size_t)st.st_size);
-                close(of);
-                LOGI("现场帧落盘：fd=%d size=%ld → %s（写入 %zd 字节）", fd, (long)st.st_size, path,
-                     wr);
-                done = 1;
-            } else {
-                LOGE("现场帧落盘：打不开 %s（errno=%d）", path, errno);
-                done = 1;
+    unsigned long want[8] = {0};
+    int wn = 0;
+    char *save = NULL;
+    for (char *t = strtok_r(spec, "|", &save); t != NULL && wn < 8; t = strtok_r(NULL, "|", &save)) {
+        unsigned long v = strtoul(t, NULL, 0);
+        if (v > 0) want[wn++] = v;
+    }
+    if (wn == 0) return NULL;
+    sleep(10);   /* 等预览/录像把帧写起来 */
+    for (int attempt = 0; attempt < 10; attempt++) {
+        for (int k = 0; k < wn; k++) {
+            char out[256];
+            snprintf(out, sizeof(out), "%s.%lu", path, want[k]);
+            DIR *d = opendir("/proc/self/fd");
+            if (d == NULL) break;
+            int cand[64];
+            unsigned long long csz[64];
+            unsigned char head[64][3][64];
+            int cn = 0;
+            struct dirent *e;
+            while ((e = readdir(d)) != NULL && cn < 64) {
+                int fd = atoi(e->d_name);
+                if (fd < 3) continue;
+                char p2[64];
+                char link[192] = {0};
+                snprintf(p2, sizeof(p2), "/proc/self/fd/%d", fd);
+                ssize_t r = readlink(p2, link, sizeof(link) - 1);
+                if (r <= 0) continue;
+                link[r] = '\0';
+                if (strstr(link, "dmabuf") == NULL) continue;
+                struct stat st;
+                if (fstat(fd, &st) != 0 || (unsigned long)st.st_size != want[k]) continue;
+                unsigned long long sz = (unsigned long long)st.st_size;
+                unsigned char *m = (unsigned char *)mmap(NULL, (size_t)sz, PROT_READ, MAP_SHARED, fd, 0);
+                if (m == MAP_FAILED) continue;
+                memcpy(head[cn][0], m, 64);
+                memcpy(head[cn][1], m + sz / 2, 64);
+                memcpy(head[cn][2], m + sz - 64, 64);
+                munmap(m, (size_t)sz);
+                cand[cn] = fd;
+                csz[cn] = sz;
+                cn++;
             }
-            munmap(m, (size_t)st.st_size);
+            closedir(d);
+            if (cn == 0) continue;
+            usleep(120000);   /* 让硬件翻一帧 */
+            int picked = -1;
+            for (int i = 0; i < cn && picked < 0; i++) {
+                unsigned char *m = (unsigned char *)mmap(NULL, (size_t)csz[i], PROT_READ, MAP_SHARED, cand[i], 0);
+                if (m == MAP_FAILED) continue;
+                int live = 0;
+                for (int w = 0; w < 3; w++) {
+                    const unsigned char *cur = (w == 0) ? m : (w == 1 ? m + csz[i] / 2 : m + csz[i] - 64);
+                    if (memcmp(cur, head[i][w], 64) != 0) live = 1;
+                }
+                if (!live) {
+                    munmap(m, (size_t)csz[i]);
+                    continue;
+                }
+                int of = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (of >= 0) {
+                    ssize_t wr = write(of, m, (size_t)csz[i]);
+                    close(of);
+                    LOGI("现场帧落盘：尺寸=%lu fd=%d → %s（写入 %zd 字节，**活的**）", want[k], cand[i],
+                         out, wr);
+                }
+                munmap(m, (size_t)csz[i]);
+                picked = i;
+                break;
+            }
+            if (picked < 0) {
+                LOGI("现场帧落盘：尺寸=%lu 共 %d 块候选，本轮没有一块是活的", want[k], cn);
+            }
         }
-        closedir(d);
-        if (done) break;
-        sleep(2);
+        sleep(3);
     }
     return NULL;
 }
@@ -4465,6 +4730,7 @@ static void portal_stride_probe(void) {}
 static void portal_bufmap(void) {}
 static void *portal_jpeg_thread(void *arg) { (void)arg; return NULL; }
 static void *portal_req_watch_thread(void *arg) { (void)arg; return NULL; }
+static void *portal_live_probe_thread(void *arg) { (void)arg; return NULL; }
 static void *portal_raw_dump_thread(void *arg) { (void)arg; return NULL; }
 static void *portal_res_writer_thread(void *arg) { (void)arg; return NULL; }
 static void portal_hook_res_install(void) { LOGE("结果钩子只有 arm64 实现"); }
@@ -4920,6 +5186,10 @@ __attribute__((constructor)) static void on_load(void) {
     if (g_opt_req_watch) {
         pthread_t th;
         if (pthread_create(&th, NULL, portal_req_watch_thread, NULL) == 0) pthread_detach(th);
+    }
+    if (g_opt_live_probe > 0) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_live_probe_thread, NULL) == 0) pthread_detach(th);
     }
     if (g_opt_jpeg_probe) {
         pthread_t th;
