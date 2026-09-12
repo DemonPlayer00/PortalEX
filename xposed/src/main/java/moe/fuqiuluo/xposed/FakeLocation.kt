@@ -7,6 +7,7 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import moe.fuqiuluo.xposed.hooks.LocationManagerHook
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
+import moe.fuqiuluo.xposed.hooks.camera.CameraMockHooks
 import moe.fuqiuluo.xposed.hooks.fused.AndroidFusedLocationProviderHook
 import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
@@ -97,6 +98,19 @@ class FakeLocation: IXposedHookLoadPackage, IXposedHookZygoteInit {
             Logger.info(
                 "应用侧传感 hook 已临时停用（模拟由系统框架侧接管）：${lpparam.packageName}"
             )
+
+            // 摄像头模拟是**唯一**必须注入目标应用的功能族：Camera2 的客户端类
+            // （CameraManager/CameraDeviceImpl/CaptureRequest.Builder）全在应用进程里，
+            // 系统框架侧没有可动手的位置。安装本身零开销（只有几个方法钩子），
+            // 是否真的拦截由"开关 + 目标应用清单 + 是否命中素材"在申请摄像头时决定。
+            try {
+                CameraMockHooks.install(lpparam.classLoader, lpparam.packageName)
+            } catch (t: Throwable) {
+                moe.fuqiuluo.xposed.utils.PortalDiag.fail(
+                    moe.fuqiuluo.xposed.utils.PortalDiag.Area.HOOK_INSTALL, t
+                )
+                Logger.error("摄像头模拟：安装失败（已跳过）：${t.message}", t)
+            }
             return
         }
 
