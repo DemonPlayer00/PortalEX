@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  两组菜单之间的**细分隔线**（1dp），左右缩进 28dp（M3 抽屉分隔线的约定值）。
+  关键点：layer-list 的 item **必须带 `android:gravity="top"`** —— 不带的话 shape 会被拉伸铺满
+  整个 layer（结果是一大块实心色），带上才按 `<size>` 的 1dp 高度贴在顶部。
+  只画线、不带底色：作为工具页 NavigationView 的 `android:foreground`（不是 background），
+  这样 M3 自己的抽屉容器色（暗色下带高度色调）原样保留，两半不会出现色差。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:gravity="top"
+        android:left="28dp"
+        android:right="28dp">
+        <shape android:shape="rectangle">
+            <size android:height="1dp" />
+            <solid android:color="?attr/colorOutlineVariant" />
+        </shape>
+    </item>
+</layer-list>
