@@ -41,16 +41,19 @@
             app:menu="@menu/activity_main_drawer" />
 
         <!--
-          间距 = 1/4 个按钮（按钮 = 一个菜单项 = ?attr/listPreferredItemHeightSmall = 48dp ⇒ 12dp）。
-          实测两个 NavigationView 各自在菜单容器里带了 8dp 上下留白（itemVerticalPadding 归零
-          也去不掉），固有间距是 16dp；所以这里不设 margin，而是把整块上移 4dp ⇒ 可见间距正好 12dp。
+          两组菜单之间：**细分隔线**（1dp，M3 缩进 28dp 与颜色）。
+          画在工具页的 `foreground` 上，不塞独立的 View —— 容器宽度是 wrap_content：
+          · match_parent 的 View 会把抽屉撑到满屏宽；
+          · 0dp+weight 在**纵向** LinearLayout 里分配的是高度（实测把工具组推到了屏幕底部）。
+          线的上下各 12dp：上方 = 顶部视图固有的 8dp 底留白 + 这里 4dp margin，下方 = paddingTop。
         -->
         <com.google.android.material.navigation.NavigationView
             android:id="@+id/nav_view_tools"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:translationY="-4dp"
-            app:itemVerticalPadding="0dp"
+            android:layout_marginTop="4dp"
+            android:paddingTop="12dp"
+            android:foreground="@drawable/drawer_divider_line"
             app:menu="@menu/activity_main_drawer_tools" />
 
     </LinearLayout>
