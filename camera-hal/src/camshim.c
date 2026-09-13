@@ -567,6 +567,62 @@ static int g_opt_vvideo = 0;
  * 条目分隔会把两边都切坏，而且**静默丢弃**。
  */
 static char g_opt_vv_mounts[640] = {0};
+/**
+ * `vv_stream_vaddr=[<模块>:]<偏移>`：**配置类入口**（重配流才会走到的那种）。
+ *
+ * 为什么需要它、而不能复用 `req_vaddrs` / `hook_rec_vaddrs`：
+ * 那两套装的是"**纯汇编记账**"桩 —— 只往自己的 .bss 里写几个字，**一条 call 都没有**
+ * （当年是为了避开"钩子从 vendor 加载锁里进来时触发 PLT 懒绑定"的死锁，见 PORTAL_HOOK_STUB_REC 的注释）。
+ * 也就是说它们**根本到不了 C**，"命中时通知注入线程"这件事在它们身上做不到。
+ * 而通用桩（`PORTAL_HOOK_STUB`）会调 `portal_hook_any_c` —— 于是事件能发出去。
+ *
+ * 代价：这一条**必须**由使用者显式指定地址（本机实测是 oemlayer+0x6c554 的
+ * configureStreams_Impl）。默认空缺 = 事件驱动退化为 15 秒安全带，功能不受影响。
+ */
+static char g_opt_vv_stream_vaddr[96] = {0};
+/**
+ * `vv_rescan_delay_us=<微秒>`：收到"流变了"事件之后**等多久再重扫**（默认 30 ms ≈ 一帧）。
+ *
+ * 为什么事件到了不能立刻扫（实测，见 docs/camera-mock.md §58.6）：
+ * 钩子挂在 configureStreams 的**入口**，此刻新的一批缓冲**还没被分配** ——
+ * 立刻重扫拿到的仍是旧的那批（日志里表现为"收到事件、重扫、还是 9 块旧的"）。
+ * 这不推翻事件驱动：**等待仍是事件唤醒的**，这 30 ms 只是给分配留出落地时间。
+ * 与"每 5 秒无条件重扫"的区别是本质的：不发生时就没有任何周期性动作。
+ */
+static int g_opt_vv_rescan_delay_us = 30000;
+/**
+ * `gate=1`：**开门闸** —— 在"我们的帧还没开始写"之前，一帧都不放给应用。
+ *
+ * 解决的是**开头泄漏**：应用点开相机之后，ISP 会先按真实画面写好若干帧，
+ * 而我们的注入线程要等到"缓冲已经分配完"才可能接管。这段窗口里应用拿到的是**真画面**
+ * （录像尤其明显：开头几百毫秒是实景）。闸门的语义是：
+ *
+ *     请求进来 → 若注入还没写过任何一帧 ⇒ **睡在事件字上** → 注入写好第一帧 ⇒ 唤醒 → 放行
+ *
+ * 为什么放在"请求入口"而不是"结果出口"：出口是 vendor 的线程，在它里面阻塞风险更大；
+ * 而请求入口挡住之后，框架根本拿不到结果，应用自然一帧都收不到 —— 效果一样，动作更小。
+ *
+ * **fail-open 是硬要求**：等不到就放行（并记一笔），绝不把相机卡死 ——
+ * 宁可开头漏几帧真画面，也不能让用户面对一台打不开相机的手机。
+ */
+static int g_opt_gate = 0;
+/** 闸门最多等多久（毫秒）。等到就开，等不到也开（fail-open）。 */
+static int g_opt_gate_timeout_ms = 300;
+/**
+ * `vv_gate_vaddr=[<模块>:]<偏移>`：**每帧都会走**的那个请求入口（HAL3 process_capture_request）。
+ *
+ * 与 `vv_stream_vaddr` 一样必须显式给地址，因为它要装**通用钩子**（会调到 C）——
+ * `req_vaddrs` 那套纯汇编记账桩到不了 C，也就没法在这里阻塞。
+ * ⚠️ 这一条是**热路径**：不装 = 闸门不存在；装错地址 = 钩子落在无关函数上（只多一次原子加）。
+ */
+static char g_opt_gate_vaddr[96] = {0};
+/**
+ * `vv_gate_sym=<模块子串>:<符号名>`：按**符号名**找每帧请求入口（比偏移可靠）。
+ * 与 `vv_gate_vaddr` 二选一，`_sym` 优先。
+ */
+static char g_opt_gate_sym[192] = {0};
+/** `g_opt_gate != 0` 的缓存：热路径上只读一个 bool（on_load 在 32 位区外也要用，故不放进 arm64 区） */
+static bool g_opt_gate_on = false;
 /** `raw_dump=<尺寸>:<路径>`：把**现场那一帧**（该尺寸的第一块 dmabuf）原样落到文件。
  *  用途：照片链路的输入是 RAW（实测：注 RAW 会改照片，注预览 YUV 不会），
  *  而"逆 ISP 合成一张自然颜色的 RAW"不是一朝一夕的事 —— 那就反过来：
@@ -818,8 +874,32 @@ static void load_options(void) {
             g_opt_live_probe = atoi(val);
         } else if (strcmp(key, "vvideo") == 0) {
             g_opt_vvideo = atoi(val);
+        } else if (strcmp(key, "vv_stream_vaddr") == 0) {
+            snprintf(g_opt_vv_stream_vaddr, sizeof(g_opt_vv_stream_vaddr), "%s", val);
+        } else if (strcmp(key, "vv_rescan_delay_us") == 0) {
+            g_opt_vv_rescan_delay_us = atoi(val);
+        } else if (strcmp(key, "gate") == 0) {
+            g_opt_gate = atoi(val);
+        } else if (strcmp(key, "gate_timeout_ms") == 0) {
+            g_opt_gate_timeout_ms = atoi(val);
+        } else if (strcmp(key, "vv_gate_vaddr") == 0) {
+            snprintf(g_opt_gate_vaddr, sizeof(g_opt_gate_vaddr), "%s", val);
+        } else if (strcmp(key, "vv_gate_sym") == 0) {
+            snprintf(g_opt_gate_sym, sizeof(g_opt_gate_sym), "%s", val);
         } else if (strcmp(key, "vv_mount") == 0) {
-            snprintf(g_opt_vv_mounts, sizeof(g_opt_vv_mounts), "%s", val);
+            /* **累加**，不是覆盖。cfg 里写多行 `vv_mount=` 是最自然的写法
+             * （部署脚本本来就是一行一个键），而"后一行静默吃掉前一行"正是本项目
+             * 最不能接受的那类故障 —— 于是这里显式拼起来；放不下就**报出来**，不静默丢。 */
+            size_t have = strlen(g_opt_vv_mounts);
+            size_t add = strlen(val);
+            size_t need = have + (have ? 1 : 0) + add + 1;
+            if (need <= sizeof(g_opt_vv_mounts)) {
+                if (have) g_opt_vv_mounts[have++] = '|';
+                memcpy(g_opt_vv_mounts + have, val, add + 1);
+            } else {
+                LOGE("vv_mount 太多，放不下第 %zu 条（上限 %zu 字节）—— 后面的条目被丢弃",
+                     (size_t)0 + 1, sizeof(g_opt_vv_mounts));
+            }
         } else if (strcmp(key, "mock_map") == 0) {
             snprintf(g_opt_mock_map, sizeof(g_opt_mock_map), "%s", val);
         } else if (strcmp(key, "mock_file") == 0) {
@@ -875,6 +955,15 @@ static void portal_process_capture_result(const camera3_callback_ops_t *,
                                           const camera3_capture_result_t *);
 /* 拍照请求的早期信号（定义在外源帧段；请求回调里就要用到，故前置声明） */
 static void portal_fsrc_signal_photo(uint32_t w, uint32_t h);
+/* VVideo 的"流配置变了"事件（定义在模板段；configure_streams 那条路要用，故前置声明）。
+ * 定义见下方 VVideo 段 —— 它要能在**钩子**里被调用，所以必须足够便宜。
+ *
+ * ⚠️ 只在 arm64 上存在：注入线程那一整段（含模板与 VVideo 接入）本来就在
+ * `#if defined(__aarch64__)` 里 —— 32 位形态没有按地址挂钩，也就没有"要通知谁"。
+ * 与文件里其它跨段引用（如 photo_mirror 那批）用同一个写法。 */
+#if defined(__aarch64__)
+static void portal_vv_notify_streams(void);
+#endif
 static void portal_notify(const camera3_callback_ops_t *, const void *);
 static camera3_callback_ops_t g_our_callbacks = {
     .process_capture_result = portal_process_capture_result,
@@ -1072,16 +1161,52 @@ static bool portal_parse_result(const void *raw, struct portal_layout *out) {
  * `GraphicBufferMapper::lock` 又只给基址不给 stride。厂商 gralloc 的私有字段里有几何信息，
  * 但布局是厂商私有的 —— 只能打出来看（纯读，不改）。头字段不像 native_handle 就立刻收手。
  */
+/**
+ * 打印一个 native_handle 的头部与整数字段。
+ *
+ * ⚠️ **必须经 `portal_peek`（/proc/self/mem）读，不能直接解引用。**
+ *
+ * 这个 handle 是**请求快照**里记下来的指针，而本函数跑在汇报线程上 —— 等到它跑的时候，
+ * 那批缓冲可能早就被释放/解映射了。直接解引用就是 SIGSEGV，而这里是 HAL 进程：
+ * 崩一次 init 就把 provider 重启，**整机相机停摆几秒**。
+ *
+ * 实测 tombstone（2026-09-13，本函数 +80 ← portal_req_report ← portal_report_thread）：
+ * 头部三个 int 的读取本身就落在未映射页上。判据也一起补上了"读不到就不打"，
+ * 于是"指针过期"从**崩溃**降级成**少一行日志**。
+ */
+/* 定义在下方存活探针段（arm64 区）里；两个 handle 打印函数要用它做**安全读**，故前置声明。
+ * 32 位形态没有那一段，于是给一个"读不到"的桩 —— handle 细节不打，但绝不因为
+ * 解引用过期指针把 provider 打死（那正是这次要修的东西）。 */
+#if defined(__aarch64__)
+static int portal_peek(unsigned long addr, void *buf, size_t len);
+#else
+static int portal_peek(unsigned long addr, void *buf, size_t len) {
+    (void)addr;
+    (void)buf;
+    (void)len;
+    return -1;
+}
+#endif
+
 static void portal_dump_handle(uint32_t idx, const void *handle) {
     if (handle == NULL || (uintptr_t)handle < 0x1000u) return;
-    const int *h = (const int *)handle;
-    int version = h[0], numFds = h[1], numInts = h[2];
+    int hdr[3] = {0};
+    if (portal_peek((unsigned long)handle, hdr, sizeof(hdr)) != 0) {
+        LOGI("  out[%u] handle=%p 读不到（可能已释放/未映射）→ 不打印细节", idx, handle);
+        return;
+    }
+    int version = hdr[0], numFds = hdr[1], numInts = hdr[2];
     if (numFds < 0 || numFds > 8 || numInts < 0 || numInts > 64) {
         LOGI("  out[%u] handle=%p 头字段不像 native_handle（v=%d nFds=%d nInts=%d）→ 不解引用",
              idx, handle, version, numFds, numInts);
         return;
     }
-    const int *ints = h + 3 + numFds;
+    int ints[64];
+    if (numInts > 0 &&
+        portal_peek((unsigned long)handle + sizeof(int) * (3 + numFds), ints,
+                    sizeof(int) * (size_t)numInts) != 0) {
+        return;
+    }
     char buf[400];
     int off = snprintf(buf, sizeof(buf), "  out[%u] handle v=%d nFds=%d nInts=%d ints=", idx,
                        version, numFds, numInts);
@@ -1094,11 +1219,17 @@ static void portal_dump_handle(uint32_t idx, const void *handle) {
 /** 把 native_handle 里每个 fd 的 **大小** 打出来：判定"色度面是独立 fd 还是同块第二段"靠它。 */
 static void portal_dump_handle_fds(uint32_t idx, const void *handle) {
     if (handle == NULL || (uintptr_t)handle < 0x1000u) return;
-    const int *h = (const int *)handle;
-    int version = h[0], numFds = h[1], numInts = h[2];
+    /* 同上：快照里的指针到汇报时可能已经失效，一律经 portal_peek 读 */
+    int hdr[3] = {0};
+    if (portal_peek((unsigned long)handle, hdr, sizeof(hdr)) != 0) return;
+    int version = hdr[0], numFds = hdr[1];
     (void)version;
     if (numFds <= 0 || numFds > 8) return;
-    const int *fds = h + 3;
+    int fds[8];
+    if (portal_peek((unsigned long)handle + sizeof(int) * 3, fds, sizeof(int) * (size_t)numFds) !=
+        0) {
+        return;
+    }
     char buf[400];
     int off = snprintf(buf, sizeof(buf), "  out[%u] fds:", idx);
     for (int k = 0; k < numFds && off < (int)sizeof(buf) - 24; k++) {
@@ -1708,6 +1839,12 @@ static int portal_configure_streams(const struct camera3_device *dev, void *stre
             LOGI("产帧端未在运行 ⇒ 本次不改用途位（真实相机走厂商原始分配路径）");
         }
     }
+    /* **流配置变了 = 缓冲要换一批**：通知注入线程立刻重扫，而不是等它的定时器。
+     * 这条（ops 表）与地址钩子那条都发，两条路各走各的，谁在用都能通知到。
+     * 32 位形态没有注入线程，这句不存在。 */
+#if defined(__aarch64__)
+    if (rc == 0) portal_vv_notify_streams();
+#endif
     return rc;
 }
 
@@ -3032,6 +3169,48 @@ static const char *g_hook_name[PORTAL_HOOK_MAX];
  *  否则第二次调用会从 0 重新分配、把第一张列表的钩子全顶掉（踩过）。 */
 static int g_hook_rec_next = 0;
 
+/**
+ * 找一个**没被占用**的钩子槽位（-1 = 用完了）。
+ *
+ * ⚠️ 为什么必须"扫空闲"而不是"从游标递增"（ACE5 实测踩到）：
+ * 构造期装的"改用途位"钩子先占了槽 1，而 rec/req 列表是从 `g_hook_rec_next` 一路
+ * 递增分配的、**不认识**别人已经占掉的槽 ⇒ 两者撞在同一个 kind 上。
+ * 后果不只是日志串行：`portal_hook_any_c` 里"kind == g_scrub_slot 就把实参当流表洗一遍"
+ * 这条判断会被**另一个函数**的调用触发 —— 而那个函数的第一个参数是 AIDL 的
+ * `StreamConfiguration`，按 `camera3_stream_configuration_t` 解引用就是拿垃圾当指针写。
+ * 判据统一成"装过就会留下名字"，占用来源就不再重要。
+ */
+/**
+ * 哪些钩子算"**配置类**"（只有重配流时才会走到）—— 只有它们才该触发"流变了"事件。
+ *
+ * 判据用**安装时写下的名字**，所以不需要新增配置项：
+ *  · `req+0x…`  ：本机实测就是 CamX 的 `CameraDeviceSession::configureStreams_Impl`
+ *                 （日志里连符号名都解出来了，且一次会话只命中个位数次 —— 不是每帧）；
+ *  · `…(scrub)` ：oemlayer 的 `configureStreams_Impl`；
+ *  · `cfg+0x…`  ：`hook_cfg_vaddr` 那条。
+ * `res`/`touch`/`null`/`nrec` 一律**不算**：它们是每帧走的，拿它们当"流变了"会把
+ * 重扫变成每帧一次 —— 那比原来的 5 秒定时还糟。
+ */
+static bool g_hook_is_cfg[PORTAL_HOOK_MAX];
+/** 哪些钩子是"每帧的请求入口"（开门闸就装在这里） */
+static bool g_hook_is_gate[PORTAL_HOOK_MAX];
+
+static void portal_mark_cfg_slot(int slot, const char *name) {
+    if (slot < 0 || slot >= PORTAL_HOOK_MAX || name == NULL) return;
+    if (strncmp(name, "req+", 4) == 0 || strstr(name, "(scrub)") != NULL ||
+        strncmp(name, "cfg+", 4) == 0 || strncmp(name, "cfg", 3) == 0) {
+        g_hook_is_cfg[slot] = true;
+    }
+    if (strncmp(name, "gate+", 5) == 0) g_hook_is_gate[slot] = true;
+}
+
+static int portal_hook_slot_alloc(void) {
+    for (int i = 0; i < PORTAL_HOOK_MAX; i++) {
+        if (g_hook_name[i] == NULL) return i;
+    }
+    return -1;
+}
+
 /*
  * 钩子外壳（**通用版**）：开头 4 条指令是占位 nop，安装时被替换成目标函数被顶掉的
  * 那 4 条真实指令（安装器会先验证它们与 PC 无关），然后记账，再跳回 entry+16。
@@ -3830,7 +4009,80 @@ static void portal_mock_parse(void) {
  * 失败一律**安静降级**回老路（直接 open 文件）：HAL 进程里没有"因为新功能起不来"这一说。
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * 开门闸（gate）
+ *
+ * 状态机只有三个变量，全部是**原子的** —— 因为它会在 vendor 的线程里被读：
+ *   · `g_armed`      注入线程写过至少一帧了吗
+ *   · `g_gate_open`  本"会话代"是否已放行（一放行就不再回头拦）
+ *   · `g_vv_armed`   `/vvideo/ev/armed` 事件节点（futex）—— 等待者睡在它上面
+ * ------------------------------------------------------------------ */
+
+static struct vvideo_file *g_vv_armed = NULL;
+static volatile int g_armed = 0;
+static volatile int g_gate_open = 1; /* 默认**放行**：不开闸时行为与从前逐字一致 */
+static int g_gate_slot = -1;
+static volatile unsigned long g_gate_blocked = 0;  /* 被拦下的请求数 */
+static volatile unsigned long g_gate_opened = 0;   /* 等到注入就绪后放行的次数 */
+static volatile unsigned long g_gate_timeouts = 0; /* 等超时（fail-open）的次数 */
+
+/** 注入线程写好"这一代"的第一帧之后调用：置位 + 唤醒所有等待者 */
+static void portal_gate_arm(void) {
+    __atomic_store_n(&g_armed, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_gate_open, 1, __ATOMIC_RELEASE);
+    if (g_vv_armed != NULL) vvideo_notify(g_vv_armed); /* FUTEX_WAKE：把睡着的请求放行 */
+}
+
+/** 新会话 / 重配流：缓冲换了一批 ⇒ 重新关门（这一代同样不许漏真画面） */
+static void portal_gate_reset(const char *why) {
+    if (!g_opt_gate_on) return;
+    __atomic_store_n(&g_armed, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_gate_open, 0, __ATOMIC_RELEASE);
+    LOGI("开门闸：%s ⇒ 重新关门（等注入写好第一帧再放行）", why);
+}
+
+/**
+ * 请求入口处的闸门。**热路径**：已放行时只是两次原子读，零系统调用。
+ * 未就绪时 `vvideo_wait` 睡在事件字上（futex）—— 不是轮询，不烧 CPU。
+ */
+static void portal_gate_wait(void) {
+    if (!g_opt_gate_on) return;
+    if (__atomic_load_n(&g_gate_open, __ATOMIC_ACQUIRE)) return; /* 热路径：放行后只剩两次原子读 */
+    /* 不是我们要模拟的那台相机 ⇒ 立刻放行。否则"只打前置"的配置会把后置也拖慢 1.5 秒，
+     * 而那是**用户能直接感觉到**的伤害（开门闸只该保护"会被我们改写的那条流"）。 */
+    if (g_opt_cam[0] != '\0' && !portal_cam_selected()) return;
+    if (__atomic_load_n(&g_armed, __ATOMIC_ACQUIRE)) {
+        __atomic_store_n(&g_gate_open, 1, __ATOMIC_RELEASE);
+        return;
+    }
+    __atomic_add_fetch(&g_gate_blocked, 1, __ATOMIC_RELAXED);
+    int rc = (g_vv_armed != NULL) ? vvideo_wait(g_vv_armed, g_opt_gate_timeout_ms) : -ENOTTY;
+    if (rc == 0) {
+        __atomic_store_n(&g_gate_open, 1, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&g_gate_opened, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    /* 等不到 ⇒ **放行**（fail-open）。宁可开头漏几帧，也不能把相机卡死。 */
+    __atomic_store_n(&g_gate_open, 1, __ATOMIC_RELEASE);
+    unsigned long n = __atomic_add_fetch(&g_gate_timeouts, 1, __ATOMIC_RELAXED);
+    if (n <= 3) {
+        LOGI("开门闸：等了 %d ms 注入仍未就绪（rc=%d）⇒ 放行；本会话不再拦（第 %lu 次）",
+             g_opt_gate_timeout_ms, rc, n);
+    }
+}
+
 static bool g_vv_inited = false;
+/** 事件驱动重扫的排期时刻（0 = 没排期）。见 vv_rescan_delay_us 的注释。 */
+static unsigned long long g_vv_rescan_at_us = 0;
+/** 上一次重扫后的目标集指纹（块数 + 总字节）。用来判断"新缓冲到底落地没有"。 */
+static int g_vv_last_n = -1;
+static unsigned long long g_vv_last_bytes = 0;
+/** 本次重扫是**事件**引起的吗（决定要不要补看）
+ *  补看是**有界**的：最多 3 次，间隔 0.5 / 1 / 2 秒（一旦目标集变了就归零）。 */
+static bool g_vv_rescan_by_event = false;
+static int g_vv_look_again = 0;
+/** 流配置变更事件节点（`notify` 后端）：configureStreams 写它，注入线程睡在它上面 */
+static struct vvideo_file *g_vv_streams = NULL;
 /** 取到的节点 file 一直开着：帧指针归它所有，关了就成了悬垂指针 */
 static struct vvideo_file *g_vv_files[PORTAL_MOCK_MAX];
 static int g_vv_files_n = 0;
@@ -3882,6 +4134,12 @@ static void portal_vv_init(void) {
         if (c3 != NULL) {
             *c3 = '\0';
             opts = c3 + 1;
+        } else if (strchr(dev, '=') != NULL) {
+            /* **少写一个冒号**是最容易犯的错：`类型:挂载点:dev,选项` —— `dev` 把选项整段吃掉了，
+             * 后端的报错会是"缺参数"，看的人却以为参数写对了。这里直接把它喊出来。 */
+            LOGE("VVideo：挂载行「%s」少了一个冒号？`dev` 里带着 `=`（%s）但没有选项段 —— "
+                 "格式是 <类型>:<挂载点>:<dev>:<选项>",
+                 tok, dev);
         }
         if (vvideo_mount_ensure(tok, dir, dev, opts) != NULL) {
             ok++;
@@ -3890,8 +4148,47 @@ static void portal_vv_init(void) {
             LOGE("VVideo：挂载失败 %s ← %s（dev=%s opts=%s）", dir, tok, dev, opts);
         }
     }
-    LOGI("VVideo 统一层已就绪：挂载 %d 个节点（失败 %d），ABI v%d", ok, bad, VV_ABI_VERSION);
+    /* "流配置变了"事件节点：**它是这一层第一个"没有帧"的节点** —— 数据面之外，
+     * 事件本身也是这条管线上的一等公民（见 vvfs_notify.c 顶上那段）。
+     * 挂在 /vvideo/ev/ 下，与帧源（/vvideo/src/）分开，免得被当成能取帧的节点。 */
+    if (vvideo_mount_ensure("notify", "/vvideo/ev/streams", "", "") != NULL) {
+        g_vv_streams = vvideo_open("/vvideo/ev/streams", VV_O_RDWR);
+    }
+    /* 开门闸等的是**另一个**事件字：语义不同（"流变了"是配置，"已就绪"是数据面），
+     * 混在一起会让等待者被无关事件叫醒 —— 分开是对的，不是洁癖。 */
+    if (g_opt_gate_on && vvideo_mount_ensure("notify", "/vvideo/ev/armed", "", "") != NULL) {
+        g_vv_armed = vvideo_open("/vvideo/ev/armed", VV_O_RDWR);
+    }
+    LOGI("VVideo 统一层已就绪：挂载 %d 个节点（失败 %d），ABI v%d；流变更事件节点=%s%s", ok, bad,
+         VV_ABI_VERSION, g_vv_streams != NULL ? "已开" : "未开",
+         g_opt_gate_on ? (g_vv_armed != NULL ? "，就绪事件节点=已开" : "，就绪事件节点=**未开**")
+                       : "，开门闸=关");
     portal_vv_log_tree();
+}
+
+/**
+ * 告诉注入线程"相机流的配置变了"。
+ *
+ * **这个函数会在钩子里被调用**（configureStreams 那条路），所以它必须：
+ *  · 不做任何分配、不打日志、不碰文件系统 —— 只是把事件字 +1；
+ *  · 层没挂（`g_vv_streams == NULL`）时立刻返回 —— 调用方不需要判空。
+ * 代价：两次指针解引用 + 一次原子自增；**只有真有等待者时**才发一次 futex 唤醒。
+ */
+static void portal_vv_notify_streams(void) {
+    struct vvideo_file *f = g_vv_streams;
+    if (f == NULL) return;
+    vvideo_notify(f);
+}
+
+/**
+ * 等"流变了"事件。`timeout_ms = 0` 是**非阻塞探询**（只比一个 seq，零系统调用），
+ * 注入线程热路径上用这个；没靶可打时才用带超时的阻塞版本。
+ * 返回 0 = 有新事件；-EAGAIN = 没有；-ENOTTY = 层没挂（调用方退回老行为）。
+ */
+static int portal_vv_wait_streams(int timeout_ms) {
+    struct vvideo_file *f = g_vv_streams;
+    if (f == NULL) return -ENOTTY;
+    return vvideo_wait(f, timeout_ms);
 }
 
 /**
@@ -4103,7 +4400,18 @@ static void *portal_inject_thread(void *arg) {
         if (n == 0) {
             n = portal_build_targets(t, PORTAL_INJECT_MAX);
             if (n == 0) {
-                sleep(2);
+                /* 没靶可打 ⇒ 这一轮本来就无事可做，于是**睡在"流变了"事件上**：
+                 * configureStreams 一发生就立刻醒、马上重扫（毫秒级），
+                 * 2 秒只是安全带。层没挂时退回老行为（固定 sleep 2）。 */
+                int wrc = portal_vv_wait_streams(2000);
+                if (wrc == -ENOTTY) {
+                    sleep(2); /* 层没挂：退回老行为 */
+                } else if (wrc == 0) {
+                    /* 事件唤醒 ⇒ 不必睡满 2 秒；但给"新缓冲落地"留一点时间再重试 */
+                    LOGI("注入线程：还没靶可打，收到流变更事件 ⇒ %d 微秒后重试",
+                         g_opt_vv_rescan_delay_us);
+                    if (g_opt_vv_rescan_delay_us > 0) usleep((useconds_t)g_opt_vv_rescan_delay_us);
+                }
                 continue;
             }
             size_t total = 0;
@@ -4111,7 +4419,33 @@ static void *portal_inject_thread(void *arg) {
             LOGI("注入线程：%d 块缓冲，共 %zu 字节（%d 个模板，同步=%d）", n, total, g_mock_n,
                  g_opt_inject_sync);
             announced = 1;
+            /*
+             * **有界补看**：钩子在 configureStreams 的**入口**，事件到时新缓冲往往还没分配
+             * （实测：切到录像那条最晚要几百毫秒才出现在 /proc/self/fd 里，
+             * +30ms 那次重扫拿到的仍是旧的 9 块）。判据是**目标集有没有变**：
+             * 变了 ⇒ 新缓冲已落地，收工；没变 ⇒ 再排一次 2 秒后的补看。
+             *
+             * 这不是轮询：**只有真的收到过事件**才会补这一次，且只补一次；
+             * 没有配置变化时，一秒都不会醒。
+             */
+            bool same = (n == g_vv_last_n && (unsigned long long)total == g_vv_last_bytes);
+            if (g_vv_rescan_by_event && same && g_vv_look_again < 3) {
+                g_vv_look_again++;
+                unsigned long long delay_us = 500000ULL << (g_vv_look_again - 1); /* 0.5s / 1s / 2s */
+                g_vv_rescan_at_us = portal_now_us() + delay_us;
+                LOGI("注入线程：目标集与上次相同（%d 块）⇒ 新缓冲可能还没落地，%llu 毫秒后补看（第 %d/3 次）",
+                     n, delay_us / 1000, g_vv_look_again);
+            } else {
+                g_vv_look_again = 0; /* 变了 / 不是事件触发的 / 补看用完 ⇒ 归零 */
+            }
+            g_vv_rescan_by_event = false;
+            g_vv_last_n = n;
+            g_vv_last_bytes = (unsigned long long)total;
+            /* 刚建完就重置安全带计时：否则"线程起来得晚"会让下一次循环立刻又满足
+             * `now - last_scan >= 15` ⇒ 同一批目标连建三次（实测见过 5 毫秒内三次）。 */
+            last_scan = time(NULL);
         }
+        unsigned long writes_before = writes;
         for (int i = 0; i < n; i++) {
             size_t len = t[i].tlen < t[i].size ? t[i].tlen : t[i].size;
             if (g_opt_inject_limit != 0 && len > g_opt_inject_limit) len = g_opt_inject_limit;
@@ -4174,6 +4508,14 @@ static void *portal_inject_thread(void *arg) {
             }
             writes++;
         }
+        /* **开门**：这一代缓冲我们已经真的写进去了 ⇒ 唤醒所有被挡在请求入口的调用者。
+         * 判据用"这一轮确实写过"而不是"线程起来了" —— 后者会放行一批还没被覆盖的帧。 */
+        if (g_opt_gate_on && writes != writes_before &&
+            !__atomic_load_n(&g_armed, __ATOMIC_ACQUIRE)) {
+            portal_gate_arm();
+            LOGI("开门闸：注入已写好第一帧（%lu 次写）⇒ 放行被挡住的请求（累计挡下 %lu 个）",
+                 writes, __atomic_load_n(&g_gate_blocked, __ATOMIC_RELAXED));
+        }
         /* 同步模式必须**低延迟**：轮询间隔要远小于一帧（33ms），否则"ISP 刚写完"这个窗口就错过了。
          * inject_us 在同步模式下被夹到 ≤200 微秒（0 表示不让出 CPU，最紧的轮询）。 */
         int sl;
@@ -4194,10 +4536,39 @@ static void *portal_inject_thread(void *arg) {
             LOGI("同步注入(模式%d)：%lu 轮 / %lu 次写（%d 块缓冲）", g_opt_inject_sync, rounds,
                  writes, n);
         }
-        if (announced && now - last_scan >= 5) {   /* 每 5 秒重扫：换模式/重建会话都会换一批缓冲 */
-            last_scan = now;
-            for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
-            n = 0;
+        /*
+         * 重扫改成**事件驱动**（原来是无条件"每 5 秒 munmap 全部 + 重建"）：
+         *  · 热路径上只做一次**非阻塞探询**（比一个 seq，零系统调用）——
+         *    发现 configureStreams 发生过就立刻换靶；
+         *  · 15 秒只是安全带（层没挂、或事件丢了时的兜底）。
+         * 两个好处都实测得到：模式切换的跟上时间从"最坏 5 秒"变成"毫秒级"；
+         * 而且不再每 5 秒白白 munmap/remap 一批 4MB 的 dmabuf（那本身就是周期性抖动）。
+         */
+        if (announced) {
+            /* **只在"有靶可打"时才消费事件** —— 否则事件会在我们不能行动的时候被吃掉。 */
+            if (portal_vv_wait_streams(0) == 0) {
+                /* 事件到了 ≠ 缓冲已经换好（钩子在 configureStreams **入口**）：
+                 * 只**排期**，等落地时间到了再扫。 */
+                g_vv_rescan_at_us =
+                    portal_now_us() + (unsigned long long)(g_opt_vv_rescan_delay_us > 0
+                                                               ? g_opt_vv_rescan_delay_us
+                                                               : 0);
+            }
+            bool due = (g_vv_rescan_at_us != 0 && portal_now_us() >= g_vv_rescan_at_us);
+            bool belt = (now - last_scan >= 15);
+            if (due || belt) {
+                g_vv_rescan_at_us = 0;
+                last_scan = now;
+                g_vv_rescan_by_event = due;
+                /* 缓冲要换一批 ⇒ 开门闸重新关上：新一代的第一帧同样不许是真画面 */
+                portal_gate_reset(due ? "流变更事件" : "15 秒安全带");
+                /* 这一行是"事件驱动确实生效"的现场证据：真机上对照 configureStreams 的
+                 * 时间戳就能看出跟上时间从"最坏 5 秒"变成了几十毫秒。 */
+                LOGI("注入线程：重扫目标（触发=%s，上一批 %d 块）",
+                     due ? "事件(configureStreams)" : "15 秒安全带", n);
+                for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
+                n = 0;
+            }
         }
     }
     return NULL;
@@ -4708,6 +5079,46 @@ static uintptr_t portal_module_base(const char *sub) {
 }
 
 /**
+ * 在已加载的模块里**按符号名**取地址（`<模块子串>:<符号名>` 用）。
+ *
+ * 为什么需要它、而不是继续用硬编码偏移：ACE5 上真件 HAL 的
+ * `process_capture_request`（`camera.qcom.so+0x1e49cc0`）**前 4 条指令里有 PC 相对指令**，
+ * 入口重放器正确地拒绝了 —— 也就是说"按偏移硬挂"这条路在那个入口上根本不成立。
+ * 但 CamX 的 AIDL 实现（`camx.device-impl.so`）**导出**了这些符号（`dladdr` 都能把
+ * 调用者名字解出来），于是可以按名字拿地址，既不猜偏移，也能换一个能重放的入口。
+ *
+ * 失败返回 0（调用方据此放弃装钩子，**不影响**既有功能）。
+ */
+static uintptr_t portal_module_sym(const char *mod_sub, const char *sym) {
+    char path[256] = {0};
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (f == NULL) return 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f) != NULL) {
+        if (strstr(line, mod_sub) == NULL) continue;
+        char *q = strchr(line, '/');
+        if (q == NULL) continue;
+        size_t n = strlen(q);
+        while (n > 0 && (q[n - 1] == '\n' || q[n - 1] == ' ')) q[--n] = '\0';
+        snprintf(path, sizeof(path), "%s", q);
+        break;
+    }
+    fclose(f);
+    if (path[0] == '\0') {
+        LOGE("符号解析：找不到模块 %s 的路径", mod_sub);
+        return 0;
+    }
+    void *h = dlopen(path, RTLD_NOW | RTLD_NOLOAD);
+    if (h == NULL) {
+        LOGE("符号解析：dlopen(%s, NOLOAD) 失败：%s", path, dlerror());
+        return 0;
+    }
+    void *a = dlsym(h, sym);
+    if (a == NULL) LOGE("符号解析：%s 里没有 %s", path, sym);
+    return (uintptr_t)a;
+}
+
+/**
  * 所有挂钩共用的记账函数。
  *
  * 参数顺序**必须**与钩子外壳里的 `mov x0..x5` 一致（x0=caller、x1=a0、x2=a1、x3=fp、
@@ -4746,7 +5157,15 @@ __attribute__((used)) static void portal_hook_any_c(unsigned long caller, unsign
     if (kind >= PORTAL_HOOK_MAX) return;
     __atomic_add_fetch(&g_hook_cnt[kind], 1, __ATOMIC_RELAXED);
     /* 指定槽位 = "改用途位"钩子：a1 就是 configureStreams 的第 2 个参数（流表） */
-    if (g_scrub_slot >= 0 && (int)kind == g_scrub_slot) portal_scrub_streams((void *)a1);
+    if (g_scrub_slot >= 0 && (int)kind == g_scrub_slot) {
+        portal_scrub_streams((void *)a1);
+    }
+    /* 配置类钩子命中 ⇒ 相机流表刚被重配 ⇒ 唤醒注入线程重扫。
+     * 放在这里（而不是只放在 scrub 分支）：ACE5 上真正在跑的是 `req_vaddrs` 那条，
+     * 而"要不要洗用途位"（scrub）与"流变了没有"是两件独立的事，不该互相绑。 */
+    if (kind < PORTAL_HOOK_MAX && g_hook_is_cfg[kind]) portal_vv_notify_streams();
+    /* 请求入口：注入没就绪就把这一帧**挡住**（睡在事件字上，不是轮询） */
+    if (g_opt_gate_on && g_gate_slot >= 0 && (int)kind == g_gate_slot) portal_gate_wait();
     if (!g_opt_open_probe) return;   /* ← 默认在这里就回去了，一行 I/O 都没有 */
 
     static unsigned long logged[PORTAL_HOOK_MAX];
@@ -4855,6 +5274,27 @@ static int portal_inline_hook_ex(int slot, uintptr_t base, unsigned long target_
         *resume_slot = 0;
         return 0;
     }
+    /*
+     * **入口补丁也必须回读校验**（这条是拿一次 SIGILL 换来的，2026-09-13）：
+     * 外壳写进去了、入口却**没真的改掉**时，我们这边日志一切正常，而 CPU 在入口上
+     * 执行到的是一条非法指令 ⇒ `SIGILL (ILL_ILLOPC)`，fault addr 正好是那个入口。
+     * 崩溃现场（tombstone）：`CameraDeviceSession::processCaptureRequest+0`，
+     * 也就是**每次捕获请求**都要走的那个函数 —— 在 HAL 进程里这意味着相机整体不可用。
+     * 与其相信 `pwrite` 的返回值，不如把 16 字节读回来比一遍：不一致就当**没装上**。
+     */
+    uint32_t entry_back[4] = {0};
+    ssize_t er = pread(memfd, entry_back, sizeof(entry_back), (off_t)(uintptr_t)code);
+    if (er != (ssize_t)sizeof(entry_back) ||
+        memcmp(entry_back, stub, sizeof(stub)) != 0) {
+        char perms[8] = {0};
+        portal_map_perm((const void *)code, perms, sizeof(perms));
+        LOGE("挂钩 %s：入口补丁**没生效**（读回 %08x %08x %08x %08x，映射权限=%s）⇒ 当没装上",
+             name, entry_back[0], entry_back[1], entry_back[2], entry_back[3],
+             perms[0] ? perms : "?");
+        close(memfd);
+        *resume_slot = 0;
+        return 0;
+    }
     close(memfd);
     __builtin___clear_cache((char *)slot_code, (char *)slot_code + 16);
     __builtin___clear_cache((char *)hook_fn, (char *)hook_fn + 36);
@@ -4920,9 +5360,11 @@ static void portal_hook_req_list(const char *list) {
         while (*tok == ' ') tok++;
         unsigned long v = strtoul(tok, NULL, 0);
         if (v == 0) continue;
-        if (g_hook_rec_next >= PORTAL_HOOK_MAX) { LOGE("请求快照：槽位用完了"); return; }
-        int slot = g_hook_rec_next++;
+        int slot = portal_hook_slot_alloc();
+        if (slot < 0) { LOGE("请求快照：槽位用完了"); return; }
+        g_hook_rec_next = slot + 1;
         snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "req+0x%lx", v);
+        portal_mark_cfg_slot(slot, g_hook_name_buf[slot]);
         portal_inline_hook_ex(slot, base, v, g_hook_name_buf[slot], (void *)portal_hook_req0,
                               &g_hook_resume_req, 12);
     }
@@ -4942,11 +5384,12 @@ static void portal_hook_res_install(void) {
              g_opt_res_hook);
         return;
     }
-    if (g_hook_rec_next >= PORTAL_HOOK_MAX) {
+    int slot = portal_hook_slot_alloc();
+    if (slot < 0) {
         LOGE("结果钩子：槽位用完了");
         return;
     }
-    int slot = g_hook_rec_next++;
+    g_hook_rec_next = slot + 1;
     snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "res+0x%lx", rv);
     portal_inline_hook_ex(slot, base, rv, g_hook_name_buf[slot], (void *)portal_hook_res0,
                           &g_hook_resume_res, 12);
@@ -4965,21 +5408,23 @@ static void portal_hook_rec_list(const char *list, const char *module_sub) {
     char buf[512];
     snprintf(buf, sizeof(buf), "%s", list);
     char *save = NULL;
-    int slot = g_hook_rec_next;
-    for (char *tok = strtok_r(buf, ",", &save); tok != NULL && slot < PORTAL_HOOK_MAX;
-         tok = strtok_r(NULL, ",", &save)) {
+    for (char *tok = strtok_r(buf, ",", &save); tok != NULL; tok = strtok_r(NULL, ",", &save)) {
         while (*tok == ' ') tok++;
         unsigned long v = strtoul(tok, NULL, 0);
         if (v == 0) continue;
+        int slot = portal_hook_slot_alloc();
+        if (slot < 0) {
+            LOGE("零调用钩子：槽位用完了");
+            return;
+        }
+        g_hook_rec_next = slot + 1;
         snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "%s+0x%lx",
                  module_sub ? module_sub : "real", v);
         /* ⚠️ 重放槽必须在**这个外壳自己的**占位 nop 处：rec 外壳的序言只有 3 条 mov
          * （12 字节），写 20 会把它后面的计数指令整段覆盖掉 —— 实测就是"挂上就崩"。 */
         portal_inline_hook_ex(slot, base, v, g_hook_name_buf[slot], g_hook_rec_fns[slot],
                               &g_hook_resume_rec[slot], 12);
-        slot++;
     }
-    g_hook_rec_next = slot;
 }
 
 /** touch 钩子：带一次调用，但被调者只 `ret`（隔离"C 函数内部"与"发起调用"） */
@@ -5034,7 +5479,7 @@ static void portal_hook_null_list(const char *list) {
 }
 
 /** 解析 `a,b,c` 形式的 vaddr 列表并逐个挂钩 */
-static void portal_hook_list(const char *list, const char *module_sub) {
+static void portal_hook_list_ex(const char *list, const char *module_sub, const char *prefix) {
     uintptr_t base = 0;
     if (module_sub != NULL) {
         base = portal_module_base(module_sub);
@@ -5069,14 +5514,35 @@ static void portal_hook_list(const char *list, const char *module_sub) {
         /* ⚠️ 名字要存进**静态**缓冲：之前把栈上 nm 的地址存进 g_hook_name，
          * 出函数就悬空，日志里打出来是乱码。 */
         snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "%s+0x%lx",
-                 module_sub ? module_sub : "real", v);
-        portal_inline_hook(slot, base, v, g_hook_name_buf[slot]);
+                 prefix ? prefix : (module_sub ? module_sub : "real"), v);
+        /* ⚠️ `portal_inline_hook` 的约定是 **1 = 成功、0 = 失败**（不是常见的 0/负）。
+         * 第一版按"非 0 即失败"写，于是**装成功反而把名字清了** —— 表现是日志里
+         * "已挂钩[0] …" 和 "开门闸：没有装上" 同时出现（自造的假阴性）。 */
+        int rc = portal_inline_hook(slot, base, v, g_hook_name_buf[slot]);
+        if (rc == 0) {
+            /* **装不上就必须把槽位还回去**（实测踩到）：`portal_inline_hook` 会因为
+             * "前 4 条里有 PC 相对指令、不能重放"而拒绝 —— 那时槽位既没被真正占用，
+             * 名字却留着了。后果不止是日志难看：`portal_mark_cfg_slot`/`gate` 那些
+             * **按名字判定**的标记会认一个根本不存在的钩子，于是"闸门"挂在一个
+             * 别人的槽上，被无关函数触发（实测就是改用途位那条被当成了请求入口）。 */
+            g_hook_name[slot] = NULL;
+            g_hook_name_buf[slot][0] = '\0';
+        } else {
+            portal_mark_cfg_slot(slot, g_hook_name_buf[slot]);
+        }
     }
 }
-#else
+
 static void portal_hook_list(const char *list, const char *module_sub) {
-    (void)list; (void)module_sub;
+    portal_hook_list_ex(list, module_sub, NULL);
+}
+#else
+static void portal_hook_list_ex(const char *list, const char *module_sub, const char *prefix) {
+    (void)list; (void)module_sub; (void)prefix;
     LOGE("入口挂钩只有 arm64 实现：本机是 32 位，跳过");
+}
+static void portal_hook_list(const char *list, const char *module_sub) {
+    portal_hook_list_ex(list, module_sub, NULL);
 }
 static void portal_hook_null_list(const char *list) {
     (void)list;
@@ -5531,6 +5997,7 @@ static void load_real_hal(void) {
             } else {
                 snprintf(g_hook_name_buf[g_scrub_slot], sizeof(g_hook_name_buf[g_scrub_slot]),
                          "camera.oemlayer.so+0x%lx(scrub)", g_opt_scrub_vaddr);
+                portal_mark_cfg_slot(g_scrub_slot, g_hook_name_buf[g_scrub_slot]);
                 portal_inline_hook(g_scrub_slot, ob, g_opt_scrub_vaddr,
                                    g_hook_name_buf[g_scrub_slot]);
                 LOGI("改用途位钩子：槽 %d ← oemlayer+0x%lx（usage_patch=%d）", g_scrub_slot,
@@ -5558,6 +6025,8 @@ static void load_real_hal(void) {
 
 __attribute__((constructor)) static void on_load(void) {
     load_options();
+    /* 闸门开关读一次就定死：热路径上只读一个 bool */
+    g_opt_gate_on = (g_opt_gate != 0);
     load_real_hal();
     if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0') {
         pthread_t th;
@@ -5566,6 +6035,85 @@ __attribute__((constructor)) static void on_load(void) {
         } else {
             LOGE("注入线程创建失败");
         }
+    }
+    /* 配置类入口：装**通用**桩（会调到 C），命中时给注入线程发"流变了"事件。
+     * 缺省不装 ⇒ 事件驱动退化为 15 秒安全带，功能不受影响。 */
+#if defined(__aarch64__)
+    if (g_opt_gate_sym[0] != '\0') {
+        char tmp[192];
+        snprintf(tmp, sizeof(tmp), "%s", g_opt_gate_sym);
+        char *colon = strchr(tmp, ':');
+        if (colon == NULL) {
+            LOGE("开门闸：vv_gate_sym 格式应为 <模块子串>:<符号名>（收到 %s）", tmp);
+        } else {
+            *colon = '\0';
+            uintptr_t a = portal_module_sym(tmp, colon + 1);
+            if (a == 0) {
+                LOGE("开门闸：按符号找不到入口（%s:%s）", tmp, colon + 1);
+            } else {
+                uintptr_t base = portal_module_base(tmp);
+                unsigned long off = (unsigned long)(a - base);
+                int slot = portal_hook_slot_alloc();
+                if (slot < 0) {
+                    LOGE("开门闸：槽位用完了");
+                } else {
+                    snprintf(g_hook_name_buf[slot], sizeof(g_hook_name_buf[slot]), "gate+0x%lx", off);
+                    if (portal_inline_hook(slot, base, off, g_hook_name_buf[slot]) == 0) {
+                        g_hook_name[slot] = NULL;
+                        g_hook_name_buf[slot][0] = '\0';
+                        LOGE("开门闸：入口不可重放（%s+0x%lx）⇒ 本次没有闸门", tmp, off);
+                    } else {
+                        g_hook_is_gate[slot] = true;
+                        g_gate_slot = slot;
+                        LOGI("开门闸：按符号装上 → %s+0x%lx（槽 %d，超时 %d ms）", tmp, off, slot,
+                             g_opt_gate_timeout_ms);
+                    }
+                }
+            }
+        }
+    }
+    if (g_opt_gate_vaddr[0] != '\0' && g_gate_slot < 0) {
+        char tmp[96];
+        snprintf(tmp, sizeof(tmp), "%s", g_opt_gate_vaddr);
+        const char *mod = NULL; /* 默认 = 真件 HAL 基址 */
+        char *off = tmp;
+        char *colon = strchr(tmp, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            mod = tmp;
+            off = colon + 1;
+        }
+        portal_hook_list_ex(off, mod, "gate");
+        /* 记下这个钩子占的槽位。**只认真正装上的**（装不上时槽位已经被还回去了） */
+        g_gate_slot = -1;
+        for (int i = 0; i < PORTAL_HOOK_MAX; i++) {
+            /* 判据只用"标记过 + 名字还在"：`g_hook_is_gate` 只在**装成功**时被置位，
+             * 而失败路径会把名字清掉（见 portal_hook_list_ex）。第一版还多要求了
+             * `g_hook_resume[i] != 0`，那是个**没被写过的**数组项（通用桩用的是别的
+             * resume 数组）⇒ 明明装上了却报"没装上"（自造的假阴性）。 */
+            if (g_hook_is_gate[i] && g_hook_name[i] != NULL) {
+                g_gate_slot = i;
+                LOGI("开门闸：装在槽 %d（每帧的请求入口，超时 %d ms）", i, g_opt_gate_timeout_ms);
+                break;
+            }
+        }
+        if (g_gate_slot < 0) {
+            LOGE("开门闸：**没有装上**（地址不可重放或已被占用）⇒ 本次没有闸门，行为与关闭时一致");
+        }
+    }
+#endif
+    if (g_opt_vv_stream_vaddr[0] != '\0') {
+        char tmp[96];
+        snprintf(tmp, sizeof(tmp), "%s", g_opt_vv_stream_vaddr);
+        const char *mod = "camera.oemlayer.so";
+        char *off = tmp;
+        char *colon = strchr(tmp, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            mod = tmp;
+            off = colon + 1;
+        }
+        if (g_opt_vv_stream_vaddr[0] != '\0') portal_hook_list_ex(off, mod, "cfg");
     }
     if (g_opt_hook_dev_vaddrs[0] != '\0') {
         portal_hook_rec_list(g_opt_hook_dev_vaddrs, "camx.device-impl.so");

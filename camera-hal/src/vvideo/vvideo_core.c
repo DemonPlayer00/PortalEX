@@ -441,9 +441,12 @@ struct vvideo_sb *vvideo_mount(const char *type, const char *dir, const char *de
 
     /* **不持锁调用后端**：后端 mount() 会 open/mmap 文件，可能慢；
      * 此时挂载点还没挂上，别的线程看不到半成品。 */
+    errno = 0; /* 清掉上一次失败留下的 errno，否则下面会报出**别人的**错误码 */
     struct vvideo_sb *sb = fs->mount(fs, dev, opts);
     if (sb == NULL) {
-        int e = vv_errno ? vv_errno : EIO;
+        /* 后端自己设的 errno 才是真相；vv_errno 只是兜底 ——
+         * 第一版优先报 vv_errno，结果把上一次失败的 5 报成了这一次的原因（误导性诊断）。 */
+        int e = errno != 0 ? errno : (vv_errno ? vv_errno : EIO);
         vvideo_logf(VV_LOG_ERR, "挂载失败：%s 后端 mount() 没给出 super_block（dev=%s errno=%d）",
                     type, dev ? dev : "-", e);
         vv_errno = e;
