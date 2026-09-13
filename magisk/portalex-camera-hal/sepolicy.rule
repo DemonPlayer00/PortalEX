@@ -27,3 +27,14 @@ allow untrusted_app shell_data_file dir { search getattr }
 # 实测（ACE5）：少了这一条，shim 的四个候选路径全部 fopen 失败并报"都不存在"，
 # 而 dmesg 里看不到对应 avc（被 dontaudit 吞掉）—— 排查时极容易误判成"文件没写进去"。
 allow hal_camera_default shell_data_file dir { search }
+
+# --- ACE5 的 /odm overlay 路线：overlay 的 upper/work 落在 **tmpfs** 上，HAL 域必须能穿过它 ---
+# 实测（冷启动，KernelSU Next / ColorOS 16）：少了这三条，provider 会**崩溃重启循环**：
+#     I CamxLoad: find_in_path: Find camera soc impl file /odm/lib64/hw/camera.oemlayer.so
+#     E CamxLoad: find_in_path: Can't access file /odm/lib64/hw/camera.oemlayer.so
+#     F DEBUG   : __cfi_slowpath  →  /odm/lib64/hw/camera.oemlayer.so (OemLayer::init()+312) SIGSEGV
+# 运行时手工部署时走的是 `ksud sepolicy patch`（见 scripts/… 与设备上的 ace5_deploy4.sh），
+# 所以这条一直没暴露；只在**开机路径**上才现形。
+allow hal_camera_default tmpfs dir { search getattr read open }
+allow hal_camera_default tmpfs file { read open getattr map execute }
+allow hal_camera_default tmpfs lnk_file { read getattr }
