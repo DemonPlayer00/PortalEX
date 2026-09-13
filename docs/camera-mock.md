@@ -4011,3 +4011,29 @@ GPU 扫堆：命中 0x7597f87180（头 version=12 numFds=2 numInts=26，fd=250 �
 
 **量具备注**：自检里给**非 YUV**（RGBA）的 AHB 用 `GL_TEXTURE_EXTERNAL_OES` 绑 FBO 是不对的
 （RGB 系 AHB 要用 `GL_TEXTURE_2D`），所以那行"把它当 FBO 画一笔 → 失败"**不是结论**（第 9/10 轮各踩一次同类）。
+
+### 63.10 第 12 轮：`desc` 不是原因 —— **18 组候选全被拒**，问题在"谁去解析这个句柄"
+
+把 `createFromHandle` 的 `desc` 当变量逐个试（`format ∈ {0x22, 0x23, 0x1}` × `usage ∈ {0x10030322,
+去掉 UBWC 位, 0x10020100, 0x10030022, 0x30322, 0x100|0x200}` = 18 组）：
+
+```
+GPU 自检(a)：句柄 0x7c23bfe100 头 version=12 numFds=2 numInts=26
+GPU 自检(a)：createFromHandle(format=0x22 usage=0x10030322) rc=-22
+GPU 自检(a)：createFromHandle(format=0x22 usage=0x30322)    rc=-22
+GPU 自检(a)：createFromHandle(format=0x22 usage=0x10020100) rc=-22
+…（18 组全 rc=-22，含最保守的 format=0x1 / usage=0x100|0x200）
+```
+⇒ **不是 desc 的问题**。句柄的形态与框架自己分配的一模一样（`12/2/26`）、它引用的 fd 与靶**是同一块
+dma-buf**（`st_ino` 相同，§63.9），可 `AHardwareBuffer_createFromHandle` 就是不认。
+
+**最可能的解释（可测）**：`createFromHandle` 与 EGL 的裸句柄导入**都要经过 mapper/分配器**
+（`android.hardware.graphics.allocator` / `libgralloccore`）。相机 provider 是 **vendor 进程**
+（`hal_camera_default`），它对这个服务/设备的访问可能在 SELinux 或命名空间上被挡住 ——
+那样两条路的失败（`-22` 与 `0x300c`）就是**同一个原因**，而不是"句柄不对"。
+**这正是本仓库已有的手段能管的**（部署脚本里用 `ksud sepolicy patch` 给 `hal_camera_default`
+放过 tmpfs 读写）。下一步：给 `hal_camera_default` 补 graphics allocator/mapper/gpu 的 allow 规则再测。
+
+**量具备注（别再踩）**：AHB 的 FBO 检查要 **`GL_TEXTURE_EXTERNAL_OES` + 先 `eglMakeCurrent`** ——
+目前试过的两种组合各缺一半（§63.10 的 `target=0xde1 → 不完整` 与 §63.8 的"没 makeCurrent"），
+所以那两行"FBO 不完整"**都还不是结论**；`eglCreateImageKHR` 成功（`0x3000`）才是。
