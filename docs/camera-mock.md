@@ -4538,3 +4538,19 @@ manifest → {"version":1,"enabled":true,"tagFilter":[],"targets":[],…}
 这个脚本"写 `targets`"的做法**语义错误**，应改为：
 保留"查看"能力，写入路径改成**调用受支持的播种**（`seed-camera-mock.sh GRANT_PKG=…`），
 或至少加醒目警告 + `--clear` 时恢复 `tagFilter:[]`。
+
+### 70.7 脚本语义修正：`set-camera-mock-targets.sh` 改为"查看 + 委派受支持播种"（第 31 轮）
+
+它的第一版**语义是错的**（§70.6 已实测证明）：直接改 `manifest.targets` 并保留 `tagFilter` ——
+而真实启用机制是**授 content URI 权限**，且 `tagFilter` 应为 `[]`。留在仓库里会继续误导
+（包括我自己），所以本轮直接改掉：
+
+| 现在的能力 | 行为 |
+|---|---|
+| 无参数 | **查看**：`enabled / tagFilter（标注应为 []）/ targets（标注空是正常的）/ points / 存储内视频` |
+| `--grant <包名>` | **委派受支持播种** `seed-camera-mock.sh GRANT_PKG=<包名>`（从 master 用 `git show` 取到 `/tmp/appacc/`），
+一次性完成"播种 + 开开关 + 授权" |
+| `--uri <包名>` | 试直接补授 URI 权限（provider 支持时），失败则提示改用 `--grant` |
+
+并在文件头部把**两处错误的实测结论**写死（`targets` 不是启用列表、`tagFilter` 应为空），
+免得下一个人（或下一轮的我）再照旧脚本走一遍弯路。
