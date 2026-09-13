@@ -4269,3 +4269,24 @@ E PortalCamShim: 注入：打不开模板 /data/local/tmp/portalex/rear_tpl.raw�
 **顺带（同轮修掉）**：`shim_open` 一发生就置 `g_rescan_now`，注入线程立刻重扫靶 ——
 真机日志 `shim_open 被调用` 后 **5 毫秒**即 `收到 shim_open（新会话开始）⇒ 立刻重扫靶`，
 治的是"开相机后十几秒才生效"（根因：换靶快路依赖 VVideo 事件层，而部署里没挂那层）。
+
+### 67. 640×480 两份模板换成**真实视频帧**（第 21 轮，无人值守首轮）
+
+把占位纯色换成真帧的流程（已跑通，可复用）：
+```
+源：/data/system/portalex-camera/videos/<clip>.mp4（app 层 store 里的素材）
+→ ffmpeg -i clip.mp4 -frames:v 1 -vf scale=640:480 -pix_fmt nv12 -f rawvideo frame.nv12   # 460,800 字节
+→ 铺进模板：Y = frame[0 : 640*480]（写 0 偏移，480 行），480..511 行复制最后一行补齐
+            UV = frame[640*480 : +640*240]（写 640*512 = 327,680 偏移）
+→ 写 /data/vendor/camera/tpl_<size>.raw（rm -f → cat → chmod 666 → chcon vendor_camera_data_file）
+→ 重新部署（模板在线程启动时加载）→ 真机验证
+```
+**判据对照**（人脸页中央区，同一 App 同一页面）：
+| 模板 | 截图 mean | std |
+|---|---|---|
+| 纯色占位（Y=235/UV=128） | 240.1 | **0.0**（全平） |
+| **真实帧**（fixture-video 一帧） | 240.1 | **20.7** |
+
+⇒ 内容确实换成了帧（std 从 0 变 20.7）。⚠️ **判据要改进**：截图裁切把人脸页 UI 一起算进去了，
+导致与源帧的相关只有 +0.121（UI 覆盖 + 缩放）。下一轮要么只截**取景器区域**，
+要么直接量"provider 侧那块缓冲的内容"（`bufmap=1` 或 `raw_dump`）与源帧比 NCC —— 后者不受 UI 干扰。
