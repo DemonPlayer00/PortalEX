@@ -115,10 +115,39 @@ PYSH
 RM=$(echo "$R" | awk '{print $1}')
 RS=$(echo "$R" | awk '{print $2}')
 say "  取景区 mean/std = $RM / $RS"
+# 复原也要**带重试**（§86.2/§87 的同一条经验）：设备跑过多次强制重启之后，provider 会话会漂，
+# 表现是"靶集掉到 0 块、取景区一直黑"，再重启一次就回来。判 FAIL 前先按顺序排查：
+# 相机模式 → 靶集是否为 0 → 才轮到注入逻辑。
+rtry=1
+while [ $rtry -le 3 ]; do
+    if awk "BEGIN{exit !($RS < 8 && $RM > 60)}"; then break; fi
+    rtry=$((rtry + 1))
+    say "  （复原第 $rtry 次尝试：重启 provider + 重拉相机）"
+    adb shell am force-stop $PKG >/dev/null 2>&1
+    adb shell su -c "setprop ctl.restart vendor.camera-provider; sleep 6" >/dev/null 2>&1
+    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+    sleep 1
+    adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    sleep 12
+    adb shell input tap 600 2140 >/dev/null 2>&1
+    sleep 5
+    adb shell su -c "screencap -p /data/local/tmp/hpc.png" >/dev/null 2>&1
+    adb pull /data/local/tmp/hpc.png /tmp/hpc.png >/dev/null 2>&1
+    R=$(python3 - <<'PYSH'
+from PIL import Image, ImageStat
+im = Image.open('/tmp/hpc.png').convert('L'); w, h = im.size
+st = ImageStat.Stat(im.crop((int(w*0.05), int(h*0.16), int(w*0.95), int(h*0.42))))
+print("%.1f %.1f" % (st.mean[0], st.stddev[0]))
+PYSH
+)
+    RM=$(echo "$R" | awk '{print $1}')
+    RS=$(echo "$R" | awk '{print $2}')
+    say "    取景区 mean/std = $RM / $RS"
+done
 if awk "BEGIN{exit !($RS < 8 && $RM > 60)}"; then
     say "  PASS：复原成功（取景器又是均匀的虚拟画面）"
 else
-    say "  FAIL：复原后取景器不是我们的画面 —— 现场没清干净"
+    say "  FAIL：复原后取景器不是我们的画面 —— 现场没清干净（已重试 3 次）"
     FAIL=1
 fi
 
