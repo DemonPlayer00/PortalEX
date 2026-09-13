@@ -4554,3 +4554,20 @@ manifest → {"version":1,"enabled":true,"tagFilter":[],"targets":[],…}
 
 并在文件头部把**两处错误的实测结论**写死（`targets` 不是启用列表、`tagFilter` 应为空），
 免得下一个人（或下一轮的我）再照旧脚本走一遍弯路。
+
+### 70.8 第 32 轮：模块只出现在 **system_server** 侧；夹具进程侧**没有任何模块日志**
+
+用最宽的过滤查了一轮（`logcat | grep LSPosedFramework`，排除 system 前缀、再按 portalex/load/init/hook 收窄）：
+
+| 事实 | 证据 |
+|---|---|
+| PortalEX **确实被授权注入夹具** | LSPosed 作用域表：`[('moe.fuqiuluo.portalex','moe.fuqiuluo.camerafixture')]` |
+| 夹具进程**在跑** | `pidof moe.fuqiuluo.camerafixture` = 14281 |
+| 但**所有** `[Portal]` 日志都来自 **pid 3795 = system_server** | 只有 `摄像头控制面：startOperation / finishOperation uid=10469 pkg=…` 两类 |
+| 夹具进程侧**没有任何模块日志** | 按 `lsposed` + `camerafixture` / `load|init|hook` 过滤均无命中 |
+
+⇒ 读法（**待下一轮确认**，我不当结论）：控制面（system_server 侧）在工作，
+但**模块在夹具进程里的那一半没有产出任何日志** —— 要么它没被加载进该进程，
+要么它的决策链在**第一道门之前**就静默返回了（脚本注释："七道前置，任何一条不满足都会安静地不拦截"）。
+下一轮的判别很具体：**看 LSPosed 有没有把模块 dex 注入夹具进程**（进程级注入日志 / 该进程内的
+`[Portal]` 行是否存在），据此把"模块没加载"与"加载了但前置不满足"分开。
