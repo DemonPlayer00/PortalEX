@@ -4740,3 +4740,57 @@ fun startFeeding(packageName: String?): Int {
 ① 读 `startPlayer`（解码器配置 / GL 上下文 / 首帧投递）里所有**静默返回**的分支；
 ② 在模块日志里按 `GL`、`解码`、`Drain` 等关键词 grep 同一时间窗（23:17:20–23:17:23），
    看有没有伴生的失败行 —— 这一步能直接指出是哪一步（而不是继续猜）。
+
+---
+
+## 71. 移交结论：应用层"喂帧不出首帧"的定位（第 38 轮固化）
+
+> 本条是**给 master 线（应用层 LSPosed 模块）的移交材料**：结论、证据、已排除项、下一步判据。
+> 本分支（feature/hal-vcam）不在此改动应用层代码。
+
+### 71.1 事实（真机、有日志）
+
+失败发生在 `com.bxkj.student` **自己的进程里**（uid 10468，LSPosed 模块日志时间窗
+`23:17:20.698 – 23:17:23.220`）：
+
+```
+[Portal]        摄像头模拟：开始播放 fixture-clip（时长 80…）
+[Portal][DEBUG] 摄像头模拟：合成照片就绪（2304x1728…）
+[Portal][DEBUG] 摄像头模拟：provider 调用失败 Unknown authority moe.fuqiuluo.p…
+[Portal][WARN]  静默失败记账 CAMERA_MOCK(摄像头模…)
+[Portal][WARN]  摄像头模拟：换面后 2500ms 内没有出帧（应用侧可能是黑屏）；素材来源=cache，取件耗时=0ms
+```
+
+日志文件：`/data/adb/lspd/log/modules_*.log`（**不是 logcat** —— 模块 App 进程日志不在 logcat 里，
+这一点此前让我误判过数轮）。本窗统计：`摄像头模拟` 45 条、`静默失败记账` 2 条、`camerafixture` 34 条。
+
+### 71.2 已排除（每条都有依据）
+
+| 假设 | 排除依据 |
+|---|---|
+| 作用域没给 / 模块没注入 | LSPosed `scope` 有 `portalex→com.bxkj.student`；且 App 进程内有模块日志产出 |
+| hook 没装上 | `CameraMockHooks.install()` 无条件安装，各族 `runCatching`+`Logger.error`+`PortalDiag`；现场无安装失败 |
+| 总开关没开 / 目标清单挡 | `manifest.enabled=true`；且 `enabledFor()` 里 `targets.isEmpty() ⇒ true`（**空清单是全放行**） |
+| 配置/素材拿不到 | 日志明写 `素材来源=cache，取件耗时=0ms` |
+| provider 不可达是主因 | `CameraMockClient.kt:233` 的 `Unknown authority` 是**设计内降级**（中转通道顶上） |
+| 输出面无效 / 一个面都喂不了 | `startFeeding()` 里 `started==0` 会打"没有任何输出面可以喂帧"——**该条未出现**，而首帧看门狗（仅 `started>=1` 时启动）**出现了** |
+| 素材缓存丢了 / 播放抛异常 | `startPlayer` 里会吭声的两条（`素材缓存丢了`、`播放失败`）**均未出现** |
+| 冷启动未热 | `prepare` 的"配置缓存未热+主线程⇒本次不拦截"分支**未出现**（配置从 cache 命中） |
+
+### 71.3 结论（收窄到一环）
+
+**换面成功、素材到位、播放器启动成功、没有任何异常——但 2500ms 内没有一帧到达消费者。**
+`firstFrame` 始终为 false（`CameraMockController.watchFirstFrame`，
+`CameraMockController.kt:248–258`）。⇒ 断点在 **`startPlayer`（`CameraMockController.kt:271` 起）
+内部"帧投递"这一段**：解码 → GL 纹理/绘制 → 排水面 → 消费者。
+
+这与 HAL 线 §62–§69 的结论**同构**：两条线都是"**换面成功、喂帧失败**"。
+
+### 71.4 下一步（给 master 线，按代价）
+
+1. 读全 `startPlayer`（`CameraMockController.kt:271–320`）：找出**所有不吭声的路径**，特别是
+   "解码器输出 → GL 绘制 → 排水面"之间**没有日志**的那几步；
+2. 确认 `firstFrame` 究竟由谁置位（哪个回调/哪一帧）：如果置位点在一条**消费者主动取样**的路径上，
+   那么"消费者（人脸 SDK）不取样"与"我们没投递"在日志上无法区分 —— 需要**在投递侧自己加一条计数日志**；
+3. 用 `DrainTextureSurface`/GL 侧的自检（进程内 GL 可用性预检已放行，但**放行 ≠ 真的能画**）补一条
+   "GL 首帧成功/失败"的显式日志，把静默失败变成可观测（这正是本仓库 `PortalDiag` 的用途）。
