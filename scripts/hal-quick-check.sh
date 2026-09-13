@@ -90,7 +90,19 @@ adb shell monkey -p $PKG_CAM -c android.intent.category.LAUNCHER 1 >/dev/null 2>
 sleep 10
 MEAN=0; SD=999
 try=1
-while [ $try -le 3 ]; do
+while [ $try -le 5 ]; do
+    # **第 3 次之前先做现场复原**（§86.2）：靶集掉到 0 块时（provider 会话漂移，反复
+    # force-stop/重启后常见）取景区会一直黑 —— 那不是注入坏了，重启一次就回来。
+    # 判 FAIL 的顺序固定为：**先看相机模式 → 再看靶集是不是 0 → 最后才怀疑注入逻辑**。
+    if [ $try -eq 3 ]; then
+        say "  （前两次都没起来 ⇒ 按 §86.2 复原现场：重启 provider + 重拉相机）"
+        adb shell am force-stop $PKG_CAM >/dev/null 2>&1
+        adb shell su -c "setprop ctl.restart vendor.camera-provider; sleep 6" >/dev/null 2>&1
+        adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+        sleep 1
+        adb shell monkey -p $PKG_CAM -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+        sleep 10
+    fi
     adb shell input tap 600 2140 >/dev/null 2>&1   # 底部模式行里的"照片"
     sleep 5
     read -r MEAN SD <<EOF
@@ -103,7 +115,7 @@ done
 if awk "BEGIN{exit !($SD < 8 && $MEAN > 60)}"; then
     say "  PASS：均匀且够亮 ⇒ 取景器是我们的画面（不是真实场景）"
 else
-    say "  FAIL：取景区不均匀/太暗 ⇒ 没接管、注入没生效，**或相机不在照片模式**（先看模式再看注入）"
+    say "  FAIL：取景区不均匀/太暗 ⇒ 先看相机模式、再看靶集是不是 0（§86.2 的复原法），最后才怀疑注入"
     FAIL=1
 fi
 LAT=$(adb logcat -d 2>/dev/null | grep -a "首帧注入延迟" | tail -1 | sed 's/.*延迟：//; s/ ms.*//')
