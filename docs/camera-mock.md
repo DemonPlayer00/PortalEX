@@ -4411,3 +4411,26 @@ I CameraFixture: [Fixture] sample #6 sig=0504050505… mean=05040b (+5002ms)
 ⚠️ **这一行还不能当判据**：帧的签名近乎均匀且偏暗（`mean=05040b`），
 "是不是我们的模拟内容"要靠**夹具自己的验收脚本**（`scripts/verify-app-hook.sh` 的 `list|config|legacy*` 变体）
 或夹具界面里的画面来判 —— 下一轮做这件事，然后再把真实目标（`com.bxkj.student`）加进去复测。
+
+### 70.2 把"改配置"脚本化：`scripts/set-camera-mock-targets.sh`（第 26 轮）
+
+后续每一轮都要动这个配置，所以固化成一个脚本（含**备份/回滚/持久性校验**）：
+
+```bash
+sh scripts/set-camera-mock-targets.sh                     # 只看：enabled / tagFilter / targets / points
+sh scripts/set-camera-mock-targets.sh pkgA [pkgB ...]     # 设为目标包
+sh scripts/set-camera-mock-targets.sh --clear             # 清空 targets
+sh scripts/set-camera-mock-targets.sh --restore           # 回滚到上次备份
+```
+
+**实机验证**（本轮跑的）：
+```
+当前 manifest： enabled=True tagFilter=['fixture'] targets=['moe.fuqiuluo.camerafixture'] points=[('fixture-point',1)]
+待写入 targets = ['moe.fuqiuluo.camerafixture']
+写入后 targets = ['moe.fuqiuluo.camerafixture']
+6 秒后 targets = ['moe.fuqiuluo.camerafixture']
+✅ 持久（未被缓存盖回）
+文件：system system u:object_r:system_data_file:s0
+```
+脚本内置的三条护栏：① 备份只做一次（避免把改坏的状态当备份）；② **原地覆盖**保标签；
+③ 复核不通过就**直接失败并提示改走 relay 的 `PUT_CONFIG`**（不留下一个看起来成功的状态）。
