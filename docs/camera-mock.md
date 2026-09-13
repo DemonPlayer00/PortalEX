@@ -4443,3 +4443,19 @@ sh scripts/set-camera-mock-targets.sh --restore           # 回滚到上次备�
   所以"用 UI 文本判"这条路不成立 —— 判据得换成**帧内容**（签名/均值）或它打印的其它日志；
 - 于是往上游查：relay 存储（`gate.txt` / `sizes.txt` / `videos/`）、app 进程与 `CameraRelayService`、
   以及模块侧有没有为夹具请求配置/视频。**结论待本轮输出。**
+
+**本轮的上游排查结果（把断点钉住了）**：
+| 环节 | 状态 |
+|---|---|
+| relay 存储 | `gate.txt=1` ✓、`sizes.txt` 有 `fixture-video=16740` ✓、`videos/fixture-video.mp4` 在 ✓ |
+| **PortalEX 应用进程** | **`pidof moe.fuqiuluo.portalex` 为空、无 `CameraRelayService`** ← **断点** |
+| 模块侧（注入夹具） | **控制面确实拦到了**：`[Portal] 摄像头控制面：startOperation / finishOperation uid=10469 pkg=moe.fuqiuluo.camerafixture` |
+| 帧内容 | 仍是 4~6 的近均匀暗（实景），不是 `fixture-clip` 条纹 |
+
+⇒ **读法**：控制面（拦截相机会话）已工作，但**视频体是由 PortalEX 应用侧通过 `openFile` 发 fd 的**
+（被注入进程没有文件路径权限，只能拿 fd）——**应用不在跑 ⇒ 拿不到视频 fd ⇒ 静默退回实景帧**。
+这也解释了为什么"配置齐全、作用域正确、控制面命中"却依然看不到模拟画面。
+
+**下一轮**：① 把 PortalEX 应用进程拉起来（前台或起它的服务），重复夹具这一次采样，看签名是否变成条纹素材；
+② 若确实需要应用常驻，则把这条前提写进验收与部署脚本（`set-camera-mock-targets.sh` 旁边加一个"确保泵在跑"的检查）；
+③ 复测通过后再把 `com.bxkj.student` 加进 `targets`。
