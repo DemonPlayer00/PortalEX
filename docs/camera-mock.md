@@ -4434,3 +4434,12 @@ sh scripts/set-camera-mock-targets.sh --restore           # 回滚到上次备�
 ```
 脚本内置的三条护栏：① 备份只做一次（避免把改坏的状态当备份）；② **原地覆盖**保标签；
 ③ 复核不通过就**直接失败并提示改走 relay 的 `PUT_CONFIG`**（不留下一个看起来成功的状态）。
+
+### 70.3 第 27 轮：`targets` 填上后，夹具**仍未拿到模拟内容** —— 断点排查进行中
+
+- 夹具（`moe.fuqiuluo.camerafixture`）被拉起后持续采样：`[Fixture] sample #N sig=05050505… mean=05040b`，
+  签名一直是 4~6 的**近均匀偏暗**值 ⇒ 看起来是**实景暗场**，不是 `fixture-clip.mp4` 的条纹素材；
+- 它自己的验收页（`ListSessionActivity`）**没有文本节点**（只渲染 surface），
+  所以"用 UI 文本判"这条路不成立 —— 判据得换成**帧内容**（签名/均值）或它打印的其它日志；
+- 于是往上游查：relay 存储（`gate.txt` / `sizes.txt` / `videos/`）、app 进程与 `CameraRelayService`、
+  以及模块侧有没有为夹具请求配置/视频。**结论待本轮输出。**
