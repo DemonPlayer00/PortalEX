@@ -695,6 +695,21 @@ static bool g_opt_gate_on = false;
  *  而"逆 ISP 合成一张自然颜色的 RAW"不是一朝一夕的事 —— 那就反过来：
  *  **先把真帧取下来，改一处，再喂回去**。人眼看到的仍是自然照片，改动处就是我们的。 */
 static char g_opt_raw_dump[256] = {0};
+/**
+ * `cal_dump=<目录>`：**标定用**——对本次会话自动认领的**每一个尺寸**，各自落一份"现场帧"
+ * 到 `<目录>/cal_<字节数>.raw`（每个尺寸只落一次，落完才开始注入）。
+ *
+ * 为什么需要它（§75）：能写对一块面的前提是知道它的**平面布局**，而布局只能从"这块面真实的
+ * 一帧"里量出来。手工做法是先在 cfg 里写死尺寸再 `raw_dump=`，于是每接一个新应用都要人先
+ * 猜尺寸 —— 与 `auto_tpl` 的"任意尺寸"自相矛盾。这个开关把那份工作交给机器：
+ * 认领到什么尺寸，就落什么尺寸的现场帧。
+ */
+static char g_opt_cal_dump[200] = {0};
+/** `cal_only=1`：**只测绘、不注入**——认领靶、把现场帧落盘，然后一个字节都不写。
+ *  为什么必须有这个模式（本轮实测踩的坑）：第一次落盘把"刚认领、ISP 还没写"的全零缓冲
+ *  当成了现场帧（4,198,400 字节全 0，`mean=0.00 std=0.00`）—— 于是"布局分析"分析的是空气。
+ *  有了它，落盘前可以安心等这一块变活（判据：4 个采样窗口在 120ms 内发生变化）。 */
+static int g_opt_cal_only = 0;
 /** `res_hook=<vaddr>` + `res_module=<模块名>` + `res_writer=1`：
  *  **在"结果投递"这一刻写缓冲**，而不是盲目死循环。
  *  为什么必须这样：录像的编码器是"ISP 写完 → 立刻读"，盲目循环的写入大多落在
@@ -991,6 +1006,10 @@ static void load_options(void) {
             g_opt_req_watch = atoi(val);
         } else if (strcmp(key, "raw_dump") == 0) {
             snprintf(g_opt_raw_dump, sizeof(g_opt_raw_dump), "%s", val);
+        } else if (strcmp(key, "cal_dump") == 0) {
+            snprintf(g_opt_cal_dump, sizeof(g_opt_cal_dump), "%s", val);
+        } else if (strcmp(key, "cal_only") == 0) {
+            g_opt_cal_only = atoi(val);
         } else if (strcmp(key, "res_hook") == 0) {
             snprintf(g_opt_res_hook, sizeof(g_opt_res_hook), "%s", val);
         } else if (strcmp(key, "res_module") == 0) {
@@ -1031,9 +1050,10 @@ static void load_options(void) {
     }
     fclose(f);
     LOGI("开关：vvideo=%d vv_mount=%s", g_opt_vvideo, g_opt_vv_mounts[0] ? g_opt_vv_mounts : "(无)");
-    LOGI("开关：dump=%d ops_index=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d auto_tpl=%d auto_model=%d auto_planar=%d photo_mirror=%d cam=%s src=%s",
+    LOGI("开关：dump=%d ops_index=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d auto_tpl=%d auto_model=%d auto_planar=%d cal_only=%d photo_mirror=%d cam=%s src=%s",
          g_opt_dump, g_opt_ops_index, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze,
-         g_opt_pattern, g_opt_auto_tpl, g_opt_auto_model, g_opt_auto_planar, g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
+         g_opt_pattern, g_opt_auto_tpl, g_opt_auto_model, g_opt_auto_planar, g_opt_cal_only,
+         g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
          g_opt_src_file[0] ? g_opt_src_file : "(图案)");
 }
 
@@ -4481,6 +4501,12 @@ static void portal_mock_parse(void) {
  * 整块 0x80 都是一块均匀灰。
  * ------------------------------------------------------------------ */
 
+/* 现场帧落盘的采样工具（定义在下方 raw_dump 段；标定落盘要用，故前置声明） */
+#define PORTAL_DUMP_WIN 4
+#define PORTAL_DUMP_WLEN 128
+static void portal_dump_win(const unsigned char *m, unsigned long long sz, int w,
+                            unsigned char *dst);
+
 #define PORTAL_AUTO_MAX 24
 #define PORTAL_AUTO_HIST 64
 
@@ -4489,6 +4515,10 @@ typedef struct {
     uint32_t format, w, h, usage, max_buffers;
     size_t stride;  /* 平面布局步长（0 = 布局未知） */
     int mode;       /* 0 = 未绑定；1 = NV12 平面；2 = YUYV；3 = 布局未知（纯色） */
+    /** **内容校验**（认领那一刻做，见 build_targets）：0 = 还没查；1 = 像 YUV 帧；
+     *  -1 = 不像（ISP 中间缓冲/RAW）⇒ 永不接管。 */
+    int checked;
+    int ok;
     const char *how; /* 绑定依据（日志里要能复算） */
 } portal_auto_entry;
 
@@ -4649,6 +4679,43 @@ static const char *portal_auto_model_name(int idx) {
     }
 }
 
+/**
+ * 这块 dmabuf **像不像"一帧 YUV"**：色度面在任何场景下都长期贴着 128（±8）。
+ *
+ * 为什么必须有这条校验（本轮真机实测的教训）：只看"块数 = max_buffers + 字节数接近估算"
+ * 会把**ISP 中间缓冲**当成应用的面。实测夹具那条 `4,198,400` 的现场帧——
+ * `mean=22.8 / 没有任何 128 平台`（比例 **0%**）——它根本不是 YUV 帧（1920×1440 的
+ * 4,147,200 是 RAW10 的尺寸，4,198,400 只是加了尾部）。我们往里涂纯色，
+ * 应用看到的是"一整块均匀绿"：**画面动过了，但动的是 ISP 的输入，不是应用的面** ——
+ * 这种"假成功"比不接管更坏（它会连带把真实相机流水线弄坏）。
+ *
+ * 判据：等距采样 4096 个字节，落在 `[120,136]` 的比例 ≥ 12%（整体与后 1/3 都要满足）。
+ * 参考值：前置预览 `4,038,656` 的色度面整片 128 ⇒ 比例 ~30%；RAW/中间缓冲 ⇒ 0%。
+ */
+static double portal_auto_yuv_score(int fd, size_t size, double *out_tail) {
+    if (fd < 0 || size < 4096) return -1.0;
+    void *m = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+    if (m == MAP_FAILED) return -1.0;
+    const unsigned char *p = (const unsigned char *)m;
+    size_t step = size / 4096;
+    if (step == 0) step = 1;
+    unsigned long hits = 0, n = 0, thits = 0, tn = 0;
+    size_t tail = size - size / 3;
+    for (size_t off = 0; off < size; off += step) {
+        unsigned char v = p[off];
+        int near = (v >= 120 && v <= 136);
+        hits += near;
+        n++;
+        if (off >= tail) {
+            thits += near;
+            tn++;
+        }
+    }
+    munmap(m, size);
+    if (out_tail != NULL) *out_tail = (tn != 0) ? (double)thits / (double)tn : 0.0;
+    return (n != 0) ? (double)hits / (double)n : -1.0;
+}
+
 /** 某个尺寸是否已经被别的几何绑走了（一个尺寸只归一路流，避免两条流互相覆盖） */
 static bool portal_auto_size_taken(unsigned long sz, int except) {
     for (int i = 0; i < g_auto_n; i++) {
@@ -4683,6 +4750,7 @@ static void portal_auto_bind(void) {
     /* 真实存在的 dmabuf：尺寸 → 块数（按尺寸的直方图，与遍历顺序无关） */
     unsigned long sizes[PORTAL_AUTO_HIST];
     int counts[PORTAL_AUTO_HIST];
+    int hitfd[PORTAL_AUTO_HIST]; /* 每个尺寸留一个 fd：留给"按内容判面"的扩展（当前只用统计） */
     int nsz = 0;
     DIR *d = opendir("/proc/self/fd");
     if (d == NULL) return;
@@ -4711,10 +4779,12 @@ static void portal_auto_bind(void) {
         if (!hit && nsz < PORTAL_AUTO_HIST) {
             sizes[nsz] = sz;
             counts[nsz] = 1;
+            hitfd[nsz] = fd;
             nsz++;
         }
     }
     closedir(d);
+    (void)hitfd;
     if (nsz == 0) return;
 
     int bound_now = 0;
@@ -4746,21 +4816,19 @@ static void portal_auto_bind(void) {
             }
         }
         if (e->mode != 0 || e->max_buffers == 0) continue;
-        /* 计数兜底：**块数恰好等于 `max_buffers`** 且字节数落在"线性估算的 [1.0, 1.15] 倍"
-         * 之内的尺寸才认，多个候选时取最接近估算的那个。
+        /* 计数兜底：块数 ≥ `max_buffers/2`、且字节数落在"线性估算的 [1.0, 1.15] 倍"之内，
+         * 多个候选时取最接近估算的那个。
          *
-         * 为什么这两条都要（实测踩过，两处都是真现场）：
-         *  · 只看"块数落在 [max/2, max]" ⇒ 把 `15,728,640`（**RAW10 照片面**）绑到了
-         *    `2136×1200` 的预览几何上、把 `7,778,304` 绑到了 `1920×1440` 上 —— 一个是张冠李戴，
-         *    另一个会把照片流水线的缓冲涂成灰；
-         *  · 只看"块数相等" ⇒ 漏掉前置预览面（`max_buffers=16` 而当时只有 **8 块**已落地）。
-         * 现在模型那条路已经能精确认领预览面，所以兜底这条路**收紧**：宁可少接管，也不乱涂。 */
+         * 关于"计数"这条判据的**强度**（实测三轮才认清）：它只能把范围缩小，**不能定案** ——
+         *  · 相等会漏（`max_buffers=8` 而落地 10 块、`=16` 而落地 8 块，两种都实测过）；
+         *  · 区间会误（把 `15,728,640` 那张 **RAW10 照片面**绑到 `2136×1200` 的预览几何上）。
+         * 所以定案交给**认领时的内容校验**（`portal_auto_yuv_score`）：块数只用来"提名"。 */
         int pick = -1, cand_n = 0;
         unsigned long long lin =
             (unsigned long long)e->w * e->h + (unsigned long long)e->w * e->h / 2;
         unsigned long long best_d = 0;
         for (int s = 0; s < nsz; s++) {
-            if (counts[s] != (int)e->max_buffers) continue;
+            if (counts[s] < (int)e->max_buffers / 2) continue;
             if ((unsigned long long)sizes[s] < lin) continue;
             if ((unsigned long long)sizes[s] > lin + lin * 15 / 100) continue;
             if (portal_auto_size_taken(sizes[s], i)) continue;
@@ -4793,6 +4861,20 @@ static void portal_auto_bind(void) {
     }
     if (bound_now > 0) {
         __atomic_add_fetch(&g_auto_bound_n, bound_now, __ATOMIC_RELAXED);
+    } else {
+        /* **绑定不上就把现场摊开**（每会话一次）：这是"为什么没接管"的唯一证据来源 ——
+         * 没有它就只能猜（本轮为这条日志先绕了一圈）。 */
+        static int dumped = 0;
+        if (dumped == 0) {
+            dumped = 1;
+            LOGI("自动模板：本会话一个都没绑上 ⇒ 直方图（尺寸 × 块数，仅列 ≥1.5×宽高的）：");
+            for (int s = 0; s < nsz; s++) {
+                if ((unsigned long long)sizes[s] < (unsigned long long)g_auto[0].w * g_auto[0].h) {
+                    continue;
+                }
+                LOGI("  候选 size=%lu ×%d", sizes[s], counts[s]);
+            }
+        }
     }
 }
 
@@ -5241,6 +5323,47 @@ static int portal_build_targets(portal_target t[], int cap) {
             LOGI("注入：fd=%d size=%lu mmap 失败（errno=%d）", fd, sz, errno);
             continue;
         }
+        /* **认领时的内容校验**（自动靶才做）：先在**我们写之前**判这块像不像"一帧 YUV"。
+         * 为什么放在这里而不是绑定时：绑定那一刻缓冲往往还是**全零**（刚分配、硬件还没写），
+         * 那时候判会把真正的应用面也一起拒掉。 */
+        if (hint.mode != 0) {
+            portal_auto_entry *e = portal_auto_find(sz);
+            if (e != NULL && e->checked == 0) {
+                int live = 0;
+                for (int t2 = 0; t2 < 8 && !live; t2++) {
+                    unsigned char w0[PORTAL_DUMP_WLEN], w3[PORTAL_DUMP_WLEN];
+                    unsigned char v0[PORTAL_DUMP_WLEN], v3[PORTAL_DUMP_WLEN];
+                    portal_dump_win((const unsigned char *)m, sz, 0, w0);
+                    portal_dump_win((const unsigned char *)m, sz, 3, w3);
+                    usleep(60000);
+                    portal_dump_win((const unsigned char *)m, sz, 0, v0);
+                    portal_dump_win((const unsigned char *)m, sz, 3, v3);
+                    if (memcmp(w0, v0, PORTAL_DUMP_WLEN) != 0 ||
+                        memcmp(w3, v3, PORTAL_DUMP_WLEN) != 0) {
+                        live = 1;
+                    }
+                }
+                double tail = 0.0;
+                double score = portal_auto_yuv_score(fd, (size_t)sz, &tail);
+                e->checked = 1;
+                if (score >= 0.0 && (score < 0.12 || tail < 0.12)) {
+                    e->ok = -1;
+                    LOGI("自动模板：**拒绝** size=%lu —— 不像 YUV 帧（128 占比 %.1f%%、后 1/3 "
+                         "%.1f%%、活帧=%s）⇒ 不接管（它多半是 ISP 中间缓冲/RAW，涂它只会弄坏"
+                         "真实流水线）",
+                         sz, score * 100.0, tail * 100.0, live ? "有" : "无");
+                } else {
+                    e->ok = 1;
+                    LOGI("自动模板：内容校验通过 size=%lu（128 占比 %.1f%%、后 1/3 %.1f%%、"
+                         "活帧=%s）⇒ 开始接管",
+                         sz, score * 100.0, tail * 100.0, live ? "有" : "无");
+                }
+            }
+            if (e != NULL && e->ok != 1) {
+                munmap(m, (size_t)sz);
+                continue;
+            }
+        }
         t[n].p = m;
         t[n].size = (size_t)sz;
         t[n].tpl = tpl;
@@ -5458,6 +5581,44 @@ static void *portal_inject_thread(void *arg) {
                  g_opt_inject_sync);
             portal_bufmap(); /* 每次换靶后都看一眼内容分布：分辨"没写进去"与"写进去被 ISP 盖掉" */
             announced = 1;
+            /* **标定落盘**（§75）：把这一代靶的"现场帧"按尺寸各落一份。必须在**我们写之前**
+             * 做，否则落下来的是我们自己刚涂的内容（那样就量不出布局了）。 */
+            if (g_opt_cal_dump[0] != '\0') {
+                for (int i = 0; i < n; i++) {
+                    char out[256];
+                    snprintf(out, sizeof(out), "%s/cal_%zu.raw", g_opt_cal_dump, t[i].size);
+                    if (access(out, F_OK) == 0) continue; /* 每尺寸只落一次（新会话会换缓冲，但布局不变） */
+                    /* `cal_only` 模式下先等这一块**真的被硬件写过**（4 个窗口 120ms 内有变化）。
+                     * 判据与 `raw_dump` 同一套：新认领的缓冲初始是全零，直接落盘等于落空气。 */
+                    if (g_opt_cal_only) {
+                        unsigned char *pp = (unsigned char *)t[i].p;
+                        for (int try = 0; try < 40; try++) {
+                            unsigned char a0[PORTAL_DUMP_WLEN], b0[PORTAL_DUMP_WLEN];
+                            int live = 0;
+                            portal_dump_win(pp, t[i].size, 0, a0);
+                            portal_dump_win(pp, t[i].size, 3, b0);
+                            usleep(120000);
+                            unsigned char a1[PORTAL_DUMP_WLEN], b1[PORTAL_DUMP_WLEN];
+                            portal_dump_win(pp, t[i].size, 0, a1);
+                            portal_dump_win(pp, t[i].size, 3, b1);
+                            if (memcmp(a0, a1, PORTAL_DUMP_WLEN) != 0 ||
+                                memcmp(b0, b1, PORTAL_DUMP_WLEN) != 0) {
+                                live = 1;
+                            }
+                            if (live) break;
+                        }
+                    }
+                    int of = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                    if (of < 0) {
+                        LOGI("标定落盘：打不开 %s（errno=%d）", out, errno);
+                        continue;
+                    }
+                    ssize_t wr = write(of, t[i].p, t[i].size);
+                    close(of);
+                    LOGI("标定落盘：size=%zu → %s（写入 %zd 字节；写入的是**未被动过**的现场帧）",
+                         t[i].size, out, wr);
+                }
+            }
             /*
              * **有界补看**：钩子在 configureStreams 的**入口**，事件到时新缓冲往往还没分配
              * （实测：切到录像那条最晚要几百毫秒才出现在 /proc/self/fd 里，
@@ -5473,6 +5634,13 @@ static void *portal_inject_thread(void *arg) {
             /* 刚建完就重置安全带计时：否则"线程起来得晚"会让下一次循环立刻又满足
              * `now - last_scan >= 15` ⇒ 同一批目标连建三次（实测见过 5 毫秒内三次）。 */
             last_scan = time(NULL);
+        }
+        if (g_opt_cal_only) {
+            /* 测绘完成（上面那段落盘已经跑过）⇒ 本次会话**不写任何字节**，让应用看到真实相机。 */
+            LOGI("标定模式（cal_only=1）：%d 块靶已落盘，本会话不再写画面", n);
+            g_opt_cal_only = 0; /* 只报一次 */
+            usleep(200000);
+            continue;
         }
         unsigned long writes_before = writes;
         for (int i = 0; i < n; i++) {
