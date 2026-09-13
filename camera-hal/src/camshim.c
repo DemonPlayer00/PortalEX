@@ -5092,7 +5092,9 @@ static int (*p_ahb_alloc)(const portal_ahb_desc *, AHardwareBuffer **) = NULL;
 static int (*p_ahb_from_handle)(const portal_ahb_desc *, const void *, int32_t,
                                 AHardwareBuffer **) = NULL;
 static void (*p_ahb_release)(AHardwareBuffer *) = NULL;
-static int (*p_ahb_get_handle)(AHardwareBuffer *, void **) = NULL;
+/* ⚠️ `AHardwareBuffer_getNativeHandle(const AHardwareBuffer*)` **返回指针、没有出参**
+ *（第 9 轮按出参签名调，拿到的是垃圾 rc=437175936，§63.8） */
+static const void *(*p_ahb_get_handle)(const AHardwareBuffer *) = NULL;
 
 static bool portal_ahb_init(void) {
     if (g_libandroid == NULL) {
@@ -5121,8 +5123,8 @@ static bool portal_ahb_init(void) {
     if (p_ahb_release == NULL)
         p_ahb_release = (void (*)(AHardwareBuffer *))dlsym(g_libandroid, "AHardwareBuffer_release");
     if (p_ahb_get_handle == NULL)
-        p_ahb_get_handle =
-            (int (*)(AHardwareBuffer *, void **))dlsym(g_libandroid, "AHardwareBuffer_getNativeHandle");
+        p_ahb_get_handle = (const void *(*)(const AHardwareBuffer *))dlsym(
+            g_libandroid, "AHardwareBuffer_getNativeHandle");
     return p_ahb_alloc != NULL;
 }
 
@@ -5150,7 +5152,15 @@ static bool portal_try_egl_image(void *client_buffer, const char *tag) {
     int err = p_eglGetError ? p_eglGetError() : 0;
     LOGI("%s：eglCreateImageKHR(native buffer) → %p（eglGetError=0x%x）", tag, img, err);
     if (img != NULL) {
-        bool ok = portal_gpu_fill(img, 640, 480, 0);
+        /* ⚠️ 必须先把上下文设成 current：第 9 轮漏了这步，FBO 必然不完整，
+         * 那条"失败"是量具的问题而不是结论（§63.8） */
+        void *pc = p_eglGetCurrentContext ? p_eglGetCurrentContext() : NULL;
+        void *pd = p_eglGetCurrentDisplay ? p_eglGetCurrentDisplay() : NULL;
+        void *pdr = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x3059) : NULL;
+        void *prd = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x305A) : NULL;
+        bool cur = p_eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context);
+        bool ok = cur && portal_gpu_fill(img, 640, 480, 0);
+        if (cur) p_eglMakeCurrent(pd, pdr, prd, pc);
         LOGI("%s：把它当 FBO 画一笔 → %s", tag, ok ? "成功" : "失败");
         p_eglDestroyImageKHR(g_egl_display, img);
         return ok;
@@ -5176,10 +5186,11 @@ static void portal_gpu_selftest_own(void) {
     LOGI("GPU 自检(b)：AHardwareBuffer_allocate(640x480 RGBA) rc=%d buf=%p", rc, (void *)b);
     if (rc != 0 || b == NULL) return;
     if (p_ahb_get_handle != NULL) {
-        void *nh = NULL;
-        int grc = p_ahb_get_handle(b, &nh);
-        LOGI("GPU 自检(b)：AHardwareBuffer_getNativeHandle rc=%d", grc);
-        portal_log_handle_shape("GPU 自检(b)", nh); /* ★ 与扫到的 12/2/26 比形态 */
+        const void *nh = p_ahb_get_handle(b);
+        LOGI("GPU 自检(b)：AHardwareBuffer_getNativeHandle → %p", nh);
+        portal_log_handle_shape("GPU 自检(b) ★形态基准", nh); /* ★ 与扫到的 12/2/26 比形态 */
+    } else {
+        LOGI("GPU 自检(b)：没有 AHardwareBuffer_getNativeHandle（API 太老？）⇒ 形态基准缺失");
     }
     void *(*get_cb)(AHardwareBuffer *) =
         (void *(*)(AHardwareBuffer *))sym(g_egl, "eglGetNativeClientBufferANDROID");
@@ -5238,15 +5249,25 @@ static void portal_gpu_selftest_from_handle(void) {
  * ------------------------------------------------------------------ */
 #define PORTAL_GPU_TARGET_FDS 32
 static int g_gpu_target_fds[PORTAL_GPU_TARGET_FDS];
+/** 靶的 **dmabuf inode** —— 这才是"同一块内存"的身份证：fd 号可以被 dup 出很多份，
+ *  尺寸也可以碰巧相同，而同一个 dma-buf 的所有 fd 共享同一个 inode。 */
+static unsigned long long g_gpu_target_inos[PORTAL_GPU_TARGET_FDS];
 static int g_gpu_target_n = 0;
 
-/** 注入线程认领到 GPU 靶时登记它的 fd（扫堆要用"哪个 fd 才是我们的靶"这个事实） */
+/** 注入线程认领到 GPU 靶时登记它（fd + dmabuf inode），扫堆要靠它判"是不是同一块" */
 static void portal_gpu_note_target_fd(int fd) {
     if (fd < 3) return;
+    struct stat st;
+    memset(&st, 0, sizeof(st));
+    if (fstat(fd, &st) != 0) return;
     for (int i = 0; i < g_gpu_target_n; i++) {
-        if (g_gpu_target_fds[i] == fd) return;
+        if (g_gpu_target_inos[i] == (unsigned long long)st.st_ino) return;
     }
-    if (g_gpu_target_n < PORTAL_GPU_TARGET_FDS) g_gpu_target_fds[g_gpu_target_n++] = fd;
+    if (g_gpu_target_n < PORTAL_GPU_TARGET_FDS) {
+        g_gpu_target_fds[g_gpu_target_n] = fd;
+        g_gpu_target_inos[g_gpu_target_n] = (unsigned long long)st.st_ino;
+        g_gpu_target_n++;
+    }
 }
 
 /** 候选头是不是 native_handle_t（只看三个 int，安全） */
@@ -5257,19 +5278,23 @@ static bool portal_handle_header_ok(const int *h) {
     return true;
 }
 
-/** 这个 fd 是不是"我们的靶"：fd 号在我们的靶集里，且尺寸复核通过 */
+/**
+ * 这个 fd 是不是"我们的靶"。
+ *
+ * ⚠️ 第 9 轮只比"fd 号 + 尺寸"，结果**误收**了：扫到的句柄交 `AHardwareBuffer_createFromHandle`
+ * 被拒（rc=-22，§63.8）。所以第 10 轮加硬判据：必须是**同一块 dmabuf** —— 比 `st_ino`。
+ * 同一个 dma-buf 的 fd 可以被 dup 成很多份（fd 号不同、inode 相同），尺寸也可能碰巧一样，
+ * 只有 inode 能证明"同一块内存"。
+ */
 static bool portal_gpu_fd_is_target(int fd, unsigned long want_size) {
-    bool known = false;
-    for (int i = 0; i < g_gpu_target_n; i++) {
-        if (g_gpu_target_fds[i] == fd) {
-            known = true;
-            break;
-        }
-    }
-    if (!known) return false;
     struct stat st;
     memset(&st, 0, sizeof(st));
-    return fstat(fd, &st) == 0 && (unsigned long)st.st_size == want_size;
+    if (fstat(fd, &st) != 0) return false;
+    if ((unsigned long)st.st_size != want_size) return false; /* 先看尺寸（便宜） */
+    for (int i = 0; i < g_gpu_target_n; i++) {
+        if (g_gpu_target_inos[i] == (unsigned long long)st.st_ino) return true;
+    }
+    return false;
 }
 
 /** 扫一遍自己的可读内存区，返回句柄地址（找不到返回 NULL），并汇报扫了多少 MB */
