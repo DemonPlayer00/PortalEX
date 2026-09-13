@@ -4592,3 +4592,24 @@ LSPosed 的 `app_configs` 表（每 App 配置）里只有三条，且带 `inval
 `scripts/verify-app-hook.sh com.bxkj.student legacy`（或 `list`），
 并同时抓**该 App 进程内**的 `[Portal]` 行（用 `logcat --pid=$(pidof com.bxkj.student)`）——
 体适能是本项目的真实目标，而且现在有证据表明模块确实在它进程里跑过。
+
+### 70.10 第 34 轮（现场日志挖掘）：模块的 `put_config` 载荷里**没有相机字段**；整段窗口零相机日志
+
+从上一轮那次手动测试留下的全量日志（`/tmp/all.log`，146 MB）里挖，两条硬事实：
+
+1. **体适能的相机路径是走 HAL 的**（不是某个私有 SDK 绕开）：HAL 侧明确记录客户端包名 ——
+   ```
+   CamX: LoadOPPackageName() [OP_EXT] mClientPackageName:com.bxkj.student
+         … m_activityName com.bxkj.student.v2.ui.face.FaceCheckV2Activity
+   ```
+   （这是 QTI/OPPO 扩展：把"哪个 App 在用相机"告诉 HAL —— 也说明我们那条 HAL 线确实在该会话里跑过。）
+2. **整段窗口里，模块的非噪声日志全是定位/传感器**（`isProviderEnabledForUser`、`set_sensor_mock`、
+   `registerGnssStatusCallback: injected!`、`融合定位 hook 状态：…`），**没有任何一行与相机有关**；
+   而 `put_config` 的载荷里**只有定位/传感器字段**（`noise_profile / min_satellites / fused_mode / …`），
+   **没有相机字段**。
+
+⇒ **读法（下一步验证）**：模块的**相机那半没有拿到任何启用配置** —— 它收到的 `put_config` 里根本没有相机段，
+所以相机 hook 只能"安静地不拦"，与我们在 §70.5 用验收器测到的"模块侧 ❌ 没拦/卡住"完全一致。
+
+**下一手（读代码，不用设备）**：在 master 分支上找**相机 mock 的启用条件**（它读哪个配置键/哪条命令、
+与 `put_config` 或 camera relay 的关系），据此确定"我们少发了什么"。这比继续在设备上试要快得多。
