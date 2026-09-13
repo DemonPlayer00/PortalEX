@@ -511,6 +511,12 @@ static int g_opt_inject_stop_after = 0;
  *  于是它**已经写完**的左边 W% 留下我们的数据，右边被它后来的写覆盖。
  *  所以"写得更晚"就能赢下更大的面积 —— 等到它快写完再写，才有机会整帧归我们。 */
 static int g_opt_inject_delay_us = 0;
+/* `inject_limit=<字节>`：每条缓冲**只写前 N 字节**。
+ * 为什么需要：后置 4K 录像面很可能是 **UBWC（带元数据）** 布局 —— 整块覆盖会把尾部的元数据面
+ * 一起写成像素值，硬件按坏元数据解码 ⇒ 录出来是纯绿/垃圾。
+ * 实测证据：连"整块填纯 128"都会录出约一半纯绿帧（0,102,0），说明问题不在内容而在元数据。
+ * 只写像素面、把尾部元数据留给 ISP，才是对的。 */
+static size_t g_opt_inject_limit = 0;
 /** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
  *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
  *
@@ -762,6 +768,8 @@ static void load_options(void) {
             g_opt_inject_burst = atoi(val);
         } else if (strcmp(key, "inject_delay_us") == 0) {
             g_opt_inject_delay_us = atoi(val);
+        } else if (strcmp(key, "inject_limit") == 0) {
+            g_opt_inject_limit = strtoul(val, NULL, 0);
         } else if (strcmp(key, "inject_stop_after") == 0) {
             g_opt_inject_stop_after = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
@@ -3900,6 +3908,7 @@ static void *portal_inject_thread(void *arg) {
         }
         for (int i = 0; i < n; i++) {
             size_t len = t[i].tlen < t[i].size ? t[i].tlen : t[i].size;
+            if (g_opt_inject_limit != 0 && len > g_opt_inject_limit) len = g_opt_inject_limit;
             if (g_opt_inject_sync >= 3) {
                 /* 只认"刚被重填过"的那几块：头 16 字节不再等于我们上次写的内容 ⇒ 就写它，
                  * 连写 inject_burst 遍后收手，其余缓冲一个字节都不碰（这是不饿死 ISP 的关键）。 */
