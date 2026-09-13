@@ -4037,3 +4037,35 @@ dma-buf**（`st_ino` 相同，§63.9），可 `AHardwareBuffer_createFromHandle`
 **量具备注（别再踩）**：AHB 的 FBO 检查要 **`GL_TEXTURE_EXTERNAL_OES` + 先 `eglMakeCurrent`** ——
 目前试过的两种组合各缺一半（§63.10 的 `target=0xde1 → 不完整` 与 §63.8 的"没 makeCurrent"），
 所以那两行"FBO 不完整"**都还不是结论**；`eglCreateImageKHR` 成功（`0x3000`）才是。
+
+### 63.11 第 13 轮：SELinux/命名空间假设**不成立**（没有拒绝），GPU 线到此收束
+
+触发完整的 GPU 尝试（`gpu=1` 的会话：扫堆 + 两个自检 + EGL 导入）之后，直接读内核 AVC：
+
+```
+ps -AZ | grep provider-service  →  u:r:hal_camera_default:s0 … vendor.qti.camera.provider-service_64
+dmesg | grep avc | grep -E 'hal_camera|cameraserver'
+  … 只有 setsched（cameraserver → opluscamera_app）与 opluscamera_app 读 adsprpc，
+     **没有任何 graphics / allocator / mapper / gpu / binder-service 相关的拒绝**
+service list | grep allocator  →  android.hardware.graphics.allocator.IAllocator/default ✓ 在
+```
+
+⇒ §63.10 猜的"共因是 vendor 进程被挡住"**没有证据支持**：既不是 SELinux 拒绝，服务也在。
+
+**那么 `createFromHandle` 的 `-22` 最可能就是它的本意**：框架的 `AHardwareBuffer` 不认这类
+**厂商私有（QTI UBWC / camera 私用 format-usage）**的 gralloc 句柄 —— 这正好解释了为什么
+`format`/`usage` 十八组全试也没用：不是 desc 填错，而是**这一类句柄本身不在 AHardwareBuffer 的可导入集合里**。
+
+**于是"写 HAL 的编码器面"这件事的结论（四轮实测的汇总）**：
+
+| 路 | 状态 | 证据 |
+|---|---|---|
+| CPU 线性写 | ❌ | §62：UBWC 压缩面，线性数据被解成噪声 |
+| 让面退回线性 | ❌ | §62.5：`vendor.gralloc.disable_ubwc` 仅 setprop 无效 |
+| fd → EGLImage | ❌ | §63.2：驱动没有 `EGL_EXT_image_dma_buf_import`（1247 字符扩展串全量核对） |
+| 裸句柄 → EGLImage | ❌ | §63.3/§63.9/§63.10：`0x300c`；句柄与靶同一块 dma-buf、形态与框架句柄一致 |
+| 句柄 → AHardwareBuffer → EGLImage | ❌ | §63.12 前身：18 组 desc 全 `-22`，且非 SELinux 所致 |
+
+**→ 收束建议**：HAL 侧保留已能做到的部分（预览、照片、系统相机的录像面，§58/§60 的实测），
+"给目标 App 的录像内容"交回**已验证的 app 层 relay 通道**（§5.7/§5.8），
+把剩余轮次投到目标里仍未收口的边界（后置 4K 录像面、照片与录像一致性、前后置统一）。
