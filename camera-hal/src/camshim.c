@@ -5066,6 +5066,162 @@ static void *portal_inject_thread(void *arg) {
 }
 
 /* ------------------------------------------------------------------ *
+ * M2c：判别实验 —— (a) 扫到的句柄合不合法；(b) 本进程到底收不收 native buffer
+ *
+ * 背景（§63.6）：扫堆确实找到了 `version=12 numFds=2 numInts=26` 的句柄，
+ * 但 `eglCreateImageKHR(EGL_NATIVE_BUFFER_ANDROID)` 对**压缩面与线性面都**报 `0x300c`。
+ * 两种解释必须分开：**(a)** 我们找到的不是驱动认识的那个句柄；**(b)** 这个进程/驱动压根不收。
+ *
+ * 做法：用 **NDK 的 `AHardwareBuffer`** 当对照组 ——
+ *   (b) `AHardwareBuffer_allocate` 一块 RGBA 小图（框架自己的分配器，句柄一定合法）
+ *       → `eglGetNativeClientBufferANDROID` → `eglCreateImageKHR`：能成 ⇒ 进程 OK；
+ *   (a) 把我们扫到的句柄交给 `AHardwareBuffer_createFromHandle`：rc=0 ⇒ 句柄本身合法
+ *       （那卡点就在 EGL 导入那一步，而不是扫描器）。
+ * 全部只吃返回码/错误码，不会把 HAL 带走。
+ * ------------------------------------------------------------------ */
+typedef struct portal_ahb AHardwareBuffer;
+typedef struct {
+    uint32_t width, height, layers, format;
+    uint64_t usage;
+    uint32_t stride, rfu0;
+    uint64_t rfu1;
+} portal_ahb_desc; /* 与 NDK 的 AHardwareBuffer_Desc 同布局 */
+
+static void *g_libandroid = NULL;
+static int (*p_ahb_alloc)(const portal_ahb_desc *, AHardwareBuffer **) = NULL;
+static int (*p_ahb_from_handle)(const portal_ahb_desc *, const void *, int32_t,
+                                AHardwareBuffer **) = NULL;
+static void (*p_ahb_release)(AHardwareBuffer *) = NULL;
+static int (*p_ahb_get_handle)(AHardwareBuffer *, void **) = NULL;
+
+static bool portal_ahb_init(void) {
+    if (g_libandroid == NULL) {
+        /* Android 10+ 起 `AHardwareBuffer_*` 实际由 **libnativewindow.so** 提供（libandroid 只是转发），
+         * 而 vendor 命名空间只放行 LLNDK —— 所以逐个试，并把 dlerror 打出来（那是"为什么没有"的答案）。 */
+        static const char *cands[] = {"libnativewindow.so", "libandroid.so",
+                                      "/system/lib64/libnativewindow.so",
+                                      "/system/lib64/libandroid.so"};
+        for (unsigned i = 0; i < sizeof(cands) / sizeof(cands[0]) && g_libandroid == NULL; i++) {
+            g_libandroid = dlopen(cands[i], RTLD_NOW | RTLD_LOCAL);
+            if (g_libandroid != NULL) {
+                LOGI("GPU 自检：AHardwareBuffer 来自 %s", cands[i]);
+            } else {
+                LOGI("GPU 自检：dlopen %s 失败：%s", cands[i], dlerror());
+            }
+        }
+    }
+    if (g_libandroid == NULL) return false;
+    if (p_ahb_alloc == NULL)
+        p_ahb_alloc = (int (*)(const portal_ahb_desc *, AHardwareBuffer **))dlsym(
+            g_libandroid, "AHardwareBuffer_allocate");
+    if (p_ahb_from_handle == NULL)
+        p_ahb_from_handle = (int (*)(const portal_ahb_desc *, const void *, int32_t,
+                                      AHardwareBuffer **))dlsym(g_libandroid,
+                                                                "AHardwareBuffer_createFromHandle");
+    if (p_ahb_release == NULL)
+        p_ahb_release = (void (*)(AHardwareBuffer *))dlsym(g_libandroid, "AHardwareBuffer_release");
+    if (p_ahb_get_handle == NULL)
+        p_ahb_get_handle =
+            (int (*)(AHardwareBuffer *, void **))dlsym(g_libandroid, "AHardwareBuffer_getNativeHandle");
+    return p_ahb_alloc != NULL;
+}
+
+/** 把句柄头的三个字段打出来（与我们扫到的 12/2/26 比形态） */
+static void portal_log_handle_shape(const char *tag, const void *h) {
+    if (h == NULL) {
+        LOGI("%s：句柄为空", tag);
+        return;
+    }
+    int hdr[3] = {0, 0, 0};
+    if (portal_peek((unsigned long)h, hdr, sizeof(hdr)) != 0) {
+        LOGI("%s：句柄 %p 读不到头", tag, h);
+        return;
+    }
+    LOGI("%s：句柄 %p 头 version=%d numFds=%d numInts=%d", tag, h, hdr[0], hdr[1], hdr[2]);
+}
+
+/** 把一块 buffer 当 EGLImage 试一次（返回 image 是否建成） */
+static bool portal_try_egl_image(void *client_buffer, const char *tag) {
+    if (client_buffer == NULL) return false;
+    const int attr_none[] = {0x3038, 0};
+    if (p_eglGetError) p_eglGetError();
+    void *img = p_eglCreateImageKHR(g_egl_display, NULL, PORTAL_EGL_NATIVE_BUFFER_ANDROID,
+                                    client_buffer, attr_none);
+    int err = p_eglGetError ? p_eglGetError() : 0;
+    LOGI("%s：eglCreateImageKHR(native buffer) → %p（eglGetError=0x%x）", tag, img, err);
+    if (img != NULL) {
+        bool ok = portal_gpu_fill(img, 640, 480, 0);
+        LOGI("%s：把它当 FBO 画一笔 → %s", tag, ok ? "成功" : "失败");
+        p_eglDestroyImageKHR(g_egl_display, img);
+        return ok;
+    }
+    return false;
+}
+
+/** (b) 用框架自己的分配器造一块 buffer，看本进程能不能把它导成 EGLImage */
+static void portal_gpu_selftest_own(void) {
+    if (!portal_egl_init() || !portal_ahb_init()) {
+        LOGE("GPU 自检(b)：EGL/AHardwareBuffer 不可用，跳过");
+        return;
+    }
+    portal_ahb_desc d;
+    memset(&d, 0, sizeof(d));
+    d.width = 640;
+    d.height = 480;
+    d.layers = 1;
+    d.format = 1;                 /* RGBA_8888 */
+    d.usage = 0x100ull | 0x200ull; /* GPU_SAMPLED_IMAGE | GPU_FRAMEBUFFER */
+    AHardwareBuffer *b = NULL;
+    int rc = p_ahb_alloc(&d, &b);
+    LOGI("GPU 自检(b)：AHardwareBuffer_allocate(640x480 RGBA) rc=%d buf=%p", rc, (void *)b);
+    if (rc != 0 || b == NULL) return;
+    if (p_ahb_get_handle != NULL) {
+        void *nh = NULL;
+        int grc = p_ahb_get_handle(b, &nh);
+        LOGI("GPU 自检(b)：AHardwareBuffer_getNativeHandle rc=%d", grc);
+        portal_log_handle_shape("GPU 自检(b)", nh); /* ★ 与扫到的 12/2/26 比形态 */
+    }
+    void *(*get_cb)(AHardwareBuffer *) =
+        (void *(*)(AHardwareBuffer *))sym(g_egl, "eglGetNativeClientBufferANDROID");
+    void *cb = (get_cb != NULL) ? get_cb(b) : NULL;
+    LOGI("GPU 自检(b)：eglGetNativeClientBufferANDROID → %p", cb);
+    (void)portal_try_egl_image(cb, "GPU 自检(b)");
+    if (p_ahb_release != NULL) p_ahb_release(b);
+}
+
+/** (a) 扫到的句柄合不合法：交给 AHardwareBuffer_createFromHandle */
+static void portal_gpu_selftest_from_handle(void) {
+    if (g_gpu_handle == NULL) {
+        LOGI("GPU 自检(a)：还没有扫到的句柄，跳过");
+        return;
+    }
+    if (!portal_egl_init() || !portal_ahb_init() || p_ahb_from_handle == NULL) {
+        LOGE("GPU 自检(a)：AHardwareBuffer_createFromHandle 不可用，跳过");
+        return;
+    }
+    portal_log_handle_shape("GPU 自检(a)", g_gpu_handle);
+    portal_ahb_desc d;
+    memset(&d, 0, sizeof(d));
+    d.width = (uint32_t)g_opt_gpu_w;
+    d.height = (uint32_t)g_opt_gpu_h;
+    d.layers = 1;
+    d.format = 0x22;             /* camera3 的 IMPLEMENTATION_DEFINED（流表实测值） */
+    d.usage = 0x10030322ull;     /* 编码器流的 usage（流表实测值） */
+    AHardwareBuffer *b = NULL;
+    int rc = p_ahb_from_handle(&d, g_gpu_handle, 0, &b);
+    LOGI("GPU 自检(a)：AHardwareBuffer_createFromHandle rc=%d buf=%p（rc=0 ⇒ 句柄合法）", rc,
+         (void *)b);
+    if (rc == 0 && b != NULL) {
+        void *(*get_cb)(AHardwareBuffer *) =
+            (void *(*)(AHardwareBuffer *))sym(g_egl, "eglGetNativeClientBufferANDROID");
+        void *cb = (get_cb != NULL) ? get_cb(b) : NULL;
+        LOGI("GPU 自检(a)：eglGetNativeClientBufferANDROID → %p", cb);
+        (void)portal_try_egl_image(cb, "GPU 自检(a)");
+        if (p_ahb_release != NULL) p_ahb_release(b);
+    }
+}
+
+/* ------------------------------------------------------------------ *
  * M2b：按 fd 号**在自己地址空间里扫出那块靶的 gralloc 句柄**（§63.4 的第 ① 条）
  *
  * 为什么还要扫：`EGL_ANDROID_image_native_buffer` 是本机唯一可用的 GPU 门，它要真句柄；
@@ -5198,12 +5354,14 @@ static void *portal_gpu_heap_scan_thread(void *arg) {
         LOGI("GPU 扫堆：始终没认领到靶 fd（没会话？尺寸不符？）⇒ 不扫");
         return NULL;
     }
+    portal_gpu_selftest_own(); /* (b) 对照组：框架自己分配的 buffer 能不能导成 EGLImage */
     LOGI("GPU 扫堆：开始（靶 fd 数=%d，首个=%d，靶尺寸=%lu）", g_gpu_target_n, g_gpu_target_fds[0],
          g_opt_gpu_size);
     void *h = portal_gpu_heap_scan((unsigned long)g_opt_gpu_size, &g_gpu_scan_mb);
     if (h != NULL) {
         g_gpu_handle = h;
         LOGI("GPU 扫堆：采用这个句柄 %p ⇒ 后续走 EGL_ANDROID_image_native_buffer", h);
+        portal_gpu_selftest_from_handle(); /* (a) 这个句柄合不合法 */
     } else {
         LOGI("GPU 扫堆：扫了 %lu MB 没命中 ⇒ 这条进程的堆里也没有可直接用的 gralloc 句柄",
              g_gpu_scan_mb);
