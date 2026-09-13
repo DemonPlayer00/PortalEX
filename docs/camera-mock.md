@@ -3404,3 +3404,51 @@ adb shell input tap 631 2410         # 快门
 **系统层、零注入目标应用**：前置**预览/照片/录像三条全通**（录像 100% 接管且零退化），
 后置**预览/照片两条通**；后置录像因为厂商用**压缩面**（UBWC）而未通——
 路线明确（自实现按压缩格式写），但需要格式细节，不是靠试探能绕过去的。
+
+---
+
+## 57. 归档索引（本届工作收束）
+
+### 57.1 仓库里有什么
+
+| 路径 | 内容 |
+| --- | --- |
+| `camera-hal/src/camshim.c` | HAL 包装层本体（钩子、注入、量具。**所有开关**见 §44.1 的表） |
+| `camera-hal/jni`、`build.gradle.kts` | NDK 构建（armeabi-v7a + arm64-v8a 都要出，见 §18.2 的 32 位 no-op 桩） |
+| `magisk/portalex-camera-hal/` | 模块源：`post-fs-data.sh`（开机部署）、`customize.sh`、`sepolicy.rule`（**含 tmpfs 三条，§52 的冷启动修复**）、`service.sh` |
+| `scripts/build-camera-hal-module.sh` | 按设备出包（`pineapple` / `msm8998`） |
+| `scripts/deploy-camera-hal-pineapple.sh` | 运行期部署（只叠 `/odm/lib64/hw`，**永不碰 `/vendor`**） |
+| `scripts/gen-camera-mock.py` | 由设计稿生成可注入素材（三种目标面，参数全部实测） |
+| `scripts/research/` | 本届用到的量具（UBWC 换算、RAW10 编辑、帧分类、列带相关）+ 两张测试卡设计稿 + README |
+| `docs/camera-mock.md` | 本文档：从"这套路走不走得通"到"每个面的字节布局"的完整记录（§1–§57） |
+
+### 57.2 设备上有什么（运行期产物）
+
+| 路径 | 内容 | 谁建的 |
+| --- | --- | --- |
+| `/odm/lib64/hw/camera.qcom.so` | 我们的 shim（overlay 的 upper 层） | 模块 `post-fs-data.sh`（开机自动） |
+| `/data/local/tmp/odmtmp/{upper,work}` | overlay 的 upper/work（tmpfs） | 同上 |
+| `/data/vendor/camera/portal.cfg` | 开关文件（随包=干净态：只装钩子不开注入） | 同上 |
+| `/data/vendor/camera/{fmock,ffront,fvidmock,fraw2}.raw` | 测试素材（预览/前置预览/录像/照片 RAW） | 手工 `adb push` |
+
+### 57.3 本届（同一天）的提交
+
+```
+0023ec7 feat(camera-hal): inject_limit 开关；后置 4K 绿帧归因推翻（与内容无关，坏在 Y 面之后那段）
+ad7fbfe docs(camera-mock): §49 前置稳定性实测（32s/958 帧/NCC 恒定 0.9972）+ 模板缺失的静默失败排查笔记
+f03a19c fix(camera-hal): cam= 闸门管住注入线程；前置取景器'圆盘'改判为 App 自身渲染
+0dda5db feat(camera-mock): 前置预览补上'上下翻转'标定；§50 跨状态稳定性矩阵
+190cfbc feat(camera-hal): inject_span 窗口写；4K 色度黑盒探到头，两处结论收回
+7c314f7 fix(module): 冷启动实测 —— 补上 tmpfs sepolicy（缺了会让 provider 崩溃重启循环）
+acaf3b4 docs(camera-mock): §52.4 4K 色度探针 —— Y 面紧后那段是元数据而非色度像素
+3afeb2b feat(camera-hal): scrub_ol_vaddr —— 按地址挂'改用途位'钩子；钩上了但挂早一步
+576f833 docs(camera-mock): §54.4 清 UBWC 会让分配改变但录像录不下去（38 帧就断）
+bc439d2 docs(camera-mock): §55 找到后置 1080p 录像面 3,219,456（存活探针+变焦制造变化）
+c549b1e docs(camera-mock): §56 验收清单（可照跑 + 判据数字）+ 一句话总结当前交付
+```
+
+### 57.4 一句话状态（归档时的真相）
+
+**已通且实测稳定**：前置**预览 / 照片 / 录像**三条 + 后置**预览 / 照片**两条 + **模块开机自部署**。
+**未通**：**后置录像**（1080p 与 4K 都是厂商**压缩面**，线性/瓦片写入会被解成绿或黑）。
+**待验证**：小时级 soak；人像/专业/60fps/前置 4K 等模式。
