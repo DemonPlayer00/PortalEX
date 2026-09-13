@@ -6005,7 +6005,11 @@ static void *portal_inject_thread(void *arg) {
              * 实测三连拍里只有第一张命中（78.7），后两张都打在**已经作废的那批**上（0.4 / -5.6）。
              * 探询本身极便宜（`portal_fd_signature` 只 opendir/readlink/fstat，约 0.2ms），
              * 因此 1 秒一次不构成抖动，却能把"换靶"从 15 秒缩到 1 秒级。 */
-            bool belt_due = (now - last_scan >= (g_mock_n > 0 ? 1 : 15));
+            /* 有手工模板时**一直"到期"**：真正的限速交给下面的探询间隔（`vv_probe_us`，默认 15ms）。
+             * 第 50 轮实测：拍照之后 RAW 靶集会被整批换掉（同尺寸新 fd/新地址），
+             * 而"提前认领"的映射随之作废 —— 唯一的补救就是**尽快重新认领**。
+             * 1 秒的安全带仍太慢（三连拍里第 2/3 张打在废映射上），所以把节流改为探询间隔本身。 */
+            bool belt_due = (now - last_scan >= 15) || (g_mock_n > 0);
             if ((in_burst || belt_due) && now_us >= g_vv_probe_next_us) {
                 g_vv_probe_next_us =
                     now_us + (unsigned long long)(g_opt_vv_probe_us > 0 ? g_opt_vv_probe_us : 15000);
