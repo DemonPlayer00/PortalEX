@@ -566,6 +566,24 @@ static int g_opt_inject_burst = 3;
  *  （实测整帧中位差 +15.3，把标记的 +74 都冲淡了）。有了这个开关，
  *  **同一个会话里**先拍"有标记"、等线程自己停、再拍"纯实景"，两张只差我们的注入。 */
 static int g_opt_inject_stop_after = 0;
+/**
+ * `cam_timeout=<秒>`：**系统级相机占用上限**（0 = 关，默认关）。
+ *
+ * 为什么必须有它（用户实测：相机被某个应用开了一整晚）：
+ * 我们此前只有两个计时器，**都只覆盖"我们自己的进程"** ——
+ *   · 夹具的自守看门狗只在夹具进程里跑（§73.1）；
+ *   · App 侧 `CameraOccupancyGuard` 只在 PortalEX 自己的两个页面里跑（§73）。
+ * 任何**第三方应用**（例如相机 App 被留在前台）持着相机过夜，两者都不会触发。
+ *
+ * 做法（系统层，零注入）：HAL 在 `shim_open` 记下会话起点；超过上限就通过**框架给我们的
+ * 回调表**投递一条 `CAMERA3_MSG_ERROR / CAMERA3_MSG_ERROR_DEVICE` —— 框架收到即拆掉这条会话，
+ * 应用拿到断连回调并释放相机。这是"夺取"而不是"请求"：应用没有拒绝的余地。
+ */
+static int g_opt_cam_timeout = 0;
+/** 本次会话起点与"是否已经投递过"（只在 HAL 进程内，`shim_open` 重置） */
+static time_t g_cam_session_start = 0;
+static volatile int g_cam_timeout_fired = 0;
+static volatile int g_cam_watch_started = 0;
 /** `inject_delay_us=<微秒>`：模式 3 里"探测到重填之后、真正写入之前"等的这段时间。
  *
  *  为什么要等：实测（burst=1）我们只在**左侧一条竖带**里赢下画面，带宽随运气在 0~30% 之间变。
@@ -988,6 +1006,8 @@ static void load_options(void) {
             }
         } else if (strcmp(key, "inject_stop_after") == 0) {
             g_opt_inject_stop_after = atoi(val);
+        } else if (strcmp(key, "cam_timeout") == 0) {
+            g_opt_cam_timeout = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
             g_opt_live_probe = atoi(val);
         } else if (strcmp(key, "vvideo") == 0) {
@@ -7669,6 +7689,49 @@ static void *portal_binder_thread(void *arg) {
     return NULL;
 }
 
+/**
+ * 相机占用看门狗（`cam_timeout=<秒>`）：到点就投 `ERROR_DEVICE`，让框架拆会话、应用释放相机。
+ *
+ * 5 秒一步地看（上限本身就是分钟级，不需要更细）；只投一次，投完继续守着，
+ * 下一次 `shim_open`（新会话）会把起点和标记重置。
+ */
+static void *portal_cam_timeout_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        sleep(5);
+        if (g_opt_cam_timeout <= 0 || g_cam_session_start == 0) continue;
+        if (__atomic_load_n(&g_cam_timeout_fired, __ATOMIC_ACQUIRE)) continue;
+        time_t held = time(NULL) - g_cam_session_start;
+        if (held < (time_t)g_opt_cam_timeout) continue;
+        __atomic_store_n(&g_cam_timeout_fired, 1, __ATOMIC_RELEASE);
+        /* `camera3_notify_msg_t`：type@0，union 里 error 的第一项 frame_number@4、
+         * error_code@8、error_stream@16（本文件里没有这个头文件的定义，按布局自己拼）。 */
+        struct {
+            int type;                 /* 1 = CAMERA3_MSG_ERROR */
+            struct {
+                uint32_t frame_number;
+                int error_code;       /* 1 = CAMERA3_MSG_ERROR_DEVICE */
+                void *error_stream;
+            } error;
+            unsigned char pad[16];
+        } msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.type = 1;
+        msg.error.frame_number = 0;
+        msg.error.error_code = 1;
+        msg.error.error_stream = NULL;
+        const camera3_callback_ops_t *cb = g_framework_callbacks;
+        if (cb != NULL && cb->notify != NULL) {
+            cb->notify(cb, &msg);
+            LOGE("相机占用超时（已持 %ld 秒，上限 %d 秒）⇒ 已投递 ERROR_DEVICE，框架将拆会话、应用释放相机",
+                 (long)held, g_opt_cam_timeout);
+        } else {
+            LOGE("相机占用超时（已持 %ld 秒）但拿不到框架回调表 ⇒ 无法投递 ERROR_DEVICE", (long)held);
+        }
+    }
+    return NULL;
+}
+
 static int shim_open(const struct hw_module_t *module, const char *id,
                      struct hw_device_t **device) {
     (void)module;
@@ -7680,6 +7743,24 @@ static int shim_open(const struct hw_module_t *module, const char *id,
 #if defined(__aarch64__)
     if (g_opt_auto_tpl) portal_auto_reset();
 #endif
+    /* **系统级相机占用看门狗**（`cam_timeout=<秒>`）：新会话重新起表；线程只起一次。 */
+    if (g_opt_cam_timeout > 0) {
+        g_cam_session_start = time(NULL);
+        __atomic_store_n(&g_cam_timeout_fired, 0, __ATOMIC_RELEASE);
+        if (!__atomic_exchange_n(&g_cam_watch_started, 1, __ATOMIC_ACQ_REL)) {
+            pthread_t th;
+            if (pthread_create(&th, NULL, portal_cam_timeout_thread, NULL) == 0) {
+                pthread_detach(th);
+                LOGI("相机占用看门狗：已启动（上限 %d 秒，到点投 ERROR_DEVICE 强制拆会话）",
+                     g_opt_cam_timeout);
+            } else {
+                LOGE("相机占用看门狗：线程创建失败");
+                __atomic_store_n(&g_cam_watch_started, 0, __ATOMIC_RELEASE);
+            }
+        } else {
+            LOGI("相机占用看门狗：新会话起表（上限 %d 秒）", g_opt_cam_timeout);
+        }
+    }
     if (id != NULL) snprintf(g_cur_cam, sizeof(g_cur_cam), "%s", id);
     /* 钩子累计命中：在 open 这条**非 vendor 热路径**上汇报，钩子体自己只自增、不做 I/O */
     portal_hook_report_counts();
