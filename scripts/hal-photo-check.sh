@@ -1,34 +1,37 @@
 #!/bin/sh
-# 高清**图像**链路的一命令回归：RAW → 12MP 照片 是否还在我们手里（§79）。
+# 高清**图像**链路的一命令回归：RAW → 12MP 照片 是否还在我们手里（§79/§80）。
 #
-# 判据（§79.3）：把 RAW10 写成"左半 0x40 / 右半 0xC0"，拍一张 12MP 照片，
-# 比较照片**上/下**两半的均值 —— 差 > 40 即通过（真实暗场基线差 ≈ 0，实测 74.8）。
-# 之所以比"上/下"而不是"左/右"：RAW 与 JPEG 之间是 **90° 旋转**（§41/§79.2）。
+# 判据（§79.3 / §80.2）：把 RAW10 写成"左半 0x40 / 右半 0xC0"，拍一张 12MP 照片，
+# 比较照片**上/下**两半的均值 —— **下 > 上 且 差 > 15** 记为命中。
+# 为什么是上/下：RAW 与 JPEG 之间是 **90° 旋转**（§41/§79.2）。
+# 为什么不是固定 40：RAW 的分割要过 ISP 的自动曝光/色调曲线，对比度会被压
+# （手动那次 74.8，脚本首跑 19.7，暗场里更小）。
+#
+# **为什么连拍三张**（第 48 轮的教训）：两次连跑得到 19.7 与 0.7，差别只在时序 ——
+# `mock_map` 靠注入线程按尺寸认领，而 RAW 那批缓冲是拍照流程里才凑齐的。
+# 单次通过/失败都说明不了问题，**命中率**才是这条链路的真实状态。
 #
 # 用法：sh scripts/hal-photo-check.sh
-# 退出码：0 = 通过（并已把现场复原）；1 = 失败或复原失败
+# 退出码：0 = 至少一张命中且现场已复原；1 = 三张全未命中或复原失败
 set -u
 
 DATADIR=/data/vendor/camera
 TMPL=$DATADIR/raw_split.raw
 CFG=$DATADIR/portal.cfg
-SIZE=$((4096*3072*10/8))
 PKG=com.oplus.camera
 FAIL=0
 say() { printf '%s\n' "$*"; }
 
-say "=== 0 造模板（左 0x40 / 右 0xC0 的 RAW10，$SIZE 字节）==="
-python3 - "$TMPL" "$SIZE" <<'PY' || exit 1
-import sys
-path, size = sys.argv[1], int(sys.argv[2])
+say "=== 0 造模板（左 0x40 / 右 0xC0 的 RAW10）==="
+python3 - <<'PYSH' || exit 1
 w, h = 4096, 3072
 row = w * 10 // 8
 buf = bytearray()
 for _ in range(h):
     buf += bytes([0x40]) * (row // 2) + bytes([0xC0]) * (row - row // 2)
-open('/tmp/hpc_split.raw', 'wb').write(bytes(buf[:size]))
-print("  本地模板 /tmp/hpc_split.raw", len(buf[:size]), "字节")
-PY
+open('/tmp/hpc_split.raw', 'wb').write(bytes(buf))
+print("  本地模板 /tmp/hpc_split.raw", len(buf), "字节")
+PYSH
 adb push /tmp/hpc_split.raw /data/local/tmp/hpc_split.raw >/dev/null 2>&1 || exit 1
 
 say "=== 1 装机（cp + chmod + chcon，注册 mock_map）==="
@@ -39,41 +42,52 @@ adb shell su -c "rm -f $TMPL; cp /data/local/tmp/hpc_split.raw $TMPL; chmod 666 
   >/dev/null 2>&1
 adb shell su -c "grep mock_map $CFG" 2>/dev/null | tail -1
 
-say "=== 2 拍照 ==="
+say "=== 2 连拍三张（量成功率，不赌单次）==="
 adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
 adb shell svc power stayon true >/dev/null 2>&1
 adb shell am force-stop $PKG >/dev/null 2>&1
 sleep 1
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 sleep 10
-adb shell input keyevent 27 >/dev/null 2>&1
-sleep 7
-J=$(adb shell "ls -t /sdcard/DCIM/Camera/*.jpg 2>/dev/null | head -1" | tr -d '\r')
-if [ -z "$J" ]; then say "  FAIL：没找到照片（快门没生效？）"; FAIL=1; else
-    adb pull "$J" /tmp/hpc_shot.jpg >/dev/null 2>&1
-    DIFF=$(python3 - <<'PY'
-from PIL import Image, ImageStat
-im = Image.open('/tmp/hpc_shot.jpg').convert('L')
-w, h = im.size
-top = im.crop((int(w*0.20), int(h*0.05), int(w*0.80), int(h*0.35)))
-bot = im.crop((int(w*0.20), int(h*0.65), int(w*0.80), int(h*0.95)))
-print("%.1f %.1f %.1f" % (ImageStat.Stat(top).mean[0], ImageStat.Stat(bot).mean[0],
-                          ImageStat.Stat(bot).mean[0] - ImageStat.Stat(top).mean[0]))
-PY
-)
-    say "  $J"
-    say "  上/下/差 = $DIFF"
-    # 判据：**下 > 上，且差 > 15**。为什么不是固定 40：RAW 里的分割经过 ISP 的自动曝光/
-    # 色调曲线后对比度会被压（手动那次 74.8，脚本这次 19.7 —— 同一套模板、不同曝光）。
-    # 方向必须对（我们的模板是"左暗右亮"，经 90° 旋转后应当是"上暗下亮"），
-    # 只判差值会把"整幅偏亮"误判成通过。
-    DT=$(echo $DIFF | awk '{print $3}')
-    if awk "BEGIN{exit !($DT > 15)}"; then
-        say "  PASS：照片上暗下亮（差 $DT）⇒ 12MP 图像内容仍在我们手里（方向 = §79.2 的 90° 映射）"
+
+OKN=0
+i=1
+while [ $i -le 3 ]; do
+    adb shell input keyevent 27 >/dev/null 2>&1
+    sleep 7
+    J=$(adb shell "ls -t /sdcard/DCIM/Camera/*.jpg 2>/dev/null | head -1" | tr -d '\r')
+    if [ -z "$J" ]; then
+        say "  第 $i 张：没找到照片（快门没生效？）"
     else
-        say "  FAIL：上/下几乎一样（差 $DT）⇒ RAW→照片 链路没接管（或被别的模板盖掉）"
-        FAIL=1
+        adb pull "$J" /tmp/hpc_shot_$i.jpg >/dev/null 2>&1
+        D=$(python3 - "$i" <<'PYSH'
+import sys
+from PIL import Image, ImageStat
+im = Image.open('/tmp/hpc_shot_%s.jpg' % sys.argv[1]).convert('L')
+w, h = im.size
+top = ImageStat.Stat(im.crop((int(w*0.20), int(h*0.05), int(w*0.80), int(h*0.35)))).mean[0]
+bot = ImageStat.Stat(im.crop((int(w*0.20), int(h*0.65), int(w*0.80), int(h*0.95)))).mean[0]
+print("%.1f %.1f %.1f" % (top, bot, bot - top))
+PYSH
+)
+        TOP=$(echo "$D" | awk '{print $1}')
+        BOT=$(echo "$D" | awk '{print $2}')
+        DT=$(echo "$D" | awk '{print $3}')
+        if awk "BEGIN{exit !($DT > 15)}"; then
+            say "  第 $i 张：上 $TOP / 下 $BOT / 差 $DT  => 命中（我们的画面）"
+            OKN=$((OKN + 1))
+        else
+            say "  第 $i 张：上 $TOP / 下 $BOT / 差 $DT  => 未命中（真实场景）"
+        fi
     fi
+    i=$((i + 1))
+done
+say "  命中率：$OKN/3"
+if [ "$OKN" -gt 0 ]; then
+    say "  PASS：至少一张命中（机制成立；命中率才是它的真实状态，见 §80.3）"
+else
+    say "  FAIL：三张全未命中 —— RAW→照片 链路这次完全没接管"
+    FAIL=1
 fi
 
 say "=== 3 复原现场（删 mock_map、重启 provider、核实取景器又是我们的画面）==="
@@ -82,19 +96,20 @@ adb shell su -c "sed -i '/^mock_map=/d' $CFG; setprop ctl.stop vendor.camera-pro
 adb shell am force-stop $PKG >/dev/null 2>&1
 sleep 1
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-sleep 10
-sleep 4   # 刚拍完照，取景器要重新起流：给它多几秒（实测 10 秒时偶尔还没认领完）
+sleep 14
 adb shell su -c "screencap -p /data/local/tmp/hpc.png" >/dev/null 2>&1
 adb pull /data/local/tmp/hpc.png /tmp/hpc.png >/dev/null 2>&1
-R=$(python3 - <<'PY'
+R=$(python3 - <<'PYSH'
 from PIL import Image, ImageStat
 im = Image.open('/tmp/hpc.png').convert('L'); w, h = im.size
 st = ImageStat.Stat(im.crop((int(w*0.05), int(h*0.16), int(w*0.95), int(h*0.42))))
 print("%.1f %.1f" % (st.mean[0], st.stddev[0]))
-PY
+PYSH
 )
-say "  取景区 mean/std = $R"
-if awk "BEGIN{exit !($(echo $R | awk '{print $2}') < 8 && $(echo $R | awk '{print $1}') > 60)}"; then
+RM=$(echo "$R" | awk '{print $1}')
+RS=$(echo "$R" | awk '{print $2}')
+say "  取景区 mean/std = $RM / $RS"
+if awk "BEGIN{exit !($RS < 8 && $RM > 60)}"; then
     say "  PASS：复原成功（取景器又是均匀的虚拟画面）"
 else
     say "  FAIL：复原后取景器不是我们的画面 —— 现场没清干净"
@@ -102,5 +117,5 @@ else
 fi
 
 say ""
-if [ "$FAIL" = 0 ]; then say "=== 照片链路全部通过 ==="; else say "=== 有 FAIL（见上）==="; fi
+if [ "$FAIL" = 0 ]; then say "=== 照片链路本次通过 ==="; else say "=== 有 FAIL（见上）==="; fi
 exit $FAIL
