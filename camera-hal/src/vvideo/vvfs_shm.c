@@ -157,6 +157,94 @@ static const struct vvideo_super_operations g_shm_sop = {.put_super = shm_put_su
  * 不经过任何块设备、不会被回写 —— 这是"数据流不过物理磁盘"最干净的落点。
  * `dev=<路径>` 则交给调用方保证那块文件在 tmpfs 上。
  */
+/**
+ * 把 fd 撑到 `total` 字节。**两条路，第一条不行就换第二条。**
+ *
+ * 实测（ACE5 / Android 16 / `hal_camera_default` 域）：`memfd_create` 成功，但紧接着的
+ * `ftruncate` 报 **EIO(5)** —— 而同一个二进制在 shell 域与 root 域里两条都成功。
+ * 也就是说这不是内核不支持，而是**这个域上被挡了某一步**（dmesg 里没有对应 AVC，
+ * 所以不是 SELinux 的文件权限）。
+ *
+ * 与其停在"不知道为什么"，不如给一条**不依赖 ftruncate 的路**：用 `write()` 把 memfd 撑开
+ * （memfd 上两者语义等价，但内核路径不同）。哪条走通了会记进日志 —— 现场自证，不靠推断。
+ */
+static int shm_grow(int fd, size_t total, const char *what) {
+    errno = 0;
+    if (ftruncate(fd, (off_t)total) == 0) return 0;
+    int save = errno;
+    static const char zeros[4096];
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+        errno = save;
+        return -1;
+    }
+    size_t left = total;
+    while (left > 0) {
+        size_t n = left < sizeof(zeros) ? left : sizeof(zeros);
+        ssize_t w = write(fd, zeros, n);
+        if (w <= 0) {
+            vvideo_logf(VV_LOG_ERR,
+                        "%s：ftruncate 失败（errno=%d）且 write 也失败（errno=%d）—— 本域两条路都不通",
+                        what, save, errno);
+            errno = save;
+            return -1;
+        }
+        left -= (size_t)w;
+    }
+    vvideo_logf(VV_LOG_WARN,
+                "%s：ftruncate 被拒（errno=%d）⇒ 已改用 write 撑开 %zu 字节（这条路走通了）", what,
+                save, total);
+    return 0;
+}
+
+/**
+ * `probe=1`：把"这个进程/域到底能不能建匿名共享内存"一步步问出来。
+ *
+ * 为什么值得留一段这样的代码：ACE5 实测 `memfd_create` 返回了合法 fd，**紧接着**
+ * 的 `ftruncate` 却在 HAL 域里被拒（shell/root 域同样两步都成功），而 dmesg 里
+ * **没有任何 AVC** —— 也就是说这不是"权限不够"这种能一眼看出的问题。
+ * 这种情况下继续推断没有意义，唯一有用的是把每一步的 errno 打出来。
+ */
+static void shm_probe(void) {
+    int fd = vv_memfd_create("vvprobe", 0);
+    int e1 = errno;
+    vvideo_logf(VV_LOG_INFO, "probe: memfd_create → fd=%d errno=%d", fd, e1);
+    if (fd >= 0) {
+        errno = 0;
+        int rc = ftruncate(fd, 65536);
+        vvideo_logf(VV_LOG_INFO, "probe:   ftruncate(64K) → %d errno=%d", rc, errno);
+        errno = 0;
+        char b[4096] = {1};
+        ssize_t w = write(fd, b, sizeof(b));
+        vvideo_logf(VV_LOG_INFO, "probe:   write(4K) → %zd errno=%d", w, errno);
+        errno = 0;
+        void *m = mmap(NULL, 65536, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        vvideo_logf(VV_LOG_INFO, "probe:   mmap(SHARED) → %s errno=%d",
+                    m == MAP_FAILED ? "失败" : "成功", errno);
+        if (m != MAP_FAILED) munmap(m, 65536);
+        close(fd);
+    }
+    errno = 0;
+    int pf = open("/data/local/tmp/portalex/vvprobe", O_RDWR | O_CREAT | O_TRUNC, 0600);
+    int e2 = errno;
+    vvideo_logf(VV_LOG_INFO, "probe: open(普通文件) → fd=%d errno=%d", pf, e2);
+    if (pf >= 0) {
+        errno = 0;
+        int rc = ftruncate(pf, 65536);
+        vvideo_logf(VV_LOG_INFO, "probe:   ftruncate(64K) → %d errno=%d", rc, errno);
+        close(pf);
+    }
+    errno = 0;
+    int mf = open("/data/local/tmp/portalex/vvprobe.map", O_RDWR | O_CREAT | O_TRUNC, 0600);
+    if (mf >= 0) {
+        errno = 0;
+        void *m = mmap(NULL, 65536, PROT_READ | PROT_WRITE, MAP_SHARED, mf, 0);
+        vvideo_logf(VV_LOG_INFO, "probe:   mmap(普通文件, 已截到 0) → %s errno=%d",
+                    m == MAP_FAILED ? "失败" : "成功", errno);
+        if (m != MAP_FAILED) munmap(m, 65536);
+        close(mf);
+    }
+}
+
 static int shm_open_backing(const char *dev, const char *opts, size_t total, int *out_created) {
     char name[64];
     if (!vv_opt_str(opts, "name", name, sizeof(name))) snprintf(name, sizeof(name), "vvvideo-shm");
@@ -168,8 +256,8 @@ static int shm_open_backing(const char *dev, const char *opts, size_t total, int
         }
         struct stat st;
         if (fstat(fd, &st) == 0 && (size_t)st.st_size < total) {
-            if (ftruncate(fd, (off_t)total) != 0) {
-                vvideo_logf(VV_LOG_ERR, "shm ftruncate 失败（%s → %zu）", dev, total);
+            if (shm_grow(fd, total, "shm 后备文件") != 0) {
+                vvideo_logf(VV_LOG_ERR, "shm 撑不开后备文件 %s（→ %zu 字节）", dev, total);
                 close(fd);
                 return -1;
             }
@@ -184,8 +272,7 @@ static int shm_open_backing(const char *dev, const char *opts, size_t total, int
         vvideo_logf(VV_LOG_ERR, "shm 建 memfd 失败（errno=%d）——本平台不支持匿名共享内存", errno);
         return -1;
     }
-    if (ftruncate(fd, (off_t)total) != 0) {
-        vvideo_logf(VV_LOG_ERR, "shm memfd ftruncate 失败（%zu 字节）", total);
+    if (shm_grow(fd, total, "shm memfd") != 0) {
         close(fd);
         return -1;
     }
@@ -194,6 +281,7 @@ static int shm_open_backing(const char *dev, const char *opts, size_t total, int
 }
 
 static struct vvideo_sb *shm_mount(struct vvideo_fs_type *type, const char *dev, const char *opts) {
+    if (vv_opt_u32(opts, "probe", 0) != 0) shm_probe();
     unsigned long slots = vv_opt_u32(opts, "slots", 3);
     unsigned long slot_bytes = vv_opt_u32(opts, "slot", 0);
     unsigned long w = vv_opt_u32(opts, "w", 0);
