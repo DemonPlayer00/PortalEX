@@ -49,6 +49,12 @@ adb shell am force-stop $PKG >/dev/null 2>&1
 sleep 1
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 sleep 10
+# **必须切到"照片"模式再判**（第 50 轮踩的坑）：相机应用会记住上一次的模式，
+# 而视频模式下取景器来自另一路流 —— 我们在 2136×1200 上写得再好也看不见，
+# 脚本就会报"没接管"（实测：切回照片模式后取景区立刻 mean=128.0 std=0.0）。
+# 这个坐标是这台设备(1264×2780)底部模式行里的"照片"。
+adb shell input tap 600 2140 >/dev/null 2>&1
+sleep 4
 
 OKN=0
 i=1
