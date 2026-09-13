@@ -7,14 +7,14 @@
   -------------   ---------   ------------------------   -----------------   ---------------------------
   rear-preview    4,038,656   @0    行距2176 ×1200 行     @2,611,200 NV21     顺时针 90°，无镜像
   rear-video      12,591,104  瓦片 NV12（见 §43/§46）     ——                  ——（用 §46 的瓦片化路径）
-  front-preview   4,038,656   @0    行距2176 ×**1256**行  @2,733,056 NV21     **径向（圆形）调制**，见下
+  front-preview   4,038,656   @0    行距2176 ×**1256**行  @2,733,056 NV21     rot90cw **再上下翻**（见下）
   front-video     3,194,880   @0    行距1920 ×**1088**行  @2,088,960 NV21     画面 = fliplr(rot90(缓冲, +1))
                                                                               ⇒ 缓冲 = rot90(fliplr(设计稿), 3)
 
-⚠️ `front-preview` 的坑：**取景器显示侧对前置预览做了径向处理**。实测把整块缓冲写成纯 128 灰，
-屏幕上仍出现"中心暗、四周亮"的圆盘（列均值 155 → 211），且色度只在中央圆内可见。
-后置预览没有这个现象（后置注入的测试卡是逐像素正确的）。所以 front-preview 模式生成的素材
-**在 HAL 缓冲里是精确的**，但取景器上会带上这层应用侧/显示侧的空间调制 —— 属于已知缺陷。
+ℹ️ `front-preview` 的圆盘：**这是 App 自己的渲染，不是我们的缺陷**（§48）——
+关掉全部注入后，前置**实景**取景器上同样有那个圆盘（中央清晰、盘外发白去饱和）。
+注入内容在**盘内逐像素准确**（探针：缓冲 (128,U200,V90) → 屏幕 (77,132,254)，理论 (69,133,255)）。
+前置预览比后置预览还多一层**上下翻转**，本模式已按实测（手性 'F' 探针）代为翻正。
 
 用法：
     python3 gen-camera-mock.py <mode> <设计稿.png|.jpg> <输出.raw>
@@ -36,9 +36,9 @@ MODES = {
     # 前置预览：Y 面 1256 行（1200 有效 + 56 填充），色度在 2176*1256（**实测全零行分界**）
     'front-preview': dict(
         total=4038656, w=2136, h=1200, stride=2176, yrows=1256,
-        uvoff=2176 * 1256, uvrows=600, display='rot90cw', fill=128,
+        uvoff=2176 * 1256, uvrows=600, display='rot90cw_flipud', fill=128,
         vis=(352, 2573),
-        warn='取景器对前置预览有径向调制：缓冲精确 ≠ 屏幕精确',
+        warn='取景器的圆盘是 App 自身渲染（§48）：盘内逐像素准确，盘外会被提亮去饱和',
     ),
     # 前置录像：1080p、线性 NV12，缓冲 1080 有效行 + 8 填充行
     'front-video': dict(
@@ -86,8 +86,12 @@ def nv21_plane(u, v, rows, stride, w):
 def build(mode, design_path, out_path):
     p = MODES[mode]
     design = Image.open(design_path).convert('RGB')
-    if p['display'] == 'rot90cw':
-        # 设计稿按屏幕可见区排版，再反变换写回缓冲
+    if p['display'] in ('rot90cw', 'rot90cw_flipud'):
+        # 设计稿按屏幕可见区排版，再反变换写回缓冲。
+        # ⚠️ 前置预览比后置多一层**上下翻转**（实测：带手性 'F' 的探针，屏幕 = flipud(设计稿)，
+        #    IoU 0.68 vs 次优 0.35）—— 这是前置传感器 180° 安装的体现。要"屏幕上正着"就得先翻一次。
+        if p['display'] == 'rot90cw_flipud':
+            design = design.transpose(Image.FLIP_TOP_BOTTOM)
         vis_top, vis_bot = p['vis']
         design = cover(design, SCREEN_W, vis_bot - vis_top)
         canvas = Image.new('RGB', (SCREEN_W, SCREEN_H), (0, 0, 0))
