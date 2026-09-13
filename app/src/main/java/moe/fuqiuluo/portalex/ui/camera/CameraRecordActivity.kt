@@ -170,6 +170,9 @@ class CameraRecordActivity : AppCompatActivity() {
                 override fun onOpened(device: CameraDevice) {
                     cameraDevice = device
                     startPreview()
+                    // 相机是"拿到就必须还"的资源：本轮持有开始计时（默认 3 分钟上限），
+                    // 到点强制释放，避免小时级持续负载把机器烤热。
+                    CameraOccupancyGuard.start("record") { onCameraOccupancyTimeout() }
                 }
 
                 override fun onDisconnected(device: CameraDevice) {
@@ -421,8 +424,20 @@ class CameraRecordActivity : AppCompatActivity() {
         if (recording) cancelAndFinish()
     }
 
+    /** 占用超时：**剥夺相机**（停录 → 关会话 → 关设备 → 结束界面），并让用户看到原因 */
+    private fun onCameraOccupancyTimeout() {
+        runCatching { releaseRecorder() }
+        runCatching { session?.close() }
+        runCatching { cameraDevice?.close() }
+        session = null
+        cameraDevice = null
+        Toast.makeText(this, "相机占用已达上限（${CameraOccupancyGuard.DEFAULT_TIMEOUT_MS / 60000} 分钟），已自动释放", Toast.LENGTH_LONG).show()
+        finish()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        CameraOccupancyGuard.stop()
         handler?.removeCallbacks(ticker)
         runCatching { session?.close() }
         session = null

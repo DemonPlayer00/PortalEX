@@ -90,6 +90,8 @@ class CameraProbeActivity : Activity() {
                 override fun onOpened(camera: CameraDevice) {
                     device = camera
                     startSession(camera, wantW, wantH)
+                    // 同 CameraRecordActivity：未显式指定超时的相机会话一律走默认上限
+                    CameraOccupancyGuard.start("probe") { finishProbe() }
                     if (holdMs > 0) {
                         Log.i(TAG, "保持会话 ${holdMs}ms（用于并发观测）")
                         handler.postDelayed({ Log.i(TAG, "hold 结束，收工"); finishProbe() }, holdMs)
@@ -224,6 +226,7 @@ class CameraProbeActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        CameraOccupancyGuard.stop()
         runCatching { session?.close() }
         runCatching { device?.close() }
         runCatching { reader?.close() }
