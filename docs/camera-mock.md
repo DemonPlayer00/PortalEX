@@ -3821,3 +3821,89 @@ adb shell 'setprop vendor.gralloc.disable_ubwc 0'
    `resetprop`）+ 整机重启 → 重跑 §62.2。若面变线性，注入立刻可用，而且全程**零注入**（符合项目红线）；
 2. 若不退：只剩 **GPU 写**那一条（§30.4 的首选）：shim 里已有 M1b 的 `EGLImage`/GL 合成段，
    让 GPU 把我们的画面 blit 进压缩面 —— 排布与元数据交给 GPU，我们不必自己实现压缩器。
+
+---
+
+## 63. GPU 写入这条路：**两扇门都量过了**（本轮新增，cfg 默认关闭）
+
+§62.6 把 GPU 写列为"若线性化不成，就只剩它"。本轮把它实现到"能跑、能报错、能自证"的程度，
+并把两扇门各自量了一次。**结论：在本机（一加 ACE5 / ColorOS 16 / Adreno）这两条路目前都不通**，
+但每一处"不通"都留下了**可复现的错误码与证据**，不是猜测。
+
+### 63.1 新增的 cfg（全部默认关闭，不动现役那套按尺寸注入）
+
+| cfg | 作用 |
+|---|---|
+| `gpu=1` | 对 `gpu_size=` 那块靶改用 **GPU 画**（不再 CPU memcpy） |
+| `gpu_size=<字节>` | 走 GPU 的靶（按尺寸选，理由同 `mock_map`） |
+| `gpu_w=` / `gpu_h=` | 那块靶的几何（建 EGLImage 要用），默认 1920×1080 |
+
+配套：注入线程现在会**按尺寸认领 GPU 靶**（不需要模板文件），并给每块靶留住 `fd`
+（`EGL_LINUX_DMA_BUF_EXT` 只认 fd）；GPU 靶**故意不退回 CPU 写** —— 线性数据进压缩面只会变成噪声，
+那会让"A/B 判据看到的画面变化"到底是 GPU 生效还是噪声变得说不清。
+
+### 63.2 门一：`EGL_LINUX_DMA_BUF_EXT`（用 fd 直接建 EGLImage）—— **驱动不支持**
+
+做法：拿注入线程手上的 dmabuf fd，按 8 组属性组合试 `eglCreateImageKHR(EGL_LINUX_DMA_BUF_EXT)`：
+`NV12 + 无modifier/modifier=QCOM_COMPRESSED/QCOM_TILE/linear` × `pitch=w/a128` × `单平面/双平面`。
+
+| 观察 | 结果 |
+|---|---|
+| EGL/GL 在 **provider 进程内**能不能用 | ✅ 能：`GPU 注入就绪：EGL 1.5 display=… context=…`（这是本轮最先要回答的未知） |
+| 8 组组合 | **全部失败，`eglGetError=0x300c` = `EGL_BAD_PARAMETER`** |
+| 根因 | **本机 EGL 扩展串（全长 1247 字符）里没有 `EGL_EXT_image_dma_buf_import`** |
+
+⚠️ **本轮踩到的坑（值得单记）**：第一版把扩展串整串打出来，logcat 单行约 1KB 就截断，
+前半段恰好"看起来"像缺了这一项 —— 于是差点得出"扩展不存在"的**正确结论、错误理由**。
+改成**分块打印 + 关键字布尔判定**后才有硬证据：
+
+```
+EGL 关键词：dma_buf_import=0 modifiers=0 native_buffer=1 image_base=1
+```
+
+### 63.3 门二：`EGL_ANDROID_image_native_buffer`（用 gralloc 句柄）—— **拿不到句柄**
+
+这条是本机唯一可用的 GPU 门（`native_buffer=1`、`image_base=1`）。它要的是**真 gralloc 句柄**。
+本轮把"句柄在不在请求内存里"这个问题**用自证判据**量了：
+
+- 判据：句柄自报的某个 fd 的 `fstat` 尺寸 **必须等于**要接管的靶尺寸（3,219,456）——
+  尺寸对上才算找到，**不靠猜结构体偏移**；搜索做**两层指针追踪**（AIDL 的 `NativeHandle` 是一层壳）。
+- 请求条目的布局（**实测**，窗口打印）：`+0 流指针`、`+8 句柄位`、`+16 status|acquire`、
+  `+24 release`、`+32 priv`、`+48 起是字符串`（`…android.hardware…`）。
+- `+8` 那个值指向的是一个**包装对象**，不是 `native_handle_t`（头三字 `v=0 nFds=0 nInts=<指针低位>`）。
+  它的前 48 字节：`+0=0 +8=<堆指针> +16=0x1_00000035 +24=0x1 +32=<堆指针> +40=0x1_00000035`。
+- 结果：**预览请求与编码器请求都探过**（探针线程确认采到 `1920x1080 format=34 usage=0x10030322`
+  那一条），**两层指针图里没有任何带该 fd/尺寸的句柄**。
+
+**为什么要专门写个探针线程**：请求快照是**汇编钩子**填的、只有一个槽位，
+而汇报线程 5/20 秒才读一次 —— 实测两次采样都落在"预览请求"（`nout=1`）上，
+真正的编码器请求（`nout=2`）根本没被看见。所以加了 `portal_gpu_probe_thread`：
+每毫秒轮询快照、对每个条目跑一次搜索，找到就退出、找不到也自限次数（不留常驻线程）。
+
+### 63.4 于是"录像面"这件事的现状（三条路，各自的硬证据）
+
+| 路 | 状态 | 证据 |
+|---|---|---|
+| CPU 线性写 | ❌ 物理上不行 | §62：编码器面是 UBWC 压缩面，线性数据被解成噪声 |
+| 让面退回线性（`vendor.gralloc.disable_ubwc`） | ❌ 只 `setprop` 改不动 | §62.5：重启 provider / 重启 codec 服务后仍是压缩面 |
+| GPU 写：fd → EGLImage | ❌ 驱动没有该扩展 | §63.2：`dma_buf_import=0`，8 组组合全 `EGL_BAD_PARAMETER` |
+| GPU 写：gralloc 句柄 | ❌ 请求内存里拿不到句柄 | §63.3：两层追踪 + 尺寸自证，预览/编码器两条都探过 |
+
+**还没试过的（下一轮的入口，按代价）**：
+1. **在 provider 进程里按"fd 号"扫堆**找句柄：`/proc/self/maps` 的可读区里搜
+   `[version∈{12,16,20,24}, numFds∈1..8, numInts∈0..64]` 且紧跟的整数字段里有我们那个 fd 号
+   的 `native_handle_t` —— 一次性的有界扫描（进程堆几百 MB，按 GB/s 算是秒级），判据同样是自证；
+2. **钩 AIDL→camera3 的转换点**：句柄在 `camx.provider-impl.so` 里被搬进 `camera3_stream_buffer_t`
+   之前的形态是 AIDL 结构，那里一定拿得到真句柄（代价：要再找一次入口地址，同 `hook_rec_vaddrs` 的做法）；
+3. **承认 HAL 侧写不了编码器面**，把"给目标 App 的录像内容"继续交给已经验证过的
+   **app 层 relay 通道**（master 分支那条线，§5.7/§5.8），HAL 只负责它已经能做到的
+   （预览/照片/系统相机录像面）。
+
+### 63.5 复现命令
+
+```bash
+# 部署（GPU 关 = 现役那套；GPU 开 = 本轮这套）
+adb shell sh /data/local/tmp/deploy.sh '...;cam=1;inject=1;inject_us=0;gpu=1;gpu_size=3219456;gpu_w=1920;gpu_h=1080'
+# 看两扇门与句柄探针
+adb shell "logcat -d -s PortalCamShim:V" | grep -E 'EGL 关键词|GPU 建图像|GPU 探针|GPU：'
+```

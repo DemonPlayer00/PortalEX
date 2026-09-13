@@ -480,6 +480,19 @@ static int g_opt_inject_fd = -1;
  *  把所有该大小的 dmabuf 全部持续填充。相机输出缓冲在 fd 表里的名字就是 MAP_UNKNOWN。 */
 static unsigned long g_opt_inject_size = 0;
 static int g_opt_inject_byte = 0x80;
+/** `gpu=1`：对 `gpu_size=` 那块靶改用 **GPU 写入**（而不是 CPU memcpy）。
+ *
+ *  为什么需要它：编码器面是 **UBWC 压缩分配**（docs/camera-mock.md §62 实测），
+ *  CPU 写进去的线性数据编码器解不出来。压缩布局与元数据只有 GPU 会写对。
+ *  做法见下方 M2 段：用**注入线程手上的 dmabuf fd**（不是请求里的 handle，
+ *  那个在本机不可信，§62 请求快照里两个输出打出来是同一个指针）建
+ *  `EGL_LINUX_DMA_BUF_EXT` 图像，让 GPU 直接画。 */
+static int g_opt_gpu = 0;
+/** 走 GPU 的那块靶的字节数（0 = 不启用；按尺寸选靶，理由同 mock_map） */
+static unsigned long g_opt_gpu_size = 0;
+/** 那块靶的几何（GPU 需要宽高才能建图像；默认 1080p） */
+static int g_opt_gpu_w = 1920;
+static int g_opt_gpu_h = 1080;
 static int g_opt_inject_us = 15000;
 /** `inject_pattern=1`：不做纯色填充，改成**逐字节渐变** —— 用来证明"逐像素可控"
  *  （纯色只能证明"写进去了"，渐变才能证明每个字节都由我们决定）。 */
@@ -938,6 +951,14 @@ static void load_options(void) {
             g_opt_bufmap = atoi(val);
         } else if (strcmp(key, "probe_size") == 0) {
             g_opt_probe_size = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "gpu") == 0) {
+            g_opt_gpu = atoi(val);
+        } else if (strcmp(key, "gpu_size") == 0) {
+            g_opt_gpu_size = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "gpu_w") == 0) {
+            g_opt_gpu_w = atoi(val);
+        } else if (strcmp(key, "gpu_h") == 0) {
+            g_opt_gpu_h = atoi(val);
         } else if (strcmp(key, "hook_nrec_vaddrs") == 0) {
             snprintf(g_opt_hook_nrec_vaddrs, sizeof(g_opt_hook_nrec_vaddrs), "%s", val);
         } else if (strcmp(key, "hook_rec_vaddrs") == 0) {
@@ -1265,6 +1286,9 @@ static bool portal_layout_has_blob(const struct portal_layout *L) {
     return false;
 }
 
+/* M2：抓 gralloc 句柄（定义在下方 M2 段；请求路径要用，故前置声明） */
+static void portal_gpu_capture_handle(const camera3_stream_buffer_t *sb);
+
 /** 打印一次请求的真实字段与每个输出流/句柄的参数（只读；dump 开关打开时才走） */
 static void portal_dump_request(const void *raw, unsigned long n) {
     struct portal_layout L;
@@ -1284,6 +1308,7 @@ static void portal_dump_request(const void *raw, unsigned long n) {
              sb->stream->width, sb->stream->height, sb->stream->usage, sb->stream->stream_type,
              sb->stream->max_buffers);
         if (sb->buffer != NULL) portal_dump_handle(i, *sb->buffer);
+        portal_gpu_capture_handle(sb);
     }
 }
 
@@ -1410,6 +1435,7 @@ static void *(*p_eglGetCurrentSurface)(int) = NULL;
 static void *(*p_eglCreateImageKHR)(void *, void *, unsigned int, void *, const int *) = NULL;
 static int (*p_eglDestroyImageKHR)(void *, void *) = NULL;
 static int (*p_eglGetError)(void) = NULL;
+static const char *(*p_eglQueryString)(void *, int) = NULL;
 static void (*p_glEGLImageTargetTexture2DOES)(unsigned int, void *) = NULL;
 static void (*p_glGenTextures)(int, unsigned int *) = NULL;
 static void (*p_glBindTexture)(unsigned int, unsigned int) = NULL;
@@ -1467,6 +1493,7 @@ static bool portal_egl_init(void) {
         (void *(*)(void *, void *, unsigned int, void *, const int *))sym(g_egl, "eglCreateImageKHR");
     p_eglDestroyImageKHR = (int (*)(void *, void *))sym(g_egl, "eglDestroyImageKHR");
     p_eglGetError = (int (*)(void))sym(g_egl, "eglGetError");
+    p_eglQueryString = (const char *(*)(void *, int))sym(g_egl, "eglQueryString");
     p_glEGLImageTargetTexture2DOES =
         (void (*)(unsigned int, void *))sym(g_gles, "glEGLImageTargetTexture2DOES");
     p_glGenTextures = (void (*)(int, unsigned int *))sym(g_gles, "glGenTextures");
@@ -1524,6 +1551,34 @@ static bool portal_egl_init(void) {
     g_egl_ready = true;
     LOGI("GPU 注入就绪：EGL %d.%d display=%p context=%p", major, minor, g_egl_display,
          g_egl_context);
+    /* 扩展串是"fd 导入这条路存不存在"的唯一判据：没有 EGL_EXT_image_dma_buf_import
+     * 就没有 EGL_LINUX_DMA_BUF_EXT，组合怎么试都是 EGL_BAD_PARAMETER。 */
+    if (p_eglQueryString != NULL) {
+        const char *ext = p_eglQueryString(g_egl_display, 0x3055 /*EGL_EXTENSIONS*/);
+        /* ⚠️ 必须**分块**打：logcat 单行约 1KB 就截断，整串打出来会被砍掉一半，
+         * 于是"某个扩展在不在"的结论就会因为"没看见"而**误判**（本轮先踩了一次）。 */
+        if (ext != NULL) {
+            size_t len = strlen(ext);
+            LOGI("EGL 扩展串长度=%zu", len);
+            for (size_t o = 0; o < len; o += 400) {
+                LOGI("EGL 扩展[%zu]：%.400s", o, ext + o);
+            }
+            LOGI("EGL 关键词：dma_buf_import=%d modifiers=%d native_buffer=%d image_base=%d",
+                 strstr(ext, "EGL_EXT_image_dma_buf_import") != NULL,
+                 strstr(ext, "EGL_EXT_image_dma_buf_import_modifiers") != NULL,
+                 strstr(ext, "EGL_ANDROID_image_native_buffer") != NULL,
+                 strstr(ext, "EGL_KHR_image_base") != NULL);
+        } else {
+            LOGI("EGL 扩展串：(null)");
+        }
+    }
+    if (g_gles != NULL) {
+        void *(*p_glGetString)(unsigned int) = (void *(*)(unsigned int))sym(g_gles, "glGetString");
+        if (p_glGetString != NULL) {
+            const char *gext = (const char *)p_glGetString(0x1F03 /*GL_EXTENSIONS*/);
+            LOGI("GL 扩展串：%.600s", gext != NULL ? gext : "(null)");
+        }
+    }
     return true;
 }
 
@@ -1625,6 +1680,295 @@ restore:
     /* 原样恢复调用线程的 EGL 状态 */
     p_eglMakeCurrent(prev_dpy, prev_draw, prev_read, prev_ctx);
     return ok;
+}
+
+/* ------------------------------------------------------------------ *
+ * M2：GPU 写入 —— 把**注入线程手上的 dmabuf fd** 直接当渲染目标
+ *
+ * 为什么需要它（docs/camera-mock.md §62 的实测结论）：编码器面是 **UBWC 压缩分配**，
+ * 线性 CPU 写在编码器眼里是噪声；压缩布局**和它的元数据**只有 GPU 会写对。
+ *
+ * 为什么用 fd 而不是请求里的 buffer handle：本机请求快照里 `out[0]/out[1]` 打出来的
+ * buffer 是**同一个指针**、头字段也不像 native_handle（§62）⇒ 那条路不可信；
+ * 而注入线程按尺寸扫 `/proc/self/fd` 拿到的 fd 是确定的。
+ *
+ * 组合逐个试：`EGL/GL` 全是错误码语义，试错不会把 HAL 带走（这是 HAL 里做实验的前提）。
+ * 每个组合的 `eglGetError` 都记下来 —— 错误码本身就是"驱动支不支持"的答案。
+ * ------------------------------------------------------------------ */
+#define PORTAL_EGL_LINUX_DMA_BUF_EXT 0x3270
+#define PORTAL_EGL_LINUX_DRM_FOURCC_EXT 0x3271
+#define PORTAL_EGL_DMA_BUF_PLANE0_FD_EXT 0x3272
+#define PORTAL_EGL_DMA_BUF_PLANE0_OFFSET_EXT 0x3273
+#define PORTAL_EGL_DMA_BUF_PLANE0_PITCH_EXT 0x3274
+#define PORTAL_EGL_DMA_BUF_PLANE1_FD_EXT 0x3275
+#define PORTAL_EGL_DMA_BUF_PLANE1_OFFSET_EXT 0x3276
+#define PORTAL_EGL_DMA_BUF_PLANE1_PITCH_EXT 0x3277
+#define PORTAL_EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT 0x3443
+#define PORTAL_EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT 0x3444
+#define PORTAL_EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT 0x3445
+#define PORTAL_EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT 0x3446
+#define PORTAL_DRM_FORMAT_NV12 0x3231564eu          /* 'NV12' */
+#define PORTAL_DRM_MOD_QCOM_COMPRESSED 0x0500000000000001ull
+#define PORTAL_DRM_MOD_QCOM_TILE 0x0500000000000003ull
+
+static unsigned portal_align_up(unsigned v, unsigned a) { return (v + a - 1u) & ~(a - 1u); }
+
+/* 抓到的句柄（给 GPU 用）与它自带的那个"尺寸对得上"的 fd */
+static void *g_gpu_handle = NULL;
+static int g_gpu_handle_fd = -1;
+static int g_gpu_handle_tried = 0;
+static int g_gpu_probe_logged = 0;
+
+/** 这个地址像不像 native_handle，且它的某个 fd 的尺寸 == want_size（自证，不靠猜偏移） */
+static void *portal_handle_like(unsigned long cand, unsigned long want_size, int *out_fd) {
+    if (cand < 0x1000 || (cand & 3) != 0) return NULL;
+    int hdr[3] = {0, 0, 0};
+    if (portal_peek(cand, hdr, sizeof(hdr)) != 0) return NULL;
+    if (hdr[0] != 12 && hdr[0] != 16 && hdr[0] != 20 && hdr[0] != 24) return NULL; /* version */
+    if (hdr[1] < 1 || hdr[1] > 8) return NULL;                                     /* numFds */
+    if (hdr[2] < 0 || hdr[2] > 64) return NULL;                                    /* numInts */
+    int fds[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    if (portal_peek(cand + 12, fds, sizeof(int) * (size_t)hdr[1]) != 0) return NULL;
+    for (int k = 0; k < hdr[1]; k++) {
+        struct stat st;
+        memset(&st, 0, sizeof(st));
+        if (fstat(fds[k], &st) == 0 && st.st_size > 0 && (unsigned long)st.st_size == want_size) {
+            if (out_fd != NULL) *out_fd = fds[k];
+            return (void *)cand;
+        }
+    }
+    return NULL;
+}
+
+/**
+ * **两层**指针追踪 + 自证判据：先看这个地址本身是不是句柄，再看它指向的前 64 字节里
+ * 每个像指针的字（AIDL 的 `NativeHandle` 包装对象就是这样一层壳：真正句柄在它内部）。
+ * 判据始终是"句柄自报的某个 fd 的 fstat 尺寸 == 目标尺寸"。
+ */
+static void *portal_handle_search(unsigned long addr, unsigned long want_size, int *out_fd,
+                                  int depth) {
+    void *h = portal_handle_like(addr, want_size, out_fd);
+    if (h != NULL) return h;
+    if (depth <= 0) return NULL;
+    for (int off = 0; off < 64; off += 8) {
+        unsigned long v = 0;
+        if (portal_peek(addr + off, &v, sizeof(v)) != 0) break;
+        if (v < 0x1000 || (v & 3) != 0) continue;
+        h = portal_handle_search(v, want_size, out_fd, depth - 1);
+        if (h != NULL) return h;
+    }
+    return NULL;
+}
+
+/**
+ * 在请求的一个输出条目附近**搜**真正的 gralloc 句柄。
+ *
+ * 为什么要搜：本机 `dump=1` 打出来的 `out[i].buffer` 两个输出是**同一个指针**、头字段也不像
+ * native_handle（§62）⇒ 那个字段不能直接当句柄用；而 EGL 的 `EGL_ANDROID_image_native_buffer`
+ * 要的正是真句柄（本机 EGL 扩展串里**没有** `EGL_EXT_image_dma_buf_import`，fd 导入那条路不存在）。
+ *
+ * 判据是**自证**的：句柄自报的某个 fd 的 `fstat` 尺寸必须等于要接管的那块靶的尺寸。
+ * 纯读（`/proc/self/mem` + `fstat`），找不到就什么都不做。
+ */
+static void portal_gpu_capture_handle(const camera3_stream_buffer_t *sb) {
+    if (!g_gpu_probe_logged) {
+        g_gpu_probe_logged = 1;
+        LOGI("GPU 探针：进入 sb=%p gpu=%d size=%lu 已有句柄=%p", (const void *)sb, g_opt_gpu,
+             g_opt_gpu_size, g_gpu_handle);
+    }
+    if (!g_opt_gpu || g_opt_gpu_size == 0 || sb == NULL || g_gpu_handle != NULL) return;
+    const unsigned long base = (unsigned long)sb;
+    void *found = NULL;
+    int found_fd = -1;
+    for (int off = 0; off < 64 && found == NULL; off += 8) {
+        unsigned long v = 0;
+        if (portal_peek(base + off, &v, sizeof(v)) != 0) break;
+        if (v < 0x1000 || (v & 3) != 0) continue;
+        found = portal_handle_search(v, g_opt_gpu_size, &found_fd, 2);
+        if (found != NULL) {
+            g_gpu_handle = found;
+            g_gpu_handle_fd = found_fd;
+            LOGI("GPU：找到编码器面的 gralloc 句柄 %p（条目 +%d，自带 fd=%d size=%lu）", found, off,
+                 found_fd, g_opt_gpu_size);
+        }
+    }
+    if (found == NULL && !g_gpu_handle_tried) {
+        g_gpu_handle_tried = 1;
+        char buf[400];
+        int o = 0;
+        for (int off = 0; off < 64; off += 8) {
+            unsigned long v = 0;
+            if (portal_peek(base + off, &v, sizeof(v)) != 0) break;
+            o += snprintf(buf + o, sizeof(buf) - (size_t)o, " +%d=%p", off, (void *)v);
+        }
+        LOGI("GPU：这条输出条目附近没找到尺寸对得上的句柄；窗口：%s", buf);
+        unsigned long wrap = 0;
+        if (portal_peek(base + 8, &wrap, sizeof(wrap)) == 0 && wrap >= 0x1000) {
+            char b2[300];
+            int o2 = 0;
+            for (int off = 0; off < 48; off += 8) {
+                unsigned long v2 = 0;
+                if (portal_peek(wrap + off, &v2, sizeof(v2)) != 0) break;
+                o2 += snprintf(b2 + o2, sizeof(b2) - (size_t)o2, " +%d=%p", off, (void *)v2);
+            }
+            LOGI("GPU：+8 那个对象 %p 的前 48 字节：%s", (void *)wrap, b2);
+        }
+    }
+}
+
+
+/** 把条纹画进一个已经建好的 EGLImage（w×h）。返回是否真的画进去了。 */
+static bool portal_gpu_fill(void *image, unsigned w, unsigned h, unsigned frame) {
+    unsigned int tex = 0, fbo = 0;
+    bool ok = false;
+    p_glGenTextures(1, &tex);
+    p_glBindTexture(PORTAL_GL_TEXTURE_EXTERNAL_OES, tex);
+    p_glTexParameteri(PORTAL_GL_TEXTURE_EXTERNAL_OES, 0x2801 /*MIN_FILTER*/, 0x2600 /*NEAREST*/);
+    p_glTexParameteri(PORTAL_GL_TEXTURE_EXTERNAL_OES, 0x2800 /*MAG_FILTER*/, 0x2600);
+    p_glEGLImageTargetTexture2DOES(PORTAL_GL_TEXTURE_EXTERNAL_OES, image);
+    p_glGenFramebuffers(1, &fbo);
+    p_glBindFramebuffer(PORTAL_GL_FRAMEBUFFER, fbo);
+    p_glFramebufferTexture2D(PORTAL_GL_FRAMEBUFFER, PORTAL_GL_COLOR_ATTACHMENT0,
+                             PORTAL_GL_TEXTURE_EXTERNAL_OES, tex, 0);
+    if (p_glCheckFramebufferStatus(PORTAL_GL_FRAMEBUFFER) == PORTAL_GL_FRAMEBUFFER_COMPLETE) {
+        p_glViewport(0, 0, (int)w, (int)h);
+        p_glDisable(0x0B71 /*GL_DEPTH_TEST*/);
+        p_glDisable(0x0BE2 /*GL_BLEND*/);
+        p_glClearColor(0.06f, 0.06f, 0.06f, 1.0f);
+        p_glClear(0x00004000 /*GL_COLOR_BUFFER_BIT*/);
+        /* 横条：每 1/12 高度一条亮带，随时间上下移动 —— 一眼看出是我们画的（A/B 判据靠它） */
+        int band = (int)(h / 12 > 4 ? h / 12 : 4);
+        int offset = (int)((frame * 8u) % (uint32_t)(h + (uint32_t)band)) - band;
+        p_glEnable(0x0C11 /*GL_SCISSOR_TEST*/);
+        for (int i = -1; i < 12; i++) {
+            int y = offset + i * band * 2;
+            p_glScissor(0, y, (int)w, band);
+            if (i % 2 == 0) p_glClearColor(0.92f, 0.92f, 0.20f, 1.0f);
+            else p_glClearColor(0.10f, 0.55f, 0.95f, 1.0f);
+            p_glClear(0x00004000);
+        }
+        p_glDisable(0x0C11);
+        ok = true;
+    }
+    p_glBindFramebuffer(PORTAL_GL_FRAMEBUFFER, 0);
+    if (fbo) p_glDeleteFramebuffers(1, &fbo);
+    if (tex) p_glDeleteTextures(1, &tex);
+    return ok;
+}
+
+/** GPU 注入的计数与"只报一次"状态（诊断用） */
+static unsigned long g_gpu_ok = 0, g_gpu_fail = 0;
+static bool g_gpu_logged = false;
+
+/**
+ * 用 dmabuf fd 建 EGLImage → 画一帧 → 销毁。**每一步失败都只是返回 false**。
+ * 组合表把"哪一组被驱动接受"直接印在日志里（含错误码）。
+ */
+static bool portal_gpu_draw_dmabuf(int fd, unsigned w, unsigned h, unsigned frame) {
+    if (!portal_egl_init()) return false;
+
+    void *prev_ctx = p_eglGetCurrentContext ? p_eglGetCurrentContext() : NULL;
+    void *prev_dpy = p_eglGetCurrentDisplay ? p_eglGetCurrentDisplay() : NULL;
+    void *prev_draw = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x3059 /*DRAW*/) : NULL;
+    void *prev_read = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x305A /*READ*/) : NULL;
+    if (!p_eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) return false;
+
+    const unsigned pitch_w = w;
+    const unsigned pitch128 = portal_align_up(w, 128);
+    const unsigned rows_y = portal_align_up(h, 32);
+    /* 组合表按"先证明路通、再谈压缩布局"排序；每个组合的错误码都印出来（那是驱动给的答案） */
+    struct {
+        const char *name;
+        unsigned fourcc;
+        unsigned long long mod;
+        unsigned pitch;
+        unsigned uv_off;
+        int with_mod; /* 0 ⇒ 不发 modifier 属性：驱动不认这个令牌时整串都是 EGL_BAD_PARAMETER */
+    } combos[8] = {
+        {"NV12+无modifier(pitch=w)", PORTAL_DRM_FORMAT_NV12, 0ull, pitch_w, pitch_w * rows_y, 0},
+        {"NV12+无modifier(pitch=a128)", PORTAL_DRM_FORMAT_NV12, 0ull, pitch128, pitch128 * rows_y, 0},
+        {"NV12+QCOM_COMPRESSED(pitch=w)", PORTAL_DRM_FORMAT_NV12, PORTAL_DRM_MOD_QCOM_COMPRESSED,
+         pitch_w, pitch_w * rows_y, 1},
+        {"NV12+QCOM_COMPRESSED(pitch=a128)", PORTAL_DRM_FORMAT_NV12, PORTAL_DRM_MOD_QCOM_COMPRESSED,
+         pitch128, pitch128 * rows_y, 1},
+        {"NV12+QCOM_TILE(pitch=a128)", PORTAL_DRM_FORMAT_NV12, PORTAL_DRM_MOD_QCOM_TILE, pitch128,
+         pitch128 * rows_y, 1},
+        {"线性(pitch=w)", PORTAL_DRM_FORMAT_NV12, 0ull, pitch_w, pitch_w * rows_y, 1},
+        /* 只给单个平面：某些实现要求"平面数 = 1"（多平面属性反而不认） */
+        {"NV12+无modifier(单平面)", PORTAL_DRM_FORMAT_NV12, 0ull, pitch_w, 0, 0},
+        {"NV12+QCOM_COMPRESSED(单平面)", PORTAL_DRM_FORMAT_NV12, PORTAL_DRM_MOD_QCOM_COMPRESSED,
+         pitch_w, 0, 1},
+    };
+    const int ncombos = 8;
+
+    bool drawn = false;
+    for (int c = 0; c < ncombos && !drawn; c++) {
+        int attrs[40];
+        int an = 0;
+        attrs[an++] = PORTAL_EGL_LINUX_DRM_FOURCC_EXT;
+        attrs[an++] = (int)combos[c].fourcc;
+        attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE0_FD_EXT;
+        attrs[an++] = fd;
+        attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE0_OFFSET_EXT;
+        attrs[an++] = 0;
+        attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE0_PITCH_EXT;
+        attrs[an++] = (int)combos[c].pitch;
+        if (combos[c].uv_off != 0) {
+            attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE1_FD_EXT;
+            attrs[an++] = fd;
+            attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE1_OFFSET_EXT;
+            attrs[an++] = (int)combos[c].uv_off;
+            attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE1_PITCH_EXT;
+            attrs[an++] = (int)combos[c].pitch;
+        }
+        if (combos[c].with_mod) {
+            attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
+            attrs[an++] = (int)(combos[c].mod & 0xffffffffull);
+            attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
+            attrs[an++] = (int)(combos[c].mod >> 32);
+            if (combos[c].uv_off != 0) {
+                attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT;
+                attrs[an++] = (int)(combos[c].mod & 0xffffffffull);
+                attrs[an++] = PORTAL_EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT;
+                attrs[an++] = (int)(combos[c].mod >> 32);
+            }
+        }
+        attrs[an++] = 0x3038 /*EGL_NONE*/;
+        attrs[an++] = 0;
+
+        if (p_eglGetError) p_eglGetError(); /* 清历史错误 */
+        void *image = p_eglCreateImageKHR(g_egl_display, NULL /*NO_CONTEXT*/,
+                                          PORTAL_EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
+        int err = p_eglGetError ? p_eglGetError() : 0;
+        if (image == NULL) {
+            if (!g_gpu_logged) LOGI("GPU 建图像[%s] 失败：eglGetError=0x%x", combos[c].name, err);
+            continue;
+        }
+        drawn = portal_gpu_fill(image, w, h, frame);
+        p_eglDestroyImageKHR(g_egl_display, image);
+        if (drawn) {
+            if (!g_gpu_logged) {
+                g_gpu_logged = true;
+                LOGI("GPU 注入生效：组合[%s] 被驱动接受，已把条纹画进 %ux%u 的靶（fd=%d）",
+                     combos[c].name, w, h, fd);
+            }
+        } else if (!g_gpu_logged) {
+            LOGE("GPU 建图像[%s] 成功但 FBO 不完整 ⇒ 该面不能当渲染目标", combos[c].name);
+        }
+    }
+    if (drawn) {
+        __atomic_add_fetch(&g_gpu_ok, 1, __ATOMIC_RELAXED);
+    } else {
+        unsigned long n = __atomic_add_fetch(&g_gpu_fail, 1, __ATOMIC_RELAXED);
+        if (n == 1) LOGE("GPU 注入：%d 个组合都没画进去 ⇒ 退回不写（线性数据进压缩面只会是噪声）", ncombos);
+    }
+    p_eglMakeCurrent(prev_dpy, prev_draw, prev_read, prev_ctx);
+    return drawn;
+}
+
+/** 注入线程用：这块靶该不该走 GPU（未启用/尺寸不符 ⇒ false，调用方退回 CPU memcpy）。 */
+static bool portal_gpu_wanted(size_t size) {
+    return g_opt_gpu && g_opt_gpu_size != 0 && (unsigned long)size == g_opt_gpu_size;
 }
 
 /* ------------------------------------------------------------------ *
@@ -4291,6 +4635,9 @@ typedef struct {
     size_t size;
     const unsigned char *tpl;   /* NULL ⇒ 用 inject_byte 纯色填 */
     size_t tlen;
+    /** 这块靶的 dmabuf fd —— GPU 写入（M2 段）要用它建 EGLImage。
+     *  为什么留着 fd 而不是只用 mmap 的指针：`EGL_LINUX_DMA_BUF_EXT` 只认 fd。 */
+    int fd;
     /* `inject_sync=2`（静止判据）用的状态：见下面注入线程的注释 */
     unsigned long long seen;
     int stable;
@@ -4319,6 +4666,12 @@ static bool portal_target_wanted(unsigned long sz, const char *link, const void 
         break;
     }
     if (tpl == NULL) {
+        /* GPU 靶：只按尺寸认领 —— GPU 写入不需要模板文件（它画的是条纹，见 M2 段） */
+        if (g_opt_gpu && g_opt_gpu_size != 0 && sz == g_opt_gpu_size) {
+            if (out_tpl != NULL) *out_tpl = NULL;
+            if (out_tlen != NULL) *out_tlen = 0;
+            return true;
+        }
         if (g_mock_n != 0) return false; /* 有映射表时：没模板的尺寸不动 */
         if (g_opt_inject_size == 0 || sz != g_opt_inject_size) return false;
         if (g_inject_tpl != NULL) {
@@ -4414,7 +4767,9 @@ static int portal_build_targets(portal_target t[], int cap) {
         t[n].size = (size_t)sz;
         t[n].tpl = tpl;
         t[n].tlen = tlen;
-        LOGI("注入：fd=%d size=%lu → %p（模板 %s）", fd, sz, m, tpl ? "有" : "纯色");
+        t[n].fd = fd;
+        LOGI("注入：fd=%d size=%lu → %p（模板 %s%s）", fd, sz, m, tpl ? "有" : "纯色",
+             portal_gpu_wanted((size_t)sz) ? "，走 GPU" : "");
         n++;
     }
     closedir(d);
@@ -4439,6 +4794,27 @@ static void portal_write_span(void *dst, const unsigned char *tpl, size_t size, 
     }
     if (tpl != NULL) memcpy(dst, tpl, len);
     else memset(dst, g_opt_inject_byte, size);
+}
+
+/**
+ * 写一块靶：**GPU 靶走 GPU，其余走 CPU**。
+ *
+ * GPU 靶失败时**故意不退回 CPU 写**：线性数据进 UBWC 压缩面只会被编码器解成噪声（§62），
+ * 那既救不了画面、又会让"A/B 判据看到的画面变化"到底是 GPU 生效还是噪声变得说不清。
+ * 要区分这两者，判据是**条纹**（GPU 画的是黄蓝横条，噪声不是）——见 §63。
+ */
+static void portal_target_write(portal_target *t, size_t len, unsigned frame) {
+    if (portal_gpu_wanted(t->size)) {
+        if (g_gpu_handle != NULL &&
+            inject_via_gpu(g_gpu_handle, (uint32_t)g_opt_gpu_w, (uint32_t)g_opt_gpu_h, frame)) {
+            return; /* 本机唯一可用的那条：EGL_ANDROID_image_native_buffer */
+        }
+        /* 句柄还没抓到（或 GPU 拒绝）：**故意不退回 CPU 写** —— 线性数据进 UBWC 压缩面
+         * 只会被编码器解成噪声，那既救不了画面，也让 A/B 判据失去意义（见 M2 段注释）。 */
+        (void)portal_gpu_draw_dmabuf(t->fd, (unsigned)g_opt_gpu_w, (unsigned)g_opt_gpu_h, frame);
+        return;
+    }
+    portal_write_span(t->p, t->tpl, t->size, len);
 }
 
 static void *portal_inject_thread(void *arg) {
@@ -4556,7 +4932,7 @@ static void *portal_inject_thread(void *arg) {
                 t[i].stable = 0;
                 int reps = g_opt_inject_burst > 0 ? g_opt_inject_burst : 1;
                 for (int r = 0; r < reps; r++) {
-                    portal_write_span(t[i].p, t[i].tpl, t[i].size, len);
+                    portal_target_write(&t[i], len, rounds);
                     writes++;
                 }
                 continue;
@@ -4588,7 +4964,7 @@ static void *portal_inject_thread(void *arg) {
                     continue;
                 }
             }
-            portal_write_span(t[i].p, t[i].tpl, t[i].size, len);
+            portal_target_write(&t[i], len, rounds);
             if (g_opt_inject_sync >= 2) {
                 t[i].stable = 0;
                 t[i].seen = 0;   /* 从头等下一次"稳定" */
@@ -4681,6 +5057,47 @@ static void *portal_inject_thread(void *arg) {
     return NULL;
 }
 
+/**
+ * GPU 句柄探针线程：**每毫秒轮询请求快照**，对每个输出条目跑一次句柄搜索。
+ *
+ * 为什么不放在汇报线程里：汇报 5/20 秒一次，而快照只有一个槽位 —— 实测两次采样都落在
+ * "预览请求"（nout=1）上，真正的编码器请求（nout=2）根本没被看见（§63）。
+ * 快照由**汇编钩子**填写、没有 C 回调可插，所以这里用轮询补覆盖；找到就退出，找不到也自限次数。
+ */
+static void *portal_gpu_probe_thread(void *arg) {
+    (void)arg;
+    unsigned long last = 0;
+    unsigned long tries = 0;
+    int saw_encoder = 0;
+    for (;;) {
+        usleep(1000);
+        if (!g_opt_gpu || g_gpu_handle != NULL) return NULL;
+        if (++tries > 300000) {
+            LOGI("GPU 探针：轮询 %lu 次仍未拿到句柄 ⇒ 停（请求内存里没有可直接用的 gralloc 句柄）",
+                 tries);
+            return NULL;
+        }
+        unsigned long f = __atomic_load_n(&g_req_snap.q[0], __ATOMIC_RELAXED);
+        unsigned long nout = __atomic_load_n(&g_req_snap.q[3], __ATOMIC_RELAXED) & 0xFFFFFFFFul;
+        unsigned long ob = __atomic_load_n(&g_req_snap.q[4], __ATOMIC_RELAXED);
+        if (f == last || nout == 0 || nout > 4 || ob < 0x1000) continue;
+        last = f;
+        for (unsigned i = 0; i < nout && g_gpu_handle == NULL; i++) {
+            unsigned long e[5] = {0, 0, 0, 0, 0};
+            if (portal_peek(ob + i * 40, e, sizeof(e)) != 0) break;
+            if (!saw_encoder && e[0] >= 0x1000) {
+                unsigned int st[12] = {0};
+                if (portal_peek(e[0], st, sizeof(st)) == 0 && st[1] == 1920) {
+                    saw_encoder = 1;
+                    LOGI("GPU 探针：终于采到编码器流条目（%ux%u format=%d usage=0x%x）", st[1], st[2],
+                         (int)st[3], st[4]);
+                }
+            }
+            portal_gpu_capture_handle((const camera3_stream_buffer_t *)e);
+        }
+    }
+}
+
 static void portal_req_report(void) {
     unsigned long c = __atomic_load_n(&g_req_snap.cnt, __ATOMIC_RELAXED);
     if (c != 0 && g_req_snap.req != 0) {
@@ -4703,6 +5120,7 @@ static void portal_req_report(void) {
                  * 录像面带不带独立色度 fd、是不是多平面，一眼就能看出来（§51.4）。 */
                 portal_dump_handle(i, (const void *)e[1]);
                 portal_dump_handle_fds(i + 40, (const void *)e[1]);
+                portal_gpu_capture_handle((const camera3_stream_buffer_t *)e);
                 /* camera3_stream_t：type/width/height/format/usage/max_buffers 一眼看出这是哪路流 */
                 unsigned int st[12] = {0};
                 if (portal_peek(e[0], st, sizeof(st)) == 0) {
@@ -6135,7 +6553,15 @@ __attribute__((constructor)) static void on_load(void) {
     /* 闸门开关读一次就定死：热路径上只读一个 bool */
     g_opt_gate_on = (g_opt_gate != 0);
     load_real_hal();
-    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0') {
+#if defined(__aarch64__)
+    /* GPU 探针线程只在 arm64 上存在（M2 段整段都在那个条件里） */
+    if (g_opt_gpu) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, portal_gpu_probe_thread, NULL) == 0) pthread_detach(th);
+    }
+#endif
+    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0' ||
+        g_opt_gpu) {
         pthread_t th;
         if (pthread_create(&th, NULL, portal_inject_thread, NULL) == 0) {
             pthread_detach(th);
