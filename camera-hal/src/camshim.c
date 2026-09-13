@@ -4796,17 +4796,23 @@ static int portal_auto_validate(int fd, unsigned long sz, portal_auto_entry *e) 
     portal_dump_win((const unsigned char *)m, sz, 3, b1);
     int live = (memcmp(a0, a1, PORTAL_DUMP_WLEN) != 0 || memcmp(b0, b1, PORTAL_DUMP_WLEN) != 0);
     munmap(m, (size_t)sz);
-    if (!live) return 0; /* 还没写起来 ⇒ 不定案，下一轮再看 */
+    /* ⚠️ **不再用"活帧"当门槛**（本轮实测踩的坑）：早先要求"40ms 内有变化"才定案，结果
+     * 那次采样没撞上刷新 ⇒ 返回"未定" ⇒ 认领被跳过 ⇒ **明明绑上了却永不接管**
+     * （现象：日志里全是"绑定 size=…"，一条"校验通过"都没有，应用看到真实相机）。
+     * 而"活帧"本来就是多余的：**全零缓冲过不了 128 平台判据、也过不了 std≥3**，
+     * 换句话说"写没写起来"这两条判据自己就能分辨。活帧只留作日志里的参考量。 */
     double tail = 0.0, std = 0.0;
     double score = portal_auto_yuv_score(fd, (size_t)sz, &tail, &std);
     if (e->kind == 2) {
         if (std >= 3.0) {
             e->checked = 1; e->ok = 1;
-            LOGI("自动模板：内容校验通过 size=%lu（亮度面：活帧、采样 std=%.2f）⇒ 开始接管", sz, std);
+            LOGI("自动模板：内容校验通过 size=%lu（亮度面：活帧=%s、采样 std=%.2f）⇒ 开始接管", sz,
+                 live ? "有" : "无", std);
             return 1;
         }
         e->checked = 1; e->ok = -1;
-        LOGI("自动模板：**拒绝** size=%lu（亮度面）—— 采样 std=%.2f（要求 ≥3）", sz, std);
+        LOGI("自动模板：**拒绝** size=%lu（亮度面）—— 采样 std=%.2f（要求 ≥3，活帧=%s）", sz, std,
+             live ? "有" : "无");
         return -1;
     }
     double need = (e->kind == 3) ? 0.10 : 0.12;
@@ -5007,6 +5013,19 @@ static void portal_auto_bind(void) {
             LOGI("自动模板：绑定 size=%lu ← format=0x%x %ux%u（%s；实测 %d 块），"
                  "布局不可知 ⇒ 只填 %d 号纯色",
                  e->size, e->format, e->w, e->h, e->how, counts[pick], g_opt_auto_color);
+        }
+    }
+    /* **已绑定但还没定案的，每轮再试一次**（本轮实测踩的坑）：校验只在"刚绑定那一刻"试过一次，
+     * 而那一刻缓冲往往还没被硬件写起来 ⇒ 返回"未定"，此后再也没人问它 ⇒ 明明绑上了却永不接管
+     * （现象：日志里全是"绑定 size=…"，一条"校验通过"都没有，应用看到真实相机）。
+     * 活帧窗口一过就能定案，而"有未定项不节流"保证了这里每轮都会跑到。 */
+    for (int i = 0; i < g_auto_n; i++) {
+        portal_auto_entry *e = &g_auto[i];
+        if (e->mode == 0 || e->checked != 0) continue;
+        for (int s = 0; s < nsz; s++) {
+            if (sizes[s] != e->size) continue;
+            portal_auto_validate(hitfd[s], sizes[s], e);
+            break;
         }
     }
     if (bound_now > 0) {
