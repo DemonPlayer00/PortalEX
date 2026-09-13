@@ -523,6 +523,14 @@ static size_t g_opt_inject_limit = 0;
  * 就必须能"跳着写"。配合 `inject_us=0`（盲写）时窗口很小、总字节量也小，不会饿死 ISP。 */
 static size_t g_opt_span_off = 0;
 static size_t g_opt_span_len = 0;
+/* `scrub_ol_vaddr=<偏移>`：在 **oemlayer** 的某个偏移上挂一个"改用途位"钩子。
+ * 为什么不能走 `usage_patch`：ACE5 上真 HAL **没有导出 configure_streams 符号**，
+ * 那条路整条不可用（日志：`configure_streams 没有导出符号：usage_patch 那条路不可用`）。
+ * 但我们**能按地址挂钩**（oemlayer 的 configureStreams_Impl = +0x6c554，前几轮已定位），
+ * 于是把同一个 portal_scrub_streams() 从钩子里调一次即可。
+ * 目标：验证"把 4K 录像编码器流退回线性"是否能让我们的线性注入成立。 */
+static unsigned long g_opt_scrub_vaddr = 0;
+static int g_scrub_slot = -1;
 /** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
  *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
  *
@@ -774,6 +782,8 @@ static void load_options(void) {
             g_opt_inject_burst = atoi(val);
         } else if (strcmp(key, "inject_delay_us") == 0) {
             g_opt_inject_delay_us = atoi(val);
+        } else if (strcmp(key, "scrub_ol_vaddr") == 0) {
+            g_opt_scrub_vaddr = strtoul(val, NULL, 0);
         } else if (strcmp(key, "inject_limit") == 0) {
             g_opt_inject_limit = strtoul(val, NULL, 0);
         } else if (strcmp(key, "inject_span") == 0) {
@@ -1621,8 +1631,12 @@ static void portal_scrub_streams(void *stream_list) {
         int f = st->format;
         /* RAW（0x20/0x25）不动：模拟 RAW 没有意义，改它的分配只会把拍照弄坏 */
         if (f == 0x20 || f == 0x25) continue;
-        /* 录像编码器流也不动：清了 UBWC 会让编码器读到平铺噪声（实测），把录像内容弄坏 */
-        if ((st->usage & PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0) {
+        /* 录像编码器流默认不动（§15.8：清了 UBWC 会让编码器读到平铺噪声）。
+         * `usage_patch=3` 时**也改它** —— 用来验证"把 4K 录像面退回线性"这条假设：
+         * 线性之后 buffer 尺寸会变（12,591,104 → 12,441,600），这本身就是"改成功了"的证据；
+         * 再看录出来是我们写的线性内容、还是平铺噪声，就能一次判死。 */
+        if ((st->usage & PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0 &&
+            g_opt_usage_patch < 3) {
             LOGI("视频编码器流（format=0x%x %ux%u usage=0x%x）不动：编码器按 UBWC 读",
                  st->format, st->width, st->height, st->usage);
             continue;
@@ -4584,6 +4598,8 @@ __attribute__((used)) static void portal_hook_any_c(unsigned long caller, unsign
                                unsigned long entry_sp) {
     if (kind >= PORTAL_HOOK_MAX) return;
     __atomic_add_fetch(&g_hook_cnt[kind], 1, __ATOMIC_RELAXED);
+    /* 指定槽位 = "改用途位"钩子：a1 就是 configureStreams 的第 2 个参数（流表） */
+    if (g_scrub_slot >= 0 && (int)kind == g_scrub_slot) portal_scrub_streams((void *)a1);
     if (!g_opt_open_probe) return;   /* ← 默认在这里就回去了，一行 I/O 都没有 */
 
     static unsigned long logged[PORTAL_HOOK_MAX];
@@ -5354,6 +5370,28 @@ static void load_real_hal(void) {
     if (g_opt_hook_rec_ol_vaddrs[0] != '\0') {
         portal_hook_rec_list(g_opt_hook_rec_ol_vaddrs, "camera.oemlayer.so");
     }
+#if defined(__aarch64__)
+    if (g_opt_scrub_vaddr != 0) {
+        uintptr_t ob = portal_module_base("camera.oemlayer.so");
+        if (ob == 0) {
+            LOGE("改用途位钩子：拿不到 oemlayer 基址");
+        } else {
+            for (int i = 0; i < PORTAL_HOOK_MAX; i++) {
+                if (g_hook_resume[i] == 0 && g_hook_name[i] == NULL) { g_scrub_slot = i; break; }
+            }
+            if (g_scrub_slot < 0) {
+                LOGE("改用途位钩子：没有空槽");
+            } else {
+                snprintf(g_hook_name_buf[g_scrub_slot], sizeof(g_hook_name_buf[g_scrub_slot]),
+                         "camera.oemlayer.so+0x%lx(scrub)", g_opt_scrub_vaddr);
+                portal_inline_hook(g_scrub_slot, ob, g_opt_scrub_vaddr,
+                                   g_hook_name_buf[g_scrub_slot]);
+                LOGI("改用途位钩子：槽 %d ← oemlayer+0x%lx（usage_patch=%d）", g_scrub_slot,
+                     g_opt_scrub_vaddr, g_opt_usage_patch);
+            }
+        }
+    }
+#endif
     /* 请求快照钩子：做图像注入前必须先看到请求与缓冲的真身 */
     if (g_opt_req_vaddrs[0] != '\0') {
         portal_hook_req_list(g_opt_req_vaddrs);
