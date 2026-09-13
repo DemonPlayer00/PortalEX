@@ -1288,6 +1288,8 @@ static bool portal_layout_has_blob(const struct portal_layout *L) {
 
 /* M2：抓 gralloc 句柄（定义在下方 M2 段；请求路径要用，故前置声明） */
 static void portal_gpu_capture_handle(const camera3_stream_buffer_t *sb);
+/* M2b：登记 GPU 靶的 fd（定义在下方 M2b 段；注入线程认领靶时要用，故前置声明） */
+static void portal_gpu_note_target_fd(int fd);
 
 /** 打印一次请求的真实字段与每个输出流/句柄的参数（只读；dump 开关打开时才走） */
 static void portal_dump_request(const void *raw, unsigned long n) {
@@ -1859,6 +1861,8 @@ static bool portal_gpu_fill(void *image, unsigned w, unsigned h, unsigned frame)
 /** GPU 注入的计数与"只报一次"状态（诊断用） */
 static unsigned long g_gpu_ok = 0, g_gpu_fail = 0;
 static bool g_gpu_logged = false;
+/** 组合尝试日志只报一次：实测每轮 8 行 × 30fps 会把 logcat 环形缓冲冲爆，把别的诊断挤掉 */
+static bool g_gpu_combo_logged = false;
 
 /**
  * 用 dmabuf fd 建 EGLImage → 画一帧 → 销毁。**每一步失败都只是返回 false**。
@@ -1941,7 +1945,9 @@ static bool portal_gpu_draw_dmabuf(int fd, unsigned w, unsigned h, unsigned fram
                                           PORTAL_EGL_LINUX_DMA_BUF_EXT, NULL, attrs);
         int err = p_eglGetError ? p_eglGetError() : 0;
         if (image == NULL) {
-            if (!g_gpu_logged) LOGI("GPU 建图像[%s] 失败：eglGetError=0x%x", combos[c].name, err);
+            if (!g_gpu_combo_logged) {
+                LOGI("GPU 建图像[%s] 失败：eglGetError=0x%x", combos[c].name, err);
+            }
             continue;
         }
         drawn = portal_gpu_fill(image, w, h, frame);
@@ -1956,6 +1962,7 @@ static bool portal_gpu_draw_dmabuf(int fd, unsigned w, unsigned h, unsigned fram
             LOGE("GPU 建图像[%s] 成功但 FBO 不完整 ⇒ 该面不能当渲染目标", combos[c].name);
         }
     }
+    g_gpu_combo_logged = true; /* 这一轮组合已经报过了，后面不再刷 */
     if (drawn) {
         __atomic_add_fetch(&g_gpu_ok, 1, __ATOMIC_RELAXED);
     } else {
@@ -4768,6 +4775,7 @@ static int portal_build_targets(portal_target t[], int cap) {
         t[n].tpl = tpl;
         t[n].tlen = tlen;
         t[n].fd = fd;
+        if (portal_gpu_wanted((size_t)sz)) portal_gpu_note_target_fd(fd);
         LOGI("注入：fd=%d size=%lu → %p（模板 %s%s）", fd, sz, m, tpl ? "有" : "纯色",
              portal_gpu_wanted((size_t)sz) ? "，走 GPU" : "");
         n++;
@@ -5053,6 +5061,152 @@ static void *portal_inject_thread(void *arg) {
                 }
             }
         }
+    }
+    return NULL;
+}
+
+/* ------------------------------------------------------------------ *
+ * M2b：按 fd 号**在自己地址空间里扫出那块靶的 gralloc 句柄**（§63.4 的第 ① 条）
+ *
+ * 为什么还要扫：`EGL_ANDROID_image_native_buffer` 是本机唯一可用的 GPU 门，它要真句柄；
+ * 而请求条目里那个"句柄位"是个包装对象、两层指针追踪也追不到（§63.3）。
+ * 但句柄**一定在这个进程里**（框架把 buffer 交给 HAL 时它就得存在），所以按"fd 号"搜。
+ *
+ * **双重自证**（这是本轮搜索的全部含金量，避免误报）：
+ *   ① 候选 `native_handle_t` 的 fd 数组里必须有一个**正好是我们那块靶的 fd 号**；
+ *   ② 该 fd 的 `fstat` 尺寸还必须等于靶尺寸。
+ * 两条同时成立才认 —— 不靠猜结构体偏移、不靠猜内存布局。
+ *
+ * 安全性：只 `pread(/proc/self/mem)`（读不到的页返回 EIO，**不会 fault 把 provider 带走**），
+ * 扫描量有上限（512 MB / 一次），找不到就明确打一行、不留常驻线程。
+ * ------------------------------------------------------------------ */
+#define PORTAL_GPU_TARGET_FDS 32
+static int g_gpu_target_fds[PORTAL_GPU_TARGET_FDS];
+static int g_gpu_target_n = 0;
+
+/** 注入线程认领到 GPU 靶时登记它的 fd（扫堆要用"哪个 fd 才是我们的靶"这个事实） */
+static void portal_gpu_note_target_fd(int fd) {
+    if (fd < 3) return;
+    for (int i = 0; i < g_gpu_target_n; i++) {
+        if (g_gpu_target_fds[i] == fd) return;
+    }
+    if (g_gpu_target_n < PORTAL_GPU_TARGET_FDS) g_gpu_target_fds[g_gpu_target_n++] = fd;
+}
+
+/** 候选头是不是 native_handle_t（只看三个 int，安全） */
+static bool portal_handle_header_ok(const int *h) {
+    if (h[0] != 12 && h[0] != 16 && h[0] != 20 && h[0] != 24) return false; /* version */
+    if (h[1] < 1 || h[1] > 8) return false;                                 /* numFds */
+    if (h[2] < 0 || h[2] > 64) return false;                                /* numInts */
+    return true;
+}
+
+/** 这个 fd 是不是"我们的靶"：fd 号在我们的靶集里，且尺寸复核通过 */
+static bool portal_gpu_fd_is_target(int fd, unsigned long want_size) {
+    bool known = false;
+    for (int i = 0; i < g_gpu_target_n; i++) {
+        if (g_gpu_target_fds[i] == fd) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) return false;
+    struct stat st;
+    memset(&st, 0, sizeof(st));
+    return fstat(fd, &st) == 0 && (unsigned long)st.st_size == want_size;
+}
+
+/** 扫一遍自己的可读内存区，返回句柄地址（找不到返回 NULL），并汇报扫了多少 MB */
+static void *portal_gpu_heap_scan(unsigned long want_size, unsigned long *mb_out) {
+    int mem = open("/proc/self/mem", O_RDONLY);
+    if (mem < 0) {
+        LOGE("GPU 扫堆：打不开 /proc/self/mem（errno=%d）", errno);
+        return NULL;
+    }
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps == NULL) {
+        close(mem);
+        return NULL;
+    }
+    static unsigned char buf[1u << 20];
+    const unsigned long limit = 512UL * 1024 * 1024;
+    unsigned long scanned = 0;
+    void *found = NULL;
+    char line[256];
+    while (found == NULL && fgets(line, sizeof(line), maps) != NULL) {
+        unsigned long a = 0, b = 0;
+        char perms[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        if (sscanf(line, "%lx-%lx %7s", &a, &b, perms) != 3) continue;
+        if (perms[0] != 'r') continue;                 /* 只扫可读区 */
+        if (b <= a || (b - a) > (1UL << 31)) continue; /* 跳过异常大的区 */
+        unsigned long len = b - a;
+        for (unsigned long off = 0; off < len; off += sizeof(buf)) {
+            size_t want = (size_t)((len - off) < sizeof(buf) ? (len - off) : sizeof(buf));
+            ssize_t r = pread(mem, buf, want, (off_t)(a + off));
+            if (r <= 0) continue;
+            scanned += (unsigned long)r;
+            for (ssize_t k = 0; k + 12 <= r; k += 4) {
+                const int *h = (const int *)(buf + k);
+                if (!portal_handle_header_ok(h)) continue;
+                const int nf = h[1];
+                int fds[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+                if (k + 12 + 4 * (ssize_t)nf <= r) {
+                    memcpy(fds, buf + k + 12, sizeof(int) * (size_t)nf); /* 同块内 */
+                } else {
+                    if (pread(mem, fds, sizeof(int) * (size_t)nf, (off_t)(a + off + (unsigned long)k + 12)) !=
+                        (ssize_t)(sizeof(int) * (size_t)nf)) {
+                        continue;
+                    }
+                }
+                for (int i = 0; i < nf; i++) {
+                    if (!portal_gpu_fd_is_target(fds[i], want_size)) continue;
+                    found = (void *)(a + off + (unsigned long)k);
+                    LOGI("GPU 扫堆：命中 %p（头 version=%d numFds=%d numInts=%d，fd=%d 尺寸复核通过）",
+                         found, h[0], h[1], h[2], fds[i]);
+                    break;
+                }
+                if (found != NULL) break;
+            }
+            if (scanned > limit) {
+                LOGI("GPU 扫堆：已达上限 %lu MB ⇒ 停", limit >> 20);
+                found = NULL;
+                goto done;
+            }
+        }
+    }
+done:
+    fclose(maps);
+    close(mem);
+    if (mb_out != NULL) *mb_out = scanned >> 20;
+    return found;
+}
+
+/** 扫堆线程：等注入线程认领到靶（拿到 fd）后扫一遍 */
+static unsigned long g_gpu_scan_mb = 0;
+
+static void *portal_gpu_heap_scan_thread(void *arg) {
+    (void)arg;
+    LOGI("GPU 扫堆：线程已启动，等靶 fd（最多 40 秒）");
+    for (int i = 0; i < 40; i++) { /* 最多等 40 秒：等一场会话把靶认领出来 */
+        if (g_gpu_handle != NULL) return NULL;
+        /* ⚠️ 必须**原子读**：这个计数由注入线程写，普通读在优化后可能被提到循环外 ⇒ 永远看不到变化 */
+        if (__atomic_load_n(&g_gpu_target_n, __ATOMIC_ACQUIRE) > 0) break;
+        sleep(1);
+    }
+    if (g_gpu_handle != NULL) return NULL;
+    if (g_gpu_target_n == 0) {
+        LOGI("GPU 扫堆：始终没认领到靶 fd（没会话？尺寸不符？）⇒ 不扫");
+        return NULL;
+    }
+    LOGI("GPU 扫堆：开始（靶 fd 数=%d，首个=%d，靶尺寸=%lu）", g_gpu_target_n, g_gpu_target_fds[0],
+         g_opt_gpu_size);
+    void *h = portal_gpu_heap_scan((unsigned long)g_opt_gpu_size, &g_gpu_scan_mb);
+    if (h != NULL) {
+        g_gpu_handle = h;
+        LOGI("GPU 扫堆：采用这个句柄 %p ⇒ 后续走 EGL_ANDROID_image_native_buffer", h);
+    } else {
+        LOGI("GPU 扫堆：扫了 %lu MB 没命中 ⇒ 这条进程的堆里也没有可直接用的 gralloc 句柄",
+             g_gpu_scan_mb);
     }
     return NULL;
 }
@@ -6558,6 +6712,11 @@ __attribute__((constructor)) static void on_load(void) {
     if (g_opt_gpu) {
         pthread_t th;
         if (pthread_create(&th, NULL, portal_gpu_probe_thread, NULL) == 0) pthread_detach(th);
+        if (pthread_create(&th, NULL, portal_gpu_heap_scan_thread, NULL) == 0) {
+            pthread_detach(th);
+        } else {
+            LOGE("GPU 扫堆线程创建失败");
+        }
     }
 #endif
     if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0' ||

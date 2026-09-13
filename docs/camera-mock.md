@@ -3907,3 +3907,37 @@ adb shell sh /data/local/tmp/deploy.sh '...;cam=1;inject=1;inject_us=0;gpu=1;gpu
 # 看两扇门与句柄探针
 adb shell "logcat -d -s PortalCamShim:V" | grep -E 'EGL 关键词|GPU 建图像|GPU 探针|GPU：'
 ```
+
+### 63.6 第 9 轮：**扫堆找到了句柄，但 EGL 还是不收**（A/B 证明不是压缩的锅）
+
+§63.4 的第 ① 条（按 fd 号扫自己的堆）**实现了，而且有效**。判据仍然是双重自证：
+候选 `native_handle_t` 的 fd 数组里必须有一个**正好是注入线程认领的那块靶的 fd**，
+且 `fstat` 尺寸复核通过。
+
+**两个面都扫到了句柄（同一形态）**：
+
+| 靶 | 靶尺寸 | 扫堆结果 | 扫了多少 |
+|---|---|---|---|
+| 应用录制页的编码器面（压缩） | 3,219,456 | `命中 0x…380（version=12 numFds=2 numInts=26，fd=248 尺寸复核通过）` | 命中即停 |
+| 系统相机前置预览面（**线性**、已知可 CPU 注入） | 4,038,656 | `命中 0x…000（version=12 numFds=2 numInts=26，fd=203 尺寸复核通过）` | 命中即停 |
+
+**但 `eglCreateImageKHR(EGL_NATIVE_BUFFER_ANDROID, handle)` 两边都失败**：
+`eglGetError=0x300c`（`EGL_BAD_PARAMETER`）。
+
+⇒ **卡点不是"压缩面"**（否则线性的那个面应该能过）。剩下三种可能，必须再做一次实验才能分开：
+
+| 可能 | 判别实验 |
+|---|---|
+| (a) 扫到的那个 `native_handle_t` 不是"驱动认识的那一个"（例如是句柄的副本/别的消费者视图） | 用 `AHardwareBuffer_createFromHandle()` 试同一个句柄：**能建出 AHardwareBuffer** ⇒ 句柄本身合法；再用 `eglGetNativeClientBufferANDROID()` 走 AHardwareBuffer → EGLImage |
+| (b) 本 ROM 的 Adreno EGL 在**这个进程**里根本不接受 native buffer 导入（mapper 权限/进程上下文） | 在同一进程里试 `EGL_KHR_image_base` + `EGL_ANDROID_image_native_buffer` 的最小用例（比如拿一块 **自己用 gralloc 分配的** buffer 去建 EGLImage）：能成 ⇒ 是我们的句柄不对，不成 ⇒ 是进程/驱动层面 |
+| (c) 属性表写错 | 已被 3 组属性（none / PRESERVED=1 / PRESERVED=0）覆盖，且 dmabuf 路线的 8 组也全失败 ⇒ 可能性最低 |
+
+### 63.7 本轮顺带修掉的两个真 bug（都是"让诊断消失"的那种）
+
+| bug | 症状 | 修法 |
+|---|---|---|
+| **GPU 失败日志把 logcat 冲爆** | 每轮 8 行 × 30fps ⇒ 环形缓冲被刷穿，**别的诊断行（探针/扫堆）被挤掉**，表现为"代码明明在跑却一条日志都没有"（本轮为此白跑了三轮） | 组合尝试日志改成**只报一次**（`g_gpu_combo_logged`）；测设备时把缓冲调到 `logcat -G 64M` |
+| **跨线程计数非原子读** | 扫堆线程里 `while (g_gpu_target_n == 0) sleep(1)` 用普通读，优化后可能被提出循环 ⇒ 永远等不到靶 | 改 `__atomic_load_n(&g_gpu_target_n, __ATOMIC_ACQUIRE)` |
+
+**教训**：在"HAL 里做实验"这种场景，**日志可观测性本身就是实验设备的一部分** ——
+一段高频日志足以让后面所有结论变成"没看见=不存在"。
