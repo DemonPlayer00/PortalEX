@@ -4865,3 +4865,41 @@ fun startFeeding(packageName: String?): Int {
 - ⚠️ **未做真机验证**：本轮**没有**安装该 APK、**没有**观察 3 分钟到点后的实际剥夺行为
   （要用真机验证，建议临时把 `DEFAULT_TIMEOUT_MS` 改成 20 秒、装一次、开录制页看 Toast 与日志
   `CameraGuard: 相机占用超时…⇒ 剥夺并释放`，确认后再改回 3 分钟）。
+
+### 73.1 夹具（三方测试用"最小相机"）的相机占用看门狗 —— 真机 20 秒验证**通过**
+
+**需求**：夹具里所有"未设置超时"的相机请求点，相机占用最多 3 分钟，超时**剥夺**（退出）。
+
+**实现位置（按用户要求：代码在 git 树之外，当前分支保持 feature/hal-vcam）**：
+```
+git worktree add --detach /tmp/px-master master      # 仓库路径之外的工作树
+/tmp/px-master/camerafixture/src/main/java/moe/fuqiuluo/camerafixture/FixtureApp.kt   ← 新增
+/tmp/px-master/camerafixture/src/main/AndroidManifest.xml                             ← <application android:name=".FixtureApp">
+```
+**为什么用进程级看门狗**（而不是逐个 Activity 挂表）：夹具里四个 Activity 各自 open/close 相机，
+逐个挂容易漏；而"相机是否被占用"系统本来就有权威通知 ——
+`CameraManager.registerAvailabilityCallback`：**被占用即起表、释放即停表**，一次覆盖**所有**请求点。
+超时动作 = 记一条 WARN 后 `Process.killProcess(myPid())`（**剥夺并退出**，相机会被系统回收）。
+
+**真机验证（20 秒，本轮实测）**：
+```
+adb install -r -d camerafixture-debug.apk        → Success
+am start -n moe.fuqiuluo.camerafixture/.ListSessionActivity
+T+4s  pid=29664     T+12s pid=29664     T+24s pid=(空)
+W CameraFixture: [Fixture] 相机占用超时（已持 20s，上限 20s）⇒ 剥夺并退出
+```
+⇒ **到点确实退出**（进程消失），逻辑与日志都对。
+
+**两条必须知道的注意事项**：
+1. **默认值现在是 20 秒（验证用）**，`FixtureApp.timeoutMs` 里写着 TODO；**上线前必须改回 `3 * 60_000L`**
+   （改完重新 `:camerafixture:assembleDebug` + 安装；当前设备上装的就是 20 秒版本）；
+2. 可用性回调反映的是**全局**相机占用（任何 App 占用都会触发计时）——对"专用测试夹具"通常等价，
+   但如果将来要与别的相机应用并存，应改成"只在**本进程**持有相机时计时"（在各 Activity 的
+   open/close 处配对调用 `start/stop`，参照 App 侧 `CameraOccupancyGuard` 的写法）。
+
+**复现/清理**：
+```bash
+git worktree list                      # 看这个树在不在
+cd /tmp/px-master && ./gradlew :camerafixture:assembleDebug
+git worktree remove /tmp/px-master     # 不想留着就删掉（HAL 分支不受影响）
+```
