@@ -3941,3 +3941,40 @@ adb shell "logcat -d -s PortalCamShim:V" | grep -E 'EGL 关键词|GPU 建图像|
 
 **教训**：在"HAL 里做实验"这种场景，**日志可观测性本身就是实验设备的一部分** ——
 一段高频日志足以让后面所有结论变成"没看见=不存在"。
+
+### 63.8 第 10 轮判别实验：**(b) 被排除** —— 本进程能导入 native buffer；问题在"我们扫到的那个句柄"
+
+用 NDK 的 `AHardwareBuffer` 当对照组（**注意**：Android 10+ 起 `AHardwareBuffer_*` 由
+**libnativewindow.so** 提供，vendor 命名空间里 `dlopen("libandroid.so")` 会失败 —— 实测踩到）：
+
+**(b) 对照组：框架自己分配的 buffer**
+```
+GPU 自检：AHardwareBuffer 来自 libnativewindow.so
+GPU 自检(b)：AHardwareBuffer_allocate(640x480 RGBA) rc=0
+GPU 自检(b)：eglGetNativeClientBufferANDROID → 0xb40000762767a010
+GPU 自检(b)：eglCreateImageKHR(native buffer) → 0xb400007624f9df80（eglGetError=0x3000）
+```
+`0x3000` = **EGL_SUCCESS** ⇒ **这个进程里 native buffer 导入是通的**。
+⇒ §63.6 的可能 (b) **排除**；也纠正了 §63.2/§63.3 的隐含结论（"EGL 不收"是错的，它**不认那个句柄**）。
+
+**(a) 扫到的句柄**
+```
+GPU 自检(a)：句柄 0x760779e100 头 version=12 numFds=2 numInts=26
+GPU 自检(a)：AHardwareBuffer_createFromHandle rc=-22（buf=0x0）
+```
+`-22` = `-EINVAL`：框架的 `createFromHandle` **不接受**这个句柄。
+两种解释仍需分开：句柄本身不是 buffer 句柄（只是恰好含一个尺寸相同的 fd 的结构），
+或者我们的 `desc`（`1920x1080 / layers=1 / format=0x22 / usage=0x10030322`）与真实分配不符。
+**⇒ 扫描器的判据还不够**：只"fd 号 + 尺寸"自证会**误收**；下一轮要加一条更硬的判据。
+
+**下一轮的扫描器加固（按代价）**：
+1. 先拿**已知合法**的句柄做形态基准：`AHardwareBuffer_getNativeHandle(const AHardwareBuffer*)`
+   （⚠️ 它**返回指针、没有出参**——本轮我按"出参"签名调，拿到的是垃圾 `rc=437175936`，记下来别重犯），
+   把框架自己那块 640×480 的句柄头（`version/numFds/numInts`）打出来与 `12/2/26` **比形态**；
+2. 再加一条硬判据：句柄的**第一个 fd 必须与注入线程 mmap 的那块靶是同一个 dmabuf**
+   （比对 `fdinfo` 里的 `ino`/`size`，或 `DMA_BUF_IOCTL` 的 name）—— 不是"尺寸相同"而是"同一块"；
+3. 若加固后仍 `-EINVAL`，则结论是**请求路径上与 HAL 打交道的那批 buffer 没有可被 EGL 导入的句柄**，
+   GPU 线就此收束（转 §63.4 的 ③：录像内容交给 app 层 relay）。
+
+**本轮顺带记下的两个"实验设备"级坑**：① `AHardwareBuffer_getNativeHandle` 的签名（返回值不是错误码）；
+② 自检里 `portal_gpu_fill()` 没先 `eglMakeCurrent()` ⇒ FBO 必然不完整（这条"失败"是量具的问题，不是被测对象的问题）。
