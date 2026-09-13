@@ -4915,6 +4915,7 @@ static void *portal_inject_thread(void *arg) {
             for (int i = 0; i < n; i++) total += t[i].size;
             LOGI("注入线程：%d 块缓冲，共 %zu 字节（%d 个模板，同步=%d）", n, total, g_mock_n,
                  g_opt_inject_sync);
+            portal_bufmap(); /* 每次换靶后都看一眼内容分布：分辨"没写进去"与"写进去被 ISP 盖掉" */
             announced = 1;
             /*
              * **有界补看**：钩子在 configureStreams 的**入口**，事件到时新缓冲往往还没分配
