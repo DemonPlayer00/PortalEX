@@ -179,6 +179,12 @@ policy "allow untrusted_app portalex_frame_file file { read write open getattr m
 policy "allow hal_camera_default portalex_frame_file dir { search read open getattr }"
 policy "allow hal_camera_default portalex_frame_file file { read write open getattr map }"
 # 让 HAL 域能"穿过" /data/local/tmp（shell_data_file）去读 portalex/ 里的开关文件与帧通道
+# ⚠️ **ACE5 /odm overlay 路线必需**：overlay 的 upper/work 在 tmpfs 上，HAL 域要能穿过它。
+# 实测（冷启动）：只有 sepolicy.rule 还不够/会静默失效，所以这里也逐条打一遍。
+# 少了它们 provider 会崩溃重启循环（CamxLoad: Can't access file …camera.oemlayer.so → CFI SIGSEGV）。
+policy "allow hal_camera_default tmpfs dir { search getattr read open }"
+policy "allow hal_camera_default tmpfs file { read open getattr map execute }"
+policy "allow hal_camera_default tmpfs lnk_file { read getattr }"
 policy "allow hal_camera_default shell_data_file dir { search }"
 policy "allow untrusted_app shell_data_file dir { search getattr }"
 
