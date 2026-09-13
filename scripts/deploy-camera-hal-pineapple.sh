@@ -41,6 +41,31 @@ chmod 666 /data/vendor/camera/mock.raw 2>/dev/null
 # ⚠️ 必须 chcon：新建文件在这里是 unlabeled，hal_camera_default 读不到（restorecon 也救不了，
 # 因为该路径的 file_contexts 规则来自 KernelSU 注入的策略，plat file_contexts 里没有）
 [ -f /data/local/tmp/portalex/mock.raw ] && 
+# ---- 量具：一起装（否则被清理过一次就"量具不见了"，第 14 轮踩过）----
+# 打印某进程所有 dmabuf 的 size 直方图：`sh /data/local/tmp/portalex-inv.sh <pid>`
+cat > /data/local/tmp/portalex-inv.sh <<'INVEOF'
+#!/system/bin/sh
+# 用法：sh /data/local/tmp/portalex-inv.sh <pid>   →  每行 "<块数> <字节数>"
+P=$1
+for f in /proc/$P/fd/*; do
+  n=${f##*/}; t=$(readlink $f 2>/dev/null)
+  case "$t" in
+    *dmabuf*)
+      s=$(grep -m1 -i '^size:' /proc/$P/fdinfo/$n 2>/dev/null | awk '{print $2}')
+      [ -n "$s" ] && echo "$s";;
+  esac
+done | sort -n | uniq -c
+INVEOF
+chmod 755 /data/local/tmp/portalex-inv.sh
+# 现场帧落盘/流表都要用的辅助：把 provider pid 直接算出来
+cat > /data/local/tmp/portalex-pid.sh <<'PIDEOF'
+#!/system/bin/sh
+pidof vendor.qti.camera.provider-service_64
+PIDEOF
+chmod 755 /data/local/tmp/portalex-pid.sh
+echo "-- 量具已装 --"
+ls -l /data/local/tmp/portalex-inv.sh /data/local/tmp/portalex-pid.sh
+
 echo "-- 部署后 --"
 ls -l /odm/lib64/hw/camera.qcom.so
 cat /data/vendor/camera/portal.cfg
