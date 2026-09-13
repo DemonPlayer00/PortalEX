@@ -4893,8 +4893,9 @@ W CameraFixture: [Fixture] 相机占用超时（已持 20s，上限 20s）⇒ �
 ⇒ **到点确实退出**（进程消失），逻辑与日志都对。
 
 **两条必须知道的注意事项**：
-1. **默认值现在是 20 秒（验证用）**，`FixtureApp.timeoutMs` 里写着 TODO；**上线前必须改回 `3 * 60_000L`**
-   （改完重新 `:camerafixture:assembleDebug` + 安装；当前设备上装的就是 20 秒版本）；
+1. ~~**默认值现在是 20 秒（验证用）**，上线前必须改回 `3 * 60_000L`~~
+   ✅ **已收口（§91，第 61 轮）**：`FixtureApp.timeoutMs` 已改回 `3 * 60_000L`，
+   重新构建安装后**真机验证 180 秒到点退出**（T0 `02:19:47` 计时开始 → `02:22:47` 超时剥夺，`pid` 为空）；
 2. 可用性回调反映的是**全局**相机占用（任何 App 占用都会触发计时）——对"专用测试夹具"通常等价，
    但如果将来要与别的相机应用并存，应改成"只在**本进程**持有相机时计时"（在各 Activity 的
    open/close 处配对调用 `start/stop`，参照 App 侧 `CameraOccupancyGuard` 的写法）。
@@ -5707,3 +5708,23 @@ PASS：均匀且够亮 ⇒ 取景器是我们的画面      首帧注入延迟 1
 sh scripts/hal-quick-check.sh   # 取景器 / 首帧延迟 / 压缩面必须被拒绝   —— 每轮必跑
 sh scripts/hal-photo-check.sh   # 12MP 照片命中率 —— 只有"复原段 PASS"的运行才计入结论
 ```
+
+---
+
+## 91. 夹具看门狗收口：3 分钟（180s）真机验证通过（第 61 轮）
+
+§73.1 留下的那个待办（"默认值现在是 20 秒，上线前必须改回 3 分钟"）本轮关掉：
+
+```
+[Fixture] 相机 0 被占用 ⇒ 计时开始（上限 180s）      02:19:47.762
+[Fixture] 相机占用超时（已持 180s，上限 180s）⇒ 剥夺并退出   02:22:47.862
+T+200s / T+230s：pidof moe.fuqiuluo.camerafixture  →  空
+```
+
+**180.1 秒到点、进程消失** —— 与 §73.1 那次 20 秒验证同一个机制，只是把交付值放回去了。
+
+现场（交付形态）：
+- `FixtureApp.timeoutMs = 3 * 60_000L`（源码在 **git 树之外** `/tmp/px-master/camerafixture/`，按用户要求不进仓库）；
+- 设备上装的 APK 就是这一版（`adb install -r -d camerafixture-debug.apk` → Success）；
+- 复验方法：`am start -n moe.fuqiuluo.camerafixture/.ListSessionActivity` → 等 3 分钟 →
+  `logcat -s CameraFixture:V` 看那两行、`pidof` 应为空。
