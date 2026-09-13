@@ -17,6 +17,7 @@ set(PORTAL_VVIDEO_SRC
     src/vvideo/vvfs_shm.c
     src/vvideo/vvfs_xform.c
     src/vvideo/vvfs_ctl.c
+    src/vvideo/vvfs_notify.c
     src/vvideo/vvfs_builtin.c)
 
 add_library(camshim SHARED src/camshim.c ${PORTAL_VVIDEO_SRC})
