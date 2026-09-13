@@ -3348,3 +3348,59 @@ allow hal_camera_default tmpfs lnk_file { read getattr }
 想让后置录像也被完全接管，只剩一条路：**自己按压缩格式写**（瓦片布局 §46 已会算，
 缺的是每块的元数据真值）—— 而 1080p（24 块 × 3.2MB ≈ 77MB/轮）比 4K（428MB/轮）轻得多，
 是更合适的第一个靶子。
+
+---
+
+## 56. 验收清单（可照着跑一遍）
+
+模块装好并**启用**之后（§52：装一次 + 重启，开机自动部署），下面这套可以在几分钟内复现全部能力。
+每条都给出了**判据**，而不是"看起来对"。
+
+### 56.1 前置：取景器 / 录像 / 照片（三条全通）
+
+```bash
+# 1) 起 provider：只打前置（cam=1），预览面 + 照片 RAW 面各一个模板
+adb shell sh /data/local/tmp/ace5_deploy4.sh \
+ 'real_hal=/vendor/lib64/hw/camera.qcom.so;real_hmi_bytes=376;ops_index=1;dump=1;report_period=20;\
+req_vaddrs=0x1e49ca0;hook_rec_vaddrs=0x1e46f60;hook_rec_ol_vaddrs=0x6cadc;cam=1;inject=1;inject_us=0;\
+mock_map=4038656:/data/vendor/camera/ffront.raw|4976640:/data/vendor/camera/fraw2.raw'
+adb shell am start -n com.oplus.camera/.Camera
+adb shell input tap 1054 2411        # 切到前置
+adb shell "dumpsys media.camera | grep 'is open'"   # 必须 Device 1
+adb shell screencap -p /sdcard/acc.png && adb pull /sdcard/acc.png
+adb shell input tap 631 2410         # 快门
+```
+
+| 项 | 判据（本轮实测值） |
+| --- | --- |
+| 前置取景器 | 屏幕中心 800px 圆内均值 **67.8 / 67.6 / 71.5**（= 我们的卡片；实景约 120+） |
+| 前置照片 | 落盘 JPEG 中心均值 **0.5（纯黑 = 我们画的黑块）**，上方实景 **109.2** |
+
+录像（换成 `3194880:/data/vendor/camera/fvidmock.raw`，进"视频"页录 8 秒）：
+
+| 项 | 判据（实测） |
+| --- | --- |
+| 接管率 | 抽 32 帧 **32/32 = 100%**；32 秒长录像 958 帧、NCC 均值=最小 **0.9972**（§49.1） |
+| 丢帧 | 958/959（不丢帧） |
+
+### 56.2 后置：取景器 / 照片（两条通）；录像**未通**
+
+| 项 | 状态 | 判据 |
+| --- | --- | --- |
+| 后置取景器 | ✅ | 注入 `4038656:fmock.raw` 后整屏即我们的卡片（逐像素） |
+| 后置照片 | ✅ | 与前置同法（`15728640` RAW 面改一处 → 落盘 JPEG 里实景完好 + 我们的改动） |
+| 后置**录像** | ❌ | 面是**压缩面**（1080p=`3,219,456`、4K=`12,591,104`），线性/瓦片式写入都会被解成绿或黑（§53/§55） |
+
+### 56.3 模块与健康
+
+| 项 | 判据 |
+| --- | --- |
+| 冷启动 | 重启后 `mount` 见 `/odm/lib64/hw` 上的 tmpfs+overlay；provider **running**；`cfi_slowpath`/`Can't access file /odm` **0 次** |
+| 拍照可用 | 任意时候按快门都有 JPEG 落盘（模拟关掉也一样） |
+| 崩溃 | `/data/tombstones` 无新增 |
+
+### 56.4 一句话总结当前交付
+
+**系统层、零注入目标应用**：前置**预览/照片/录像三条全通**（录像 100% 接管且零退化），
+后置**预览/照片两条通**；后置录像因为厂商用**压缩面**（UBWC）而未通——
+路线明确（自实现按压缩格式写），但需要格式细节，不是靠试探能绕过去的。
