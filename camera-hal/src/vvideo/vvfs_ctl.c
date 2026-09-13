@@ -67,7 +67,7 @@ static int ctl_gen(struct vvideo_file *f, struct vv_seq *s, void *priv) {
         }
         case CTL_FS: {
             /* 遍历注册表：核没有对外的迭代器，这里用自己的接口拿 */
-            static const char *known[] = {"mem", "raw", "gen", "shm", "xform", "ctl"};
+            static const char *known[] = {"mem", "raw", "gen", "shm", "xform", "ctl", "notify"};
             for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++) {
                 if (vvideo_find_filesystem(known[i]) != NULL) vv_seq_printf(s, "%s\n", known[i]);
             }
@@ -103,7 +103,7 @@ static int ctl_gen(struct vvideo_file *f, struct vv_seq *s, void *priv) {
                           "      mount <类型> <挂载点> <dev> <选项>\n"
                           "      umount <挂载点>\n"
                           "      mkdir <目录>\n"
-                          "  类型：mem raw gen shm xform ctl\n"
+                          "  类型：mem raw gen shm xform ctl notify\n"
                           "  例：echo 'mount gen /vvideo/src/probe w=640,h=480,mode=card' > cmd\n");
             return 0;
     }
