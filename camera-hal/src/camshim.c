@@ -581,15 +581,25 @@ static char g_opt_vv_mounts[640] = {0};
  */
 static char g_opt_vv_stream_vaddr[96] = {0};
 /**
- * `vv_rescan_delay_us=<微秒>`：收到"流变了"事件之后**等多久再重扫**（默认 30 ms ≈ 一帧）。
+ * `vv_rescan_delay_us=<微秒>`：**还没有靶**的时候被事件唤醒，等这么久再重试（默认 30 ms）。
  *
- * 为什么事件到了不能立刻扫（实测，见 docs/camera-mock.md §58.6）：
- * 钩子挂在 configureStreams 的**入口**，此刻新的一批缓冲**还没被分配** ——
- * 立刻重扫拿到的仍是旧的那批（日志里表现为"收到事件、重扫、还是 9 块旧的"）。
- * 这不推翻事件驱动：**等待仍是事件唤醒的**，这 30 ms 只是给分配留出落地时间。
- * 与"每 5 秒无条件重扫"的区别是本质的：不发生时就没有任何周期性动作。
+ * 它只作用于"没靶可打"那条路（`n == 0`）：那种情况下我们本来就没在写任何缓冲，
+ * 多等一帧的时间不会漏任何东西。**已经有靶时不走这条路** ——
+ * 那时改用"廉价探询窗口"（见 `vv_burst_ms`）：继续写旧靶，只在指纹变了才换。
  */
 static int g_opt_vv_rescan_delay_us = 30000;
+/**
+ * `vv_burst_ms=<毫秒>`：配置事件之后"快速探询窗口"有多长（默认 3000）。
+ *
+ * 方案 2（放弃闸门）的落点：**别在等新缓冲的时候停手**。
+ * 老做法是事件一到就把目标全部 munmap（n=0），等 30ms~1s 之后才重建 ——
+ * 那段真空期里没人往缓冲里写，应用拿到的就是**真画面**，正是"开头泄漏"本身。
+ * 现在改成：事件只**武装一段有界的高频探询**，注入照旧继续写旧缓冲
+ * （陈旧但仍是我们的卡片，不是实景），直到廉价指纹说"新的一批出现了"才换靶。
+ */
+static int g_opt_vv_burst_ms = 3000;
+/** 快速探询的间隔（微秒）。0.2ms 级的 fstat 扫描，15ms 一次几乎不占 CPU。 */
+static int g_opt_vv_probe_us = 15000;
 /**
  * `gate=1`：**开门闸** —— 在"我们的帧还没开始写"之前，一帧都不放给应用。
  *
@@ -878,6 +888,10 @@ static void load_options(void) {
             snprintf(g_opt_vv_stream_vaddr, sizeof(g_opt_vv_stream_vaddr), "%s", val);
         } else if (strcmp(key, "vv_rescan_delay_us") == 0) {
             g_opt_vv_rescan_delay_us = atoi(val);
+        } else if (strcmp(key, "vv_burst_ms") == 0) {
+            g_opt_vv_burst_ms = atoi(val);
+        } else if (strcmp(key, "vv_probe_us") == 0) {
+            g_opt_vv_probe_us = atoi(val);
         } else if (strcmp(key, "gate") == 0) {
             g_opt_gate = atoi(val);
         } else if (strcmp(key, "gate_timeout_ms") == 0) {
@@ -4073,14 +4087,17 @@ static void portal_gate_wait(void) {
 
 static bool g_vv_inited = false;
 /** 事件驱动重扫的排期时刻（0 = 没排期）。见 vv_rescan_delay_us 的注释。 */
-static unsigned long long g_vv_rescan_at_us = 0;
-/** 上一次重扫后的目标集指纹（块数 + 总字节）。用来判断"新缓冲到底落地没有"。 */
-static int g_vv_last_n = -1;
-static unsigned long long g_vv_last_bytes = 0;
-/** 本次重扫是**事件**引起的吗（决定要不要补看）
- *  补看是**有界**的：最多 3 次，间隔 0.5 / 1 / 2 秒（一旦目标集变了就归零）。 */
-static bool g_vv_rescan_by_event = false;
-static int g_vv_look_again = 0;
+static unsigned long long g_vv_target_bytes = 0;
+/** 快速探询窗口的截止时刻（0 = 不在窗口里）。窗口只由**配置事件**武装。 */
+static unsigned long long g_vv_burst_until_us = 0;
+/** 下一次允许探询的时刻（限流用：热循环跑得比 15ms 快得多） */
+static unsigned long long g_vv_probe_next_us = 0;
+/** 当前这批靶的廉价指纹（重建完就更新） */
+static unsigned long long g_vv_target_sig = 0;
+static int g_vv_target_n = 0;
+/* 方案 2 说明：这里曾经有一套"事件后补看 0.5/1/2 秒"的阶梯。它被**探询窗口**取代 ——
+ * 阶梯的每次补看都要无条件丢靶重建（那段时间没人写缓冲 = 漏真画面），
+ * 而窗口期间我们**照旧写旧靶**、只在指纹变了才换。少一次停手，就少一段泄漏。 */
 /** 流配置变更事件节点（`notify` 后端）：configureStreams 写它，注入线程睡在它上面 */
 static struct vvideo_file *g_vv_streams = NULL;
 /** 取到的节点 file 一直开着：帧指针归它所有，关了就成了悬垂指针 */
@@ -4283,6 +4300,90 @@ typedef struct {
  * 扫 /proc/self/fd，把"尺寸能在 mock_map 里找到模板"（或等于 inject_size）的 dmabuf 全部映射下来。
  * 只读罗列 → 按尺寸选靶，是"图片"与"视频"两条流能同时被接管的关键。
  */
+/**
+ * 这个 fd 是不是"我们该接管的靶"，以及该用哪个模板。
+ *
+ * **`portal_build_targets`（贵：要 mmap）与廉价探询（只 fstat）必须共用这一个判据** ——
+ * 两处各写一份的话，"探询说没变、重建说变了"就会来回打架，
+ * 而那种打架在真机上表现为无休止的 munmap/mmap 抖动。
+ */
+static bool portal_target_wanted(unsigned long sz, const char *link, const void **out_tpl,
+                                 size_t *out_tlen) {
+    const unsigned char *tpl = NULL;
+    size_t tlen = 0;
+    for (int i = 0; i < g_mock_n; i++) {
+        if (g_mock[i].size != sz || g_mock[i].tpl == NULL) continue;
+        if (g_mock[i].name[0] != '\0' && strstr(link, g_mock[i].name) == NULL) continue;
+        tpl = g_mock[i].tpl;
+        tlen = g_mock[i].tlen;
+        break;
+    }
+    if (tpl == NULL) {
+        if (g_mock_n != 0) return false; /* 有映射表时：没模板的尺寸不动 */
+        if (g_opt_inject_size == 0 || sz != g_opt_inject_size) return false;
+        if (g_inject_tpl != NULL) {
+            tpl = g_inject_tpl;
+            tlen = g_inject_tpl_size;
+        }
+    }
+    if (out_tpl != NULL) *out_tpl = tpl;
+    if (out_tlen != NULL) *out_tlen = tlen;
+    return true;
+}
+
+/**
+ * 当前那批靶的**廉价指纹** —— 只 `opendir`/`readlink`/`fstat`，**不 mmap**。
+ *
+ * 为什么需要它（方案 2 的地基）：缩短"开头泄漏"要靠"新缓冲一出现就接管"，
+ * 而"一出现就接管"意味着**高频地问"换了没有"**。若每次都跑
+ * `portal_build_targets`（要把每块 4MB 的 dmabuf 重新 mmap 一遍），
+ * 那点探询本身就会变成新的抖动源。所以把它拆成两步：
+ *   · 便宜的一步（本函数，约 0.2ms）可以每 15ms 问一次；
+ *   · 贵的一步只在**指纹真的变了**之后才做。
+ *
+ * 指纹用 `(st_ino, st_size)` 而不是只用尺寸：重配流时框架常常**用同样的尺寸**
+ * 重新分配一批缓冲（fd 号还可能被复用）—— 只看尺寸会得出"没变"，
+ * 于是我们继续往已经作废的那批里写。
+ */
+static void portal_fd_signature(unsigned long long *out_sig, int *out_count,
+                                unsigned long long *out_bytes) {
+    unsigned long long sig = 0, bytes = 0;
+    int count = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) {
+        if (out_sig) *out_sig = 0;
+        if (out_count) *out_count = 0;
+        if (out_bytes) *out_bytes = 0;
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        int fd = atoi(e->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(path, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0 || st.st_size <= 0) continue;
+        unsigned long sz = (unsigned long)st.st_size;
+        if (!portal_target_wanted(sz, link, NULL, NULL)) continue;
+        /* 加法而不是异或：同一尺寸的多块异或会互相抵消，指纹就废了 */
+        unsigned long long v = (unsigned long long)st.st_ino * 0x9E3779B97F4A7C15ull +
+                               (unsigned long long)sz * 0xC2B2AE3D27D4EB4Full;
+        sig += v ^ (v >> 31);
+        bytes += (unsigned long long)sz;
+        count++;
+    }
+    closedir(d);
+    if (out_sig) *out_sig = sig;
+    if (out_count) *out_count = count;
+    if (out_bytes) *out_bytes = bytes;
+}
+
 static int portal_build_targets(portal_target t[], int cap) {
     int n = 0;
     DIR *d = opendir("/proc/self/fd");
@@ -4301,20 +4402,9 @@ static int portal_build_targets(portal_target t[], int cap) {
         struct stat st;
         if (fstat(fd, &st) != 0 || st.st_size <= 0) continue;
         unsigned long sz = (unsigned long)st.st_size;
-        const unsigned char *tpl = NULL;
+        const void *tpl = NULL;
         size_t tlen = 0;
-        for (int i = 0; i < g_mock_n; i++) {
-            if (g_mock[i].size != sz || g_mock[i].tpl == NULL) continue;
-            if (g_mock[i].name[0] != '\0' && strstr(link, g_mock[i].name) == NULL) continue;
-            tpl = g_mock[i].tpl;
-            tlen = g_mock[i].tlen;
-            break;
-        }
-        if (tpl == NULL) {
-            if (g_mock_n != 0) continue;                 /* 有映射表时：没模板的尺寸不动 */
-            if (g_opt_inject_size == 0 || sz != g_opt_inject_size) continue;
-            if (g_inject_tpl != NULL) { tpl = g_inject_tpl; tlen = g_inject_tpl_size; }
-        }
+        if (!portal_target_wanted(sz, link, &tpl, &tlen)) continue;
         void *m = mmap(NULL, (size_t)sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED) {
             LOGI("注入：fd=%d size=%lu mmap 失败（errno=%d）", fd, sz, errno);
@@ -4400,6 +4490,13 @@ static void *portal_inject_thread(void *arg) {
         if (n == 0) {
             n = portal_build_targets(t, PORTAL_INJECT_MAX);
             if (n == 0) {
+                /* **探询窗口还开着** = 我们正处在"新旧靶交接"的那一小段里：
+                 * 此时绝不能睡满 2 秒（那就是漏真画面的时长），按探询间隔快速重试。
+                 * 窗口是有界的，所以这不是轮询 —— 只在事件之后的那几秒里发生。 */
+                if (g_vv_burst_until_us != 0 && portal_now_us() < g_vv_burst_until_us) {
+                    usleep((useconds_t)(g_opt_vv_probe_us > 0 ? g_opt_vv_probe_us : 15000));
+                    continue;
+                }
                 /* 没靶可打 ⇒ 这一轮本来就无事可做，于是**睡在"流变了"事件上**：
                  * configureStreams 一发生就立刻醒、马上重扫（毫秒级），
                  * 2 秒只是安全带。层没挂时退回老行为（固定 sleep 2）。 */
@@ -4428,19 +4525,9 @@ static void *portal_inject_thread(void *arg) {
              * 这不是轮询：**只有真的收到过事件**才会补这一次，且只补一次；
              * 没有配置变化时，一秒都不会醒。
              */
-            bool same = (n == g_vv_last_n && (unsigned long long)total == g_vv_last_bytes);
-            if (g_vv_rescan_by_event && same && g_vv_look_again < 3) {
-                g_vv_look_again++;
-                unsigned long long delay_us = 500000ULL << (g_vv_look_again - 1); /* 0.5s / 1s / 2s */
-                g_vv_rescan_at_us = portal_now_us() + delay_us;
-                LOGI("注入线程：目标集与上次相同（%d 块）⇒ 新缓冲可能还没落地，%llu 毫秒后补看（第 %d/3 次）",
-                     n, delay_us / 1000, g_vv_look_again);
-            } else {
-                g_vv_look_again = 0; /* 变了 / 不是事件触发的 / 补看用完 ⇒ 归零 */
-            }
-            g_vv_rescan_by_event = false;
-            g_vv_last_n = n;
-            g_vv_last_bytes = (unsigned long long)total;
+            /* 重建完就把"这批靶张什么样"记下来：之后廉价探询只跟它比。 */
+            portal_fd_signature(&g_vv_target_sig, &g_vv_target_n, &g_vv_target_bytes);
+            g_vv_probe_next_us = portal_now_us() + (unsigned long long)g_opt_vv_probe_us;
             /* 刚建完就重置安全带计时：否则"线程起来得晚"会让下一次循环立刻又满足
              * `now - last_scan >= 15` ⇒ 同一批目标连建三次（实测见过 5 毫秒内三次）。 */
             last_scan = time(NULL);
@@ -4544,30 +4631,50 @@ static void *portal_inject_thread(void *arg) {
          * 两个好处都实测得到：模式切换的跟上时间从"最坏 5 秒"变成"毫秒级"；
          * 而且不再每 5 秒白白 munmap/remap 一批 4MB 的 dmabuf（那本身就是周期性抖动）。
          */
-        if (announced) {
+        if (announced && n > 0) {
             /* **只在"有靶可打"时才消费事件** —— 否则事件会在我们不能行动的时候被吃掉。 */
             if (portal_vv_wait_streams(0) == 0) {
                 /* 事件到了 ≠ 缓冲已经换好（钩子在 configureStreams **入口**）：
-                 * 只**排期**，等落地时间到了再扫。 */
-                g_vv_rescan_at_us =
-                    portal_now_us() + (unsigned long long)(g_opt_vv_rescan_delay_us > 0
-                                                               ? g_opt_vv_rescan_delay_us
-                                                               : 0);
+                 * 给它武装一段**有界的高频探询**窗口，**但先不动现有的靶** ——
+                 * 继续写旧缓冲（陈旧，但仍是我们的卡片），比停手等强得多。 */
+                unsigned long long now_us = portal_now_us();
+                g_vv_burst_until_us =
+                    now_us + (unsigned long long)(g_opt_vv_burst_ms > 0 ? g_opt_vv_burst_ms : 0) *
+                                 1000ULL;
+                if (g_vv_probe_next_us < now_us) g_vv_probe_next_us = now_us;
+                LOGI("注入线程：收到流变更事件 ⇒ 探询窗口开到 %d ms（期间**继续写旧缓冲**）",
+                     g_opt_vv_burst_ms);
             }
-            bool due = (g_vv_rescan_at_us != 0 && portal_now_us() >= g_vv_rescan_at_us);
-            bool belt = (now - last_scan >= 15);
-            if (due || belt) {
-                g_vv_rescan_at_us = 0;
-                last_scan = now;
-                g_vv_rescan_by_event = due;
-                /* 缓冲要换一批 ⇒ 开门闸重新关上：新一代的第一帧同样不许是真画面 */
-                portal_gate_reset(due ? "流变更事件" : "15 秒安全带");
-                /* 这一行是"事件驱动确实生效"的现场证据：真机上对照 configureStreams 的
-                 * 时间戳就能看出跟上时间从"最坏 5 秒"变成了几十毫秒。 */
-                LOGI("注入线程：重扫目标（触发=%s，上一批 %d 块）",
-                     due ? "事件(configureStreams)" : "15 秒安全带", n);
-                for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
-                n = 0;
+            unsigned long long now_us = portal_now_us();
+            bool in_burst = (g_vv_burst_until_us != 0 && now_us < g_vv_burst_until_us);
+            /* 安全带：15 秒一次**廉价**核对。原来这里是无条件 munmap + 重建一整批 4MB 的
+             * dbamuf —— 那本身就是周期性抖动；现在只在指纹真的变了时才重建。 */
+            bool belt_due = (now - last_scan >= 15);
+            if ((in_burst || belt_due) && now_us >= g_vv_probe_next_us) {
+                g_vv_probe_next_us =
+                    now_us + (unsigned long long)(g_opt_vv_probe_us > 0 ? g_opt_vv_probe_us : 15000);
+                unsigned long long sig = 0, bytes = 0;
+                int cnt = 0;
+                portal_fd_signature(&sig, &cnt, &bytes);
+                if (cnt != g_vv_target_n || sig != g_vv_target_sig) {
+                    /* **真的换了** —— 这才是该重建的时刻。 */
+                    LOGI("注入线程：靶集变了（%d 块/%llu 字节 → %d 块/%llu 字节）⇒ 换靶（触发=%s）",
+                         g_vv_target_n, g_vv_target_bytes, cnt, bytes,
+                         in_burst ? "事件窗口内" : "安全带核对");
+                    /* ⚠️ **窗口不要关**：换靶往往经过"旧靶先释放、新靶还没分配"的瞬间
+                     * （实测指纹会先变成 0 块）。关掉窗口就会掉进下面那条"睡满 2 秒"的路，
+                     * 而那 2 秒正是没人在写缓冲 ⇒ 应用看到的全是真画面。
+                     * 窗口是有界的（vv_burst_ms），留着它，下面按 15ms 快速重试。 */
+                    last_scan = now;
+                    for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
+                    n = 0;
+                } else if (belt_due) {
+                    last_scan = now; /* 核对过、没变 ⇒ 什么都不做（这正是省下来的抖动） */
+                } else if (in_burst && now_us + (unsigned long long)g_opt_vv_probe_us >=
+                                          g_vv_burst_until_us) {
+                    LOGI("注入线程：探询窗口结束，靶集始终没变（%d 块）", cnt);
+                    g_vv_burst_until_us = 0;
+                }
             }
         }
     }
