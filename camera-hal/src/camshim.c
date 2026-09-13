@@ -5142,8 +5142,12 @@ static void portal_log_handle_shape(const char *tag, const void *h) {
     LOGI("%s：句柄 %p 头 version=%d numFds=%d numInts=%d", tag, h, hdr[0], hdr[1], hdr[2]);
 }
 
-/** 把一块 buffer 当 EGLImage 试一次（返回 image 是否建成） */
-static bool portal_try_egl_image(void *client_buffer, const char *tag) {
+/**
+ * 把一块 buffer 当 EGLImage 试一次，并**真的画一笔**验证它能当渲染目标。
+ * @param tex_target `GL_TEXTURE_EXTERNAL_OES`（YUV/相机面）或 `GL_TEXTURE_2D`（RGB 面）——
+ *   ⚠️ 非 YUV 的 AHB 用 EXTERNAL_OES 绑 FBO 必然不完整，那是**量具的错**不是结论（第 9/10 轮各踩一次）。
+ */
+static bool portal_try_egl_image(void *client_buffer, const char *tag, unsigned tex_target) {
     if (client_buffer == NULL) return false;
     const int attr_none[] = {0x3038, 0};
     if (p_eglGetError) p_eglGetError();
@@ -5152,16 +5156,32 @@ static bool portal_try_egl_image(void *client_buffer, const char *tag) {
     int err = p_eglGetError ? p_eglGetError() : 0;
     LOGI("%s：eglCreateImageKHR(native buffer) → %p（eglGetError=0x%x）", tag, img, err);
     if (img != NULL) {
-        /* ⚠️ 必须先把上下文设成 current：第 9 轮漏了这步，FBO 必然不完整，
-         * 那条"失败"是量具的问题而不是结论（§63.8） */
+        /* ⚠️ 必须先把上下文设成 current，否则 FBO 必然不完整（§63.8 的坑） */
         void *pc = p_eglGetCurrentContext ? p_eglGetCurrentContext() : NULL;
         void *pd = p_eglGetCurrentDisplay ? p_eglGetCurrentDisplay() : NULL;
         void *pdr = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x3059) : NULL;
         void *prd = p_eglGetCurrentSurface ? p_eglGetCurrentSurface(0x305A) : NULL;
         bool cur = p_eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context);
-        bool ok = cur && portal_gpu_fill(img, 640, 480, 0);
-        if (cur) p_eglMakeCurrent(pd, pdr, prd, pc);
-        LOGI("%s：把它当 FBO 画一笔 → %s", tag, ok ? "成功" : "失败");
+        bool ok = false;
+        if (cur) {
+            unsigned int tex = 0, fbo = 0;
+            p_glGenTextures(1, &tex);
+            p_glBindTexture(tex_target, tex);
+            p_glTexParameteri(tex_target, 0x2801, 0x2600);
+            p_glTexParameteri(tex_target, 0x2800, 0x2600);
+            p_glEGLImageTargetTexture2DOES(tex_target, img);
+            p_glGenFramebuffers(1, &fbo);
+            p_glBindFramebuffer(PORTAL_GL_FRAMEBUFFER, fbo);
+            p_glFramebufferTexture2D(PORTAL_GL_FRAMEBUFFER, PORTAL_GL_COLOR_ATTACHMENT0, tex_target,
+                                     tex, 0);
+            ok = (p_glCheckFramebufferStatus(PORTAL_GL_FRAMEBUFFER) ==
+                  PORTAL_GL_FRAMEBUFFER_COMPLETE);
+            p_glBindFramebuffer(PORTAL_GL_FRAMEBUFFER, 0);
+            if (fbo) p_glDeleteFramebuffers(1, &fbo);
+            if (tex) p_glDeleteTextures(1, &tex);
+            p_eglMakeCurrent(pd, pdr, prd, pc);
+        }
+        LOGI("%s：绑 FBO（target=0x%x）→ %s", tag, tex_target, ok ? "完整，可当渲染目标" : "不完整");
         p_eglDestroyImageKHR(g_egl_display, img);
         return ok;
     }
@@ -5196,7 +5216,7 @@ static void portal_gpu_selftest_own(void) {
         (void *(*)(AHardwareBuffer *))sym(g_egl, "eglGetNativeClientBufferANDROID");
     void *cb = (get_cb != NULL) ? get_cb(b) : NULL;
     LOGI("GPU 自检(b)：eglGetNativeClientBufferANDROID → %p", cb);
-    (void)portal_try_egl_image(cb, "GPU 自检(b)");
+    (void)portal_try_egl_image(cb, "GPU 自检(b)", 0x0DE1u /*GL_TEXTURE_2D：RGB 面*/);
     if (p_ahb_release != NULL) p_ahb_release(b);
 }
 
@@ -5211,24 +5231,51 @@ static void portal_gpu_selftest_from_handle(void) {
         return;
     }
     portal_log_handle_shape("GPU 自检(a)", g_gpu_handle);
-    portal_ahb_desc d;
-    memset(&d, 0, sizeof(d));
-    d.width = (uint32_t)g_opt_gpu_w;
-    d.height = (uint32_t)g_opt_gpu_h;
-    d.layers = 1;
-    d.format = 0x22;             /* camera3 的 IMPLEMENTATION_DEFINED（流表实测值） */
-    d.usage = 0x10030322ull;     /* 编码器流的 usage（流表实测值） */
+    /* `createFromHandle` 的 `desc` 必须与真实分配一致，否则 `-EINVAL`。
+     * 我们并不知道厂商分配时用的 format/usage 组合（流表给的是 camera3 视角的值，
+     * 且压缩位/编码位可能被分配器换掉），所以**逐个候选试**并把 rc 全部打出来 ——
+     * 这正是"desc 对不对"的实验，而不是猜。 */
+    const unsigned fmts[3] = {0x22u /*IMPLEMENTATION_DEFINED*/, 0x23u /*YCbCr_420_888*/, 0x1u /*RGBA_8888*/};
+    const unsigned long long usages[6] = {
+        0x10030322ull,             /* 编码器流 usage（流表实测） */
+        0x10030322ull & ~0x10000000ull, /* 去掉 UBWC 位 */
+        0x10020100ull,             /* 预览流 usage（流表实测） */
+        0x10030022ull,             /* 文档注释里记过的变体 */
+        0x30322ull,                /* 去掉 UBWC 位与编码位 */
+        0x100ull | 0x200ull,       /* GPU 采样 + 帧缓冲（最保守） */
+    };
+    int ok_rc = -1;
     AHardwareBuffer *b = NULL;
-    int rc = p_ahb_from_handle(&d, g_gpu_handle, 0, &b);
-    LOGI("GPU 自检(a)：AHardwareBuffer_createFromHandle rc=%d buf=%p（rc=0 ⇒ 句柄合法）", rc,
-         (void *)b);
-    if (rc == 0 && b != NULL) {
+    for (unsigned fi = 0; fi < 3 && b == NULL; fi++) {
+        for (unsigned ui = 0; ui < 6 && b == NULL; ui++) {
+            portal_ahb_desc d;
+            memset(&d, 0, sizeof(d));
+            d.width = (uint32_t)g_opt_gpu_w;
+            d.height = (uint32_t)g_opt_gpu_h;
+            d.layers = 1;
+            d.format = fmts[fi];
+            d.usage = usages[ui];
+            AHardwareBuffer *t = NULL;
+            int rc = p_ahb_from_handle(&d, g_gpu_handle, 0, &t);
+            LOGI("GPU 自检(a)：createFromHandle(format=0x%x usage=0x%llx) rc=%d", d.format,
+                 (unsigned long long)d.usage, rc);
+            if (rc == 0 && t != NULL) {
+                b = t;
+                ok_rc = rc;
+                LOGI("GPU 自检(a)：★ 这组 desc 被接受：format=0x%x usage=0x%llx buf=%p", d.format,
+                     (unsigned long long)d.usage, (void *)t);
+            }
+        }
+    }
+    if (ok_rc == 0 && b != NULL) {
         void *(*get_cb)(AHardwareBuffer *) =
             (void *(*)(AHardwareBuffer *))sym(g_egl, "eglGetNativeClientBufferANDROID");
         void *cb = (get_cb != NULL) ? get_cb(b) : NULL;
         LOGI("GPU 自检(a)：eglGetNativeClientBufferANDROID → %p", cb);
-        (void)portal_try_egl_image(cb, "GPU 自检(a)");
+        (void)portal_try_egl_image(cb, "GPU 自检(a)", 0x8D65u /*EXTERNAL_OES：相机面*/);
         if (p_ahb_release != NULL) p_ahb_release(b);
+    } else {
+        LOGI("GPU 自检(a)：18 组 desc 全被拒 ⇒ 这个句柄不是 createFromHandle 认识的那一类");
     }
 }
 
