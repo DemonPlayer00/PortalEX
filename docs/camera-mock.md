@@ -4108,3 +4108,22 @@ provider 手上的 dmabuf 尺寸（≥1 MB，纯直方图）：
    然后把 `cam=` 放开成"按尺寸自动覆盖前后置"，这就是"前后置统一"的落地形态；
 2. 照片与录像一致性：两者共用模板内容（同一段视频帧），差异只在**写入策略**（照片盲写、录像成簇写，§38.2），
    一致性判据可用现成的"落盘照片 vs 视频帧"逐像素比对。
+
+### 64.1 量具并入部署流程（第 15 轮）
+
+**踩过**：第 14 轮去量后置底数时，`/data/local/tmp/portalex-inv.sh` 在设备上**已经不在了**
+（之前某次清理把它带走），只能当场重新推 —— 这类"量具不见了"会直接让一轮实验作废。
+
+**改法**：部署脚本 `scripts/deploy-camera-hal-pineapple.sh` 现在**顺带装量具**（幂等，每次部署都覆盖）：
+
+| 装到 | 用途 |
+|---|---|
+| `/data/local/tmp/portalex-inv.sh <pid>` | 打印该进程所有 dmabuf 的 `size` 直方图（`<块数> <字节数>`）——差分量具与"哪块面多大"的底座 |
+| `/data/local/tmp/portalex-pid.sh` | 一行拿到 provider pid（`pidof vendor.qti.camera.provider-service_64`），省掉到处写 pid |
+
+用法（照抄）：
+```bash
+P=$(adb shell sh /data/local/tmp/portalex-pid.sh)
+adb shell "sh /data/local/tmp/portalex-inv.sh $P" | tr -d '\r' | awk '$2>1000000'
+```
+这样"部署成功"与"量具就位"是同一件事，不再依赖会话记忆。
