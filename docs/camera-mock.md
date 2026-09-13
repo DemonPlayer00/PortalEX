@@ -5491,3 +5491,32 @@ adb shell su -c 'cat /data/vendor/camera/portal.cfg'   # 当前：auto_tpl=1、�
 adb shell su -c 'md5sum /odm/lib64/hw/camera.qcom.so'  # 应与本地 camera-hal/build/.../arm64-v8a/camshim.so 相同
 sh scripts/hal-quick-check.sh                  # 三条应全过
 ```
+
+### 56.3 现行验收清单（第 54 轮更新）—— **取代** 56.1 / 56.2 的旧坐标与旧结论
+
+56.1 / 56.2 是"用手工 `mock_map` + 固定坐标"时代的清单，其中的坐标、`cam=` 用法与结论**已经过期**
+（例：56.1 里"录像 100% 接管"指的是**前置录像面 `3,194,880`**，而应用录制页的**编码器面 `3,219,456`**
+是 UBWC 压缩面 —— 两者不是一回事，§62/§76 已定论后者写不动）。现行清单只有两条命令：
+
+```bash
+sh scripts/hal-quick-check.sh     # ① 取景器 ② 首帧延迟 ③ 压缩面必须被拒绝   —— 每轮必跑
+sh scripts/hal-photo-check.sh     # 12MP 照片：RAW→JPEG 是否还在我们手里（看命中率）
+```
+
+| 项 | 判据（本轮真机实测） | 稳定性 |
+|---|---|---|
+| 取景器（前/后，照片模式） | 取景区 **均匀且够亮**：`mean≈128`、`std≈0` | 稳（脚本会先切照片模式，切不过来会再点，§82） |
+| 首帧注入延迟 | 打印的毫秒数 **< 3000**（基线 1.0–1.9 s，大头是应用自身启动） | 稳 |
+| 压缩面（带 UBWC 位） | 日志里必须有 `**拒绝** … usage 带 UBWC 位 0x10000000 ⇒ 压缩面` | 稳 |
+| 高清图像（12MP） | `hal-photo-check.sh` 的**命中率**与差值（**别只看退出码**） | **不稳**：1/3 → 0/3，根因见 §81.1（RAW 靶集每次拍照后整批换新） |
+| 4K / 应用编码器面 | 不适用：**已知不可行**（§54.4 / §62 / §63 / §76），现行行为是**明确拒绝** | —— |
+
+**现场一致性（交接时先核这三条）**：
+```bash
+git -C /var/www/PortalEX status --porcelain                     # 空
+adb shell su -c 'md5sum /odm/lib64/hw/camera.qcom.so'           # == camera-hal/build/…/arm64-v8a/camshim.so
+adb shell su -c 'cat /data/vendor/camera/portal.cfg'            # 现行：auto_tpl=1，通常无 mock_map
+```
+
+> 现行配置的"默认交付形态"是 `auto_tpl=1`（任意尺寸自动认领、按需生成、压缩面明确拒绝），
+> `mock_map` 只在需要**精确几何/真实素材**时手工登记（如 12MP 照片的 RAW 模板）。
