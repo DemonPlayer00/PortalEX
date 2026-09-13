@@ -389,6 +389,43 @@ static int g_opt_init_wrap = 0;
 static int g_opt_inject = 0;
 static int g_opt_freeze = 0;
 static int g_opt_pattern = 0;
+/**
+ * `auto_tpl=<0|1|2>`：**尺寸泛化**——让"按尺寸预置模板"不再是接管的必要条件。
+ *
+ * 为什么需要它（§74 的动机）：`mock_map` 是**每个尺寸手工一份素材**的做法，实测每接一个新
+ * 应用（640×480 的体适能、1920×1080 的录制页…）都要先 dump 活帧、造模板、再登记，
+ * 否则那个尺寸**完全不接管**（`有映射表时：没模板的尺寸不动`）。而"应用请求什么尺寸"
+ * 是应用自己的自由 —— 泛用性要求 HAL 能对**没见过的尺寸**也立刻给出画面。
+ *
+ * 做法：从 `configure_streams` 的流表 + 请求里的 buffer 句柄，把本次会话每个输出流的
+ * **几何（宽高/格式/用途）与缓冲字节数**精确对上，凡是几何表里有的尺寸都自动认领，
+ * 内容现场生成（布局能从字节数推导就按平面写，推不出来就整块填 `auto_color`）。
+ *
+ * 取值：0 = 关（默认，行为与从前逐字一致）；1 = 全开；2 = 只认领"布局可推导"的尺寸。
+ */
+static int g_opt_auto_tpl = 0;
+/** `auto_model=<0|1>`：自动模板**要不要用分配模型去推平面布局**（**默认 0 = 不用**）。
+ *
+ *  为什么默认关：模型（`stride=ALIGN(w,64)`、`rows=ALIGN(h,32)`）能把**总字节数**算得
+ *  一模一样（实测 4,038,656 与 3,194,880 两处精确命中），但"字节数对"**不等于**"平面排布对"。
+ *  实测（本机，同一块 `2136×1200` 前置预览面，三个对照）：
+ *    · 按模型写平面（Y 2176×1216 + UV 2176×608、尾部 32 行不动）⇒ 取景器**全黑**；
+ *    · 整块填 0x80（纯色，`inject_size=4038656;inject_byte=0x80`）⇒ 取景器**均匀灰**；
+ *    · 整块拷真实 dump（`mock_map=4038656:ffront.raw`）        ⇒ 取景器正常出图。
+ *  三者说明：这块面**能写、也确实被显示**，但它的 Y/UV 偏移与行距不是模型假设的那样
+ *  （总字节数对得上只是巧合）。所以默认"纯色"（布局无关），模型只给已单独验证过的面开。 */
+static int g_opt_auto_model = 1;
+/** `auto_planar=<0|1>`：认到尺寸之后**要不要按模型推的平面布局写**（**默认 0 = 不写平面，整块纯色**）。
+ *
+ *  为什么把"认尺寸"和"写平面"拆成两个开关：模型的两半**证据强度完全不同** ——
+ *    · "总字节数"那一半有实测锚点（4,038,656 = 2176×1856、3,194,880 = 1920×1664，两处精确命中）；
+ *    · "Y/UV 偏移与行距"那一半**没有**验证，而且已经被证伪过一次（按模型写那块预览面 ⇒ 全黑）。
+ *  把它们绑在一起，就会出现"尺寸猜对了、画面写坏了"这种最难查的组合。 */
+static int g_opt_auto_planar = 0;
+/** `auto_color=<0-255>`：布局不可推导时整块填的字节。
+ *  `0x80` = 中性灰 —— 之所以选它：**任何平面布局下都是同一种灰**，
+ *  所以"应用看到的是一块均匀灰"这件事与布局对不对**无关**，是唯一布局无关的可见证明。 */
+static int g_opt_auto_color = 0x80;
 static char g_opt_cam[16] = {0};
 /** 外源帧文件（app 侧解码后写进来的像素通道）；空 = 用合成图案 */
 static char g_opt_src_file[160] = {0};
@@ -839,6 +876,14 @@ static void load_options(void) {
             g_opt_freeze = atoi(val);
         } else if (strcmp(key, "pattern") == 0) {
             g_opt_pattern = atoi(val);
+        } else if (strcmp(key, "auto_tpl") == 0) {
+            g_opt_auto_tpl = atoi(val);
+        } else if (strcmp(key, "auto_model") == 0) {
+            g_opt_auto_model = atoi(val);
+        } else if (strcmp(key, "auto_planar") == 0) {
+            g_opt_auto_planar = atoi(val);
+        } else if (strcmp(key, "auto_color") == 0) {
+            g_opt_auto_color = (int)(strtoul(val, NULL, 0) & 0xFFu);
         } else if (strcmp(key, "swap_uv") == 0) {
             g_opt_swap_uv = atoi(val);
         } else if (strcmp(key, "photo_mirror") == 0) {
@@ -986,9 +1031,9 @@ static void load_options(void) {
     }
     fclose(f);
     LOGI("开关：vvideo=%d vv_mount=%s", g_opt_vvideo, g_opt_vv_mounts[0] ? g_opt_vv_mounts : "(无)");
-    LOGI("开关：dump=%d ops_index=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d photo_mirror=%d cam=%s src=%s",
+    LOGI("开关：dump=%d ops_index=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d auto_tpl=%d auto_model=%d auto_planar=%d photo_mirror=%d cam=%s src=%s",
          g_opt_dump, g_opt_ops_index, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze,
-         g_opt_pattern, g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
+         g_opt_pattern, g_opt_auto_tpl, g_opt_auto_model, g_opt_auto_planar, g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
          g_opt_src_file[0] ? g_opt_src_file : "(图案)");
 }
 
@@ -1298,6 +1343,15 @@ static void portal_gpu_capture_handle(const camera3_stream_buffer_t *sb);
 /* M2b：登记 GPU 靶的 fd（定义在下方 M2b 段；注入线程认领靶时要用，故前置声明） */
 static void portal_gpu_note_target_fd(int fd);
 
+/* 会话几何表 + 自动模板（定义在下方 mock_map 段；请求路径要登记、configure_streams 要清零）。
+ * ⚠️ 与注入线程同一处境：那一整段在 `#if defined(__aarch64__)` 里（32 位形态没有按地址挂钩，
+ * 也就没有"要登记的靶"），所以引用处一并加守卫。 */
+#if defined(__aarch64__)
+static void portal_auto_reset(void);
+static void portal_auto_note_streams(void *stream_list);
+static void portal_auto_note_request(const camera3_capture_request_t *request);
+#endif
+
 /** 打印一次请求的真实字段与每个输出流/句柄的参数（只读；dump 开关打开时才走） */
 static void portal_dump_request(const void *raw, unsigned long n) {
     struct portal_layout L;
@@ -1374,6 +1428,15 @@ static int shim_process_capture_request(const struct camera3_device *dev,
 
     if (n == 1 || n % 240 == 0) {
         LOGI("process_capture_request 已接管：#%lu（相机 %s）", n, g_cur_cam[0] ? g_cur_cam : "?");
+    }
+    /* **尺寸泛化**（§74）：把"这次请求的每个输出缓冲 ↔ 它的几何"精确对上。
+     * 为什么必须在这一层做：这里同时握着 `camera3_stream_t`（宽高/格式/用途）与
+     * `buffer_handle_t`（真实的 dmabuf fd）—— 于是"字节数"与"几何"这对关系是**读出来的**，
+     * 不是按公式猜的。注入线程那头只有字节数，靠这张表才能反查出几何。 */
+    if (g_opt_auto_tpl && request != NULL && portal_cam_selected()) {
+#if defined(__aarch64__)
+        portal_auto_note_request(request);
+#endif
     }
     /* **拍照请求的早期信号**：这里就能看到 BLOB 流，比结果早一百多毫秒 */
     if (request != NULL && g_opt_src_file[0] != '\0' && portal_cam_selected()) {
@@ -2204,6 +2267,15 @@ static int portal_configure_streams(const struct camera3_device *dev, void *stre
     int rc = g_real_configure_streams(dev, stream_list);
     /* 新会话 ⇒ 新 buffer ⇒ 映射缓存整表失效 */
     portal_invalidate_maps();
+    /* 新会话 ⇒ 上一场的几何表全部作废（"同一个尺寸"在新会话里是**另一批**缓冲），
+     * 并从这一刻起给"首帧注入延迟"起表（§74 的对标量：OPPO 相机 <0.5 秒）。
+     * 放在真 HAL 之后：`stream_list` 这时才带着厂商补的 usage 位（判"编码器面"要用它）。 */
+    if (rc == 0) {
+#if defined(__aarch64__)
+        portal_auto_reset();
+        if (g_opt_auto_tpl && portal_cam_selected()) portal_auto_note_streams(stream_list);
+#endif
+    }
     if (rc == 0 && stream_list != NULL && g_opt_usage_patch && portal_cam_selected()) {
         if (portal_should_patch_usage()) {
             portal_scrub_streams(stream_list);
@@ -4371,6 +4443,367 @@ static void portal_mock_parse(void) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 尺寸泛化（`auto_tpl=`）：按会话几何自动认领任意尺寸（§74）
+ *
+ * 要解决的问题：`mock_map` 要求**每个尺寸手工一份素材** —— 实测每接一个新应用
+ * （体适能 640×480、录制页 1920×1080…）都要先 dump 活帧、造模板、再登记；没登记的尺寸
+ * 一条都不接管（"有映射表时：没模板的尺寸不动"）。而"请求什么尺寸"是应用的自由，
+ * 泛用性要求 HAL 对**没见过的尺寸**也能立刻给出画面。
+ *
+ * ## 为什么不是"在请求入口把句柄的 fd 读出来"
+ *
+ * 那是第一版的做法，**在 ACE5 上是死的**（本轮实测）：本机 `device->ops` 是 NULL，
+ * `process_capture_request` 的导出符号也没有，于是我们的 `shim_process_capture_request`
+ * / `portal_configure_streams` 两个包装函数**一次都不会被调用**；真正在跑的是
+ * **零调用地址钩子**（`hook_rec_ol_vaddrs`，每个请求命中一次，只往 .bss 里抄字段、不 call）。
+ * 而请求快照里那个 `buffer_handle_t` 指针（栈/映射区）**汇报时早已失效**
+ * （实测：`头字段不像 native_handle（v=0 nFds=0 nInts=1512451008）`）⇒ 从快照里拿不到 fd。
+ *
+ * 所以几何只能从**快照里能读到的那个指针**拿：`camera3_stream_t*` 在堆上，
+ * 汇报时依然可读（`portal_req_report` 一直是这么打的：`stream: type=0 1920x1440 format=…`）。
+ * 剩下"这块流占多少字节"用**预测 + 现场核对**解决，见下。
+ *
+ * ## 几何 → 字节数：一个可复算的分配模型，而不是"猜"
+ *
+ * 本机实测两个锚点（都是整块分配的字节数，不是估算）：
+ *   · `2136×1200`（后置/前置预览，`format=0x23`）→ **4,038,656** = 2176 × (1216 × 1.5 + 32)
+ *   · `1920×1080`（前置录像面，`format=0x23`）     → **3,194,880** = 1920 × (1088 × 1.5 + 32)
+ * 两处都满足 `stride = ALIGN(w,64)`、`rows = ALIGN(h,32)`、`总字节 = stride × (rows×1.5 + 32)`。
+ * 但 `640×480` → **491,520** = 640 × 512 × 1.5（**没有**那 32 行尾部）——
+ * 说明分配规则不止一条，所以做法是**候选表**：A/B/C/D 四种平面式与两种交织式，
+ * 逐个去和"进程里真实存在的 dmabuf 尺寸"对，**对上了才算数**（对上 = 现场证据，不是推断）。
+ * 都对不上时退回**计数判据**（`max_buffers` 与某个尺寸的块数相等且唯一），此时布局未知 ⇒ 纯色。
+ *
+ * ## 为什么"布局未知就填纯色"而不是"猜个 stride 硬写"
+ *
+ * 写错布局的画面**看起来仍是我们的图案**（渐变被拉歪、平铺块），于是"A/B 判定生效"
+ * 就成了假阳性 —— 比不写更坏。纯色是**唯一与布局无关**的可见证明：任何平面布局下，
+ * 整块 0x80 都是一块均匀灰。
+ * ------------------------------------------------------------------ */
+
+#define PORTAL_AUTO_MAX 24
+#define PORTAL_AUTO_HIST 64
+
+typedef struct {
+    unsigned long size; /* 绑定的缓冲字节数（0 = 还没绑上） */
+    uint32_t format, w, h, usage, max_buffers;
+    size_t stride;  /* 平面布局步长（0 = 布局未知） */
+    int mode;       /* 0 = 未绑定；1 = NV12 平面；2 = YUYV；3 = 布局未知（纯色） */
+    const char *how; /* 绑定依据（日志里要能复算） */
+} portal_auto_entry;
+
+static portal_auto_entry g_auto[PORTAL_AUTO_MAX];
+static int g_auto_n = 0;
+static volatile int g_auto_bound_n = 0;
+/** 会话起点与"首帧已注入"标记 —— 只为一件事：把"多久就绪"变成一个能对标的数字
+ *  （OPPO 相机实测 <0.5 秒切到虚拟画面）。 */
+static volatile unsigned long long g_session_t0_us = 0;
+static volatile int g_first_inject_done = 0;
+/** 本会话**新认领的**靶集是否已经建好 —— 首帧延迟只认"写进新靶"的那一次。
+ *  为什么需要它（实测踩过）：`shim_open` 一到就重置会话时钟，而注入线程那一刻手上还握着
+ *  **上一场会话的**靶，于是它立刻写进去并报出"首帧注入延迟 0.9ms"——数字漂亮，但毫无意义。 */
+static volatile int g_session_fresh = 0;
+static unsigned long long g_auto_bind_last_us = 0;
+
+static void portal_auto_reset(void) {
+    g_auto_n = 0;
+    __atomic_store_n(&g_auto_bound_n, 0, __ATOMIC_RELEASE);
+    g_session_t0_us = portal_now_us();
+    __atomic_store_n(&g_first_inject_done, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_session_fresh, 0, __ATOMIC_RELEASE);
+}
+
+/**
+ * 这个输出流要不要自动接管。
+ *
+ * 判据与 `mock_map` 那条**分开写**：那条的语义是"我给它准备了素材"，
+ * 这条是"我能现场生成画面"，两者该管的范围不同（这条要管**没登记过的尺寸**，
+ * 但又必须避开几条**写进去就是破坏**的流）。
+ */
+static bool portal_auto_eligible_stream(int stream_type, int format, uint32_t usage) {
+    if (stream_type != 0 /* OUTPUT */) return false;
+    /* RAW(0x20)/RAW10(0x25)：模拟 RAW 没有意义；BLOB(0x21)：照片另有编码通道（§45） */
+    if (format == 0x20 || format == 0x25 || format == 0x21) return false;
+    /* 编码器面（录进文件的那条）：线性数据编码器解不出来（§15.8 / §62）⇒ 一个字节都不碰 */
+    if ((usage & PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0) return false;
+    return true;
+}
+
+static bool portal_auto_eligible(const camera3_stream_t *st) {
+    if (st == NULL) return false;
+    return portal_auto_eligible_stream((int)st->stream_type, st->format, st->usage);
+}
+
+static portal_auto_entry *portal_auto_find(unsigned long sz) {
+    for (int i = 0; i < g_auto_n; i++) {
+        if (g_auto[i].mode != 0 && g_auto[i].size == sz) return &g_auto[i];
+    }
+    return NULL;
+}
+
+/** 登记一条几何（同几何只留一条：同一路流每帧都会被观测到） */
+static void portal_auto_add_geom(uint32_t w, uint32_t h, int format, uint32_t usage,
+                                 uint32_t max_buffers) {
+    if (w == 0 || h == 0) return;
+    for (int i = 0; i < g_auto_n; i++) {
+        if (g_auto[i].w == w && g_auto[i].h == h && g_auto[i].format == (uint32_t)format &&
+            g_auto[i].usage == usage) {
+            return;
+        }
+    }
+    if (g_auto_n >= PORTAL_AUTO_MAX) return;
+    portal_auto_entry *e = &g_auto[g_auto_n++];
+    memset(e, 0, sizeof(*e));
+    e->w = w;
+    e->h = h;
+    e->format = (uint32_t)format;
+    e->usage = usage;
+    e->max_buffers = max_buffers;
+    LOGI("几何表[%d]：format=0x%x %ux%u usage=0x%x max=%u（本会话自动认领；尺寸待与真实 dmabuf 对上）",
+         g_auto_n - 1, format, w, h, usage, max_buffers);
+}
+
+/** `configure_streams` 那条路（ops 表被接管时才有）：流表直接给几何，**比快照更早、更全** */
+static void portal_auto_note_streams(void *stream_list) {
+    struct {
+        uint32_t num_streams;
+        camera3_stream_t **streams;
+    } *cfg = (void *)stream_list;
+    if (cfg == NULL || cfg->streams == NULL || cfg->num_streams > 16u) return;
+    for (uint32_t i = 0; i < cfg->num_streams; i++) {
+        camera3_stream_t *st = cfg->streams[i];
+        if (!portal_auto_eligible(st)) continue;
+        portal_auto_add_geom(st->width, st->height, st->format, st->usage, st->max_buffers);
+    }
+}
+
+/** 观测本会话的输出流几何。
+ *
+ * 两个来源，哪个活着用哪个（**两条都留着**：本机只有快照那条活，别的机型可能相反）：
+ *   · 请求快照（`g_req_snap`，零调用钩子抄下来的，本机唯一可用的一条）；
+ *   · `shim_process_capture_request` 的实参（ops 表被我们接管时才有）。
+ */
+static void portal_auto_observe(void) {
+    unsigned long c = __atomic_load_n(&g_req_snap.cnt, __ATOMIC_RELAXED);
+    if (c == 0) return;
+    unsigned long nout = __atomic_load_n(&g_req_snap.q[3], __ATOMIC_RELAXED) & 0xFFFFFFFFul;
+    unsigned long arr = __atomic_load_n(&g_req_snap.q[4], __ATOMIC_RELAXED);
+    if (nout == 0 || nout > 4 || arr < 0x1000) return;
+    for (unsigned i = 0; i < nout; i++) {
+        unsigned long e[5] = {0};
+        if (portal_peek(arr + i * 40, e, sizeof(e)) != 0) break;
+        unsigned long sp = portal_untag((const void *)e[0]);
+        if (sp < 0x1000) continue;
+        unsigned int st[12] = {0};
+        if (portal_peek(sp, st, sizeof(st)) != 0) continue;
+        if (!portal_auto_eligible_stream((int)st[0], (int)st[3], st[4])) continue;
+        portal_auto_add_geom(st[1], st[2], (int)st[3], st[4], st[5]);
+    }
+}
+
+/** 请求入口的第二个来源（ops 表被接管时走这条；本机不走，但留着不吃亏） */
+static void portal_auto_note_request(const camera3_capture_request_t *request) {
+    struct portal_layout L;
+    if (!portal_parse_request(request, &L)) return;
+    for (uint32_t i = 0; i < L.num; i++) {
+        const camera3_stream_buffer_t *sb = &L.sbs[i];
+        if (sb->stream == NULL) continue;
+        if (!portal_auto_eligible(sb->stream)) continue;
+        portal_auto_add_geom(sb->stream->width, sb->stream->height, sb->stream->format,
+                             sb->stream->usage, sb->stream->max_buffers);
+    }
+}
+
+static size_t portal_auto_align(size_t v, size_t a) { return (v + a - 1) / a * a; }
+
+/**
+ * 分配字节数的候选式（本机实测命中的是第 1、2 条）。
+ *
+ * `out_stride` 只对平面式有意义（YUYV 那条给的是"每像素 2 字节"的等价步长）。
+ * 顺序 = 实测命中概率的顺序；**候选对上真实 dmabuf 才算数**，所以顺序不引入风险。
+ */
+static int portal_auto_candidates(uint32_t w, uint32_t h, size_t out_size[6], size_t out_stride[6],
+                                 int out_mode[6]) {
+    size_t sw = portal_auto_align(w, 64);
+    size_t h32 = portal_auto_align(h, 32);
+    size_t h64 = portal_auto_align(h, 64);
+    size_t y32 = h32 * 3 / 2, y64 = h64 * 3 / 2;
+    int n = 0;
+    out_size[n] = sw * (y32 + 32); out_stride[n] = sw;     out_mode[n] = 1; n++;
+    out_size[n] = sw * y32;        out_stride[n] = sw;     out_mode[n] = 1; n++;
+    out_size[n] = sw * (y64 + 32); out_stride[n] = sw;     out_mode[n] = 1; n++;
+    out_size[n] = sw * y64;        out_stride[n] = sw;     out_mode[n] = 1; n++;
+    out_size[n] = sw * h32 * 2;    out_stride[n] = sw * 2; out_mode[n] = 2; n++;
+    out_size[n] = sw * h64 * 2;    out_stride[n] = sw * 2; out_mode[n] = 2; n++;
+    return n;
+}
+
+static const char *portal_auto_model_name(int idx) {
+    switch (idx) {
+        case 0: return "stride×(⌈h/32⌉×1.5+32)";
+        case 1: return "stride×(⌈h/32⌉×1.5)";
+        case 2: return "stride×(⌈h/64⌉×1.5+32)";
+        case 3: return "stride×(⌈h/64⌉×1.5)";
+        case 4: return "stride×⌈h/32⌉×2（交织）";
+        default: return "stride×⌈h/64⌉×2（交织）";
+    }
+}
+
+/** 某个尺寸是否已经被别的几何绑走了（一个尺寸只归一路流，避免两条流互相覆盖） */
+static bool portal_auto_size_taken(unsigned long sz, int except) {
+    for (int i = 0; i < g_auto_n; i++) {
+        if (i == except) continue;
+        if (g_auto[i].mode != 0 && g_auto[i].size == sz) return true;
+    }
+    return false;
+}
+
+/**
+ * 把"几何"与"进程里真实存在的 dmabuf 尺寸"对上 —— **这是整段的关键一步**，
+ * 也是唯一允许发生误判的地方，所以每一步都留下可复算的日志。
+ *
+ * 顺序：先按分配模型预测（对上了 ⇒ 布局已知，能写平面），
+ * 再退回计数判据（`max_buffers` 唯一的那个尺寸 ⇒ 布局未知，只能纯色）。
+ */
+static void portal_auto_bind(void) {
+    if (!g_opt_auto_tpl) return;
+    /* 本会话的几何都绑上了 ⇒ 没什么可做的（否则每轮都要扫一遍 400+ 个 fd） */
+    if (g_auto_n > 0 && __atomic_load_n(&g_auto_bound_n, __ATOMIC_RELAXED) >= g_auto_n) return;
+    /* 节流：注入线程在"没靶可打"时会以探询间隔（15ms）转圈，而每次 bind 都要扫一遍
+     * 400+ 个 fd —— 那是自己给自己造抖动。200ms 足够"半秒内就绪"这个目标。 */
+    unsigned long long now = portal_now_us();
+    if (g_auto_bind_last_us != 0 && now - g_auto_bind_last_us < 200000ull &&
+        __atomic_load_n(&g_auto_bound_n, __ATOMIC_RELAXED) > 0) {
+        return;
+    }
+    g_auto_bind_last_us = now;
+    portal_auto_observe();
+    if (g_auto_n == 0) return;
+
+    /* 真实存在的 dmabuf：尺寸 → 块数（按尺寸的直方图，与遍历顺序无关） */
+    unsigned long sizes[PORTAL_AUTO_HIST];
+    int counts[PORTAL_AUTO_HIST];
+    int nsz = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (d == NULL) return;
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        int fd = atoi(de->d_name);
+        if (fd < 3) continue;
+        char path[64];
+        char link[192] = {0};
+        snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+        ssize_t r = readlink(path, link, sizeof(link) - 1);
+        if (r <= 0) continue;
+        link[r] = '\0';
+        if (strstr(link, "dmabuf") == NULL) continue;
+        struct stat st;
+        if (fstat(fd, &st) != 0 || st.st_size <= 0) continue;
+        unsigned long sz = (unsigned long)st.st_size;
+        int hit = 0;
+        for (int i = 0; i < nsz; i++) {
+            if (sizes[i] == sz) {
+                counts[i]++;
+                hit = 1;
+                break;
+            }
+        }
+        if (!hit && nsz < PORTAL_AUTO_HIST) {
+            sizes[nsz] = sz;
+            counts[nsz] = 1;
+            nsz++;
+        }
+    }
+    closedir(d);
+    if (nsz == 0) return;
+
+    int bound_now = 0;
+    for (int i = 0; i < g_auto_n; i++) {
+        portal_auto_entry *e = &g_auto[i];
+        if (e->mode != 0) continue;
+        size_t cand[6], str[6];
+        int mode[6];
+        int nc = g_opt_auto_model ? portal_auto_candidates(e->w, e->h, cand, str, mode) : 0;
+        for (int c = 0; c < nc && e->mode == 0; c++) {
+            if (cand[c] == 0) continue;
+            for (int s = 0; s < nsz; s++) {
+                if (sizes[s] != cand[c]) continue;
+                if (portal_auto_size_taken(sizes[s], i)) continue;
+                e->size = sizes[s];
+                e->stride = str[c];
+                /* **默认只认尺寸、整块填纯色**（布局无关，一定看得见）；按平面写要显式开 */
+                e->mode = g_opt_auto_planar ? mode[c] : 3;
+                e->how = portal_auto_model_name(c);
+                bound_now++;
+                LOGI("自动模板：绑定 size=%lu ← format=0x%x %ux%u usage=0x%x max=%u"
+                     "（分配模型 %s，实测 %d 块同尺寸）",
+                     e->size, e->format, e->w, e->h, e->usage, e->max_buffers, e->how, counts[s]);
+                if (e->mode == 1 || e->mode == 2) {
+                    LOGI("自动模板：布局推定 stride=%zu（%s），按平面整幅写", e->stride,
+                         e->mode == 1 ? "NV12" : "YUYV");
+                }
+                break;
+            }
+        }
+        if (e->mode != 0 || e->max_buffers == 0) continue;
+        /* 计数兜底：**块数恰好等于 `max_buffers`** 且字节数落在"线性估算的 [1.0, 1.15] 倍"
+         * 之内的尺寸才认，多个候选时取最接近估算的那个。
+         *
+         * 为什么这两条都要（实测踩过，两处都是真现场）：
+         *  · 只看"块数落在 [max/2, max]" ⇒ 把 `15,728,640`（**RAW10 照片面**）绑到了
+         *    `2136×1200` 的预览几何上、把 `7,778,304` 绑到了 `1920×1440` 上 —— 一个是张冠李戴，
+         *    另一个会把照片流水线的缓冲涂成灰；
+         *  · 只看"块数相等" ⇒ 漏掉前置预览面（`max_buffers=16` 而当时只有 **8 块**已落地）。
+         * 现在模型那条路已经能精确认领预览面，所以兜底这条路**收紧**：宁可少接管，也不乱涂。 */
+        int pick = -1, cand_n = 0;
+        unsigned long long lin =
+            (unsigned long long)e->w * e->h + (unsigned long long)e->w * e->h / 2;
+        unsigned long long best_d = 0;
+        for (int s = 0; s < nsz; s++) {
+            if (counts[s] != (int)e->max_buffers) continue;
+            if ((unsigned long long)sizes[s] < lin) continue;
+            if ((unsigned long long)sizes[s] > lin + lin * 15 / 100) continue;
+            if (portal_auto_size_taken(sizes[s], i)) continue;
+            cand_n++;
+            /* 取最接近"线性 NV12 估算值"的那个：候选通常不止一个（进程里还有照片/编码器等
+             * 别的 dmabuf），而**离线性估算最近**是这批里最不可能错的一条判据。 */
+            unsigned long long d = (unsigned long long)sizes[s] > lin
+                                       ? (unsigned long long)sizes[s] - lin
+                                       : lin - (unsigned long long)sizes[s];
+            if (pick < 0 || d < best_d) {
+                best_d = d;
+                pick = s;
+            }
+        }
+        if (pick >= 0) {
+            if (cand_n > 1) {
+                LOGI("自动模板：尺寸候选 %d 个（块数 = max_buffers=%u 且字节数在估算 %llu 的 "
+                     "[1.0,1.15] 倍内），取最接近的那个",
+                     cand_n, e->max_buffers, lin);
+            }
+            e->size = sizes[pick];
+            e->stride = 0;
+            e->mode = 3;
+            e->how = "按 max_buffers 计数对上（布局未知）";
+            bound_now++;
+            LOGI("自动模板：绑定 size=%lu ← format=0x%x %ux%u（%s；实测 %d 块），"
+                 "布局不可知 ⇒ 只填 %d 号纯色",
+                 e->size, e->format, e->w, e->h, e->how, counts[pick], g_opt_auto_color);
+        }
+    }
+    if (bound_now > 0) {
+        __atomic_add_fetch(&g_auto_bound_n, bound_now, __ATOMIC_RELAXED);
+    }
+}
+
+/** 自动靶的几何 + 布局提示（`portal_target_wanted` 的附加输出） */
+typedef struct {
+    int mode; /* 0 = 不是自动靶；1 = NV12；2 = YUYV；3 = 纯色兜底 */
+    size_t stride;
+    uint32_t w, h, format;
+} portal_auto_hint;
+
+/* ------------------------------------------------------------------ *
  * VVideo：统一取帧层（可选）
  *
  * 这里只做三件事：
@@ -4655,6 +5088,12 @@ typedef struct {
     /* `inject_sync=2`（静止判据）用的状态：见下面注入线程的注释 */
     unsigned long long seen;
     int stable;
+    /* **自动模板**（§74）：`auto_mode` 非 0 ⇒ 内容是"按几何现场生成"的，不是模板文件。
+     * 布局在认领时就推导好并记进日志（见 build_targets），写路径只照着做。 */
+    int auto_mode; /* 0 = 不适用；1 = NV12 平面；2 = YUYV；3 = 纯色兜底 */
+    size_t auto_stride;
+    uint32_t aw, ah;
+    int logged; /* "这块写过第一帧"只报一次（谁先写到谁报，不刷屏） */
 } portal_target;
 
 /**
@@ -4669,9 +5108,10 @@ typedef struct {
  * 而那种打架在真机上表现为无休止的 munmap/mmap 抖动。
  */
 static bool portal_target_wanted(unsigned long sz, const char *link, const void **out_tpl,
-                                 size_t *out_tlen) {
+                                 size_t *out_tlen, portal_auto_hint *out_auto) {
     const unsigned char *tpl = NULL;
     size_t tlen = 0;
+    if (out_auto != NULL) memset(out_auto, 0, sizeof(*out_auto));
     for (int i = 0; i < g_mock_n; i++) {
         if (g_mock[i].size != sz || g_mock[i].tpl == NULL) continue;
         if (g_mock[i].name[0] != '\0' && strstr(link, g_mock[i].name) == NULL) continue;
@@ -4685,6 +5125,29 @@ static bool portal_target_wanted(unsigned long sz, const char *link, const void 
             if (out_tpl != NULL) *out_tpl = NULL;
             if (out_tlen != NULL) *out_tlen = 0;
             return true;
+        }
+        /* **尺寸泛化**（§74）：几何表里有这个尺寸 ⇒ 自动认领，内容现场生成。
+         * 位置在 `mock_map` 之后：**手工素材优先**（它带真实内容），
+         * 自动那条只是"这个尺寸没素材也不至于完全不接管"的兜底。 */
+        if (g_opt_auto_tpl) {
+            portal_auto_entry *e = portal_auto_find(sz);
+            if (e != NULL) {
+                portal_auto_hint h;
+                memset(&h, 0, sizeof(h));
+                h.mode = e->mode;
+                h.stride = e->stride;
+                h.w = e->w;
+                h.h = e->h;
+                h.format = e->format;
+                /* `auto_tpl=2`：**只认布局已知的尺寸**（研究用：把"纯色兜底"这条排除掉，
+                 * 于是画面上的任何变化都只能来自真正的平面写入）。 */
+                if (!(h.mode == 3 && g_opt_auto_tpl == 2)) {
+                    if (out_auto != NULL) *out_auto = h;
+                    if (out_tpl != NULL) *out_tpl = NULL;
+                    if (out_tlen != NULL) *out_tlen = 0;
+                    return true;
+                }
+            }
         }
         if (g_mock_n != 0) return false; /* 有映射表时：没模板的尺寸不动 */
         if (g_opt_inject_size == 0 || sz != g_opt_inject_size) return false;
@@ -4737,7 +5200,7 @@ static void portal_fd_signature(unsigned long long *out_sig, int *out_count,
         struct stat st;
         if (fstat(fd, &st) != 0 || st.st_size <= 0) continue;
         unsigned long sz = (unsigned long)st.st_size;
-        if (!portal_target_wanted(sz, link, NULL, NULL)) continue;
+        if (!portal_target_wanted(sz, link, NULL, NULL, NULL)) continue;
         /* 加法而不是异或：同一尺寸的多块异或会互相抵消，指纹就废了 */
         unsigned long long v = (unsigned long long)st.st_ino * 0x9E3779B97F4A7C15ull +
                                (unsigned long long)sz * 0xC2B2AE3D27D4EB4Full;
@@ -4771,7 +5234,8 @@ static int portal_build_targets(portal_target t[], int cap) {
         unsigned long sz = (unsigned long)st.st_size;
         const void *tpl = NULL;
         size_t tlen = 0;
-        if (!portal_target_wanted(sz, link, &tpl, &tlen)) continue;
+        portal_auto_hint hint;
+        if (!portal_target_wanted(sz, link, &tpl, &tlen, &hint)) continue;
         void *m = mmap(NULL, (size_t)sz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m == MAP_FAILED) {
             LOGI("注入：fd=%d size=%lu mmap 失败（errno=%d）", fd, sz, errno);
@@ -4782,12 +5246,29 @@ static int portal_build_targets(portal_target t[], int cap) {
         t[n].tpl = tpl;
         t[n].tlen = tlen;
         t[n].fd = fd;
+        t[n].auto_mode = hint.mode;
+        t[n].auto_stride = hint.stride;
+        t[n].aw = hint.w;
+        t[n].ah = hint.h;
+        t[n].logged = 0;
         if (portal_gpu_wanted((size_t)sz)) portal_gpu_note_target_fd(fd);
         LOGI("注入：fd=%d size=%lu → %p（模板 %s%s）", fd, sz, m, tpl ? "有" : "纯色",
              portal_gpu_wanted((size_t)sz) ? "，走 GPU" : "");
+        /* 自动靶：**认领时就把"这块要按什么布局写"讲清楚**（写路径只照着做，不再做判断）——
+         * 于是"画面为什么是这样"在日志里是**可复算**的，不是一句"看起来对"。 */
+        if (hint.mode != 0) {
+            LOGI("自动模板[%d]：size=%lu 几何=%ux%u fmt=0x%x → %s", n, sz, hint.w, hint.h, hint.format,
+                 hint.mode == 1 ? "NV12 平面"
+                                : (hint.mode == 2 ? "YUYV（交织）" : "布局推不出 ⇒ 整块填纯色"));
+            if (hint.mode == 1 || hint.mode == 2) {
+                LOGI("自动模板[%d]：stride=%zu（由 %lu = stride × %s 整除得出）", n, hint.stride, sz,
+                     hint.mode == 1 ? "⌈h×1.5⌉" : "h");
+            }
+        }
         n++;
     }
     closedir(d);
+    if (n > 0) __atomic_store_n(&g_session_fresh, 1, __ATOMIC_RELEASE);
     return n;
 }
 
@@ -4818,7 +5299,61 @@ static void portal_write_span(void *dst, const unsigned char *tpl, size_t size, 
  * 那既救不了画面、又会让"A/B 判据看到的画面变化"到底是 GPU 生效还是噪声变得说不清。
  * 要区分这两者，判据是**条纹**（GPU 画的是黄蓝横条，噪声不是）——见 §63。
  */
+/**
+ * 自动靶的内容生成（`auto_mode != 0`）：按认领时推导好的布局把画面写进去。
+ *
+ * 三种模式：
+ *   · NV12（1）：Y 面用与模板同一套图案（横向渐变 + 移动竖条，`portal_template` 有底图缓存，
+ *     逐行 memcpy），色度面填 128 —— 填 128 而不是照抄真图色彩，是为了不让模拟画面
+ *     叠在 ISP 的真实色彩上发花（与 `portal_fill_frame` 同一条经验）。
+ *   · YUYV（2）：每像素 2 字节，Y 取图案、色度 128（先整行填 128，再把 Y 写进偶数位）。
+ *   · 纯色（3）：**整块**填 `auto_color` —— 唯一与布局无关的可见证明。
+ *
+ * 为什么 Y 面用缓存图案而不是逐像素函数：实测逐像素重建底图要 48ms/帧（§早期），
+ * 而 `portal_template` 的底图只算一次，热路径只剩 memcpy。
+ */
+static void portal_auto_write(portal_target *t, unsigned frame) {
+    uint8_t *p = (uint8_t *)t->p;
+    if (t->auto_mode == 3 || t->auto_stride == 0 || t->ah == 0 || t->aw == 0) {
+        memset(p, g_opt_auto_color, t->size);
+    } else if (t->auto_mode == 1) {
+        const uint8_t *tpl = portal_template(t->aw, t->ah, frame);
+        size_t stride = t->auto_stride;
+        for (uint32_t r = 0; r < t->ah; r++) {
+            uint8_t *row = p + (size_t)r * stride;
+            if (tpl != NULL) memcpy(row, tpl + (size_t)r * t->aw, t->aw);
+            else memset(row, g_opt_auto_color, t->aw);
+            if (stride > t->aw) memset(row + t->aw, g_opt_auto_color, stride - t->aw);
+        }
+        uint32_t uv_rows = (t->ah + 1) / 2;
+        for (uint32_t r = 0; r < uv_rows; r++) {
+            size_t off = (size_t)(t->ah + r) * stride;
+            if (off + stride <= t->size) memset(p + off, 128, stride);
+        }
+    } else { /* 2 = YUYV */
+        const uint8_t *tpl = portal_template(t->aw, t->ah, frame);
+        size_t stride = t->auto_stride;
+        for (uint32_t r = 0; r < t->ah; r++) {
+            uint8_t *row = p + (size_t)r * stride;
+            memset(row, 128, stride);
+            if (tpl == NULL) continue;
+            uint32_t xmax = t->aw;
+            if ((size_t)xmax * 2 > stride) xmax = (uint32_t)(stride / 2);
+            for (uint32_t x = 0; x < xmax; x++) row[x * 2] = tpl[(size_t)r * t->aw + x];
+        }
+    }
+    if (!t->logged) {
+        t->logged = 1;
+        LOGI("自动模板：%lu 字节（%ux%u）已写入第一帧（%s）", t->size, t->aw, t->ah,
+             t->auto_mode == 1 ? "NV12" : (t->auto_mode == 2 ? "YUYV" : "纯色"));
+    }
+}
+
 static void portal_target_write(portal_target *t, size_t len, unsigned frame) {
+    if (t->auto_mode != 0) {
+        portal_auto_write(t, frame);
+        return;
+    }
     if (portal_gpu_wanted(t->size)) {
         if (g_gpu_handle != NULL &&
             inject_via_gpu(g_gpu_handle, (uint32_t)g_opt_gpu_w, (uint32_t)g_opt_gpu_h, frame)) {
@@ -4858,6 +5393,12 @@ static void *portal_inject_thread(void *arg) {
 
     time_t started = time(NULL);
     for (;;) {
+        /* **尺寸泛化**：每轮都试着把"本会话几何 ↔ 真实 dmabuf 尺寸"再对一次。
+         * 为什么挂在循环开头而不是"没靶可打时"：实测踩过 —— 先落地的是次要流
+         * （`640×358` 的 16 块），一绑定成功 `n` 就不为 0 了，于是**再也不会**去绑
+         * 稍后才出现的主预览面（`4,038,656`），取景器一直是真实画面。
+         * 成本由 bind 自己节流（200ms + 全部绑完即返回），热路径上就是一次原子读。 */
+        if (g_opt_auto_tpl) portal_auto_bind();
         if (g_opt_inject_stop_after > 0 && time(NULL) - started >= g_opt_inject_stop_after) {
             LOGI("注入线程：已按 inject_stop_after=%d 秒退出（此后相机输出不再被我们改写）",
                  g_opt_inject_stop_after);
@@ -4995,6 +5536,18 @@ static void *portal_inject_thread(void *arg) {
                 t[i].seen = 0;   /* 从头等下一次"稳定" */
             }
             writes++;
+        }
+        /* **首帧注入延迟**（§74 的对标量）：从"本会话 configure_streams 返回"到"第一帧真的写进
+         * 相机缓冲"的毫秒数。OPPO 相机实测在半秒内切到虚拟画面 —— 这个数字就是同一条尺子。
+         * 只报一次（每个会话一次），因为这才是应用能感知的那个"就绪时刻"。 */
+        if (writes != writes_before && __atomic_load_n(&g_session_fresh, __ATOMIC_ACQUIRE) &&
+            !__atomic_load_n(&g_first_inject_done, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&g_first_inject_done, 1, __ATOMIC_RELEASE);
+            unsigned long long t0 = g_session_t0_us;
+            if (t0 != 0) {
+                LOGI("首帧注入延迟：%.1f ms（%d 块靶，共 %lu 次写，自动靶 %d 块）",
+                     (double)(portal_now_us() - t0) / 1000.0, n, writes, g_auto_n);
+            }
         }
         /* **开门**：这一代缓冲我们已经真的写进去了 ⇒ 唤醒所有被挡在请求入口的调用者。
          * 判据用"这一轮确实写过"而不是"线程起来了" —— 后者会放行一批还没被覆盖的帧。 */
@@ -6639,6 +7192,13 @@ static int shim_open(const struct hw_module_t *module, const char *id,
                      struct hw_device_t **device) {
     (void)module;
     load_options();
+    /* **新会话开始**：几何表整表作废，并给"首帧注入延迟"重新起表。
+     * 为什么用 open 当会话起点（而不是 configure_streams 的包装函数）：本机
+     * `configure_streams` 没有导出符号、包装函数根本不会被调用（实测），
+     * 而 `shim_open` 是**每次应用开相机都会走**的那一个点（日志里一直在打）。 */
+#if defined(__aarch64__)
+    if (g_opt_auto_tpl) portal_auto_reset();
+#endif
     if (id != NULL) snprintf(g_cur_cam, sizeof(g_cur_cam), "%s", id);
     /* 钩子累计命中：在 open 这条**非 vendor 热路径**上汇报，钩子体自己只自增、不做 I/O */
     portal_hook_report_counts();
@@ -6974,8 +7534,8 @@ __attribute__((constructor)) static void on_load(void) {
         }
     }
 #endif
-    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0' ||
-        g_opt_gpu) {
+    if (g_opt_inject_fd >= 0 || g_opt_inject_size != 0 || g_opt_mock_map[0] != '\0' || g_opt_gpu ||
+        g_opt_auto_tpl) {
         pthread_t th;
         if (pthread_create(&th, NULL, portal_inject_thread, NULL) == 0) {
             pthread_detach(th);
