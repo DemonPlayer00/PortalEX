@@ -3421,6 +3421,7 @@ adb shell input tap 631 2410         # 快门
 | `scripts/gen-camera-mock.py` | 由设计稿生成可注入素材（三种目标面，参数全部实测） |
 | `scripts/research/` | 本届用到的量具（UBWC 换算、RAW10 编辑、帧分类、列带相关）+ 两张测试卡设计稿 + README |
 | `docs/camera-mock.md` | 本文档：从"这套路走不走得通"到"每个面的字节布局"的完整记录（§1–§57） |
+| `docs/camera-hal-compat.md` | **兼容性分析**：适用范围、两种平台形态对照、依赖自检清单、症状索引、移植清单、未验证边界 |
 
 ### 57.2 设备上有什么（运行期产物）
 

@@ -81,7 +81,7 @@
 
 | 项 | 观察 |
 | --- | --- |
-| 与 LSPosed / Zygisk / susfs 等模块共存 | 实测同机同时装着 7 个模块（含 LSPosed、Zygisk、susfs 系）时，本模块部署与相机功能均正常（`ksud module list` 可见） |
+| 与 LSPosed / Zygisk / susfs 等模块共存 | 实测同机同时装着 6 个模块（`ksud module list`：本模块 + LSPosed、Zygisk、susfs、tricky_store、WorkSettingPro）时，本模块部署与相机功能均正常，且本模块全程 enabled=true |
 | 模块安装顺序 | 本模块**不参与** `system` 分区树挂载（ACE5 形态下只叠 `/odm`），因此与其它模块的挂载顺序**无耦合** |
 | 与目标 App 的 Xposed 模块（本项目另一半） | 二者**互不依赖**：模拟完全在系统层；关掉 Xposed 侧不影响相机接管，反之亦然 |
 | 卸载/禁用 | 禁用模块 + 重启即回到厂商原始行为；**运行期**回滚只需 `umount /odm/lib64/hw; umount /data/local/tmp/odmtmp; setprop ctl.start vendor.camera-provider` |
