@@ -493,6 +493,13 @@ static unsigned long g_opt_gpu_size = 0;
 /** 那块靶的几何（GPU 需要宽高才能建图像；默认 1080p） */
 static int g_opt_gpu_w = 1920;
 static int g_opt_gpu_h = 1080;
+/** `shim_open` 一发生就置 1：**新相机会话开始了，注入线程请立刻重扫靶**。
+ *
+ *  为什么需要它：换靶的快路依赖 VVideo 事件层（`vv_mount=`），而实测部署里**没有挂那层**
+ *  ⇒ `portal_vv_wait_streams()` 返回 `-ENOTTY`，快路整条是死的；线程只能等周期性安全带，
+ *  期间还继续往**上一场会话的旧缓冲**里写 —— 表现就是"相机开了十几秒才看到模拟画面"。
+ *  `shim_open` 正是"新会话开始"那一刻（日志里一直在打），在这里置位最准。 */
+static volatile int g_rescan_now = 0;
 static int g_opt_inject_us = 15000;
 /** `inject_pattern=1`：不做纯色填充，改成**逐字节渐变** —— 用来证明"逐像素可控"
  *  （纯色只能证明"写进去了"，渐变才能证明每个字节都由我们决定）。 */
@@ -4871,6 +4878,15 @@ static void *portal_inject_thread(void *arg) {
             sleep(1);
             continue;
         }
+        if (__atomic_load_n(&g_rescan_now, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&g_rescan_now, 0, __ATOMIC_RELEASE);
+            if (n != 0) {
+                for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
+                n = 0;
+                announced = 0;
+                LOGI("注入线程：收到 shim_open（新会话开始）⇒ 立刻重扫靶");
+            }
+        }
         if (n == 0) {
             n = portal_build_targets(t, PORTAL_INJECT_MAX);
             if (n == 0) {
@@ -6634,6 +6650,7 @@ static int shim_open(const struct hw_module_t *module, const char *id,
      * 因为若 provider 绕过 open 自行 dlopen 真件，整个 ops 接管面就根本不会被走到。 */
     LOGI("shim_open 被调用：id=%s device=%p —— provider 走的是我们的 methods->open",
          id ? id : "(null)", (void *)device);
+    __atomic_store_n(&g_rescan_now, 1, __ATOMIC_RELEASE); /* 新会话：让注入线程立刻重扫 */
     {
         char w0[256] = {0}, w1[256] = {0};
         const void *r0 = __builtin_return_address(0);
