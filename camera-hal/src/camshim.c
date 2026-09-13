@@ -601,6 +601,15 @@ static int g_scrub_slot = -1;
  *  桩里只做一件事：请求里带回 `BLOB(0x21)` 流（= 按下快门那一帧）时置位 `g_photo_burst`。 */
 static unsigned long g_opt_photo_vaddr = 0;
 static int g_photo_slot = -1;
+/** `photo_mod=<模块名>`：拍照帧钩子挂到哪个模块（默认 `camera.oemlayer.so`）。
+ *
+ *  **为什么需要它**（第 75 轮实测）：`ol+0x6cadc` 那个入口上，`a1` 虽然第一字是帧号，
+ *  但**输出缓冲数组指针是 0**（`num=1、array=NULL`）⇒ 请求解析必然失败（`解析=0`），
+ *  也就是说**这个入口看不到输出流，认不出 BLOB**。真正能看到输出流的是
+ *  `camera.qcom.so+0x1e49ca0`（`req_vaddrs` 那个入口，快照里一直打得出 out[0..n]）。
+ *  所以把同一个 C 桩指过去：`photo_mod=camera.qcom.so` + `photo_ol_vaddr=0x1e49ca0`
+ *  （注意：此时 cfg 里**不能**再留 `req_vaddrs=`，同一个入口不能挂两套钩子）。 */
+static char g_opt_photo_mod[64] = {0};
 /** "拍照那一帧"的触发位：请求入口置位，注入线程看到就**立刻重写一遍所有靶**再清零。
  *  为什么不在钩子里直接写：映射表在注入线程的栈上（局部数组），钩子里拿不到；
  *  置位 + 线程立刻响应（循环间隔 0–15ms）足够落在几百毫秒的拍照窗口里。 */
@@ -966,6 +975,8 @@ static void load_options(void) {
             g_opt_scrub_vaddr = strtoul(val, NULL, 0);
         } else if (strcmp(key, "photo_ol_vaddr") == 0) {
             g_opt_photo_vaddr = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "photo_mod") == 0) {
+            snprintf(g_opt_photo_mod, sizeof(g_opt_photo_mod), "%s", val);
         } else if (strcmp(key, "inject_limit") == 0) {
             g_opt_inject_limit = strtoul(val, NULL, 0);
         } else if (strcmp(key, "inject_span") == 0) {
@@ -7079,9 +7090,38 @@ __attribute__((used)) static void portal_hook_any_c(unsigned long caller, unsign
      * 这是"提前认领打不赢拍照窗口"（§100）之后最便宜的一条确定性路：挂钩点是我们已经
      * 验证过每帧都会被调用的那个请求入口，而成本只落在拍照那一帧（预览帧只多一次比较）。 */
     if (g_photo_slot >= 0 && (int)kind == g_photo_slot) {
-        struct portal_layout LB;
-        if (portal_parse_request((const void *)a1, &LB) && portal_layout_has_blob(&LB)) {
-            __atomic_store_n(&g_photo_burst, 1, __ATOMIC_RELEASE);
+        /* **按"快照布局"读请求**（第 75 轮的诊断结论）：在这两个入口上，
+         * `camera3_capture_request_t` 的字段顺序是
+         *   `word0=帧号, word1=settings, word2=(NULL), word3=num_output_buffers, word4=输出数组`
+         * —— 而 `portal_parse_request()` 期望的是 HAL3 头文件顺序（数组在 word2），
+         * 于是**永远是"解析=0"**（实测两处入口都是这个形状：word2=0、word3=1 或 3）。
+         * 零调用快照那条路一直能打出 out[0..n]，用的就是 word3/word4 这套偏移，这里与它对齐。 */
+        unsigned long rq[8] = {0};
+        if (portal_peek(a1, rq, sizeof(rq)) == 0) {
+            unsigned long nout = rq[3] & 0xFFFFFFFFul;
+            unsigned long arr = portal_untag((const void *)rq[4]);
+            static unsigned long dbg2 = 0;
+            unsigned long dn = __atomic_add_fetch(&dbg2, 1, __ATOMIC_RELAXED);
+            int blob = 0;
+            if (arr >= 0x1000 && nout > 0 && nout <= 8) {
+                for (unsigned i = 0; i < nout; i++) {
+                    unsigned long ent[2] = {0};
+                    if (portal_peek(arr + i * 40, ent, sizeof(ent)) != 0) break;
+                    unsigned long sp = portal_untag((const void *)ent[0]);
+                    if (sp < 0x1000) continue;
+                    unsigned int stt[8] = {0};
+                    if (portal_peek(sp, stt, sizeof(stt)) != 0) continue;
+                    if ((int)stt[3] == 0x21) {
+                        blob = 1;
+                        break;
+                    }
+                }
+            }
+            if (dn <= 5) {
+                LOGI("拍照帧钩子[%lu]：帧号=%lu 输出数=%lu 数组=%p ⇒ %s", dn, rq[0] & 0xFFFFFFFFul,
+                     nout, (void *)arr, blob ? "**含 BLOB（拍照）**" : "无 BLOB");
+            }
+            if (blob) __atomic_store_n(&g_photo_burst, 1, __ATOMIC_RELEASE);
         }
     }
     /* 请求入口：注入没就绪就把这一帧**挡住**（睡在事件字上，不是轮询） */
@@ -7920,7 +7960,8 @@ static void load_real_hal(void) {
     }
 #if defined(__aarch64__)
     if (g_opt_photo_vaddr != 0) {
-        uintptr_t ob = portal_module_base("camera.oemlayer.so");
+        const char *pmod = g_opt_photo_mod[0] ? g_opt_photo_mod : "camera.oemlayer.so";
+        uintptr_t ob = portal_module_base(pmod);
         if (ob == 0) {
             LOGE("拍照帧钩子：拿不到 oemlayer 基址");
         } else {
@@ -7931,10 +7972,10 @@ static void load_real_hal(void) {
                 LOGE("拍照帧钩子：没有空槽");
             } else {
                 snprintf(g_hook_name_buf[g_photo_slot], sizeof(g_hook_name_buf[g_photo_slot]),
-                         "camera.oemlayer.so+0x%lx(photo)", g_opt_photo_vaddr);
+                         "%s+0x%lx(photo)", pmod, g_opt_photo_vaddr);
                 portal_inline_hook(g_photo_slot, ob, g_opt_photo_vaddr,
                                    g_hook_name_buf[g_photo_slot]);
-                LOGI("拍照帧钩子：槽 %d ← oemlayer+0x%lx（遇 BLOB 立刻重写靶）", g_photo_slot,
+                LOGI("拍照帧钩子：槽 %d ← %s+0x%lx（遇 BLOB 立刻重写靶）", g_photo_slot, pmod,
                      g_opt_photo_vaddr);
             }
         }
