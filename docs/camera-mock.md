@@ -4613,3 +4613,42 @@ LSPosed 的 `app_configs` 表（每 App 配置）里只有三条，且带 `inval
 
 **下一手（读代码，不用设备）**：在 master 分支上找**相机 mock 的启用条件**（它读哪个配置键/哪条命令、
 与 `put_config` 或 camera relay 的关系），据此确定"我们少发了什么"。这比继续在设备上试要快得多。
+
+### 70.11 第 34 轮：读代码找到**拦截门**（应用层"不拦"的权威解释源）
+
+`CameraMockController`（master）的拦截门，两条关键条件：
+
+```kotlin
+// ① 配置缓存没热 + 当前在主线程 ⇒ 本次不拦截，只做异步预热
+if (!CameraMockClient.isWarm() && Looper.myLooper() == Looper.getMainLooper()) {
+    CameraMockClient.warmUpAsync()
+    if (FakeLoc.enableDebugLog) Logger.info("摄像头模拟：配置缓存未热且当前在主线程，本次不拦截（已后台预热）")
+    return false
+}
+// ② 总开关 + 目标清单
+if (!CameraMockClient.enabledFor(packageName)) {
+    if (FakeLoc.enableDebugLog) Logger.debug("摄像头模拟：不拦截（总开关未开或不在目标清单）：${packageName ?: "?"}")
+    return false
+}
+```
+`enabledFor`（`CameraMockClient.kt`）：
+```kotlin
+val m = manifest()
+if (!m.enabled) return false
+if (packageName == CameraMockProtocol.OWN_PACKAGE) return true   // 自己（录制页）不看清单
+if (m.targets.isEmpty()) return true                              // ★ 空清单 = 全放行
+return m.targets.any { it == packageName }
+```
+
+**三条对我前几轮的更正/确认**：
+1. **`targets=[]` 是全放行**（`if (m.targets.isEmpty()) return true`）⇒ 我 round 25 写 `targets` **完全没必要**，
+   round 30 的还原**是对的**（这条结论现在有代码依据，不再靠猜）；
+2. **日志为零是可解释的**：两道门都只在 `FakeLoc.enableDebugLog` 下打日志。
+   而我们在 `put_config` 里看到过 `enable_debug_log=true` —— 所以"没日志"更可能意味着
+   **相机那条门根本没被走到**（hook 没触发），而不是"模块没进进程"；
+3. **应用层也有"冷启动"效应**：①说得很直白 —— 缓存没热 + 主线程时**本次就是拦不了**，
+   只能异步预热等下一次。**与 HAL 线那条"冷启动注入未生效"同构**
+   （那条我们已用 `shim_open` 立即重扫修掉；应用层这条目前**没有对应补丁**）。
+
+**下一手（读代码即可）**：把 `CameraMockController` 的两道门**之外**的安装条件读完
+（hook 是在什么时机被装到目标进程的、需要什么前置），据此确定"为什么相机门没被走到"。
