@@ -6230,3 +6230,42 @@ adb logcat -d | grep -a "拍照那一帧"        # 有 ⇒ 机制成立；没有
 这属于"需要连续多轮"的工作，不适合挤在本会话末尾。
 
 **本条链的当前成绩：仍未验证成功**；代码保留、默认不启用。标准 cfg 已复原，三条回归全过。
+
+---
+
+## 105. 一个**具体的**候选入口地址：`camx.device-impl.so+0x1059c`（第 79 轮）
+
+§104 的结论是"还得先标定一个可重放的 still-capture 入口"。**这个地址其实早就在我们自己的日志里**，
+只是当时它只被当成一行"调用者"信息读过去了：
+
+```
+零调用钩子[1] camera.oemlayer.so+0x6cadc 命中 235 次；首次：
+  caller=0x71e1abf59c（/vendor/lib64/camx.device-impl.so+0x1059c
+  [_ZN7android8hardware6camera6device14implementation19CameraDeviceSession24processOneCaptureRequestERKN4aidl7android8hardware6camera6device14CaptureRe…]）
+```
+
+也就是：**`camx.device-impl.so+0x1059c` = `CameraDeviceSession::processOneCaptureRequest`（AIDL 层）**，
+而它是 `ol+0x6cadc` 的**调用者**。三条理由让它值得先试：
+
+1. **它一定每帧都被调到**（我们自己的日志已经证实：`ol+0x6cadc` 每帧命中，而它正是被这个函数调用的）；
+2. **它不是跳板**：跳板是 `sProcessCaptureResult` 那类 `bti c; b <实现>` 的静态外壳（§27.3），
+   而这是**实现函数**，序言与 `ol+0x6cadc` 同类（后者我们已经成功挂了 C 桩）⇒ 大概率可重放；
+3. 从**调用链的层级**看，它比 `ol+0x6cadc` 更**外层**（AIDL 入口）——BLOB 输出更可能在这里就已经在请求里。
+
+**唯一的成本**：这一层的参数是 **AIDL 的 `CaptureRequest`**（不是 `camera3_capture_request_t`），
+布局不同（`outputBuffers` 是 vector、流用 `streamId` 指代），所以 BLOB 识别不能再照抄 word3/word4 那套；
+需要把"`streamId` → 格式"对上，而**那张表我们在 configureStreams 时已经能看到**（`portal_scrub_streams` 的入口）。
+
+### 105.1 下一轮的两条命令（先证入口，再谈识别）
+
+```bash
+# ① 先只看"能不能挂上、会不会每帧命中"——不写任何画面（photo 桩里 BLOB 判定必然失败也没关系）：
+#    photo_mod=camx.device-impl.so
+#    photo_ol_vaddr=0x1059c
+#    期望日志：拍照帧钩子：槽 N ← camx.device-impl.so+0x1059c
+#    若出现"前 4 条指令里有 PC 相对指令，不能重放，跳过" ⇒ 这个入口也是跳板，换下一个候选
+# ② 挂上之后，再补 AIDL 版的 BLOB 识别（streamId→format 用 configureStreams 那张表）
+```
+
+**这一步的战略价值**：即使 ① 失败，它也把"候选入口"从"不知道去哪找"变成了"按调用链一层层往上试"——
+`ol+0x6cadc`（已否证）→ `camx+0x1059c`（本轮候选）→ 再往上。这是可行的方法，而不是碰运气。
