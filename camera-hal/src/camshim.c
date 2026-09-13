@@ -6651,6 +6651,13 @@ static int shim_open(const struct hw_module_t *module, const char *id,
     LOGI("shim_open 被调用：id=%s device=%p —— provider 走的是我们的 methods->open",
          id ? id : "(null)", (void *)device);
     __atomic_store_n(&g_rescan_now, 1, __ATOMIC_RELEASE); /* 新会话：让注入线程立刻重扫 */
+    /* ⚠️ 一次重扫不够（§68 实测）：应用那批面往往是 shim_open **之后**才分配的，
+     * 单次重扫会漏掉它们 ⇒ 我们认领的是旧块、ISP 往新块里写 ⇒ 画面完全不受我们影响。
+     * 所以新会话后**密集重扫一段时间**：借用已有的"探询窗口"机制（窗口内每 vv_probe_us
+     * 比一次廉价指纹，一变就重建靶）。默认 5 秒。 */
+#if defined(__aarch64__)
+    g_vv_burst_until_us = portal_now_us() + 5000000ull;
+#endif
     {
         char w0[256] = {0}, w1[256] = {0};
         const void *r0 = __builtin_return_address(0);
