@@ -4711,3 +4711,32 @@ return m.targets.any { it == packageName }
 **下一手（最后一步，读代码即可）**：看 `CameraMockController` 里换面之后的**喂帧路径**
 （`DrainTextureSurface` / GL 投递那一环）在什么条件下会"一帧都不出"，
 以及 `prepare` 的两道预检（进程内 GL 可用性 + 至少一个面能当 GL 输出）为何放行了它。
+
+### 70.15 第 37 轮：再排除一格 —— **播放器起来了**，断点在"解码 → GL → 输出面"内部
+
+读 `CameraMockController`（master）换面之后的喂帧入口：
+```kotlin
+fun startFeeding(packageName: String?): Int {
+    appSurfaces.forEach { surface ->
+        if (players.containsKey(surface)) return@forEach
+        if (surface == dummy || !surface.isValid) return@forEach
+        val player = startPlayer(surface, picked, packageName) ?: return@forEach
+        players[surface] = player; started++
+    }
+    if (started == 0) {
+        PortalDiag.fail(...); Logger.warn("摄像头模拟：没有任何输出面可以喂帧（画面将保持黑/静止）")   // ← 这条**没出现**
+        CameraMockClient.report(packageName, picked, "no-surface")
+    } else { firstFrame = false; watchFirstFrame(packageName) }        // ← 首帧看门狗（**出现了**）
+}
+```
+日志里出现的是**首帧看门狗**那条（`换面后 2500ms 内没有出帧`），而"没有任何输出面可以喂帧"**没有出现**
+⇒ **`started >= 1`：至少一路播放器已经起来了**（输出面也是有效的）。
+
+⇒ 断点**收窄到 `startPlayer` 内部**：**解码 → GL 纹理 → 输出面** 这条链路里某一步静默失败，
+帧没投递出去（`firstFrame` 始终为 false）。这也把"黑屏"的成因从"面不对/素材没有/权限不够"
+彻底钉到"**播放器起来了但吐不出帧**"。
+
+**下一手（读 `startPlayer` + 一条日志 grep）**：
+① 读 `startPlayer`（解码器配置 / GL 上下文 / 首帧投递）里所有**静默返回**的分支；
+② 在模块日志里按 `GL`、`解码`、`Drain` 等关键词 grep 同一时间窗（23:17:20–23:17:23），
+   看有没有伴生的失败行 —— 这一步能直接指出是哪一步（而不是继续猜）。
