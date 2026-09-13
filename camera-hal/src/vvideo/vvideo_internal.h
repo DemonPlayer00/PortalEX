@@ -15,6 +15,7 @@ extern struct vvideo_fs_type vv_type_gen;
 extern struct vvideo_fs_type vv_type_shm;
 extern struct vvideo_fs_type vv_type_xform;
 extern struct vvideo_fs_type vv_type_ctl;
+extern struct vvideo_fs_type vv_type_notify;
 
 /* ------------------------------------------------------------------ *
  * 帧节点（vvfs_node.c）

@@ -386,6 +386,71 @@ static void test_xform_algebra(void) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 纯事件节点（notify）：camshim 用它把"流配置变了"通知注入线程
+ * ------------------------------------------------------------------ */
+
+struct notify_poke_arg {
+    struct vvideo_file *f;
+    int delay_ms;
+};
+
+static void *notify_poke_thread(void *arg) {
+    struct notify_poke_arg *a = (struct notify_poke_arg *)arg;
+    struct timespec ts = {.tv_sec = 0, .tv_nsec = (long)a->delay_ms * 1000000L};
+    nanosleep(&ts, NULL);
+    vvideo_notify(a->f);
+    return NULL;
+}
+
+static void test_notify_event_node(void) {
+    CHECK(vvideo_mount_ensure("notify", "/vvideo/ev/streams", "", "") != NULL,
+          "挂载 notify 应当成功");
+
+    struct vvideo_file *cons = vvideo_open("/vvideo/ev/streams", VV_O_RDONLY);
+    struct vvideo_file *prod = vvideo_open("/vvideo/ev/streams", VV_O_RDWR);
+    CHECK(cons != NULL && prod != NULL, "应当能同时开消费者与生产者");
+    if (cons == NULL || prod == NULL) return;
+
+    /* 没有数据可读：read 返回 0（EOF），不是错误 —— 列表工具不该被它绊倒 */
+    uint8_t one = 0;
+    CHECK(vvideo_read(cons, &one, 1) == 0, "notify 的 read 应当返回 0（它没有数据）");
+
+    /* 初始：非阻塞探询立刻 -EAGAIN */
+    CHECK(vvideo_wait(cons, 0) == -EAGAIN, "没有信号时探询应当 -EAGAIN");
+
+    /* 写一个字节 = 发一次信号（照 eventfd） */
+    CHECK(vvideo_write(prod, "x", 1) == 1, "写 notify 应当成功");
+    CHECK(vvideo_wait(cons, 0) == 0, "发过信号之后探询应当立刻 0");
+    /* **不累积**：同一个信号只让一次 wait 成功 */
+    CHECK(vvideo_wait(cons, 0) == -EAGAIN, "信号不该累积（第二次探询应当 -EAGAIN）");
+
+    /* 睡等被唤醒：生产者 30ms 后发信号，消费者的超时是 3000ms */
+    struct notify_poke_arg pa = {prod, 30};
+    pthread_t th;
+    pthread_create(&th, NULL, notify_poke_thread, &pa);
+    struct timespec a, b;
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    int rc = vvideo_wait(cons, 3000);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    pthread_join(th, NULL);
+    double dt = (b.tv_sec - a.tv_sec) * 1000.0 + (b.tv_nsec - a.tv_nsec) / 1e6;
+    CHECK(rc == 0, "应当被信号唤醒（rc=%d）", rc);
+    CHECK(dt < 500.0, "唤醒应当很及时（实测 %.1f ms，超时上限 3000ms）", dt);
+
+    /* 生产者侧：write 也能唤醒（与 VVIO_NOTIFY 等价） */
+    CHECK(vvideo_write(prod, "y", 1) == 1, "再写一次");
+    CHECK(vvideo_wait(cons, 0) == 0, "write 也应当置位事件");
+
+    struct vvideo_fsstat st;
+    CHECK(vvideo_ioctl(cons, VVIO_STAT, &st) == 0 && st.waits > 0,
+          "notify 节点也该记账（等待=%lu）", st.waits);
+
+    vvideo_close(prod);
+    vvideo_close(cons);
+    CHECK(vvideo_umount("/vvideo/ev/streams") == 0, "卸载 notify");
+}
+
+/* ------------------------------------------------------------------ *
  * 控制面
  * ------------------------------------------------------------------ */
 
@@ -470,6 +535,7 @@ int main(void) {
     test_event_driven_wait();
     test_xform_single_step();
     test_xform_algebra();
+    test_notify_event_node();
     test_ctl();
 
     char tree[16384];

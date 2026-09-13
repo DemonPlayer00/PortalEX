@@ -12,7 +12,8 @@
 
 void vv_builtin_register(void) {
     struct vvideo_fs_type *all[] = {
-        &vv_type_mem, &vv_type_raw, &vv_type_gen, &vv_type_shm, &vv_type_xform, &vv_type_ctl,
+        &vv_type_mem,  &vv_type_raw,  &vv_type_gen, &vv_type_shm,
+        &vv_type_xform, &vv_type_ctl, &vv_type_notify,
     };
     for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
         int rc = vvideo_register_filesystem(all[i]);
