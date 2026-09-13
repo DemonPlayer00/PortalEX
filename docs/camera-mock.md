@@ -3453,3 +3453,55 @@ c549b1e docs(camera-mock): §56 验收清单（可照跑 + 判据数字）+ 一�
 **已通且实测稳定**：前置**预览 / 照片 / 录像**三条 + 后置**预览 / 照片**两条 + **模块开机自部署**。
 **未通**：**后置录像**（1080p 与 4K 都是厂商**压缩面**，线性/瓦片写入会被解成绿或黑）。
 **待验证**：小时级 soak；人像/专业/60fps/前置 4K 等模式。
+
+---
+
+## 58. VVideo 统一取帧层接入（本次）
+
+完整设计、ABI 与自测见 **[`docs/vvideo.md`](vvideo.md)**（形状照 Linux VFS：
+super_block/inode/dentry/file + 操作表 + 挂载表 + 路径解析）。这里只记**本次落地与判据**。
+
+### 58.1 改了什么
+
+`camshim.c` 只在**模板加载**这一处接进来：`mock_map` 里以 `/vvideo/` 开头的路径
+经统一层取帧（**零拷贝**，节点自己的内存），其余路径仍直接 `open()`。默认 `vvideo=0`，
+行为与接入前逐字节一致。
+
+```ini
+vvideo=1
+vv_mount=raw:/vvideo/src/front-preview:/data/vendor/camera/ffront.raw:w=2176,h=1256,stride=2176|raw:/vvideo/src/front-video:/data/vendor/camera/fvidmock.raw:w=1920,h=1088,stride=1920
+mock_map=4038656:/vvideo/src/front-preview|3194880:/vvideo/src/front-video
+```
+
+两条硬约束（项目要求）：**数据流不过物理磁盘**（`raw` 挂载时读一次就 `close(fd)`；
+`shm` 走 `memfd` 匿名共享内存）、**事件驱动不轮询**（消费者 `FUTEX_WAIT` 睡在共享事件字上，
+无新帧时零 CPU；静态源 `always_ready`，`wait` 立刻返回，不制造虚假节拍）。
+
+### 58.2 开发机自测：100 项全过（ASan/UBSan 干净）
+
+`sh scripts/test-vvideo.sh`。**自测抓到 4 个真 bug**，都记在 `docs/vvideo.md` §7.2，
+其中两个的性质值得在本文件里重述一遍：
+
+| bug | 症状 | 教训 |
+|---|---|---|
+| `vv_seq_printf` 静默截断在 1023 字节 | `ctl/tree`、`ctl/log` 永远只有一屏 | "看起来就是这样"式故障 —— 本项目最怕的一类 |
+| 路径解析不穿挂载点 | `open()` 拿到挂载点那个空目录 ⇒ 取帧永远 `-ENOTTY` | VFS 里挂载是**覆盖**，不是"并列" |
+| 卸载 double free | ASan 当场报 | 递归释放函数自己会释放子节点 |
+| 变换链分隔符与挂载选项分隔符撞车 | `op=rot90cw+flipud` 曾被写成逗号 ⇒ 后半个 op **静默丢失** | 表现是"画面对了但方向不对" |
+
+### 58.3 真机判据（前置，`cam=1`）
+
+| 项 | 判据 |
+|---|---|
+| 层在 HAL 里活起来 | `VVideo 统一层已就绪：挂载 2 个节点（失败 0），ABI v1` |
+| 两个落地节点都经层取帧 | `注入：模板 ← /vvideo/src/front-preview（**经 VVideo 统一层**，后端=raw，4038656 字节，零拷贝）`；`.../front-video（3194880 字节）` |
+| **A/B 等价**（前置预览） | 老路 vs 新路两张截图 `DIFF mean=0.00 std=0.00 max=0`（逐像素相同）；对照组日志 `经 VVideo` 出现 **0** 次 |
+| **前置录像** | 8.0 s / 239 帧 @30fps / 1080×1920；抽 3 帧统计一致（静态卡片）；**目视 = 我们的前置录像测试卡**，TOP/BOTTOM 与四角手性标记方向正确（未镜像、未旋转） |
+| 注入靶 | `注入线程：10 块缓冲，共 31948800 字节（2 个模板）`（3,194,880 的前置录像面） |
+
+### 58.4 尚未接进来的
+
+- **照片路径**、`vcam.c`（自建虚拟摄像头）未接入统一层；
+- **`shm` 的跨进程用法**（app 产帧 → HAL 取帧）未接 —— 设备上仍是老的 `cammock.frames`
+  通道（`portal_fsrc_*`）；`shm` 目前只在 host 自测里验证过（memfd + futex）；
+- `xform` 的色度平面变换（`chroma=1`）与每帧变换（`cache=0`）的性能均未在真机上量过。
