@@ -3978,3 +3978,36 @@ GPU 自检(a)：AHardwareBuffer_createFromHandle rc=-22（buf=0x0）
 
 **本轮顺带记下的两个"实验设备"级坑**：① `AHardwareBuffer_getNativeHandle` 的签名（返回值不是错误码）；
 ② 自检里 `portal_gpu_fill()` 没先 `eglMakeCurrent()` ⇒ FBO 必然不完整（这条"失败"是量具的问题，不是被测对象的问题）。
+
+### 63.9 第 11 轮：形态基准一致、硬判据不加不减，但**原始句柄仍被 EGL 拒收**（AHB 路线却是通的）
+
+**扫描器加固**：判据从"fd 号 + 尺寸"升级为"**同一块 dma-buf**"——比 `fstat().st_ino`
+（同一个 dma-buf 的 fd 可以被 dup 成很多份：fd 号不同、**inode 相同**；尺寸也可能碰巧一样）。
+登记与判据都在注入线程认领靶时完成（`portal_gpu_note_target_fd` 记录 fd + ino）。
+
+**形态基准（本轮新增的对照，最有价值的一条）**：
+```
+GPU 自检(b) ★形态基准：句柄 0xb400007596d51480 头 version=12 numFds=2 numInts=26
+GPU 扫堆：命中 0x7597f87180（头 version=12 numFds=2 numInts=26，fd=250 尺寸复核通过）
+```
+框架自己分配的 AHB 句柄与**扫到的句柄形态完全相同**（`12 / 2 / 26`）⇒
+"扫到的是别的结构"这条解释基本被否掉：**它就是一类 gralloc/AHardwareBuffer 句柄**。
+
+**但仍失败**（同一进程、同一时刻的对照）：
+| 路线 | 结果 |
+|---|---|
+| `AHardwareBuffer`（框架自己分配）→ `eglGetNativeClientBufferANDROID` → `eglCreateImageKHR` | ✅ 图像建成（`0x3000`） |
+| 扫到的 `native_handle_t*` → `eglCreateImageKHR(EGL_NATIVE_BUFFER_ANDROID)` | ❌ `0x300c`（BAD_PARAMETER） |
+| 扫到的句柄 → `AHardwareBuffer_createFromHandle` | ❌ `rc=-22`（EINVAL） |
+
+⇒ **不对称本身就是答案**：在这套 ROM 上，EGL 吃的是**AHardwareBuffer 对象**，不是裸 `native_handle_t`。
+所以剩下的路是"**把句柄变成 AHardwareBuffer**"，两条：
+1. **修 `desc`**：`createFromHandle` 的 `desc` 必须与真实分配一致。目前用的是流表的
+   `1920x1080 / layers=1 / format=0x22 / usage=0x10030322`；下一步把 `usage` 换几个候选
+   （含/不含 `0x10000000`、含/不含 `0x10000`）与 `format` 备选（`0x22` / `0x23`）逐个试 ——
+   `-EINVAL` 很可能就是"desc 与分配不符"；
+2. **找框架已经建好的那个 `AHardwareBuffer` 对象**：框架把每个 camera3 buffer 包成 AHB 之后才交给上层，
+   那个对象就在本进程堆里（可以按"对象里的句柄指针 == 我们扫到的句柄"来搜）。
+
+**量具备注**：自检里给**非 YUV**（RGBA）的 AHB 用 `GL_TEXTURE_EXTERNAL_OES` 绑 FBO 是不对的
+（RGB 系 AHB 要用 `GL_TEXTURE_2D`），所以那行"把它当 FBO 画一笔 → 失败"**不是结论**（第 9/10 轮各踩一次同类）。
