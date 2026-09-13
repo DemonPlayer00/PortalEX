@@ -8,7 +8,16 @@
 # sepolicy 里本来就有对 hal_camera_default 的读写放行），根本不需要 /vendor 可写。
 #
 # 用法： sh /tmp/deploy-camera-hal-pineapple.sh "<portal.cfg 内容行，分号分隔>"
-CFG_LINES="${1:-real_hal=/vendor/lib64/hw/camera.qcom.so;real_hmi_bytes=376;ops_index=1;dump=1}"
+# 用法二（推荐）：第一个参数是**文件路径** —— 直接整份拷进去，避免经 adb/su 传分号串时被
+# 中间层重新分词（实测踩过：`su -c "sh deploy.sh 'a=1;b=2'"` 到设备只剩第一行，
+# cfg 静默变成单行、所有开关都是默认值，而日志里只看到"开关文件已读"）。
+CFG_FILE=""
+CFG_LINES="real_hal=/vendor/lib64/hw/camera.qcom.so;real_hmi_bytes=376;ops_index=1;dump=1"
+case "$1" in
+  /*) CFG_FILE="$1" ;;
+  "") ;;
+  *) CFG_LINES="$1" ;;
+esac
 
 setprop ctl.stop vendor.camera-provider
 sleep 2
@@ -30,11 +39,17 @@ ksud sepolicy patch 'allow hal_camera_default tmpfs lnk_file { read getattr }' >
 # cfg 放相机自己的数据目录（vendor_camera_data_file：可写、hal_camera_default 可读，无需 overlay）
 # ⚠️ 先删再建：`: >` 只截断、会保留旧文件的标签（踩过：残留的 portalex_frame_file 标签让 HAL 读不到）
 rm -f /data/vendor/camera/portal.cfg
-: > /data/vendor/camera/portal.cfg
-echo "$CFG_LINES" | tr ';' '\n' | while read -r L; do
-    [ -n "$L" ] || continue
-    echo "$L" >> /data/vendor/camera/portal.cfg
-done
+if [ -n "$CFG_FILE" ]; then
+    cp -f "$CFG_FILE" /data/vendor/camera/portal.cfg
+else
+    : > /data/vendor/camera/portal.cfg
+    echo "$CFG_LINES" | tr ';' '\n' | while read -r L; do
+        [ -n "$L" ] || continue
+        echo "$L" >> /data/vendor/camera/portal.cfg
+    done
+fi
+echo "-- cfg 行数（应当与预期一致，不要只看'读到了'）--"
+wc -l < /data/vendor/camera/portal.cfg
 chmod 666 /data/vendor/camera/portal.cfg
 chcon u:object_r:vendor_camera_data_file:s0 /data/vendor/camera/portal.cfg 2>/dev/null
 chmod 666 /data/vendor/camera/mock.raw 2>/dev/null
