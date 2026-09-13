@@ -1,59 +1,65 @@
 #!/bin/bash
-# 设置/查看「应用层相机模拟」的目标应用列表（relay 存储里的 manifest.targets）。
+# 查看 / 变更「应用层相机模拟」的启用对象（目标应用）。
 #
-# 为什么需要它：应用层（LSPosed 模块）即使已启用、目标包也在作用域内，**没有 targets 就什么都不发生**
-# （docs/camera-mock.md §70）。而应用内 UI 手动加目标不适合无人值守/可复现的流程。
+# ## ⚠️ 一条必须写在最前面的更正（2026-09-14，走过一轮弯路之后）
 #
-# 实测要点（§70.1）：
-#   · 必须**原地覆盖**文件内容（`cat > 目标路径`），不要 push 到 /data/system（会丢 SELinux 标签）；
-#   · 写完 **6 秒后复核仍为写入值** ⇒ system_server 不会用内存缓存盖回；
-#   · 文件属主/标签应为 `system system u:object_r:system_data_file:s0`。
+# 这个脚本的**第一版是错的**：它直接改写 `/data/system/portalex-camera/manifest.json` 里的
+# `targets`，并保留了当时的 `tagFilter`。两处都错（docs/camera-mock.md §70.6 有实测证据）：
+#
+#   1. **启用机制不是 `targets`** —— 是**给目标包授 content URI 权限**
+#      （`granted[content://moe.fuqiuluo.portalex.cameramock/manifest]`、
+#        `granted[content://moe.fuqiuluo.portalex.cameramock/video/<id>]`）。
+#      `targets: []` 是**正常状态**，写它没有意义（自创语义）。
+#   2. **`tagFilter` 应为 `[]`**（受支持播种写出来的就是空）；改成 `["fixture"]` 会改变筛选语义。
+#
+# 受支持的路径是 `scripts/seed-camera-mock.sh`（在 master 分支；`GRANT_PKG=` 指定目标包），
+# 它一次完成：播种素材 + 打开开关 + **授 URI 权限**，并把 `tagFilter` 留空。
+# 所以本脚本现在**只做两件事**：查看状态、委派播种 —— 不再直接改 manifest。
 #
 # 用法：
-#   sh scripts/set-camera-mock-targets.sh                      # 只看当前 targets
-#   sh scripts/set-camera-mock-targets.sh pkgA [pkgB ...]      # 设为这些包
-#   sh scripts/set-camera-mock-targets.sh --restore            # 回滚到上次备份
-#   sh scripts/set-camera-mock-targets.sh --clear              # 清空 targets
+#   sh scripts/set-camera-mock-targets.sh                 # 查看：enabled / tagFilter / targets / points
+#   sh scripts/set-camera-mock-targets.sh --grant <包名>  # 委派受支持播种（= 授权该包）
+#   sh scripts/set-camera-mock-targets.sh --uri <包名>    # 试补授 URI 权限（provider 支持时）
 set -u
 M=/data/system/portalex-camera/manifest.json
-BAK=/data/local/tmp/portalex-manifest.bak.json
-TMP=/data/local/tmp/portalex-manifest.new.json
+AUTH=moe.fuqiuluo.portalex.cameramock
 
-cur() { adb shell "cat $M" 2>/dev/null | tr -d '\r'; }
+show() {
+  adb shell "cat $M" 2>/dev/null | tr -d '\r' | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+print(' enabled   =', d['enabled'])
+print(' tagFilter =', d.get('tagFilter'), '  <- 应为 []')
+print(' targets   =', d.get('targets'), '  <- 不是启用列表，空是正常的')
+print(' points    =', [(p['name'], p.get('lat'), p.get('lon'), [v['name'] for v in p.get('videos',[])]) for p in d.get('points',[])])
+"
+  echo " 存储内的视频：$(adb shell "ls /data/system/portalex-camera/videos/ 2>/dev/null" | tr -d '\r' | tr '\n' ' ')"
+}
+
+# 受支持脚本不在本分支工作区（它在 master）—— 需要时用 git show 取出来
+ensure_seed_script() {
+  [ -f /tmp/appacc/seed-camera-mock.sh ] && return 0
+  mkdir -p /tmp/appacc
+  git show master:scripts/seed-camera-mock.sh > /tmp/appacc/seed-camera-mock.sh 2>/dev/null || return 1
+  for f in camera-fixture-check.py make-fixture-clip.py; do
+    [ -f /tmp/appacc/$f ] || git show master:scripts/$f > /tmp/appacc/$f 2>/dev/null
+  done
+  chmod +x /tmp/appacc/*.sh /tmp/appacc/*.py 2>/dev/null
+}
 
 case "${1:-}" in
   "")
-    echo "当前 manifest："; cur | python3 -c "import sys,json;d=json.load(sys.stdin);print(' enabled=',d['enabled'],' tagFilter=',d.get('tagFilter'),'\n targets=',d['targets'],'\n points=',[(p['name'],len(p.get('videos',[]))) for p in d.get('points',[])])" 2>/dev/null || cur
-    exit 0;;
-  --restore)
-    adb shell "[ -f $BAK ] || exit 1"; adb shell "cat $BAK > $M; chmod 600 $M"
-    echo "已回滚；当前 targets = $(cur | python3 -c "import sys,json;print(json.load(sys.stdin)['targets'])" 2>/dev/null)"; exit 0;;
-  --clear)
-    NEW="[]";;
-  *) NEW="$(printf '%s\n' "$@" | python3 -c "import sys,json;print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")";;
+    show; exit 0;;
+  --grant)
+    PKG=${2:?用法: --grant <包名>}
+    ensure_seed_script || { echo "取不到 master 的 seed-camera-mock.sh"; exit 1; }
+    echo "== 委派受支持播种（GRANT_PKG=$PKG）=="
+    ( cd /tmp/appacc && GRANT_PKG="$PKG" bash seed-camera-mock.sh ) 2>&1 | tail -6
+    echo; show;;
+  --uri)
+    PKG=${2:?用法: --uri <包名>}
+    adb shell "content call --uri content://$AUTH/manifest --method grant --arg $PKG" 2>&1 | tail -3
+    echo "（若该 provider 不提供 grant 方法，请改用 --grant 走受支持播种）";;
+  *)
+    echo "未知参数：$1"; show; exit 2;;
 esac
-
-# 1) 备份（只备份一次，避免把改坏的状态当备份）
-adb shell "[ -f $BAK ] || cp $M $BAK"
-echo "备份：$(adb shell "ls -l $BAK" | awk '{print $5}') 字节"
-
-# 2) 本地改 + 推临时文件 + 原地上覆写
-cur > /tmp/portalex-manifest.json
-python3 - "$NEW" <<'PY'
-import json,sys
-d=json.load(open('/tmp/portalex-manifest.json'))
-d['targets']=json.loads(sys.argv[1])
-json.dump(d,open('/tmp/portalex-manifest.new.json','w'),ensure_ascii=False)
-print('待写入 targets =',d['targets'])
-PY
-adb push /tmp/portalex-manifest.new.json $TMP >/dev/null 2>&1
-adb shell "cat $TMP > $M; chmod 600 $M"
-
-# 3) 复核：立即 + 6 秒后（确认没被 system_server 盖回）
-now=$(cur | python3 -c "import sys,json;print(json.load(sys.stdin)['targets'])" 2>/dev/null)
-sleep 6
-later=$(cur | python3 -c "import sys,json;print(json.load(sys.stdin)['targets'])" 2>/dev/null)
-echo "写入后 targets = $now"
-echo "6 秒后 targets = $later"
-[ "$now" = "$later" ] && echo "✅ 持久（未被缓存盖回）" || { echo "❌ 被改回去了 —— 别用这条路，改走 relay 协议 PUT_CONFIG"; exit 1; }
-echo "文件：$(adb shell "ls -lZ $M" | awk '{print $3, $4, $5}')"
