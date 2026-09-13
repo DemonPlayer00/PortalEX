@@ -1044,6 +1044,25 @@ static void portal_dump_handle(uint32_t idx, const void *handle) {
     LOGI("%s", buf);
 }
 
+/** 把 native_handle 里每个 fd 的 **大小** 打出来：判定"色度面是独立 fd 还是同块第二段"靠它。 */
+static void portal_dump_handle_fds(uint32_t idx, const void *handle) {
+    if (handle == NULL || (uintptr_t)handle < 0x1000u) return;
+    const int *h = (const int *)handle;
+    int version = h[0], numFds = h[1], numInts = h[2];
+    (void)version;
+    if (numFds <= 0 || numFds > 8) return;
+    const int *fds = h + 3;
+    char buf[400];
+    int off = snprintf(buf, sizeof(buf), "  out[%u] fds:", idx);
+    for (int k = 0; k < numFds && off < (int)sizeof(buf) - 24; k++) {
+        struct stat st;
+        memset(&st, 0, sizeof(st));
+        long long sz = (fstat(fds[k], &st) == 0) ? (long long)st.st_size : -1;
+        off += snprintf(buf + off, sizeof(buf) - off, " [%d]=%d:%lld", k, fds[k], sz);
+    }
+    LOGI("%s", buf);
+}
+
 /** 这批输出里有没有 JPEG/BLOB（0x21）—— 拍照走的就是它，需要单独打点 */
 static bool portal_layout_has_blob(const struct portal_layout *L) {
     if (L == NULL || L->sbs == NULL) return false;
@@ -4020,6 +4039,10 @@ static void portal_req_report(void) {
                 LOGI("  out[%u]: stream=%p buffer=%p status=%u acq=%d rel=%d priv=%p", i,
                      (void *)e[0], (void *)e[1], (unsigned)e[2], (int)(e[2] >> 32), (int)e[3],
                      (void *)e[4]);
+                /* 顺手把这个输出的 native_handle 也解出来（nFds/numInts + 各 fd 的 size）：
+                 * 录像面带不带独立色度 fd、是不是多平面，一眼就能看出来（§51.4）。 */
+                portal_dump_handle(i, (const void *)e[1]);
+                portal_dump_handle_fds(i + 40, (const void *)e[1]);
                 /* camera3_stream_t：type/width/height/format/usage/max_buffers 一眼看出这是哪路流 */
                 unsigned int st[12] = {0};
                 if (portal_peek(e[0], st, sizeof(st)) == 0) {

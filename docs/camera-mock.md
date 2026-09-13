@@ -3068,3 +3068,92 @@ TL 三角在左、TR 方块在右、中央 `FRONT` 十字正立 —— 与设计
    多平面的话一眼就能看出色度面是独立 fd 还是同一块的第二段。
    `portal_dump_handle()` 已存在，但它挂在"请求/结果布局解析"那条路上，实测没被触到（本轮日志里
    一条 `handle v=` 都没有）⇒ 需要把它挂到**确认可用**的那条路径（`req_vaddrs` 钩子的请求快照）。
+
+---
+
+## 52. 冷启动（重启）实测：**发现并修掉一个只在开机路径上现形的 sepolicy 缺失**
+
+用户指令：先做重启冷启动测试，再查边界，最后处理 4K 色度。本节是前两项。
+
+### 52.1 第一次重启：**相机挂了**（provider 崩溃重启循环）
+
+把当前模块打包装上（`ksud module install` → 重启）后：
+
+| 项 | 结果 |
+| --- | --- |
+| `/odm/lib64/hw` 上的 tmpfs + overlay | ✅ 模块自己挂上了（无人工介入） |
+| `/odm/lib64/hw/camera.qcom.so` | ✅ 我们的 shim（236,520 字节） |
+| `/data/vendor/camera/portal.cfg` | ✅ 随包干净态已写好 |
+| **`init.svc.vendor.camera-provider`** | ❌ **`restarting`（崩溃重启循环）** |
+
+崩溃现场（`logcat -b crash` + tombstone）：
+
+```
+I CamxLoad: find_in_path: Find camera soc impl file /odm/lib64/hw/camera.oemlayer.so
+E CamxLoad: find_in_path: Can't access file /odm/lib64/hw/camera.oemlayer.so
+F DEBUG   : signal 11 (SIGSEGV), code 2 (SEGV_ACCERR)
+F DEBUG   : #00 __cfi_slowpath+28 (libdl.so)
+F DEBUG   : #01 OemLayer::init() (.cfi)+312  (/odm/lib64/hw/camera.oemlayer.so)
+```
+
+**根因**：ACE5 的路线是在 `/odm/lib64/hw` 上叠 **tmpfs-upper 的 overlay**，而 HAL 域
+（`hal_camera_default`）**没有穿过 tmpfs 的权限** ⇒ 它连 overlay **下面那一层**的
+`camera.oemlayer.so` 都读不到（overlay 的查表要动 upper/work）⇒ `OemLayer::init()` 拿不到
+函数指针 ⇒ CFI 检查失败 ⇒ SIGSEGV ⇒ provider 崩溃重启循环 ⇒ **相机整体不可用**。
+
+**为什么之前一直没暴露**：运行时手工部署走的是 `ksud sepolicy patch`（设备上的
+`ace5_deploy4.sh` 里就有这两条），而**模块包里的 `sepolicy.rule` 与 `post-fs-data.sh` 都漏了它们**
+—— 只有"从开机路径走一遍"才会现形。这正是"冷启动必须实测"的价值。
+
+### 52.2 修复与第二次重启：干净通过
+
+给模块补上三条（`sepolicy.rule` 与 `post-fs-data.sh` 的 `policy` 列表**两处都写**，
+沿用本仓库"两条路都留着防静默失效"的惯例）：
+
+```
+allow hal_camera_default tmpfs dir      { search getattr read open }
+allow hal_camera_default tmpfs file     { read open getattr map execute }
+allow hal_camera_default tmpfs lnk_file { read getattr }
+```
+
+重新打包安装 → 第二次重启：
+
+| 项 | 结果 |
+| --- | --- |
+| tmpfs + overlay | ✅ |
+| **`init.svc.vendor.camera-provider`** | ✅ **`running`（pid 1937）** |
+| `cfi_slowpath` / `Can't access file /odm` 出现次数 | ✅ **0** |
+| 拍照 | ✅ 落盘 JPEG（3.2 MB） |
+| shim 钩子 | ✅ `零调用钩子[0]/[1]` 正常命中 |
+| 相机设备数 | ✅ 18 |
+| tombstone | ✅ 无新增（最新仍是 12:33 那批，属于修复前） |
+
+⇒ **模块现在能自己走完开机路径**：装一次、重启即可，不需要再手工 deploy。这是"系统层"交付的最后一环。
+
+### 52.3 边界复测：**"只写 Y 面"是唯一可复现的安全配方**
+
+给 `inject_limit` 做细扫（纯 128 素材、各录 8 秒、抽 3fps 判"纯绿帧"占比）：
+
+| `inject_limit` | 纯绿帧 | 备注 |
+| --- | --- | --- |
+| **8,355,840**（只写 Y 面） | **0/22、0/22、0/31**（三次一致） | ✅ 安全 |
+| 9,500,000 | 0/17 | |
+| 10,500,000 | 0/19 | |
+| 11,500,000 | 0/19 | 首次扫描 |
+| 11,490,000 / 11,510,000（复测） | 50% / 41% | ⚠️ **与上面矛盾** |
+| 12,000,000 | 45% | |
+| 12,500,000 | 77% | |
+| 12,533,760 | 64% | |
+| **12,591,104**（整块） | **68%（复测 4 次 64–77%）** | ❌ 必坏 |
+
+**结论要照着"可复现性"说，不能照着一次扫描说**：
+
+1. **只写 Y 面（8,355,840）= 三次独立复测全 0 绿** —— 这是可以依赖的配方
+   （后置 4K 录像目前只能可靠接管**亮度**，录出来是"我们的亮度 + 现场的色度"）。
+2. **整块写 = 四次复测 64–77% 绿** —— 稳定地坏。
+3. 中间那一段（11.5M–12.5M）**是噪声区**：同一点两次能差 50 个百分点
+   ⇒ 不能拿单次扫描去宣布"边界在 N 字节"。**上一轮那条"边界在 8,355,840"的措辞已按此收窄为
+   "Y 面之内可复现安全，之外不可依赖"。**
+
+（方法学上的教训记一笔：这类"占比型"指标必须**同点重复**再下结论；本轮正是靠复测才发现
+单次扫描的 0% 是运气。）
