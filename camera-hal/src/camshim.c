@@ -7975,8 +7975,18 @@ static void load_real_hal(void) {
                          "%s+0x%lx(photo)", pmod, g_opt_photo_vaddr);
                 portal_inline_hook(g_photo_slot, ob, g_opt_photo_vaddr,
                                    g_hook_name_buf[g_photo_slot]);
-                LOGI("拍照帧钩子：槽 %d ← %s+0x%lx（遇 BLOB 立刻重写靶）", g_photo_slot, pmod,
-                     g_opt_photo_vaddr);
+                /* ⚠️ **安装器可能拒绝**（例如"前 4 条指令里有 PC 相对指令，不能重放"）。
+                 * 判定成功的唯一依据是**返回点被填上了**（`g_hook_resume[slot] != 0`）——
+                 * 不检查就打"已装上"，会让下一轮把"跳板不可挂"误读成"挂上了但没触发"
+                 * （第 76/79 轮各错过一次，§102/§106）。 */
+                if (g_hook_resume[g_photo_slot] != 0) {
+                    LOGI("拍照帧钩子：槽 %d ← %s+0x%lx（遇 BLOB 立刻重写靶）", g_photo_slot, pmod,
+                         g_opt_photo_vaddr);
+                } else {
+                    LOGE("拍照帧钩子：**安装被拒**（%s+0x%lx）—— 这个入口挂不上，换调用链上的下一个候选",
+                         pmod, g_opt_photo_vaddr);
+                    g_photo_slot = -1;
+                }
             }
         }
     }
