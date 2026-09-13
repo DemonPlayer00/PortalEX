@@ -517,6 +517,12 @@ static int g_opt_inject_delay_us = 0;
  * 实测证据：连"整块填纯 128"都会录出约一半纯绿帧（0,102,0），说明问题不在内容而在元数据。
  * 只写像素面、把尾部元数据留给 ISP，才是对的。 */
 static size_t g_opt_inject_limit = 0;
+/* `inject_span=<起始>:<长度>`：**只写缓冲里的一段**（模板同偏移处的字节）。
+ * 为什么需要：`inject_limit` 只能写"前缀"，而后置 4K 面上 Y 面之后那段是**元数据**——
+ * 前缀式写入必然先把元数据写坏（实测：整块绿）。要在不碰元数据的前提下试探后面的窗口，
+ * 就必须能"跳着写"。配合 `inject_us=0`（盲写）时窗口很小、总字节量也小，不会饿死 ISP。 */
+static size_t g_opt_span_off = 0;
+static size_t g_opt_span_len = 0;
 /** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
  *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
  *
@@ -770,6 +776,13 @@ static void load_options(void) {
             g_opt_inject_delay_us = atoi(val);
         } else if (strcmp(key, "inject_limit") == 0) {
             g_opt_inject_limit = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "inject_span") == 0) {
+            char *colon2 = strchr(val, ':');
+            if (colon2 != NULL) {
+                *colon2 = '\0';
+                g_opt_span_off = strtoul(val, NULL, 0);
+                g_opt_span_len = strtoul(colon2 + 1, NULL, 0);
+            }
         } else if (strcmp(key, "inject_stop_after") == 0) {
             g_opt_inject_stop_after = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
@@ -3867,6 +3880,19 @@ static int portal_build_targets(portal_target t[], int cap) {
  * 为什么要"持续"填：相机以 30fps（录像 60fps）往同一批缓冲里写新帧，只填一次 33ms 后就没了。
  * 为什么必须 memcpy/memset：逐字节循环跑不赢 ISP 的 DMA（实测）。
  */
+/** 一次写入：默认整块；`inject_span` 非零时**只写 [off, off+len) 那一段**。 */
+static void portal_write_span(void *dst, const unsigned char *tpl, size_t size, size_t len) {
+    if (g_opt_span_len != 0 && g_opt_span_off + g_opt_span_len <= size) {
+        unsigned char *d = (unsigned char *)dst + g_opt_span_off;
+        size_t n = g_opt_span_len;
+        if (tpl != NULL && g_opt_span_off + n <= len) memcpy(d, tpl + g_opt_span_off, n);
+        else memset(d, g_opt_inject_byte, n);
+        return;
+    }
+    if (tpl != NULL) memcpy(dst, tpl, len);
+    else memset(dst, g_opt_inject_byte, size);
+}
+
 static void *portal_inject_thread(void *arg) {
     (void)arg;
     static portal_target t[PORTAL_INJECT_MAX];
@@ -3948,8 +3974,7 @@ static void *portal_inject_thread(void *arg) {
                 t[i].stable = 0;
                 int reps = g_opt_inject_burst > 0 ? g_opt_inject_burst : 1;
                 for (int r = 0; r < reps; r++) {
-                    if (t[i].tpl != NULL) memcpy(t[i].p, t[i].tpl, len);
-                    else memset(t[i].p, g_opt_inject_byte, t[i].size);
+                    portal_write_span(t[i].p, t[i].tpl, t[i].size, len);
                     writes++;
                 }
                 continue;
@@ -3981,11 +4006,7 @@ static void *portal_inject_thread(void *arg) {
                     continue;
                 }
             }
-            if (t[i].tpl != NULL) {
-                memcpy(t[i].p, t[i].tpl, len);
-            } else {
-                memset(t[i].p, g_opt_inject_byte, t[i].size);
-            }
+            portal_write_span(t[i].p, t[i].tpl, t[i].size, len);
             if (g_opt_inject_sync >= 2) {
                 t[i].stable = 0;
                 t[i].seen = 0;   /* 从头等下一次"稳定" */
