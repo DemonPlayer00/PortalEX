@@ -79,12 +79,18 @@ PYSH
         TOP=$(echo "$D" | awk '{print $1}')
         BOT=$(echo "$D" | awk '{print $2}')
         DT=$(echo "$D" | awk '{print $3}')
+        # **把"命中/未命中"与"那一刻靶集的状态"并排打出来**（第 63 轮）：
+        # §89 把命中率波动归因为"RAW 靶集在拍照时被换掉"的**竞态**，但那是推断。
+        # 每张照片旁边挂上"最近一次换靶"与"当前认领到的 15728640 块数"，
+        # 就能把竞态变成**逐张的相关性证据**（或直接证伪）。
+        TRACE=$(adb logcat -d 2>/dev/null | grep -a PortalCamShim | grep -aE "靶集变了|size=15728640" | tail -2 | sed 's/.*PortalCamShim: //' | tr '\n' ' | ')
         if awk "BEGIN{exit !($DT > 15)}"; then
             say "  第 $i 张：上 $TOP / 下 $BOT / 差 $DT  => 命中（我们的画面）"
             OKN=$((OKN + 1))
         else
             say "  第 $i 张：上 $TOP / 下 $BOT / 差 $DT  => 未命中（真实场景）"
         fi
+        say "        靶集现场：$TRACE"
     fi
     i=$((i + 1))
 done
@@ -124,7 +130,7 @@ while [ $rtry -le 3 ]; do
     rtry=$((rtry + 1))
     say "  （复原第 $rtry 次尝试：重启 provider + 重拉相机）"
     adb shell am force-stop $PKG >/dev/null 2>&1
-    adb shell su -c "setprop ctl.restart vendor.camera-provider; sleep 6" >/dev/null 2>&1
+    adb shell su -c "setprop ctl.stop vendor.camera-provider; sleep 2; setprop ctl.start vendor.camera-provider; sleep 8" >/dev/null 2>&1
     adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
     sleep 1
     adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1

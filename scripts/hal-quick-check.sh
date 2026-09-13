@@ -97,7 +97,7 @@ while [ $try -le 5 ]; do
     if [ $try -eq 3 ]; then
         say "  （前两次都没起来 ⇒ 按 §86.2 复原现场：重启 provider + 重拉相机）"
         adb shell am force-stop $PKG_CAM >/dev/null 2>&1
-        adb shell su -c "setprop ctl.restart vendor.camera-provider; sleep 6" >/dev/null 2>&1
+        adb shell su -c "setprop ctl.stop vendor.camera-provider; sleep 2; setprop ctl.start vendor.camera-provider; sleep 8" >/dev/null 2>&1
         adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
         sleep 1
         adb shell monkey -p $PKG_CAM -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
