@@ -710,6 +710,9 @@ static char g_opt_cal_dump[200] = {0};
  *  当成了现场帧（4,198,400 字节全 0，`mean=0.00 std=0.00`）—— 于是"布局分析"分析的是空气。
  *  有了它，落盘前可以安心等这一块变活（判据：4 个采样窗口在 120ms 内发生变化）。 */
 static int g_opt_cal_only = 0;
+/** `auto_hist=1`：把本会话 dmabuf 直方图**完整**打一遍（每会话一次）——
+ *  "为什么这条几何没绑上"的唯一证据来源。 */
+static int g_opt_auto_hist = 0;
 /** `res_hook=<vaddr>` + `res_module=<模块名>` + `res_writer=1`：
  *  **在"结果投递"这一刻写缓冲**，而不是盲目死循环。
  *  为什么必须这样：录像的编码器是"ISP 写完 → 立刻读"，盲目循环的写入大多落在
@@ -1010,6 +1013,8 @@ static void load_options(void) {
             snprintf(g_opt_cal_dump, sizeof(g_opt_cal_dump), "%s", val);
         } else if (strcmp(key, "cal_only") == 0) {
             g_opt_cal_only = atoi(val);
+        } else if (strcmp(key, "auto_hist") == 0) {
+            g_opt_auto_hist = atoi(val);
         } else if (strcmp(key, "res_hook") == 0) {
             snprintf(g_opt_res_hook, sizeof(g_opt_res_hook), "%s", val);
         } else if (strcmp(key, "res_module") == 0) {
@@ -4515,10 +4520,13 @@ typedef struct {
     uint32_t format, w, h, usage, max_buffers;
     size_t stride;  /* 平面布局步长（0 = 布局未知） */
     int mode;       /* 0 = 未绑定；1 = NV12 平面；2 = YUYV；3 = 布局未知（纯色） */
-    /** **内容校验**（认领那一刻做，见 build_targets）：0 = 还没查；1 = 像 YUV 帧；
+    /** **内容校验**（认领那一刻做，见 build_targets）：0 = 还没查；1 = 像 YUV 帧/平面；
      *  -1 = 不像（ISP 中间缓冲/RAW）⇒ 永不接管。 */
     int checked;
     int ok;
+    /** 候选类别（见 `portal_auto_kind_name`）：决定**用哪套内容判据** ——
+     *  "整幅/色度面"看 128 平台，"亮度面"看空间结构 + 活帧。 */
+    int kind;
     const char *how; /* 绑定依据（日志里要能复算） */
 } portal_auto_entry;
 
@@ -4652,20 +4660,46 @@ static size_t portal_auto_align(size_t v, size_t a) { return (v + a - 1) / a * a
  * `out_stride` 只对平面式有意义（YUYV 那条给的是"每像素 2 字节"的等价步长）。
  * 顺序 = 实测命中概率的顺序；**候选对上真实 dmabuf 才算数**，所以顺序不引入风险。
  */
-static int portal_auto_candidates(uint32_t w, uint32_t h, size_t out_size[6], size_t out_stride[6],
-                                 int out_mode[6]) {
+/**
+ * 分配字节数的候选式。**整幅面**（kind 0/1）与**单平面**（kind 2/3）分两类 ——
+ * `YCbCr_420_888`（`0x22`）实测是**三条平面各自独立的 dmabuf**
+ * （`1920×1440` ⇒ Y `2,764,800`、U/V 各 `691,200`），只认"整幅"就永远认不到应用真正的面。
+ *
+ * `out_stride` 只对平面式有意义（YUYV 给的是"每像素 2 字节"的等价步长）。
+ * 顺序 = 实测命中概率的顺序；**候选对上真实 dmabuf 才算数**，所以顺序不引入风险。
+ */
+static int portal_auto_candidates(uint32_t w, uint32_t h, size_t out_size[10], size_t out_stride[10],
+                                  int out_kind[10]) {
     size_t sw = portal_auto_align(w, 64);
     size_t h32 = portal_auto_align(h, 32);
     size_t h64 = portal_auto_align(h, 64);
     size_t y32 = h32 * 3 / 2, y64 = h64 * 3 / 2;
     int n = 0;
-    out_size[n] = sw * (y32 + 32); out_stride[n] = sw;     out_mode[n] = 1; n++;
-    out_size[n] = sw * y32;        out_stride[n] = sw;     out_mode[n] = 1; n++;
-    out_size[n] = sw * (y64 + 32); out_stride[n] = sw;     out_mode[n] = 1; n++;
-    out_size[n] = sw * y64;        out_stride[n] = sw;     out_mode[n] = 1; n++;
-    out_size[n] = sw * h32 * 2;    out_stride[n] = sw * 2; out_mode[n] = 2; n++;
-    out_size[n] = sw * h64 * 2;    out_stride[n] = sw * 2; out_mode[n] = 2; n++;
+    /* 整幅：NV12（Y 连续 + 交织 UV），四个变体 */
+    out_size[n] = sw * (y32 + 32); out_stride[n] = sw;     out_kind[n] = 0; n++;
+    out_size[n] = sw * y32;        out_stride[n] = sw;     out_kind[n] = 0; n++;
+    out_size[n] = sw * (y64 + 32); out_stride[n] = sw;     out_kind[n] = 0; n++;
+    out_size[n] = sw * y64;        out_stride[n] = sw;     out_kind[n] = 0; n++;
+    /* 整幅：YUYV */
+    out_size[n] = sw * h32 * 2;    out_stride[n] = sw * 2; out_kind[n] = 1; n++;
+    out_size[n] = sw * h64 * 2;    out_stride[n] = sw * 2; out_kind[n] = 1; n++;
+    /* 单平面：亮度面 */
+    out_size[n] = sw * h32;        out_stride[n] = sw;     out_kind[n] = 2; n++;
+    out_size[n] = sw * (size_t)h;  out_stride[n] = sw;     out_kind[n] = 2; n++;
+    /* 单平面：色度面（4:2:0 的四分之一，或半平面的一半） */
+    out_size[n] = sw * h32 / 4;    out_stride[n] = sw / 2; out_kind[n] = 3; n++;
+    out_size[n] = sw * h32 / 2;    out_stride[n] = sw;     out_kind[n] = 3; n++;
     return n;
+}
+
+/** 候选属于哪一类（日志与"内容校验用哪套判据"都看它） */
+static const char *portal_auto_kind_name(int kind) {
+    switch (kind) {
+        case 0: return "整幅 NV12";
+        case 1: return "整幅 YUYV";
+        case 2: return "亮度面";
+        default: return "色度面";
+    }
 }
 
 static const char *portal_auto_model_name(int idx) {
@@ -4692,7 +4726,7 @@ static const char *portal_auto_model_name(int idx) {
  * 判据：等距采样 4096 个字节，落在 `[120,136]` 的比例 ≥ 12%（整体与后 1/3 都要满足）。
  * 参考值：前置预览 `4,038,656` 的色度面整片 128 ⇒ 比例 ~30%；RAW/中间缓冲 ⇒ 0%。
  */
-static double portal_auto_yuv_score(int fd, size_t size, double *out_tail) {
+static double portal_auto_yuv_score(int fd, size_t size, double *out_tail, double *out_std) {
     if (fd < 0 || size < 4096) return -1.0;
     void *m = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
     if (m == MAP_FAILED) return -1.0;
@@ -4700,12 +4734,15 @@ static double portal_auto_yuv_score(int fd, size_t size, double *out_tail) {
     size_t step = size / 4096;
     if (step == 0) step = 1;
     unsigned long hits = 0, n = 0, thits = 0, tn = 0;
+    double sum = 0.0, sumsq = 0.0;
     size_t tail = size - size / 3;
     for (size_t off = 0; off < size; off += step) {
         unsigned char v = p[off];
         int near = (v >= 120 && v <= 136);
         hits += near;
         n++;
+        sum += v;
+        sumsq += (double)v * (double)v;
         if (off >= tail) {
             thits += near;
             tn++;
@@ -4713,6 +4750,18 @@ static double portal_auto_yuv_score(int fd, size_t size, double *out_tail) {
     }
     munmap(m, size);
     if (out_tail != NULL) *out_tail = (tn != 0) ? (double)thits / (double)tn : 0.0;
+    if (out_std != NULL) {
+        double mean = (n != 0) ? sum / (double)n : 0.0;
+        double var = (n != 0) ? sumsq / (double)n - mean * mean : 0.0;
+        /* 不开 -lm：用牛顿迭代开方（几个采样点而已，热路径不在这里） */
+        if (var > 0.0) {
+            double x = var, y = 1.0;
+            for (int k = 0; k < 24; k++) y = 0.5 * (y + x / y);
+            *out_std = y;
+        } else {
+            *out_std = 0.0;
+        }
+    }
     return (n != 0) ? (double)hits / (double)n : -1.0;
 }
 
@@ -4723,6 +4772,58 @@ static bool portal_auto_size_taken(unsigned long sz, int except) {
         if (g_auto[i].mode != 0 && g_auto[i].size == sz) return true;
     }
     return false;
+}
+
+/**
+ * 判这块面**能不能写**：先看有没有活帧（一次 40ms 采样对），再按类别套判据。
+ * 返回 1 = 通过、-1 = 拒绝、0 = 还没定（这块还没被硬件写起来，下一轮再看）。
+ *
+ * 为什么把校验放在**绑定阶段**而不是认领那一刻：认领发生在注入线程的靶表重建里，
+ * 那里的每一次等待都直接加进"首帧注入延迟"（实测：4 个尺寸各自串行等 ⇒ 2886ms）。
+ * 放在绑定阶段，等待与 200ms 的绑定节流重合，且**未定就不认领**（而不是拿不确定的面乱涂）。
+ */
+static int portal_auto_validate(int fd, unsigned long sz, portal_auto_entry *e) {
+    if (e == NULL || fd < 0) return 0;
+    if (e->checked != 0) return e->ok;
+    void *m = mmap(NULL, (size_t)sz, PROT_READ, MAP_SHARED, fd, 0);
+    if (m == MAP_FAILED) return 0;
+    unsigned char a0[PORTAL_DUMP_WLEN], b0[PORTAL_DUMP_WLEN];
+    unsigned char a1[PORTAL_DUMP_WLEN], b1[PORTAL_DUMP_WLEN];
+    portal_dump_win((const unsigned char *)m, sz, 0, a0);
+    portal_dump_win((const unsigned char *)m, sz, 3, b0);
+    usleep(40000);
+    portal_dump_win((const unsigned char *)m, sz, 0, a1);
+    portal_dump_win((const unsigned char *)m, sz, 3, b1);
+    int live = (memcmp(a0, a1, PORTAL_DUMP_WLEN) != 0 || memcmp(b0, b1, PORTAL_DUMP_WLEN) != 0);
+    munmap(m, (size_t)sz);
+    if (!live) return 0; /* 还没写起来 ⇒ 不定案，下一轮再看 */
+    double tail = 0.0, std = 0.0;
+    double score = portal_auto_yuv_score(fd, (size_t)sz, &tail, &std);
+    if (e->kind == 2) {
+        if (std >= 3.0) {
+            e->checked = 1; e->ok = 1;
+            LOGI("自动模板：内容校验通过 size=%lu（亮度面：活帧、采样 std=%.2f）⇒ 开始接管", sz, std);
+            return 1;
+        }
+        e->checked = 1; e->ok = -1;
+        LOGI("自动模板：**拒绝** size=%lu（亮度面）—— 采样 std=%.2f（要求 ≥3）", sz, std);
+        return -1;
+    }
+    double need = (e->kind == 3) ? 0.10 : 0.12;
+    if (score >= 0.0 && (score < need || tail < need)) {
+        e->checked = 1; e->ok = -1;
+        LOGI("自动模板：**拒绝** size=%lu（%s）—— 不像线性 YUV 帧（128 占比 %.1f%%、后 1/3 "
+             "%.1f%%）⇒ 不接管%s",
+             sz, portal_auto_kind_name(e->kind), score * 100.0, tail * 100.0,
+             (e->usage & PORTAL_GRALLOC_USAGE_PRIVATE_0)
+                 ? "（usage 带 UBWC 位 0x10000000 ⇒ 压缩面，线性写不可能生效，§62/§63 已定论）"
+                 : "（多半是 ISP 中间缓冲/RAW，涂它只会弄坏真实流水线）");
+        return -1;
+    }
+    e->checked = 1; e->ok = 1;
+    LOGI("自动模板：内容校验通过 size=%lu（%s：128 占比 %.1f%%、后 1/3 %.1f%%）⇒ 开始接管",
+         sz, portal_auto_kind_name(e->kind), score * 100.0, tail * 100.0);
+    return 1;
 }
 
 /**
@@ -4739,10 +4840,17 @@ static void portal_auto_bind(void) {
     /* 节流：注入线程在"没靶可打"时会以探询间隔（15ms）转圈，而每次 bind 都要扫一遍
      * 400+ 个 fd —— 那是自己给自己造抖动。200ms 足够"半秒内就绪"这个目标。 */
     unsigned long long now = portal_now_us();
-    if (g_auto_bind_last_us != 0 && now - g_auto_bind_last_us < 200000ull &&
-        __atomic_load_n(&g_auto_bound_n, __ATOMIC_RELAXED) > 0) {
-        return;
+    /* 还有"没绑上"或"没定案"的几何 ⇒ **不节流**（每轮都试：一轮 ~1ms 的 fd 扫描 + 至多一次
+     * 40ms 活帧采样）。全都定案之后才退回 200ms 节流。
+     * 为什么必须这样：等待直接算进"首帧注入延迟"（实测：按 200ms 节流逐尺寸串行 ⇒ 1650ms）。 */
+    int pending = 0;
+    for (int i = 0; i < g_auto_n; i++) {
+        if (g_auto[i].mode == 0 || g_auto[i].checked == 0) {
+            pending = 1;
+            break;
+        }
     }
+    if (!pending && g_auto_bind_last_us != 0 && now - g_auto_bind_last_us < 200000ull) return;
     g_auto_bind_last_us = now;
     portal_auto_observe();
     if (g_auto_n == 0) return;
@@ -4786,32 +4894,72 @@ static void portal_auto_bind(void) {
     closedir(d);
     (void)hitfd;
     if (nsz == 0) return;
+    static int hist_calls = 0;
+    int hist_dumped = (++hist_calls == 3);
+    if (g_opt_auto_hist && hist_dumped) {
+        LOGI("自动模板：dmabuf 直方图（全部 %d 类，按尺寸降序）", nsz);
+        for (int a1 = 0; a1 < nsz; a1++) {
+            for (int b1 = a1 + 1; b1 < nsz; b1++) {
+                if (sizes[b1] > sizes[a1]) {
+                    unsigned long ts = sizes[a1];
+                    sizes[a1] = sizes[b1];
+                    sizes[b1] = ts;
+                    int tc = counts[a1];
+                    counts[a1] = counts[b1];
+                    counts[b1] = tc;
+                }
+            }
+        }
+        for (int a1 = 0; a1 < nsz && a1 < 24; a1++) {
+            LOGI("  %lu 字节 ×%d", sizes[a1], counts[a1]);
+        }
+    }
 
     int bound_now = 0;
     for (int i = 0; i < g_auto_n; i++) {
         portal_auto_entry *e = &g_auto[i];
-        if (e->mode != 0) continue;
-        size_t cand[6], str[6];
-        int mode[6];
-        int nc = g_opt_auto_model ? portal_auto_candidates(e->w, e->h, cand, str, mode) : 0;
-        for (int c = 0; c < nc && e->mode == 0; c++) {
+        if (e->w == 0 || e->h == 0) continue;
+        /* ⚠️ **不跳过已绑定的条目**：`0x22` 的三条平面是**三个 dmabuf**、而且**不是同时出现**的
+         * （实测：认领主尺寸那一刻，应用的三条平面还没进 fd 表）。已绑的尺寸会被
+         * `portal_auto_size_taken` 挡住，所以这里继续扫只会补上"还没认领的平面"。 */
+        size_t cand[10], str[10];
+        int kind[10];
+        int nc = g_opt_auto_model ? portal_auto_candidates(e->w, e->h, cand, str, kind) : 0;
+        /* 同一路流可能对应**多个 dmabuf**（`0x22` 的三条平面各自独立）⇒ 第一个命中填在本条目上，
+         * 后续命中各自**追加一条**（几何相同、尺寸/类别不同）。写入是分别进行的：
+         * 亮度面写图案、色度面写中性 128，合起来才是"应用看到我们的画面"。 */
+        for (int c = 0; c < nc; c++) {
             if (cand[c] == 0) continue;
             for (int s = 0; s < nsz; s++) {
                 if (sizes[s] != cand[c]) continue;
-                if (portal_auto_size_taken(sizes[s], i)) continue;
-                e->size = sizes[s];
-                e->stride = str[c];
+                if (portal_auto_size_taken(sizes[s], -1)) continue;
+                portal_auto_entry *dst = e;
+                if (e->mode != 0) {
+                    if (g_auto_n >= PORTAL_AUTO_MAX) break;
+                    dst = &g_auto[g_auto_n++];
+                    memset(dst, 0, sizeof(*dst));
+                    dst->w = e->w;
+                    dst->h = e->h;
+                    dst->format = e->format;
+                    dst->usage = e->usage;
+                    dst->max_buffers = e->max_buffers;
+                }
+                dst->size = sizes[s];
+                dst->stride = str[c];
+                dst->kind = kind[c];
                 /* **默认只认尺寸、整块填纯色**（布局无关，一定看得见）；按平面写要显式开 */
-                e->mode = g_opt_auto_planar ? mode[c] : 3;
-                e->how = portal_auto_model_name(c);
+                dst->mode = g_opt_auto_planar ? (kind[c] == 0 ? 1 : (kind[c] == 1 ? 2 : 3)) : 3;
+                dst->how = portal_auto_model_name(c);
                 bound_now++;
                 LOGI("自动模板：绑定 size=%lu ← format=0x%x %ux%u usage=0x%x max=%u"
-                     "（分配模型 %s，实测 %d 块同尺寸）",
-                     e->size, e->format, e->w, e->h, e->usage, e->max_buffers, e->how, counts[s]);
-                if (e->mode == 1 || e->mode == 2) {
-                    LOGI("自动模板：布局推定 stride=%zu（%s），按平面整幅写", e->stride,
-                         e->mode == 1 ? "NV12" : "YUYV");
+                     "（%s，分配式 %s，实测 %d 块同尺寸）",
+                     dst->size, dst->format, dst->w, dst->h, dst->usage, dst->max_buffers,
+                     portal_auto_kind_name(kind[c]), dst->how, counts[s]);
+                if (kind[c] == 2) {
+                    LOGI("自动模板：这是**亮度面**（stride=%zu）—— 校验看空间结构，不看 128 平台",
+                         dst->stride);
                 }
+                portal_auto_validate(hitfd[s], sizes[s], dst);
                 break;
             }
         }
@@ -4852,7 +5000,9 @@ static void portal_auto_bind(void) {
             e->size = sizes[pick];
             e->stride = 0;
             e->mode = 3;
+            e->kind = 0;
             e->how = "按 max_buffers 计数对上（布局未知）";
+            portal_auto_validate(hitfd[pick], sizes[pick], e);
             bound_now++;
             LOGI("自动模板：绑定 size=%lu ← format=0x%x %ux%u（%s；实测 %d 块），"
                  "布局不可知 ⇒ 只填 %d 号纯色",
@@ -5323,43 +5473,11 @@ static int portal_build_targets(portal_target t[], int cap) {
             LOGI("注入：fd=%d size=%lu mmap 失败（errno=%d）", fd, sz, errno);
             continue;
         }
-        /* **认领时的内容校验**（自动靶才做）：先在**我们写之前**判这块像不像"一帧 YUV"。
-         * 为什么放在这里而不是绑定时：绑定那一刻缓冲往往还是**全零**（刚分配、硬件还没写），
-         * 那时候判会把真正的应用面也一起拒掉。 */
+        /* **只认已通过校验的面**（校验在绑定阶段做完，见 portal_auto_validate）：
+         * `checked == 0`（还没定）⇒ 这一轮先不认领、也不写；`ok != 1` ⇒ 永不认领。 */
         if (hint.mode != 0) {
             portal_auto_entry *e = portal_auto_find(sz);
-            if (e != NULL && e->checked == 0) {
-                int live = 0;
-                for (int t2 = 0; t2 < 8 && !live; t2++) {
-                    unsigned char w0[PORTAL_DUMP_WLEN], w3[PORTAL_DUMP_WLEN];
-                    unsigned char v0[PORTAL_DUMP_WLEN], v3[PORTAL_DUMP_WLEN];
-                    portal_dump_win((const unsigned char *)m, sz, 0, w0);
-                    portal_dump_win((const unsigned char *)m, sz, 3, w3);
-                    usleep(60000);
-                    portal_dump_win((const unsigned char *)m, sz, 0, v0);
-                    portal_dump_win((const unsigned char *)m, sz, 3, v3);
-                    if (memcmp(w0, v0, PORTAL_DUMP_WLEN) != 0 ||
-                        memcmp(w3, v3, PORTAL_DUMP_WLEN) != 0) {
-                        live = 1;
-                    }
-                }
-                double tail = 0.0;
-                double score = portal_auto_yuv_score(fd, (size_t)sz, &tail);
-                e->checked = 1;
-                if (score >= 0.0 && (score < 0.12 || tail < 0.12)) {
-                    e->ok = -1;
-                    LOGI("自动模板：**拒绝** size=%lu —— 不像 YUV 帧（128 占比 %.1f%%、后 1/3 "
-                         "%.1f%%、活帧=%s）⇒ 不接管（它多半是 ISP 中间缓冲/RAW，涂它只会弄坏"
-                         "真实流水线）",
-                         sz, score * 100.0, tail * 100.0, live ? "有" : "无");
-                } else {
-                    e->ok = 1;
-                    LOGI("自动模板：内容校验通过 size=%lu（128 占比 %.1f%%、后 1/3 %.1f%%、"
-                         "活帧=%s）⇒ 开始接管",
-                         sz, score * 100.0, tail * 100.0, live ? "有" : "无");
-                }
-            }
-            if (e != NULL && e->ok != 1) {
+            if (e == NULL || e->ok != 1) {
                 munmap(m, (size_t)sz);
                 continue;
             }
@@ -5437,6 +5555,36 @@ static void portal_write_span(void *dst, const unsigned char *tpl, size_t size, 
  */
 static void portal_auto_write(portal_target *t, unsigned frame) {
     uint8_t *p = (uint8_t *)t->p;
+    if (t->auto_mode == 5) {
+        /* 色度面：中性 128（留在真实色彩上会发花，§早期经验） */
+        memset(p, 128, t->size);
+        if (!t->logged) {
+            t->logged = 1;
+            LOGI("自动模板：%lu 字节 色度面已写入第一帧（中性 128）", t->size);
+        }
+        return;
+    }
+    if (t->auto_mode == 4) {
+        /* 亮度面：按推定 stride 写图案，多出来的尾部行填纯色 */
+        const uint8_t *tpl = portal_template(t->aw, t->ah, frame);
+        size_t stride = t->auto_stride;
+        size_t rows = (stride != 0) ? t->size / stride : 0;
+        for (size_t r = 0; r < rows; r++) {
+            uint8_t *row = p + r * stride;
+            if (r < t->ah && tpl != NULL) {
+                memcpy(row, tpl + r * t->aw, t->aw);
+                if (stride > t->aw) memset(row + t->aw, g_opt_auto_color, stride - t->aw);
+            } else {
+                memset(row, g_opt_auto_color, stride);
+            }
+        }
+        if (!t->logged) {
+            t->logged = 1;
+            LOGI("自动模板：%lu 字节 亮度面已写入第一帧（%ux%u，stride=%zu）", t->size, t->aw, t->ah,
+                 stride);
+        }
+        return;
+    }
     if (t->auto_mode == 3 || t->auto_stride == 0 || t->ah == 0 || t->aw == 0) {
         memset(p, g_opt_auto_color, t->size);
     } else if (t->auto_mode == 1) {
