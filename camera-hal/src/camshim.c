@@ -74,6 +74,11 @@
 #include <time.h>
 #include <unistd.h>
 
+/* VVideo：视频数据的统一层（形状照 Linux VFS，见 src/vvideo/vvideo.h）。
+ * 本文件只用它的**取帧接口**：挂载命名空间 → 打开节点 → 取一帧。
+ * 具体从哪来（文件 / 生成器 / 共享内存 / 叠加变换）由挂载决定，这里一概不关心。 */
+#include "vvideo.h"
+
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
@@ -548,6 +553,20 @@ static char g_opt_mock_file[192] = {0};
  *  为什么需要：预览/录像是不同尺寸的流（实测预览 4,038,656、录像 3,194,880），
  *  一个模板套不了两张画面 —— 图片与视频必须各给一份。 */
 static char g_opt_mock_map[512] = {0};
+/**
+ * `vvideo=1`：模板经 **VVideo 统一层**取（`/vvideo/...` 路径），而不是直接 open 文件。
+ *
+ * 为什么做成开关而不是直接换掉老路：这台设备上"注入能跑通"是花了两周换来的，
+ * 换数据来源必须能一键退回。默认关 ⇒ 行为与启用前逐字节一致。
+ */
+static int g_opt_vvideo = 0;
+/**
+ * `vv_mount=<类型>:<挂载点>:<dev>:<选项>|<...>`：挂载 VVideo 命名空间。
+ *
+ * 分隔符用 `|`（与 `mock_map` 同一个理由）：选项里要写逗号，dev 是路径 —— 用逗号当
+ * 条目分隔会把两边都切坏，而且**静默丢弃**。
+ */
+static char g_opt_vv_mounts[640] = {0};
 /** `raw_dump=<尺寸>:<路径>`：把**现场那一帧**（该尺寸的第一块 dmabuf）原样落到文件。
  *  用途：照片链路的输入是 RAW（实测：注 RAW 会改照片，注预览 YUV 不会），
  *  而"逆 ISP 合成一张自然颜色的 RAW"不是一朝一夕的事 —— 那就反过来：
@@ -797,6 +816,10 @@ static void load_options(void) {
             g_opt_inject_stop_after = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
             g_opt_live_probe = atoi(val);
+        } else if (strcmp(key, "vvideo") == 0) {
+            g_opt_vvideo = atoi(val);
+        } else if (strcmp(key, "vv_mount") == 0) {
+            snprintf(g_opt_vv_mounts, sizeof(g_opt_vv_mounts), "%s", val);
         } else if (strcmp(key, "mock_map") == 0) {
             snprintf(g_opt_mock_map, sizeof(g_opt_mock_map), "%s", val);
         } else if (strcmp(key, "mock_file") == 0) {
@@ -840,6 +863,7 @@ static void load_options(void) {
         }
     }
     fclose(f);
+    LOGI("开关：vvideo=%d vv_mount=%s", g_opt_vvideo, g_opt_vv_mounts[0] ? g_opt_vv_mounts : "(无)");
     LOGI("开关：dump=%d ops_index=%d usage_patch=%d init_wrap=%d inject=%d freeze=%d pattern=%d photo_mirror=%d cam=%s src=%s",
          g_opt_dump, g_opt_ops_index, g_opt_usage_patch, g_opt_init_wrap, g_opt_inject, g_opt_freeze,
          g_opt_pattern, g_opt_photo_mirror, g_opt_cam[0] ? g_opt_cam : "(全部)",
@@ -3795,10 +3819,133 @@ static void portal_mock_parse(void) {
     }
 }
 
+/* ------------------------------------------------------------------ *
+ * VVideo：统一取帧层（可选）
+ *
+ * 这里只做三件事：
+ *   1) 把 `vv_mount=` 里的挂载行交给层（借 `vvideo_mount_ensure` 自动补目录）；
+ *   2) 把 `mock_map` 里以 `/vvideo/` 开头的条目光经层取帧（**零拷贝**：直接用节点自己的内存）；
+ *   3) 把挂载结果与命名空间打进日志 —— 真机日志是本项目唯一的现场。
+ *
+ * 失败一律**安静降级**回老路（直接 open 文件）：HAL 进程里没有"因为新功能起不来"这一说。
+ * ------------------------------------------------------------------ */
+
+static bool g_vv_inited = false;
+/** 取到的节点 file 一直开着：帧指针归它所有，关了就成了悬垂指针 */
+static struct vvideo_file *g_vv_files[PORTAL_MOCK_MAX];
+static int g_vv_files_n = 0;
+
+static void portal_vv_log_tree(void) {
+    char tree[3072];
+    size_t len = 0;
+    if (vvideo_tree_text(tree, sizeof(tree), &len) != 0) return;
+    /* 逐行打：logcat 单条有长度上限，整块丢进去会被截断（而截断的现场等于没有现场） */
+    LOGI("VVideo 命名空间：");
+    char *line = tree;
+    while (line != NULL && *line != '\0') {
+        char *nl = strchr(line, '\n');
+        if (nl != NULL) *nl = '\0';
+        if (*line != '\0') LOGI("  | %s", line);
+        if (nl == NULL) break;
+        line = nl + 1;
+    }
+}
+
+static void portal_vv_init(void) {
+    if (g_vv_inited) return;
+    g_vv_inited = true;
+    if (!g_opt_vvideo) return;
+    vvideo_init();
+
+    char buf[sizeof(g_opt_vv_mounts)];
+    snprintf(buf, sizeof(buf), "%s", g_opt_vv_mounts);
+    char *save = NULL;
+    int ok = 0, bad = 0;
+    for (char *tok = strtok_r(buf, "|", &save); tok != NULL; tok = strtok_r(NULL, "|", &save)) {
+        /* <类型>:<挂载点>:<dev>:<选项> —— dev 可以为空（`:://` 这样写），选项可以缺省 */
+        char *c1 = strchr(tok, ':');
+        if (c1 == NULL) {
+            bad++;
+            continue;
+        }
+        *c1 = '\0';
+        char *dir = c1 + 1;
+        char *c2 = strchr(dir, ':');
+        if (c2 == NULL) {
+            bad++;
+            continue;
+        }
+        *c2 = '\0';
+        char *dev = c2 + 1;
+        char *opts = (char *)"";
+        char *c3 = strchr(dev, ':');
+        if (c3 != NULL) {
+            *c3 = '\0';
+            opts = c3 + 1;
+        }
+        if (vvideo_mount_ensure(tok, dir, dev, opts) != NULL) {
+            ok++;
+        } else {
+            bad++;
+            LOGE("VVideo：挂载失败 %s ← %s（dev=%s opts=%s）", dir, tok, dev, opts);
+        }
+    }
+    LOGI("VVideo 统一层已就绪：挂载 %d 个节点（失败 %d），ABI v%d", ok, bad, VV_ABI_VERSION);
+    portal_vv_log_tree();
+}
+
+/**
+ * 经统一层取一份模板。**零拷贝**：返回的是节点自己的内存。
+ *
+ * 不是 `/vvideo/` 路径、层没就绪、节点不存在、取不到帧 —— 一律返回 false，
+ * 调用方继续走"直接 open 文件"的老路。没有中间态。
+ */
+static bool portal_vv_load(const char *path, unsigned char **out, size_t *out_len) {
+    if (path == NULL || strncmp(path, "/vvideo/", 8) != 0) return false;
+    portal_vv_init();
+    if (!g_vv_inited) return false;
+
+    struct vvideo_file *f = vvideo_open(path, VV_O_RDONLY);
+    if (f == NULL) {
+        LOGE("VVideo：打不开 %s（errno=%d）→ 本模板退回直接读文件", path, vv_errno);
+        return false;
+    }
+    /* 事件驱动：先问"现在有没有帧"。静态源立刻返回 0；真·事件源会在这里等。
+     * 非阻塞（超时 0）—— 启动路径上绝不阻塞 HAL 的注入线程。 */
+    int w = vvideo_wait(f, 0);
+    struct vvideo_frame fr;
+    int rc = vvideo_acquire(f, &fr);
+    if (rc != 0 || fr.plane[0] == NULL) {
+        LOGE("VVideo：%s 取不到帧（wait=%d acquire=%d errno=%d）→ 退回直接读文件", path, w, rc,
+             vv_errno);
+        vvideo_close(f);
+        return false;
+    }
+    struct vvideo_cap cap;
+    const char *driver = "?";
+    if (vvideo_ioctl(f, VVIO_QUERYCAP, &cap) == 0) driver = cap.driver;
+    *out = fr.plane[0];
+    *out_len = fr.size[0];
+    if (g_vv_files_n < PORTAL_MOCK_MAX) g_vv_files[g_vv_files_n++] = f; /* 保持打开：帧指针归它 */
+    LOGI("注入：模板 ← %s（**经 VVideo 统一层**，后端=%s，%ux%u fmt=%u，%zu 字节，零拷贝）", path,
+         driver, fr.width, fr.height, fr.format, fr.size[0]);
+    return true;
+}
+
 /** 每个模板只读一次 */
 static void portal_mock_load(void) {
+    portal_vv_init();
     for (int i = 0; i < g_mock_n; i++) {
         if (g_mock[i].tpl != NULL) continue;
+        unsigned char *vv = NULL;
+        size_t vv_len = 0;
+        if (portal_vv_load(g_mock[i].path, &vv, &vv_len)) {
+            g_mock[i].tpl = vv;
+            g_mock[i].tlen = vv_len;
+            LOGI("注入：模板[%lu%s%s] ← %s（%zu 字节，来自统一层）", g_mock[i].size,
+                 g_mock[i].name[0] ? "@" : "", g_mock[i].name, g_mock[i].path, g_mock[i].tlen);
+            continue;
+        }
         int fd = open(g_mock[i].path, O_RDONLY);
         if (fd < 0) {
             LOGE("注入：打不开模板 %s（errno=%d）", g_mock[i].path, errno);
