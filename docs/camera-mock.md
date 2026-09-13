@@ -4510,3 +4510,31 @@ sh scripts/set-camera-mock-targets.sh --restore           # 回滚到上次备�
 2. 若复原后变绿 ⇒ **确证是我手写 manifest 造成的**，那就把 `set-camera-mock-targets.sh` 改成
    "**保格式改写**"（紧凑单行、字段顺序不变）或干脆改走 relay 协议，并在脚本里写明这条禁令；
 3. 若复原后仍红 ⇒ 与我的改动无关，转查模块侧决策链的第一道门（它自己的日志会说是哪一条不满足）。
+
+### 70.6 第 30 轮：受支持路径复原后**仍不通过** ⇒ 我的手写 manifest 被洗清（但暴露了真实启用机制）
+
+**受支持的播种**（`/tmp/appacc/seed-camera-mock.sh`，`GRANT_PKG=moe.fuqiuluo.camerafixture`）成功：
+```
+[Seed] seeded file=fixture-clip.mp4 durationMs=8000 tags=[fixture] point=fixture-point … enabled=true points=1
+       grant=[granted[content://moe.fuqiuluo.portalex.cameramock/manifest]
+              granted[content://moe.fuqiuluo.portalex.cameramock/video/fixture-video]]
+manifest → {"version":1,"enabled":true,"tagFilter":[],"targets":[],…}
+```
+**两条对我此前理解的重要更正**：
+1. **启用机制不是 `targets`**，而是**给目标包授 content URI 权限**（`granted[content://…/manifest]`、
+   `…/video/fixture-video`）——`targets:[]` 是正常状态；我 round 25 写 `targets=[…]` 属**自创语义**；
+2. **`tagFilter` 应为 `[]`**，我却把它改成了 `["fixture"]` —— 这是我引入的真实差异（已还原）。
+
+**但复原后验收仍然 ❌**（`fixture`/`list`：模块侧 ❌ 没拦/卡住；画面侧 ❌ 命中阶梯行 0/14）：
+```
+== 总结 ==
+   模块侧（决策链）: ❌ 没拦 / 卡住
+   画面侧（内容）  : ❌ 不是合成素材（或没跑起来）
+```
+⇒ **我的手写 manifest 不是（唯一）原因**；失败在**模块侧决策链**（脚本注释说它有**七道前置条件**，
+任何一条不满足都会"安静地不拦截"）。下一轮直接读它自己的判定日志（`[Portal]` 行），看卡在哪一条。
+
+**给 `set-camera-mock-targets.sh` 的修正项（下一轮做）**：既然启用靠 URI 授权，
+这个脚本"写 `targets`"的做法**语义错误**，应改为：
+保留"查看"能力，写入路径改成**调用受支持的播种**（`seed-camera-mock.sh GRANT_PKG=…`），
+或至少加醒目警告 + `--clear` 时恢复 `tagFilter:[]`。
