@@ -4560,8 +4560,18 @@ static void portal_auto_reset(void) {
  */
 static bool portal_auto_eligible_stream(int stream_type, int format, uint32_t usage) {
     if (stream_type != 0 /* OUTPUT */) return false;
-    /* RAW(0x20)/RAW10(0x25)：模拟 RAW 没有意义；BLOB(0x21)：照片另有编码通道（§45） */
-    if (format == 0x20 || format == 0x25 || format == 0x21) return false;
+    /* BLOB(0x21) 仍排除：那是**编码器输出**（照片已经压好了，改它没有意义）。
+     * **RAW（0x20/0x25/0x2a 等）现在纳入**（本轮改动）：实测照片链路的入口就是 RAW10
+     * （`4096×3072` / `15,728,640` 字节，线性、无 UBWC 位），注它就能决定照片内容（§26/§45/§64）。
+     * 旧注释写"模拟 RAW 没有意义"是因为当时只想着预览面；对**高清静态图像**这条恰恰是唯一的入口
+     * —— 编码器面（视频）是压缩面写不动，RAW 面是线性面写得动。 */
+    if (format == 0x21) return false;
+    /* ⚠️ RAW **重新排除**（本轮实测）：RAW 面在**没拍照时是全零**，拍照时才被 ISP 写；
+     * 而"自动认领"要求"先读到活内容再决定写不写"，这条对 RAW 天然不成立 ——
+     * 结果是它永远停在"未定"，却把注入线程每轮都拖去做两次 40ms 采样，
+     * 连带把**主预览面的认领**饿死（回归现象：取景器一直是真实画面）。
+     * RAW 这条路的正确入口是 §64 那条：**先 dump 活帧、改一处、再喂回去**（照片内容我们已经能控）。 */
+    if (format == 0x20 || format == 0x25 || format == 0x2a || format == 0x2b) return false;
     /* 编码器面（录进文件的那条）：线性数据编码器解不出来（§15.8 / §62）⇒ 一个字节都不碰 */
     if ((usage & PORTAL_GRALLOC_USAGE_HW_VIDEO_ENCODER) != 0) return false;
     return true;
@@ -4668,8 +4678,8 @@ static size_t portal_auto_align(size_t v, size_t a) { return (v + a - 1) / a * a
  * `out_stride` 只对平面式有意义（YUYV 给的是"每像素 2 字节"的等价步长）。
  * 顺序 = 实测命中概率的顺序；**候选对上真实 dmabuf 才算数**，所以顺序不引入风险。
  */
-static int portal_auto_candidates(uint32_t w, uint32_t h, size_t out_size[10], size_t out_stride[10],
-                                  int out_kind[10]) {
+static int portal_auto_candidates(uint32_t w, uint32_t h, int format, size_t out_size[13],
+                                  size_t out_stride[13], int out_kind[13]) {
     size_t sw = portal_auto_align(w, 64);
     size_t h32 = portal_auto_align(h, 32);
     size_t h64 = portal_auto_align(h, 64);
@@ -4689,6 +4699,16 @@ static int portal_auto_candidates(uint32_t w, uint32_t h, size_t out_size[10], s
     /* 单平面：色度面（4:2:0 的四分之一，或半平面的一半） */
     out_size[n] = sw * h32 / 4;    out_stride[n] = sw / 2; out_kind[n] = 3; n++;
     out_size[n] = sw * h32 / 2;    out_stride[n] = sw;     out_kind[n] = 3; n++;
+    /* 静态图像链路：RAW10 / RAW12 / RAW16（**照片内容的唯一入口**，线性面，§45/§64）。
+     * ⚠️ **只对 RAW 流生成**（本轮踩的坑）：不加这个判断的话，普通的 `0x23` 分析流
+     * （`640×358`）也会去认 "RAW10 = 640×384×1.25 = 307,200" 这种尺寸，
+     * 于是注入线程抱着一批无关缓冲狂写、**真正的主预览面（4,038,656）反而一直没被认领**
+     * （回归现象：取景器一直是真实画面）。几何必须和格式一起判。 */
+    if (format == 0x20 || format == 0x25 || format == 0x2a || format == 0x2b || format == 0x2c) {
+        out_size[n] = (size_t)sw * h32 * 10 / 8; out_stride[n] = sw; out_kind[n] = 4; n++;
+        out_size[n] = (size_t)sw * h32 * 12 / 8; out_stride[n] = sw; out_kind[n] = 5; n++;
+        out_size[n] = (size_t)sw * h32 * 2;      out_stride[n] = sw; out_kind[n] = 6; n++;
+    }
     return n;
 }
 
@@ -4698,7 +4718,10 @@ static const char *portal_auto_kind_name(int kind) {
         case 0: return "整幅 NV12";
         case 1: return "整幅 YUYV";
         case 2: return "亮度面";
-        default: return "色度面";
+        case 3: return "色度面";
+        case 4: return "RAW10（照片）";
+        case 5: return "RAW12（照片）";
+        default: return "RAW16（照片）";
     }
 }
 
@@ -4795,7 +4818,6 @@ static int portal_auto_validate(int fd, unsigned long sz, portal_auto_entry *e) 
     portal_dump_win((const unsigned char *)m, sz, 0, a1);
     portal_dump_win((const unsigned char *)m, sz, 3, b1);
     int live = (memcmp(a0, a1, PORTAL_DUMP_WLEN) != 0 || memcmp(b0, b1, PORTAL_DUMP_WLEN) != 0);
-    munmap(m, (size_t)sz);
     /* ⚠️ **不再用"活帧"当门槛**（本轮实测踩的坑）：早先要求"40ms 内有变化"才定案，结果
      * 那次采样没撞上刷新 ⇒ 返回"未定" ⇒ 认领被跳过 ⇒ **明明绑上了却永不接管**
      * （现象：日志里全是"绑定 size=…"，一条"校验通过"都没有，应用看到真实相机）。
@@ -4803,21 +4825,43 @@ static int portal_auto_validate(int fd, unsigned long sz, portal_auto_entry *e) 
      * 换句话说"写没写起来"这两条判据自己就能分辨。活帧只留作日志里的参考量。 */
     double tail = 0.0, std = 0.0;
     double score = portal_auto_yuv_score(fd, (size_t)sz, &tail, &std);
-    if (e->kind == 2) {
+    if (e->kind == 2 || e->kind >= 4) {
+        /* 亮度面与 RAW 面：**没有 128 色度平台**，只能用"空间结构"判。
+         * ⚠️ RAW 面有个特殊状态（本轮实测）：**没在拍照时它就是全零**（ISP 只在拍照流程里
+         * 往里写）——所以"std≈0"对 RAW 不等于"这块面不能写"，只等于"**现在还没有照片在拍**"。
+         * 判成拒绝会永久挡死照片链路（第一次校验必然发生在拍照之前），所以这里返回"未定"，
+         * 交给"已绑定但未定案的每轮重试"（§77.2 那条）去等它活起来。 */
+        if (e->kind >= 4 && std < 0.5) {
+            /* 诊断（前 3 次）：RAW 面在"还没拍照"时本来就是全零，但也要能分清
+             * "全零"和"根本没读到"（fd 失效/mmamp 失败）—— 这两者以前都表现为"永远未定"。 */
+            static int undecided_logged = 0;
+            if (undecided_logged < 3) {
+                unsigned char *q = (unsigned char *)m;
+                undecided_logged++;
+                LOGI("自动模板：RAW 面校验**未定** size=%lu（std=%.2f、活帧=%s、"
+                     "首 4 字节 %02x %02x %02x %02x）",
+                     sz, std, live ? "有" : "无", q[0], q[1], q[2], q[3]);
+            }
+            munmap(m, (size_t)sz);
+            return 0;
+        }
         if (std >= 3.0) {
             e->checked = 1; e->ok = 1;
-            LOGI("自动模板：内容校验通过 size=%lu（亮度面：活帧=%s、采样 std=%.2f）⇒ 开始接管", sz,
-                 live ? "有" : "无", std);
+            munmap(m, (size_t)sz);
+            LOGI("自动模板：内容校验通过 size=%lu（%s：活帧=%s、采样 std=%.2f）⇒ 开始接管",
+                 sz, portal_auto_kind_name(e->kind), live ? "有" : "无", std);
             return 1;
         }
         e->checked = 1; e->ok = -1;
-        LOGI("自动模板：**拒绝** size=%lu（亮度面）—— 采样 std=%.2f（要求 ≥3，活帧=%s）", sz, std,
-             live ? "有" : "无");
+        munmap(m, (size_t)sz);
+        LOGI("自动模板：**拒绝** size=%lu（%s）—— 采样 std=%.2f（要求 ≥3，活帧=%s）", sz,
+             portal_auto_kind_name(e->kind), std, live ? "有" : "无");
         return -1;
     }
     double need = (e->kind == 3) ? 0.10 : 0.12;
     if (score >= 0.0 && (score < need || tail < need)) {
         e->checked = 1; e->ok = -1;
+        munmap(m, (size_t)sz);
         LOGI("自动模板：**拒绝** size=%lu（%s）—— 不像线性 YUV 帧（128 占比 %.1f%%、后 1/3 "
              "%.1f%%）⇒ 不接管%s",
              sz, portal_auto_kind_name(e->kind), score * 100.0, tail * 100.0,
@@ -4827,6 +4871,7 @@ static int portal_auto_validate(int fd, unsigned long sz, portal_auto_entry *e) 
         return -1;
     }
     e->checked = 1; e->ok = 1;
+    munmap(m, (size_t)sz);
     LOGI("自动模板：内容校验通过 size=%lu（%s：128 占比 %.1f%%、后 1/3 %.1f%%）⇒ 开始接管",
          sz, portal_auto_kind_name(e->kind), score * 100.0, tail * 100.0);
     return 1;
@@ -4841,8 +4886,21 @@ static int portal_auto_validate(int fd, unsigned long sz, portal_auto_entry *e) 
  */
 static void portal_auto_bind(void) {
     if (!g_opt_auto_tpl) return;
-    /* 本会话的几何都绑上了 ⇒ 没什么可做的（否则每轮都要扫一遍 400+ 个 fd） */
-    if (g_auto_n > 0 && __atomic_load_n(&g_auto_bound_n, __ATOMIC_RELAXED) >= g_auto_n) return;
+    /* 本会话的几何都绑上了**且都定案了** ⇒ 没什么可做的（否则每轮都要扫一遍 400+ 个 fd）。
+     * ⚠️ 必须连"定案"一起判（本轮实测踩的坑）：只看"绑上"就返回，会让**未定案的条目永远
+     * 没人再问** —— RAW（照片）面正是这种：没拍照时它是全零 ⇒ 校验返回"未定"，
+     * 而绑定数已经等于几何数 ⇒ 这条早退把它永久冻在"未定"，照片照出来永远是真实场景。 */
+    int pending_check = 0;
+    for (int i = 0; i < g_auto_n; i++) {
+        if (g_auto[i].mode != 0 && g_auto[i].checked == 0) {
+            pending_check = 1;
+            break;
+        }
+    }
+    if (!pending_check && g_auto_n > 0 &&
+        __atomic_load_n(&g_auto_bound_n, __ATOMIC_RELAXED) >= g_auto_n) {
+        return;
+    }
     /* 节流：注入线程在"没靶可打"时会以探询间隔（15ms）转圈，而每次 bind 都要扫一遍
      * 400+ 个 fd —— 那是自己给自己造抖动。200ms 足够"半秒内就绪"这个目标。 */
     unsigned long long now = portal_now_us();
@@ -4851,7 +4909,9 @@ static void portal_auto_bind(void) {
      * 为什么必须这样：等待直接算进"首帧注入延迟"（实测：按 200ms 节流逐尺寸串行 ⇒ 1650ms）。 */
     int pending = 0;
     for (int i = 0; i < g_auto_n; i++) {
-        if (g_auto[i].mode == 0 || g_auto[i].checked == 0) {
+        if (g_auto[i].mode == 0) { /* 只看"**还没绑上**"的：没绑上要紧跟（首帧延迟），
+                                    * "绑上了但没定案"可以慢慢来（5Hz），否则每轮两次 40ms
+                                    * 采样会把靶表重建饿死（本轮踩过） */
             pending = 1;
             break;
         }
@@ -4928,9 +4988,10 @@ static void portal_auto_bind(void) {
         /* ⚠️ **不跳过已绑定的条目**：`0x22` 的三条平面是**三个 dmabuf**、而且**不是同时出现**的
          * （实测：认领主尺寸那一刻，应用的三条平面还没进 fd 表）。已绑的尺寸会被
          * `portal_auto_size_taken` 挡住，所以这里继续扫只会补上"还没认领的平面"。 */
-        size_t cand[10], str[10];
-        int kind[10];
-        int nc = g_opt_auto_model ? portal_auto_candidates(e->w, e->h, cand, str, kind) : 0;
+        size_t cand[13], str[13];
+        int kind[13];
+        int nc = g_opt_auto_model ? portal_auto_candidates(e->w, e->h, (int)e->format, cand, str, kind)
+                                  : 0;
         /* 同一路流可能对应**多个 dmabuf**（`0x22` 的三条平面各自独立）⇒ 第一个命中填在本条目上，
          * 后续命中各自**追加一条**（几何相同、尺寸/类别不同）。写入是分别进行的：
          * 亮度面写图案、色度面写中性 128，合起来才是"应用看到我们的画面"。 */
