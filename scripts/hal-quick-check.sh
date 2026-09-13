@@ -70,26 +70,40 @@ say "=== ⓪ 唤醒屏幕 ==="
 wake_screen
 
 say "=== ① OPPO 相机取景器 ==="
-adb shell su -c "logcat -c" >/dev/null 2>&1
+# **模式 + 时序**：相机应用会记住上一次的模式，而视频模式的取景器来自另一路流 ——
+# 那时我们在 2136×1200 上写得再好也看不见，脚本就会报假 FAIL（§81.2 实测）。
+# 所以这里不是"点一次就走"，而是**点一次、看一次、不行再点**（最多 3 轮）。
+preview_stat() {
+    adb shell su -c "screencap -p /data/local/tmp/hqc.png" >/dev/null 2>&1
+    adb pull /data/local/tmp/hqc.png /tmp/hqc.png >/dev/null 2>&1
+    python3 - <<'PYSH'
+from PIL import Image, ImageStat
+im = Image.open('/tmp/hqc.png').convert('L'); w, h = im.size
+st = ImageStat.Stat(im.crop((int(w*0.05), int(h*0.16), int(w*0.95), int(h*0.42))))
+print("%.1f %.1f" % (st.mean[0], st.stddev[0]))
+PYSH
+}
+
 adb shell am force-stop $PKG_CAM >/dev/null 2>&1
 sleep 1
 adb shell monkey -p $PKG_CAM -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 sleep 10
-# **必须切到"照片"模式再判**（第 50 轮踩的坑）：相机应用会记住上一次的模式，
-# 而视频模式下取景器来自另一路流 —— 我们在 2136×1200 上写得再好也看不见，
-# 脚本就会报"没接管"（实测：切回照片模式后取景区立刻 mean=128.0 std=0.0）。
-# 这个坐标是这台设备(1264×2780)底部模式行里的"照片"。
-adb shell input tap 600 2140 >/dev/null 2>&1
-sleep 4
-adb shell su -c "screencap -p /data/local/tmp/hqc.png" >/dev/null 2>&1
-read -r MEAN SD <<EOF
-$(shot_uniform /data/local/tmp/hqc.png)
+MEAN=0; SD=999
+try=1
+while [ $try -le 3 ]; do
+    adb shell input tap 600 2140 >/dev/null 2>&1   # 底部模式行里的"照片"
+    sleep 5
+    read -r MEAN SD <<EOF
+$(preview_stat)
 EOF
-say "取景区 mean=$MEAN std=$SD"
-if [ "${SD:-999}" != "nopull" ] && awk "BEGIN{exit !($SD < 8 && $MEAN > 60)}"; then
+    say "  第 $try 次尝试（切照片模式后）：取景区 mean=$MEAN std=$SD"
+    if awk "BEGIN{exit !($SD < 8 && $MEAN > 60)}"; then break; fi
+    try=$((try + 1))
+done
+if awk "BEGIN{exit !($SD < 8 && $MEAN > 60)}"; then
     say "  PASS：均匀且够亮 ⇒ 取景器是我们的画面（不是真实场景）"
 else
-    say "  FAIL：取景区不均匀/太暗 ⇒ 没接管或注入没生效"
+    say "  FAIL：取景区不均匀/太暗 ⇒ 没接管、注入没生效，**或相机不在照片模式**（先看模式再看注入）"
     FAIL=1
 fi
 LAT=$(adb logcat -d 2>/dev/null | grep -a "首帧注入延迟" | tail -1 | sed 's/.*延迟：//; s/ ms.*//')
