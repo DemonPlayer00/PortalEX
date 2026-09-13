@@ -4195,8 +4195,21 @@ static void *portal_req_watch_thread(void *arg) {
  *
  * ⚠️ 为什么必须挑"活的"：同一尺寸往往有 30+ 块缓冲（池化的），第一次实现按 readdir 顺序取第一块
  * —— 实测抓到的是一块**全零的闲置缓冲**，据此分析布局等于分析空气。
- * 活着的判据：三个采样窗口的内容在 100 毫秒里变了（有硬件在往里写）。没有活的就退回第一块。
+ * 活着的判据：四个采样窗口（各 128 字节，分布在 0、1/3、2/3、末尾）的内容在 120 毫秒里变了。
+ * ⚠️ **静止场景会误判**：对着天花板录像时，采样窗口可能一帧都不变，于是 32 块候选全判"不活"
+ * ——这时**退回第一块**并明确打日志（这是早期的设计意图，代码里一直没实现，实测踩到）。
  */
+#define PORTAL_DUMP_WIN 4
+#define PORTAL_DUMP_WLEN 128
+static void portal_dump_win(const unsigned char *m, unsigned long long sz, int w,
+                            unsigned char *dst) {
+    unsigned long long off = (w == 0)   ? 0
+                             : (w == 1) ? sz / 3
+                             : (w == 2) ? (sz * 2) / 3
+                                        : (sz > PORTAL_DUMP_WLEN ? sz - PORTAL_DUMP_WLEN : 0);
+    memcpy(dst, m + off, PORTAL_DUMP_WLEN);
+}
+
 static void *portal_raw_dump_thread(void *arg) {
     (void)arg;
     char spec[sizeof(g_opt_raw_dump)];
@@ -4222,7 +4235,7 @@ static void *portal_raw_dump_thread(void *arg) {
             if (d == NULL) break;
             int cand[64];
             unsigned long long csz[64];
-            unsigned char head[64][3][64];
+            unsigned char head[64][PORTAL_DUMP_WIN][PORTAL_DUMP_WLEN];
             int cn = 0;
             struct dirent *e;
             while ((e = readdir(d)) != NULL && cn < 64) {
@@ -4240,9 +4253,7 @@ static void *portal_raw_dump_thread(void *arg) {
                 unsigned long long sz = (unsigned long long)st.st_size;
                 unsigned char *m = (unsigned char *)mmap(NULL, (size_t)sz, PROT_READ, MAP_SHARED, fd, 0);
                 if (m == MAP_FAILED) continue;
-                memcpy(head[cn][0], m, 64);
-                memcpy(head[cn][1], m + sz / 2, 64);
-                memcpy(head[cn][2], m + sz - 64, 64);
+                for (int w = 0; w < PORTAL_DUMP_WIN; w++) portal_dump_win(m, sz, w, head[cn][w]);
                 munmap(m, (size_t)sz);
                 cand[cn] = fd;
                 csz[cn] = sz;
@@ -4256,9 +4267,10 @@ static void *portal_raw_dump_thread(void *arg) {
                 unsigned char *m = (unsigned char *)mmap(NULL, (size_t)csz[i], PROT_READ, MAP_SHARED, cand[i], 0);
                 if (m == MAP_FAILED) continue;
                 int live = 0;
-                for (int w = 0; w < 3; w++) {
-                    const unsigned char *cur = (w == 0) ? m : (w == 1 ? m + csz[i] / 2 : m + csz[i] - 64);
-                    if (memcmp(cur, head[i][w], 64) != 0) live = 1;
+                unsigned char cur[PORTAL_DUMP_WLEN];
+                for (int w = 0; w < PORTAL_DUMP_WIN; w++) {
+                    portal_dump_win(m, csz[i], w, cur);
+                    if (memcmp(cur, head[i][w], PORTAL_DUMP_WLEN) != 0) live = 1;
                 }
                 if (!live) {
                     munmap(m, (size_t)csz[i]);
@@ -4276,7 +4288,33 @@ static void *portal_raw_dump_thread(void *arg) {
                 break;
             }
             if (picked < 0) {
-                LOGI("现场帧落盘：尺寸=%lu 共 %d 块候选，本轮没有一块是活的", want[k], cn);
+                /* 静止场景（对着天花板）：采样窗口一帧都不变 ⇒ 四窗判据失效，退回第一块。
+                 * 首选**内容非全零**的那块（闲置缓冲通常是全零）。 */
+                int best = -1;
+                for (int i = 0; i < cn && best < 0; i++) {
+                    for (int w = 0; w < PORTAL_DUMP_WIN; w++) {
+                        for (int b = 0; b < PORTAL_DUMP_WLEN; b++) {
+                            if (head[i][w][b] != 0) {
+                                best = i;
+                                break;
+                            }
+                        }
+                        if (best >= 0) break;
+                    }
+                }
+                if (best < 0) best = 0;
+                unsigned char *m =
+                    (unsigned char *)mmap(NULL, (size_t)csz[best], PROT_READ, MAP_SHARED, cand[best], 0);
+                if (m != MAP_FAILED) {
+                    int of = open(out, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                    if (of >= 0) {
+                        ssize_t wr = write(of, m, (size_t)csz[best]);
+                        close(of);
+                        LOGI("现场帧落盘：尺寸=%lu fd=%d → %s（写入 %zd 字节，**静止场景强制落盘**，"
+                             "共 %d 块候选无一被判活）", want[k], cand[best], out, wr, cn);
+                    }
+                    munmap(m, (size_t)csz[best]);
+                }
             }
         }
         sleep(3);
