@@ -4389,3 +4389,25 @@ App 自己的 640×480 链路不生效（§69，三条独立证据）。
 **先用夹具 App（`moe.fuqiuluo.camerafixture`，已在作用域内）跑通链路**，再上真实目标。
 两条填充途径：① 应用内 UI 手动添加；② 走 relay 协议（app→system_server 的 `PUT_CONFIG`），
 或据其存储格式直接写 `manifest.json`（后者有被 system_server 缓存覆盖的风险，需验证）。
+
+### 70.1 应用层"配置"缺口：**直接写 manifest 可行且持久**（第 25 轮）
+
+做法（保住 SELinux 标签的关键：**原地覆盖**，不要 push 到目标路径）：
+```bash
+adb shell "cp /data/system/portalex-camera/manifest.json /data/local/tmp/manifest.bak"   # 先备份
+adb pull /data/system/portalex-camera/manifest.json /tmp/m.json
+python3 -c "import json;d=json.load(open('/tmp/m.json'));d['targets']=['moe.fuqiuluo.camerafixture'];json.dump(d,open('/tmp/m.new.json','w'))"
+adb push /tmp/m.new.json /data/local/tmp/m.new.json
+adb shell "cat /data/local/tmp/m.new.json > /data/system/portalex-camera/manifest.json; chmod 600 …"
+```
+**实测结果**：写入后 **6 秒再读仍是写入值**（`"targets": ["moe.fuqiuluo.camerafixture"]`）
+⇒ **system_server 没有用内存缓存把它盖回去**，文件属主/标签也没变
+（`system system u:object_r:system_data_file:s0`）。⇒ "配置"这条缺口有一条**可脚本化**的通路。
+
+夹具 App（`moe.fuqiuluo.camerafixture`，已在 LSPosed 作用域内）随即被拉起并开始采样：
+```
+I CameraFixture: [Fixture] sample #6 sig=0504050505… mean=05040b (+5002ms)
+```
+⚠️ **这一行还不能当判据**：帧的签名近乎均匀且偏暗（`mean=05040b`），
+"是不是我们的模拟内容"要靠**夹具自己的验收脚本**（`scripts/verify-app-hook.sh` 的 `list|config|legacy*` 变体）
+或夹具界面里的画面来判 —— 下一轮做这件事，然后再把真实目标（`com.bxkj.student`）加进去复测。
