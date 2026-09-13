@@ -4835,3 +4835,33 @@ fun startFeeding(packageName: String?): Int {
    设备上没有 `sqlite3`，LSPosed 配置库要 `adb pull` 回本地用 python 读。
 2. **判据强度**：**结构化签名（std/NCC）> 颜色占比 > 亮度**。亮度单独用骗过我一次（§66）；
    "日志里没看见" 也不等于 "不存在"（犯过两次，§70.8/§71）。凡下结论前先确认**该看的源在哪、有没有命中**。
+
+---
+
+## 73. App 侧：相机占用上限计时器（3 分钟，超时剥夺）—— 第 41 轮
+
+**需求**（用户）："测试需要的、并且未设置超时的**所有相机请求点**，相机占用最多 3 分钟，超时需剥夺。"
+
+**实现**（App 层，不涉及 HAL 模块）：新增 `app/src/main/java/moe/fuqiuluo/portalex/ui/camera/CameraOccupancyGuard.kt`
+
+| 设计点 | 做法 | 理由 |
+|---|---|---|
+| 默认上限 | `DEFAULT_TIMEOUT_MS = 3 分钟` | 用户要的默认策略：**未显式设置就走上限** |
+| 显式覆盖 | `start(tag, timeoutMs = DEFAULT) { … }` | "未设置超时"才用默认值，允许显式放宽 |
+| 时钟 | `SystemClock.elapsedRealtime()` | 单调时钟，不受系统时间调整影响 |
+| 会话隔离 | 每次 `start()` 递增 token，旧定时器一律作废 | 快速开关相机时**不会串台误杀**新会话 |
+| 回调线程 | 主线程 `Handler` | 相机 API 与界面都在主线程，避免额外并发 |
+| 剥夺动作 | 由调用方在回调里真正释放 | 计时器只管"到点"，释放逻辑留在持有者（可复用各自的 release 路径） |
+
+**接入点（本分支 App 里所有持有相机的地方）**：
+| 位置 | 计时开始 | 超时动作 |
+|---|---|---|
+| `CameraRecordActivity.onOpened()` | `CameraOccupancyGuard.start("record") { onCameraOccupancyTimeout() }` | 停录 → 关会话 → 关设备 → Toast 说明 → `finish()` |
+| `CameraProbeActivity.onOpened()` | `CameraOccupancyGuard.start("probe") { finishProbe() }` | 复用已有的 `finishProbe()` 收尾 |
+| 两者 `onDestroy()` | — | `CameraOccupancyGuard.stop()` 停表 |
+
+**验证状态（如实）**：
+- ✅ **编译通过**：`./gradlew :app:assembleDebug` 无错误（本轮实测）；
+- ⚠️ **未做真机验证**：本轮**没有**安装该 APK、**没有**观察 3 分钟到点后的实际剥夺行为
+  （要用真机验证，建议临时把 `DEFAULT_TIMEOUT_MS` 改成 20 秒、装一次、开录制页看 Toast 与日志
+  `CameraGuard: 相机占用超时…⇒ 剥夺并释放`，确认后再改回 3 分钟）。
