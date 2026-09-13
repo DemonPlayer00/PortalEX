@@ -4359,3 +4359,33 @@ A/B 的签名是"均值大幅偏移 **且 std 保持 46.4**"（换成我们的�
 **面向 App 的交付改走**：**app 层 relay 视频通道**（master 分支已验收：`CameraRelayService` +
 `/data/system/portalex-camera/` 的配置与视频、system_server 侧控制面、零注入目标应用）。
 HAL 侧继续负责它已经证实的部分（系统相机预览面 / 照片链路 / 前置后置统一）。
+
+---
+
+## 70. 两层的真实状态（第 24 轮）：**应用层有注入能力但没配置；HAL 层只对系统相机预览有效**
+
+判据来源：LSPosed 配置库 `/data/adb/lspd/config/modules_config.db`
+（设备上没有 `sqlite3`，**拉回本地用 python 读**就行）。
+
+**应用层（master 分支的 LSPosed 模块）**：
+```
+modules_state: ('moe.fuqiuluo.portalex', 0, enabled=1, scope_request_blocked=0)
+scope (6 个): com.android.phone / com.bxkj.student / com.oplus.location /
+              com.zjwh.android_wh_physicalfitness / moe.fuqiuluo.camerafixture / system
+```
+⇒ **模块已启用、体适能在作用域内**（两个体适能包都在），**夹具 App 也在** —— 应用层**具备注入能力**。
+
+**但 relay 的配置是空的**：
+```
+/data/system/portalex-camera/manifest.json → enabled=true, tagFilter=["fixture"], targets=[]
+```
+⇒ **没有任何目标应用被配置**，模块即使注入进去也没有内容可下发 ⇒ 应用层现在对谁都不生效。
+
+**HAL 层（feature/hal-vcam）**：只对系统相机的前置/后置预览面（`4,038,656`）可见生效；
+App 自己的 640×480 链路不生效（§69，三条独立证据）。
+
+### 结论：下一步的缺口不在"能不能注入"，而在"**有没有配置**"
+把 `targets` 填上（例如 `com.bxkj.student`），应用层立刻有内容可发；验证顺序应当是
+**先用夹具 App（`moe.fuqiuluo.camerafixture`，已在作用域内）跑通链路**，再上真实目标。
+两条填充途径：① 应用内 UI 手动添加；② 走 relay 协议（app→system_server 的 `PUT_CONFIG`），
+或据其存储格式直接写 `manifest.json`（后者有被 system_server 缓存覆盖的风险，需验证）。
