@@ -5728,3 +5728,28 @@ T+200s / T+230s：pidof moe.fuqiuluo.camerafixture  →  空
 - 设备上装的 APK 就是这一版（`adb install -r -d camerafixture-debug.apk` → Success）；
 - 复验方法：`am start -n moe.fuqiuluo.camerafixture/.ListSessionActivity` → 等 3 分钟 →
   `logcat -s CameraFixture:V` 看那两行、`pidof` 应为空。
+
+---
+
+## 92. 第四个面（PortalEX 自己的录制页）：同一套判据、同样的结论（第 62 轮）
+
+顺手把自动路径拿到**第四个应用**上量了一次 —— 我们自己 App 的录制页
+（`moe.fuqiuluo.portalex/.ui.camera.CameraRecordActivity`，不需要登录、可直接 `am start`）：
+
+```
+几何表[0]：format=0x22 1200x1200 usage=0x10020100 max=8
+自动模板：绑定 size=2400256 ← 按 max_buffers 计数对上（实测 10 块）
+自动模板：**拒绝** size=2400256（整幅 NV12）—— 128 占比 2.5%、后 1/3 6.2%
+          ⇒ 不接管（usage 带 UBWC 位 0x10000000 ⇒ 压缩面）
+```
+
+三件事一次说清：
+
+1. **机制在任何应用上都一样跑**：几何来自请求快照、尺寸按模型/计数认 —— 不需要为某个应用写代码；
+2. **判据给出的结论与 §76 一致**：`1200×1200 usage=0x10020100` 里同样带 UBWC 位，128 平台占比 2.5%
+   ⇒ 压缩面 ⇒ 明确拒绝，而不是涂成一幅假画面；
+3. 顺带解释了应用层的分工（§71）：**PortalEX 自己页面的模拟走"应用进程内喂帧"**，
+   而不是"HAL 写相机缓冲" —— 因为这个面本来就是压缩面，线性写不可能生效。
+
+（另记一条失败的尝试：体适能 `com.bxkj.student` 的相机页需要**登录后的流程**才能到达，
+不适合作为"无人值守的第三方探针"；它的 `640×480` 两条尺寸是早期轮次手工测得的，不在本轮。）
