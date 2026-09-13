@@ -3871,6 +3871,21 @@ static void *portal_inject_thread(void *arg) {
                  g_opt_inject_stop_after);
             return NULL;
         }
+        /* `cam=` 也必须管住**注入线程**（不只是结果钩子那一路）。
+         * 实测踩过：`cam=1` 配 `mock_map` 时，App 其实开在后置（id=2），线程照样按尺寸把后置预览
+         * 写成了我们的卡片 —— 因为 build_targets 只认尺寸、不认相机。这里补上：相机不对就
+         * 全部解除映射并退回重扫，等目标相机出现再打。 */
+        if (g_opt_cam[0] != '\0' && !portal_cam_selected()) {
+            if (n != 0) {
+                for (int i = 0; i < n; i++) munmap(t[i].p, t[i].size);
+                n = 0;
+                announced = 0;
+                LOGI("注入线程：当前相机是 id=%s，与 cam=%s 不符 ⇒ 停手（等目标相机）",
+                     g_cur_cam[0] ? g_cur_cam : "?", g_opt_cam);
+            }
+            sleep(1);
+            continue;
+        }
         if (n == 0) {
             n = portal_build_targets(t, PORTAL_INJECT_MAX);
             if (n == 0) {
