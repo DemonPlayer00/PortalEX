@@ -593,6 +593,18 @@ static size_t g_opt_span_len = 0;
  * 目标：验证"把 4K 录像编码器流退回线性"是否能让我们的线性注入成立。 */
 static unsigned long g_opt_scrub_vaddr = 0;
 static int g_scrub_slot = -1;
+/** `photo_ol_vaddr=<偏移>`：在 **oemlayer 的每帧请求入口**挂一个 C 调用型桩，
+ *  只为"拍照那一帧"服务（§101）。为什么用每帧请求入口而不是结果路径：结果路径那几个符号
+ *  是**跳板**（`bti c; b <实现>`，PC 相对不可重放，§27.3 已定论挂不上），
+ *  而这个请求入口我们**已经在挂零调用桩**（`hook_rec_ol_vaddrs`，每帧命中，实测稳定），
+ *  同址换 C 调用桩是同一套机制、只是多一次 C 调用。
+ *  桩里只做一件事：请求里带回 `BLOB(0x21)` 流（= 按下快门那一帧）时置位 `g_photo_burst`。 */
+static unsigned long g_opt_photo_vaddr = 0;
+static int g_photo_slot = -1;
+/** "拍照那一帧"的触发位：请求入口置位，注入线程看到就**立刻重写一遍所有靶**再清零。
+ *  为什么不在钩子里直接写：映射表在注入线程的栈上（局部数组），钩子里拿不到；
+ *  置位 + 线程立刻响应（循环间隔 0–15ms）足够落在几百毫秒的拍照窗口里。 */
+static volatile int g_photo_burst = 0;
 /** `live_probe=<秒>`：**存活探针** —— 每 N 秒把进程里所有 ≥512KB 的 dmabuf 各读三个 64 字节窗口，
  *  与上一轮比；**内容在变的，就是此刻有硬件在写的面**。
  *
@@ -952,6 +964,8 @@ static void load_options(void) {
             g_opt_inject_delay_us = atoi(val);
         } else if (strcmp(key, "scrub_ol_vaddr") == 0) {
             g_opt_scrub_vaddr = strtoul(val, NULL, 0);
+        } else if (strcmp(key, "photo_ol_vaddr") == 0) {
+            g_opt_photo_vaddr = strtoul(val, NULL, 0);
         } else if (strcmp(key, "inject_limit") == 0) {
             g_opt_inject_limit = strtoul(val, NULL, 0);
         } else if (strcmp(key, "inject_span") == 0) {
@@ -5933,6 +5947,18 @@ static void *portal_inject_thread(void *arg) {
             }
             writes++;
         }
+        /* **拍照那一帧**：请求入口置的位 ⇒ 立刻把全部靶再写一遍（§101）。 */
+        if (__atomic_exchange_n(&g_photo_burst, 0, __ATOMIC_ACQ_REL) && n > 0) {
+            for (int i = 0; i < n; i++) {
+                size_t len2 = t[i].tlen < t[i].size ? t[i].tlen : t[i].size;
+                portal_target_write(&t[i], len2, rounds);
+            }
+            static unsigned long photo_bursts = 0;
+            photo_bursts++;
+            if (photo_bursts <= 5 || photo_bursts % 20 == 0) {
+                LOGI("拍照那一帧：已按请求入口的触发立刻重写 %d 块靶（第 %lu 次）", n, photo_bursts);
+            }
+        }
         /* **首帧注入延迟**（§74 的对标量）：从"本会话 configure_streams 返回"到"第一帧真的写进
          * 相机缓冲"的毫秒数。OPPO 相机实测在半秒内切到虚拟画面 —— 这个数字就是同一条尺子。
          * 只报一次（每个会话一次），因为这才是应用能感知的那个"就绪时刻"。 */
@@ -7049,6 +7075,15 @@ __attribute__((used)) static void portal_hook_any_c(unsigned long caller, unsign
      * 放在这里（而不是只放在 scrub 分支）：ACE5 上真正在跑的是 `req_vaddrs` 那条，
      * 而"要不要洗用途位"（scrub）与"流变了没有"是两件独立的事，不该互相绑。 */
     if (kind < PORTAL_HOOK_MAX && g_hook_is_cfg[kind]) portal_vv_notify_streams();
+    /* **拍照那一帧**（§101）：请求里带 BLOB(0x21) ⇒ 置位，注入线程下一轮立刻重写所有靶。
+     * 这是"提前认领打不赢拍照窗口"（§100）之后最便宜的一条确定性路：挂钩点是我们已经
+     * 验证过每帧都会被调用的那个请求入口，而成本只落在拍照那一帧（预览帧只多一次比较）。 */
+    if (g_photo_slot >= 0 && (int)kind == g_photo_slot) {
+        struct portal_layout LB;
+        if (portal_parse_request((const void *)a1, &LB) && portal_layout_has_blob(&LB)) {
+            __atomic_store_n(&g_photo_burst, 1, __ATOMIC_RELEASE);
+        }
+    }
     /* 请求入口：注入没就绪就把这一帧**挡住**（睡在事件字上，不是轮询） */
     if (g_opt_gate_on && g_gate_slot >= 0 && (int)kind == g_gate_slot) portal_gate_wait();
     if (!g_opt_open_probe) return;   /* ← 默认在这里就回去了，一行 I/O 都没有 */
@@ -7884,6 +7919,26 @@ static void load_real_hal(void) {
         portal_hook_rec_list(g_opt_hook_rec_ol_vaddrs, "camera.oemlayer.so");
     }
 #if defined(__aarch64__)
+    if (g_opt_photo_vaddr != 0) {
+        uintptr_t ob = portal_module_base("camera.oemlayer.so");
+        if (ob == 0) {
+            LOGE("拍照帧钩子：拿不到 oemlayer 基址");
+        } else {
+            for (int i = 0; i < PORTAL_HOOK_MAX; i++) {
+                if (g_hook_resume[i] == 0 && g_hook_name[i] == NULL) { g_photo_slot = i; break; }
+            }
+            if (g_photo_slot < 0) {
+                LOGE("拍照帧钩子：没有空槽");
+            } else {
+                snprintf(g_hook_name_buf[g_photo_slot], sizeof(g_hook_name_buf[g_photo_slot]),
+                         "camera.oemlayer.so+0x%lx(photo)", g_opt_photo_vaddr);
+                portal_inline_hook(g_photo_slot, ob, g_opt_photo_vaddr,
+                                   g_hook_name_buf[g_photo_slot]);
+                LOGI("拍照帧钩子：槽 %d ← oemlayer+0x%lx（遇 BLOB 立刻重写靶）", g_photo_slot,
+                     g_opt_photo_vaddr);
+            }
+        }
+    }
     if (g_opt_scrub_vaddr != 0) {
         uintptr_t ob = portal_module_base("camera.oemlayer.so");
         if (ob == 0) {
