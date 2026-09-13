@@ -5999,7 +5999,13 @@ static void *portal_inject_thread(void *arg) {
             bool in_burst = (g_vv_burst_until_us != 0 && now_us < g_vv_burst_until_us);
             /* 安全带：15 秒一次**廉价**核对。原来这里是无条件 munmap + 重建一整批 4MB 的
              * dbamuf —— 那本身就是周期性抖动；现在只在指纹真的变了时才重建。 */
-            bool belt_due = (now - last_scan >= 15);
+            /* **安全带间隔**：有手工模板（`mock_map`，照片/大面都走它）时收紧到 **1 秒**。
+             * 为什么（第 50 轮实测）：拍照之后那批 RAW 缓冲会被**整批换掉**（日志：同尺寸
+             * `15728640` 的 fd 全变、映射地址全变），而旧的 15 秒安全带要等到下一次核对才发现 ——
+             * 实测三连拍里只有第一张命中（78.7），后两张都打在**已经作废的那批**上（0.4 / -5.6）。
+             * 探询本身极便宜（`portal_fd_signature` 只 opendir/readlink/fstat，约 0.2ms），
+             * 因此 1 秒一次不构成抖动，却能把"换靶"从 15 秒缩到 1 秒级。 */
+            bool belt_due = (now - last_scan >= (g_mock_n > 0 ? 1 : 15));
             if ((in_burst || belt_due) && now_us >= g_vv_probe_next_us) {
                 g_vv_probe_next_us =
                     now_us + (unsigned long long)(g_opt_vv_probe_us > 0 ? g_opt_vv_probe_us : 15000);
