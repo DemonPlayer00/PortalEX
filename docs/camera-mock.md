@@ -4571,3 +4571,24 @@ manifest → {"version":1,"enabled":true,"tagFilter":[],"targets":[],…}
 要么它的决策链在**第一道门之前**就静默返回了（脚本注释："七道前置，任何一条不满足都会安静地不拦截"）。
 下一轮的判别很具体：**看 LSPosed 有没有把模块 dex 注入夹具进程**（进程级注入日志 / 该进程内的
 `[Portal]` 行是否存在），据此把"模块没加载"与"加载了但前置不满足"分开。
+
+### 70.9 第 33 轮：**"模块没被注入 App 进程"这个读法被推翻** —— 反过来给了更好的靶子
+
+LSPosed 的 `app_configs` 表（每 App 配置）里只有三条，且带 `invalidate_inline_hooks=true`：
+```
+('com.tencent.mobileqq',        HashMap{invalidate_inline_hooks=true})
+('com.bxkj.student',            HashMap{invalidate_inline_hooks=true})   ← 体适能（人脸核验那个）
+('com.zjwh.android_wh_physicalfitness', HashMap{invalidate_inline_hooks=true})  ← 另一个体适能
+```
+这个标记是**模块在 App 进程内自己写下来的**（不是 system_server 侧写的）⇒
+**模块确实被注入进了这两个体适能 App 的进程**，并且在里面跑过（还要求过 inline hook 失效重建）。
+
+⇒ 上一轮"夹具进程里没有模块日志 ⇒ 模块可能没被加载"的读法**不成立**（至少对体适能不成立）：
+- 夹具包 `moe.fuqiuluo.camerafixture` **不在** `app_configs` 里（它可能只是没触发过 inline hook 失效）；
+- App 进程里的模块日志**本来就很少**（verbose 日志里能搜到的注入词汇全是 system_server 侧的），
+  所以"没看到日志"**不能**推出"没注入"——这是我上一轮差点犯的同类错误（把"没看见"当"不存在"）。
+
+**下一手（靶子直接换成真实目标，而不是夹具）**：用验收器对**包名**跑（它的用法支持 `<包名>`）：
+`scripts/verify-app-hook.sh com.bxkj.student legacy`（或 `list`），
+并同时抓**该 App 进程内**的 `[Portal]` 行（用 `logcat --pid=$(pidof com.bxkj.student)`）——
+体适能是本项目的真实目标，而且现在有证据表明模块确实在它进程里跑过。
