@@ -5,8 +5,23 @@ project(portal_camshim C)
 #
 # 只用 C、不链接 libc++（`-DANDROID_STL=none`）：HAL 进程里多带一个 C++ 运行时
 # 既没必要，也容易与 vendor 自己的 libc++ 版本打架。
-add_library(camshim SHARED src/camshim.c)
+#
+# VVideo（src/vvideo/）是**视频数据的统一层**（形状照 Linux VFS）：
+# 命名空间 + 挂载表 + 操作表，后端按 file_system_type 注册。
+# 它的数据面只碰 RAM（memfd / 常驻缓冲），事件面用 futex（不轮询）。
+set(PORTAL_VVIDEO_SRC
+    src/vvideo/vvideo_core.c
+    src/vvideo/vvideo_event.c
+    src/vvideo/vvfs_mem.c
+    src/vvideo/vvfs_gen.c
+    src/vvideo/vvfs_shm.c
+    src/vvideo/vvfs_xform.c
+    src/vvideo/vvfs_ctl.c
+    src/vvideo/vvfs_builtin.c)
+
+add_library(camshim SHARED src/camshim.c ${PORTAL_VVIDEO_SRC})
 add_library(vcam SHARED src/vcam.c)
+target_include_directories(camshim PRIVATE src/vvideo)
 
 target_link_libraries(camshim log dl)
 target_link_libraries(vcam log dl)
