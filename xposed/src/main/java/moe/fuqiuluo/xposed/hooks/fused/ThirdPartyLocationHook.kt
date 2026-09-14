@@ -2,7 +2,7 @@ package moe.fuqiuluo.xposed.hooks.fused
 
 import android.location.LocationListener
 import android.os.Bundle
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation.invoke

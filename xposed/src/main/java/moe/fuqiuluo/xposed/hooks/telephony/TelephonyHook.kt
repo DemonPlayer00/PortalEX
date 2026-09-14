@@ -10,8 +10,7 @@ import android.telephony.CellInfoCdma
 import android.telephony.CellSignalStrengthCdma
 import android.telephony.NeighboringCellInfo
 import android.telephony.SignalStrength
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
@@ -23,6 +22,8 @@ import moe.fuqiuluo.xposed.utils.hookMethodBefore
 import moe.fuqiuluo.xposed.utils.onceHookDoNothingMethod
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
 import java.lang.reflect.Modifier
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.Hooks
 
 
 object TelephonyHook: BaseTelephonyHook() {
@@ -35,7 +36,7 @@ object TelephonyHook: BaseTelephonyHook() {
 //        kotlin.runCatching {
 //            val cCellIdentityCdma =
 //                XposedHelpers.findClass("android.telephony.CellIdentityCdma", classLoader)
-//            val hookCdma = object: XC_MethodHook() {
+//            val hookCdma = object: MethodHook() {
 //                override fun beforeHookedMethod(param: MethodHookParam?) {
 //                    if (param == null) return
 //
@@ -58,19 +59,19 @@ object TelephonyHook: BaseTelephonyHook() {
 //                hookCdma
 //            )
 //        }.onFailure {
-//            XposedBridge.log("[Portal] Hook CellIdentityCdma failed")
+//            Hooks.log("[Portal] Hook CellIdentityCdma failed")
 //        }
 
 //        kotlin.runCatching {
 //            val cCellIdentityGsm = XposedHelpers.findClass("android.telephony.CellIdentityGsm", classLoader)
 //
 //        }.onFailure {
-//            XposedBridge.log("[Portal] Hook CellIdentityGsm failed")
+//            Hooks.log("[Portal] Hook CellIdentityGsm failed")
 //        }
 
 //        XposedHelpers.findClassIfExists("android.telephony.TelephonyManager", classLoader)?.let {
-//            XposedBridge.hookAllMethods(it, "getNeighboringCellInfo", hookGetNeighboringCellInfoList)
-//            XposedBridge.hookAllMethods(it, "getCellLocation", hookGetCellLocation)
+//            Hooks.hookAllMethods(it, "getNeighboringCellInfo", hookGetNeighboringCellInfoList)
+//            Hooks.hookAllMethods(it, "getCellLocation", hookGetCellLocation)
 //        }
 
 //        kotlin.runCatching {
@@ -83,7 +84,7 @@ object TelephonyHook: BaseTelephonyHook() {
 //                }
 //            }
 //        }.onFailure {
-//            XposedBridge.log("[Portal] ITelephony.Stub not found: ${it.stackTraceToString()}")
+//            Hooks.log("[Portal] ITelephony.Stub not found: ${it.stackTraceToString()}")
 //        }
 
         if (!FakeLoc.needDowngradeToCdma) return
@@ -135,12 +136,12 @@ object TelephonyHook: BaseTelephonyHook() {
                     result = cResult
                 }
             }
-            if (XposedBridge.hookMethod(it, hookGetAllCellInfo) == null) {
+            if (Hooks.hookMethod(it, hookGetAllCellInfo) == null) {
                 Logger.error("Hook PhoneInterfaceManager.getAllCellInfo failed")
             }
         }
 
-        if(XposedBridge.hookAllMethods(cPhoneInterfaceManager, "getCellLocation", afterHook {
+        if(Hooks.hookAllMethods(cPhoneInterfaceManager, "getCellLocation", afterHook {
                 if (!FakeLoc.enable || BinderUtils.isSystemAppsCall()) {
                     return@afterHook
                 }
@@ -520,8 +521,8 @@ object TelephonyHook: BaseTelephonyHook() {
     }
 
 //    private fun hookOnTransactForServiceInstance(m: Method) {
-//        var hook: XC_MethodHook.Unhook? = null
-//        hook = XposedBridge.hookMethod(m, object : XC_MethodHook() {
+//        var hook: MethodHook.Unhook? = null
+//        hook = Hooks.hookMethod(m, object : MethodHook() {
 //            override fun beforeHookedMethod(param: MethodHookParam?) {
 //                if (param == null) return
 //
@@ -541,12 +542,12 @@ object TelephonyHook: BaseTelephonyHook() {
 //        println("[Portal] found " + cITelephony.declaredMethods.mapNotNull {
 //            if (it.returnType.javaClass.name.contains("CellLocation")) {
 //                if (FakeLocationConfig.DEBUG) {
-//                    XposedBridge.log("[Portal] hook method: $it")
+//                    Hooks.log("[Portal] hook method: $it")
 //                }
-//                XposedBridge.hookMethod(it, hookGetCellLocation)
+//                Hooks.hookMethod(it, hookGetCellLocation)
 //            } else null
 //        }.size + " methods(CellLocation) to hook in ITelephony\$Stub")
 //
-//        XposedBridge.hookAllMethods(cITelephony, "getNeighboringCellInfo", hookGetNeighboringCellInfoList)
+//        Hooks.hookAllMethods(cITelephony, "getNeighboringCellInfo", hookGetNeighboringCellInfoList)
 //    }
 }
