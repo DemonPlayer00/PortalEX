@@ -4,7 +4,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.microbios.nmea.NMEA
