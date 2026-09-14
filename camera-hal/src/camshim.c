@@ -580,6 +580,17 @@ static int g_opt_inject_stop_after = 0;
  * 应用拿到断连回调并释放相机。这是"夺取"而不是"请求"：应用没有拒绝的余地。
  */
 static int g_opt_cam_timeout = 0;
+/**
+ * `cam_timeout_screen_off=<秒>`：**熄屏时的相机占用上限**（0 = 关）。
+ *
+ * 为什么需要第二条（用户澄清的目标）：**相机支持长时间运行**，合法的长会话不该被误杀；
+ * 超时要防的是"**无人值守**时应用一直占着相机"造成损坏 —— 而"无人值守"最硬的信号就是**屏幕熄灭**。
+ * 于是语义分成两层：
+ *   · `cam_timeout_screen_off`：熄屏多久 ⇒ 剥夺（无人值守的主判据）；
+ *   · `cam_timeout`：**绝对**上限（屏幕亮着也算），防止"屏幕常亮但没人操作"过夜。
+ * 屏幕状态从 sysfs 读（HAL 进程里没有 PowerManager），读不到就只保留绝对上限并记一次日志。
+ */
+static int g_opt_cam_timeout_screen_off = 0;
 /** 本次会话起点与"是否已经投递过"（只在 HAL 进程内，`shim_open` 重置） */
 static time_t g_cam_session_start = 0;
 static volatile int g_cam_timeout_fired = 0;
@@ -1008,6 +1019,8 @@ static void load_options(void) {
             g_opt_inject_stop_after = atoi(val);
         } else if (strcmp(key, "cam_timeout") == 0) {
             g_opt_cam_timeout = atoi(val);
+        } else if (strcmp(key, "cam_timeout_screen_off") == 0) {
+            g_opt_cam_timeout_screen_off = atoi(val);
         } else if (strcmp(key, "live_probe") == 0) {
             g_opt_live_probe = atoi(val);
         } else if (strcmp(key, "vvideo") == 0) {
@@ -7695,6 +7708,36 @@ static void *portal_binder_thread(void *arg) {
  * 5 秒一步地看（上限本身就是分钟级，不需要更细）；只投一次，投完继续守着，
  * 下一次 `shim_open`（新会话）会把起点和标记重置。
  */
+/** 屏幕现在还亮着吗：读 sysfs（HAL 里没有 PowerManager）。读不到返回 -1（未知）。 */
+static int portal_screen_on(void) {
+    static const char *nodes[] = {
+        "/sys/class/backlight/panel0-backlight/brightness",
+        "/sys/class/backlight/panel1-backlight/brightness",
+        "/sys/class/graphics/fb0/blank",
+        "/sys/class/drm/card0-DSI-1/dpms",
+    };
+    int known = 0;
+    for (unsigned i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
+        int fd = open(nodes[i], O_RDONLY);
+        if (fd < 0) continue;
+        char b[32] = {0};
+        ssize_t r = read(fd, b, sizeof(b) - 1);
+        close(fd);
+        if (r <= 0) continue;
+        long v = strtol(b, NULL, 10);
+        if (strstr(nodes[i], "blank") != NULL || strstr(nodes[i], "dpms") != NULL) {
+            /* blank/dpms：非 0 / "Off" ⇒ 熄屏 */
+            if (strncmp(b, "Off", 3) == 0) return 0;
+            known = 1;
+            if (v != 0) return 0;
+        } else {
+            known = 1;
+            if (v == 0) return 0; /* 背光 0 ⇒ 熄屏 */
+        }
+    }
+    return known ? 1 : -1;
+}
+
 static void *portal_cam_timeout_thread(void *arg) {
     (void)arg;
     for (;;) {
@@ -7702,7 +7745,21 @@ static void *portal_cam_timeout_thread(void *arg) {
         if (g_opt_cam_timeout <= 0 || g_cam_session_start == 0) continue;
         if (__atomic_load_n(&g_cam_timeout_fired, __ATOMIC_ACQUIRE)) continue;
         time_t held = time(NULL) - g_cam_session_start;
-        if (held < (time_t)g_opt_cam_timeout) continue;
+        /* **两层判据**（用户澄清的目标：相机支持长跑，超时只为防"无人值守损坏"）：
+         *   · 熄屏满 `cam_timeout_screen_off` 秒 ⇒ 剥夺（无人值守的主判据）；
+         *   · 不管屏幕，满 `cam_timeout` 秒 ⇒ 剥夺（绝对上限）。
+         * 屏幕状态读不到（SELinux 挡住/节点不存在）时**只留绝对上限**，并记一次日志。 */
+        int screen = portal_screen_on();
+        static int screen_warned = 0;
+        if (screen < 0 && !screen_warned && g_opt_cam_timeout_screen_off > 0) {
+            screen_warned = 1;
+            LOGI("相机占用看门狗：读不到屏幕状态 ⇒ 本次只按绝对上限 %d 秒（熄屏判据不可用）",
+                 g_opt_cam_timeout);
+        }
+        int by_screen = (g_opt_cam_timeout_screen_off > 0 && screen == 0 &&
+                         held >= (time_t)g_opt_cam_timeout_screen_off);
+        int by_abs = (g_opt_cam_timeout > 0 && held >= (time_t)g_opt_cam_timeout);
+        if (!by_screen && !by_abs) continue;
         __atomic_store_n(&g_cam_timeout_fired, 1, __ATOMIC_RELEASE);
         /* `camera3_notify_msg_t`：type@0，union 里 error 的第一项 frame_number@4、
          * error_code@8、error_stream@16（本文件里没有这个头文件的定义，按布局自己拼）。 */
@@ -7723,8 +7780,11 @@ static void *portal_cam_timeout_thread(void *arg) {
         const camera3_callback_ops_t *cb = g_framework_callbacks;
         if (cb != NULL && cb->notify != NULL) {
             cb->notify(cb, &msg);
-            LOGE("相机占用超时（已持 %ld 秒，上限 %d 秒）⇒ 已投递 ERROR_DEVICE，框架将拆会话、应用释放相机",
-                 (long)held, g_opt_cam_timeout);
+            LOGE("相机占用超时（已持 %ld 秒；触发=%s，熄屏上限 %d 秒 / 绝对上限 %d 秒，屏幕=%s）"
+                 "⇒ 已投递 ERROR_DEVICE，框架将拆会话、应用释放相机",
+                 (long)held, by_screen ? "熄屏无人值守" : "绝对上限",
+                 g_opt_cam_timeout_screen_off, g_opt_cam_timeout,
+                 screen == 0 ? "灭" : (screen > 0 ? "亮" : "未知"));
         } else {
             LOGE("相机占用超时（已持 %ld 秒）但拿不到框架回调表 ⇒ 无法投递 ERROR_DEVICE", (long)held);
         }
@@ -7744,21 +7804,24 @@ static int shim_open(const struct hw_module_t *module, const char *id,
     if (g_opt_auto_tpl) portal_auto_reset();
 #endif
     /* **系统级相机占用看门狗**（`cam_timeout=<秒>`）：新会话重新起表；线程只起一次。 */
-    if (g_opt_cam_timeout > 0) {
+    /* ⚠️ 判据要**两个开关一起看**（本轮踩到）：只设 `cam_timeout_screen_off`（熄屏判据）时，
+     * 若这里只看 `cam_timeout`，看门狗线程根本不会起 —— 熄屏保护静默失效。 */
+    if (g_opt_cam_timeout > 0 || g_opt_cam_timeout_screen_off > 0) {
         g_cam_session_start = time(NULL);
         __atomic_store_n(&g_cam_timeout_fired, 0, __ATOMIC_RELEASE);
         if (!__atomic_exchange_n(&g_cam_watch_started, 1, __ATOMIC_ACQ_REL)) {
             pthread_t th;
             if (pthread_create(&th, NULL, portal_cam_timeout_thread, NULL) == 0) {
                 pthread_detach(th);
-                LOGI("相机占用看门狗：已启动（上限 %d 秒，到点投 ERROR_DEVICE 强制拆会话）",
-                     g_opt_cam_timeout);
+                LOGI("相机占用看门狗：已启动（熄屏 %d 秒 / 绝对 %d 秒，到点投 ERROR_DEVICE 强制拆会话）",
+                     g_opt_cam_timeout_screen_off, g_opt_cam_timeout);
             } else {
                 LOGE("相机占用看门狗：线程创建失败");
                 __atomic_store_n(&g_cam_watch_started, 0, __ATOMIC_RELEASE);
             }
         } else {
-            LOGI("相机占用看门狗：新会话起表（上限 %d 秒）", g_opt_cam_timeout);
+            LOGI("相机占用看门狗：新会话起表（熄屏 %d 秒 / 绝对 %d 秒）", g_opt_cam_timeout_screen_off,
+                 g_opt_cam_timeout);
         }
     }
     if (id != NULL) snprintf(g_cur_cam, sizeof(g_cur_cam), "%s", id);
