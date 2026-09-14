@@ -21,6 +21,36 @@ package moe.fuqiuluo.xposed.utils;
  */
 public abstract class MethodHook {
 
+    /**
+     * 本次回调**是否实现了 before 阶段**。
+     *
+     * 为什么需要它：旧 API 是 before/after 两个回调，框架按你有没有重写来决定调不调；
+     * 而 libxposed 是**单回调拦截器链**（`intercept(chain)`），框架只会调我们那一个方法 ——
+     * 于是"这个钩子到底要不要跑某个阶段"必须由我们自己判断，否则会给只写了 after 的钩子
+     * 白跑一次 before（甚至因为 before 为空而改变短路判断）。
+     * 见 {@code Hooks.intercept}：只实现了 after 时，`chain.proceed()` 的返回值必须留住。
+     */
+    public final boolean hasBefore() {
+        return getClass() != MethodHook.class && declares("beforeHookedMethod");
+    }
+
+    /** 同 {@link #hasBefore()}，对应 after 阶段。 */
+    public final boolean hasAfter() {
+        return getClass() != MethodHook.class && declares("afterHookedMethod");
+    }
+
+    /** 本类层次里是否**声明过**（重写过）某个回调方法 */
+    private boolean declares(String name) {
+        Class<?> c = getClass();
+        while (c != null && c != MethodHook.class) {
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                if (m.getName().equals(name)) return true;
+            }
+            c = c.getSuperclass();
+        }
+        return false;
+    }
+
     /** 原方法执行**之前**调用。赋值 `param.result` 即短路（见 [MethodHookParam] 的类注释）。 */
     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
     }
@@ -34,3 +64,4 @@ public abstract class MethodHook {
         void unhook();
     }
 }
+
