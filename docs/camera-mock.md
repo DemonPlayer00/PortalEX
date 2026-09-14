@@ -6434,3 +6434,58 @@ sh scripts/hal-quick-check.sh      # 顺手确认没把预览注入弄坏
 
 **在此之前，不许把它记成"已修好"** —— 这条与 §102/§103 是同一个规矩：
 实现 ≠ 生效，没被真机验证过的机制一律按"未验证"记账。
+
+---
+
+## 110. 夹具超时：补上"自持"计时器（并按用户要求设为 20 秒）——真机验证通过（第 84 轮）
+
+### 110.1 原来那条的两个洞
+
+夹具此前只有一条**系统可用性回调**触发的计时器（`FixtureApp`）。它有两个洞：
+
+1. **回调没到就永远不起表** —— 相机在回调注册完成之前就被打开时会错过（夹具的 Activity 正是
+   `onCreate` 里开相机）；
+2. **全局占用语义** —— 别的应用占着相机，夹具也会起表（§73.1 记过这条误报）。
+
+### 110.2 现在改成"谁开谁报"
+
+- 新增 `CameraWatchdog.kt`（**自持**、按引用计数配对）：夹具自己的相机 `open/close` 处调用
+  `start()/stop()` —— `CameraFixtureActivity.openCamera()`/`closeAll()` 与
+  `LegacyCameraActivity` 的 `Camera.open`/`release` 都已接上；
+- `FixtureApp` 的可用性回调**退居兜底**：只在"夹具在前台（有 resumed Activity）且自己没在计时"时起表
+  —— 这样既补上洞①，又不会因为别的应用占着相机就误杀夹具（洞②）；
+- 到点动作不变：`Process.killProcess` ⇒ **剥夺并退出**（相机被系统回收）。
+
+### 110.3 真机验证（**20 秒**，用户指定的验证值）
+
+```
+I CameraFixture: [Fixture] 相机占用计时开始：Camera2 id=0（上限 20s，自持）      08:26:19.762
+W CameraFixture: [Fixture] 相机占用超时（Camera2 id=0 已持 20s，上限 20s）⇒ 剥夺并退出  08:26:39.762
+T+26s：pidof moe.fuqiuluo.camerafixture → 空
+```
+
+**20.000 秒整、进程消失** ⇒ 起表/到点/剥夺三段都对。
+
+**两个必须记住的点**：
+1. **交付值是 3 分钟**（`3 * 60_000L`）——当前设备上装的是**用户指定的 20 秒验证版**；
+   验完改回并重装（APK 是构建产物，改源码不重装不生效）。
+2. 验证时**屏幕必须解锁且保持常亮**：锁屏状态下 Activity 起在 keyguard 后面 ⇒ surface 立刻销毁 ⇒
+   夹具自己就把相机放了，计时器随即停表（现象：`closed: surface-destroyed（持有 0s）`）。
+   这不是缺陷（surface 没了本就等于不再持有相机），但会把验证搞成假 FAIL。
+   ```
+   adb shell input keyevent KEYCODE_WAKEUP && adb shell input swipe 632 2200 632 700 200
+   adb shell svc power stayon true
+   ```
+
+### 110.4 顺带记一件**损失**（教训）
+
+`/tmp/px-master` 这个工作树被系统的 `/tmp` 清理**删掉了**，而夹具源码当时**没有提交**
+（按用户要求"不进 git 树"）⇒ 上一轮写的 `FixtureApp.kt`/`CameraWatchdog.kt` 与 Activity 改动**全部丢失**，
+只剩设备上那份 APK 是活的。本轮按记忆重建，并把工作树放在**不会被清理的**持久路径：
+
+```bash
+git worktree add --detach ~/px-fixture-master master     # 不在 /tmp
+cp /var/www/PortalEX/local.properties ~/px-fixture-master/   # 新工作树缺 sdk.dir，需要它才能构建
+cd ~/px-fixture-master && ./gradlew :camerafixture:assembleDebug
+```
+**教训**：凡"故意不入库"的代码，必须放在**不会被自动清理**的路径下；`/tmp` 不是仓库的替代品。
