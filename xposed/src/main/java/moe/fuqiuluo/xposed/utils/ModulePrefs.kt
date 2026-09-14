@@ -10,11 +10,18 @@ import java.io.File
  * （`sendExtraCommand("portal", …)`）被刻意限死在 PortalEX 自己的 uid 上
  * （`BinderUtils.isLocationProviderEnabled`），普通应用进程拿不到 key，也就拿不到配置。
  *
- * LSPosed 提供了 XSharedPreferences（注入进程可直接读模块应用的 prefs 文件），
- * 这正是模块分发开关的标准通道。这里**全程反射调用**：
- * - 类/构造签名随 LSPosed 版本有过变化（旧版 `(String, String)`，新版接受 `File`）；
- * - 反射失败 / prefs 不可读时一律返回 null，调用方按"开关未开启"处理，
- *   即**回落到既有行为**，绝不因为读不到设置而改变模块功能。
+ * LSPosed 曾提供 XSharedPreferences（注入进程可直接读模块应用的 prefs 文件），这正是模块
+ * 分发开关的标准通道；而**现代框架已宣布它即将废弃**，替代品是 libxposed 的
+ * `XposedInterface.getRemotePreferences(group)`（框架把偏好投递进被注入进程，只读）。
+ * 于是这里按**新通道优先**的顺序读：
+ *
+ *  1. [ModuleRuntime.remotePreferences] —— libxposed 远程偏好（入口在 `onModuleLoaded` 里登记）；
+ *  2. 旧 XSharedPreferences（反射）—— 过渡期兼容，等旧入口摘掉后再删。
+ *
+ * 旧通道**全程反射调用**：类/构造签名随 LSPosed 版本变过（旧版 `(String, String)`，
+ * 新版接受 `File`），且该类不在模块 classloader 的可见白名单里。
+ * 两条通道失败时一律返回 null，调用方按"开关未开启"处理，即**回落到既有行为**，
+ * 绝不因为读不到设置而改变模块功能。
  */
 internal object ModulePrefs {
 
@@ -53,8 +60,20 @@ internal object ModulePrefs {
     }
 
     private fun readBoolean(key: String, def: Boolean): Boolean? {
+        // ① libxposed 远程偏好（现代通道，框架内置）
+        ModuleRuntime.remotePreferences(PREFS_NAME)?.let { prefs ->
+            val v = runCatching { prefs.getBoolean(key, def) }.onFailure {
+                Logger.error("ModulePrefs: 远程偏好读 $key 失败：${it.message}", it)
+            }.getOrNull()
+            if (v != null) {
+                dbg("$key=$v (libxposed remote)")
+                return v
+            }
+        }
+
+        // ② 旧 XSharedPreferences（过渡期兼容；现代框架已宣布废弃）
         val prefs = open() ?: run {
-            dbg("XSharedPreferences unavailable, treat $key as off")
+            dbg("no preference channel, treat $key as off")
             return null
         }
         return runCatching {

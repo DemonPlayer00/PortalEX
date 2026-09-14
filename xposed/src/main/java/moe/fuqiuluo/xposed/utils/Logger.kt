@@ -1,6 +1,5 @@
 package moe.fuqiuluo.xposed.utils
 
-import de.robv.android.xposed.XposedBridge
 
 /**
  * 模块日志。
@@ -22,7 +21,7 @@ object Logger {
     private fun emit(tag: String, msg: String, throwable: Throwable?) {
         val text = if (throwable == null) "[Portal]$tag $msg"
         else "[Portal]$tag $msg: ${throwable.stackTraceToString()}"
-        val logged = runCatching { XposedBridge.log(text) }.isSuccess
+        val logged = runCatching { Hooks.log(text) }.isSuccess
         if (!logged) runCatching { println(text) }
     }
 

@@ -1,9 +1,9 @@
 package moe.fuqiuluo.xposed.hooks.gnss
 
 import android.location.Location
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation.invoke
@@ -13,6 +13,7 @@ import moe.fuqiuluo.xposed.utils.beforeHook
 import moe.fuqiuluo.xposed.utils.hookAllMethods
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import java.util.Collections
+import moe.fuqiuluo.xposed.utils.Hooks
 
 object GnssHook: BaseLocationHook() {
     operator fun invoke(classLoader: ClassLoader) {
@@ -23,7 +24,7 @@ object GnssHook: BaseLocationHook() {
     private fun hookFrameworkGnss(classLoader: ClassLoader) {
         val cGnssManagerService = XposedHelpers.findClassIfExists("com.android.server.location.GnssManagerService", classLoader) ?: return
 
-        val doNothingMethod = object: XC_MethodHook() {
+        val doNothingMethod = object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam?) {
                 if (param == null || param.args.isEmpty()) return
 
@@ -41,19 +42,19 @@ object GnssHook: BaseLocationHook() {
         }
 
         // AGPS Listener?
-        XposedBridge.hookAllMethods(cGnssManagerService, "addGnssAntennaInfoListener", doNothingMethod)
-        XposedBridge.hookAllMethods(cGnssManagerService, "addGnssMeasurementsListener", doNothingMethod)
-        XposedBridge.hookAllMethods(cGnssManagerService, "addGnssNavigationMessageListener", doNothingMethod)
-        XposedBridge.hookAllMethods(cGnssManagerService, "removeGnssAntennaInfoListener", doNothingMethod)
-        XposedBridge.hookAllMethods(cGnssManagerService, "removeGnssMeasurementsListener", doNothingMethod)
-        XposedBridge.hookAllMethods(cGnssManagerService, "removeGnssNavigationMessageListener", doNothingMethod)
+        Hooks.hookAllMethods(cGnssManagerService, "addGnssAntennaInfoListener", doNothingMethod)
+        Hooks.hookAllMethods(cGnssManagerService, "addGnssMeasurementsListener", doNothingMethod)
+        Hooks.hookAllMethods(cGnssManagerService, "addGnssNavigationMessageListener", doNothingMethod)
+        Hooks.hookAllMethods(cGnssManagerService, "removeGnssAntennaInfoListener", doNothingMethod)
+        Hooks.hookAllMethods(cGnssManagerService, "removeGnssMeasurementsListener", doNothingMethod)
+        Hooks.hookAllMethods(cGnssManagerService, "removeGnssNavigationMessageListener", doNothingMethod)
 
         run {
             val hookedGnssCallback = Collections.synchronizedSet(HashSet<String>())
             val unhooks = cGnssManagerService.declaredMethods.filter {
                 it.name == "registerGnssNmeaCallback" && it.parameterTypes.size > 1
             }.map { method ->
-                XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                Hooks.hookMethod(method, object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param == null || param.args[0] == null) return
                         val classListener = param.args[0].javaClass
@@ -64,7 +65,7 @@ object GnssHook: BaseLocationHook() {
                         if (FakeLoc.enableDebugLog)
                             Logger.debug("registerGnssNmeaCallback: $classListener")
                         kotlin.runCatching {
-                            XposedHelpers.findAndHookMethod(classListener, "onNmeaReceived", Long::class.java, String::class.java, object: XC_MethodHook() {
+                            XposedHelpers.findAndHookMethod(classListener, "onNmeaReceived", Long::class.java, String::class.java, object: MethodHook() {
                                 override fun beforeHookedMethod(param: MethodHookParam) {
                                     if (FakeLoc.enableMockGnss && !FakeLoc.enableAGPS) {
                                         if (FakeLoc.enableDebugLog)

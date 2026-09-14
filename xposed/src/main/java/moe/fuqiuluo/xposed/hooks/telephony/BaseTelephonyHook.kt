@@ -1,10 +1,11 @@
 package moe.fuqiuluo.xposed.hooks.telephony
 
 import moe.fuqiuluo.xposed.BaseDivineService
+import moe.fuqiuluo.xposed.utils.MethodHook
 
 abstract class BaseTelephonyHook: BaseDivineService() {
     companion object {
-//        val hookGetCellLocation = object: XC_MethodHook() {
+//        val hookGetCellLocation = object: MethodHook() {
 //            override fun afterHookedMethod(param: MethodHookParam?) {
 //                if (param == null || param.result == null) return
 //
@@ -38,7 +39,7 @@ abstract class BaseTelephonyHook: BaseDivineService() {
 //            }
 //        }
 //
-//        val hookGetNeighboringCellInfoList = object: XC_MethodHook() {
+//        val hookGetNeighboringCellInfoList = object: MethodHook() {
 //            override fun afterHookedMethod(param: MethodHookParam?) {
 //                if (param == null || param.result == null) return
 //
