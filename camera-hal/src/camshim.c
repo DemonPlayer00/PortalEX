@@ -4469,7 +4469,17 @@ __attribute__((used)) static volatile unsigned long g_res_done;
 __attribute__((used)) static volatile unsigned long g_hook_resume_res;
 PORTAL_HOOK_STUB_RES(portal_hook_res0, g_hook_resume_res)
 
-#define PORTAL_INJECT_MAX 24
+/**
+ * 一次能接管的最大靶数。
+ *
+ * ⚠️ **原来是 24，实测不够**（用户报"规律闪烁 / 有的面真实有的面是假的"）：
+ * 一个多流相机会话（预览 10 块 + 亮度面 13 块 + 色度面 + 分析流 16 块 …）轻松超过 24，
+ * 而 `portal_build_targets()` 是**按 `readdir` 顺序取到上限为止** —— 于是**只有一部分缓冲被接管**，
+ * 没被接管的那几块继续显示真实画面 ⇒ 表现就是"我们的画面与真实画面交替出现（规律闪烁）"，
+ * 以及"某个应用的预览是真的、另一个面是假的"。
+ * 上限拉到 64：覆盖一整个会话的所有输出缓冲；写入量由 `inject_sync` 控制（见下），不靠这个上限省流量。
+ */
+#define PORTAL_INJECT_MAX 64
 #define PORTAL_MOCK_MAX 6
 
 /** `mock_map=<尺寸>:<路径>[,<尺寸>:<路径>…]`：**按缓冲尺寸分别给模板**。
