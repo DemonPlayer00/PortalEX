@@ -60,7 +60,12 @@ android {
 }
 
 dependencies {
+    // 旧 XposedBridge API：过渡期仍在用（S4 之后只有 Hooks.kt 适配层引用）。两条入口并存，
+    // 直到 libxposed 入口在真机上验证通过再摘。
     compileOnly(libs.xposed.api)
+    // libxposed 现代 API。**compileOnly 是硬要求**：这些类由框架的 framework.dex 提供并注入
+    // 目标进程，打进模块就成了第二份实现（还会和框架的类冲突）。
+    compileOnly(libs.libxposed.api)
     compileOnly(project(":system-api"))
     implementation(project(":nmea"))
     // 解析平台库 mini debug info（.gnu_debugdata，xz）用；随模块 dex 进 system_server

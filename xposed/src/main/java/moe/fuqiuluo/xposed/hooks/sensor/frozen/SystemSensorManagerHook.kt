@@ -64,8 +64,7 @@ import android.hardware.SensorManager
 import android.location.Location
 import android.os.Build
 import android.os.Handler
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
@@ -75,6 +74,7 @@ import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicInteger
+import moe.fuqiuluo.xposed.utils.Hooks
 
 /**
  * 外周传感器模拟 hook（真实回调改写方案）。
@@ -482,7 +482,7 @@ object SystemSensorManagerHook {
 
             return sensor
         } catch (t: Throwable) {
-            XposedBridge.log("[Portal] create fake step sensor failed: ${t.message}")
+            Hooks.log("[Portal] create fake step sensor failed: ${t.message}")
             return null
         }
     }
@@ -689,7 +689,7 @@ object SystemSensorManagerHook {
                         "pushEvents=${trPushEvents} pushedSteps=${trPushes} yields=${trYields} blocked=${trBlocked}"
             }
             f.writeText(text)
-            XposedBridge.log("[StepTrace] " + text.replace("\n", " | "))
+            Hooks.log("[StepTrace] " + text.replace("\n", " | "))
         }
     }
 
@@ -707,7 +707,7 @@ object SystemSensorManagerHook {
      */
     init {
         runCatching {
-            XposedBridge.log(
+            Hooks.log(
                 "[StepTrace] app-side sensor mock installed (blocked=${appMockBlocked()}, " +
                         "debug.portalex.appsensor=${propRaw()})"
             )
@@ -869,7 +869,7 @@ object SystemSensorManagerHook {
                     reg.listener.onSensorChanged(event)
                 }
             } catch (t: Throwable) {
-                XposedBridge.log("[Portal] step listener callback failed: ${t.message}")
+                Hooks.log("[Portal] step listener callback failed: ${t.message}")
             }
         }
     }

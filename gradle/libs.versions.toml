@@ -1,6 +1,11 @@
 [versions]
 agp = "9.3.0"
 xposed = "82"
+# libxposed 现代 API。选 101 而不是最新的 102：本模块用不到 102 才有的
+# HotReloadingParam/HotReloadedParam，而 minApiVersion=101 能让模块在只实现 101
+# 的框架上也能加载（向后兼容由框架保证：102 实现包含 101 的全部面）。
+# 设备实测：LSPosed v2.2.0 (7854) 的 framework.dex 自带完整 102 面。
+libxposed = "101.0.0"
 kotlin = "2.4.20"
 coreKtx = "1.15.0"
 junit = "4.13.2"
@@ -18,6 +23,7 @@ jetbrainsKotlinJvm = "2.4.20"
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 xposed-api = { group = "de.robv.android.xposed", name = "api", version.ref = "xposed" }
+libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

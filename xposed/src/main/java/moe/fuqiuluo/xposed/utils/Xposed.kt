@@ -1,8 +1,5 @@
 package moe.fuqiuluo.xposed.utils
 
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import java.lang.reflect.Method
 import java.util.Collections
 import java.util.concurrent.locks.ReentrantLock
@@ -35,7 +32,7 @@ private fun <T> ifNotHook(
  * This method will only allow one hooker to add into Xposed.
  * @return Unhook object, you can use it to unhook the method.
  */
-fun Method.onceHook(callback: XC_MethodHook): XC_MethodHook.Unhook? {
+fun Method.onceHook(callback: MethodHook): MethodHook.Unhook? {
     return ifNotHook(declaringClass.name, name, parameterTypes) {
         hookOnceLock.withLock {
             // 锁内二次检查：避免两个线程同时通过外层 contains 检查后重复 hook 同一方法
@@ -44,7 +41,7 @@ fun Method.onceHook(callback: XC_MethodHook): XC_MethodHook.Unhook? {
             }
             hookedMethods.add(it)
             try {
-                XposedBridge.hookMethod(this, callback)
+                Hooks.hookMethod(this, callback)
             } catch (t: Throwable) {
                 // hook 失败时回滚标记，避免后续无法重试
                 hookedMethods.remove(it)
@@ -61,13 +58,13 @@ fun Method.onceHook(callback: XC_MethodHook): XC_MethodHook.Unhook? {
  *
  * @return Unhook object, you can use it to unhook the method.
  */
-fun Method.onceHookBefore(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
-    return onceHook(object : XC_MethodHook() {
+fun Method.onceHookBefore(callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
+    return onceHook(object : MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     })
@@ -78,13 +75,13 @@ fun Method.onceHookBefore(callback: XC_MethodHook.MethodHookParam.() -> Unit): X
  * Note: the callback will only be executed after the original method.
  * @return Unhook object, you can use it to unhook the method.
  */
-fun Method.onceHookAfter(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
-    return onceHook(object : XC_MethodHook() {
+fun Method.onceHookAfter(callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
+    return onceHook(object : MethodHook() {
         override fun afterHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     })
@@ -94,8 +91,8 @@ fun Method.onceHookAfter(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC
  * This method will only allow one hooker to add into Xposed.
  * @return set of Unhook object, you can use it to unhook the method.
  */
-fun <T> Class<T>.onceHookAllMethod(methodName: String, callback: XC_MethodHook): Set<XC_MethodHook.Unhook> {
-    val unhooks = mutableSetOf<XC_MethodHook.Unhook>()
+fun <T> Class<T>.onceHookAllMethod(methodName: String, callback: MethodHook): Set<MethodHook.Unhook> {
+    val unhooks = mutableSetOf<MethodHook.Unhook>()
     hookOnceLock.withLock {
         declaredMethods.forEach { method ->
             if (method.name == methodName) {
@@ -105,7 +102,7 @@ fun <T> Class<T>.onceHookAllMethod(methodName: String, callback: XC_MethodHook):
                         return@ifNotHook
                     }
                     val unhook = runCatching { method.hook(callback) }.getOrElse {
-                        XposedBridge.log(it)
+                        Hooks.log(it)
                         null
                     }
                     if (unhook != null) {
@@ -126,7 +123,7 @@ fun <T> Class<T>.onceHookAllMethod(methodName: String, callback: XC_MethodHook):
  *
  * @return Unhook object, you can use it to unhook the method.
  */
-fun <T> Class<T>.onceHookMethod(methodName: String, vararg parameterTypes: Class<*>, callback: XC_MethodHook): XC_MethodHook.Unhook? {
+fun <T> Class<T>.onceHookMethod(methodName: String, vararg parameterTypes: Class<*>, callback: MethodHook): MethodHook.Unhook? {
     return XposedHelpers.findMethodExactIfExists(this, methodName, *parameterTypes)?.onceHook(callback)
 }
 
@@ -137,7 +134,7 @@ fun <T> Class<T>.onceHookMethod(methodName: String, vararg parameterTypes: Class
  *
  * @return Unhook object, you can use it to unhook the method.
  */
-fun <T> Class<T>.onceHookMethodBefore(methodName: String, vararg parameterTypes: Class<*>, callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
+fun <T> Class<T>.onceHookMethodBefore(methodName: String, vararg parameterTypes: Class<*>, callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
     return XposedHelpers.findMethodExactIfExists(this, methodName, *parameterTypes)?.onceHookBefore(callback)
 }
 
@@ -146,7 +143,7 @@ fun <T> Class<T>.onceHookMethodBefore(methodName: String, vararg parameterTypes:
  * Note: the callback will only be executed after the original method.
  * @return Unhook object, you can use it to unhook the method.
  */
-fun <T> Class<T>.onceHookMethodAfter(methodName: String, vararg parameterTypes: Class<*>, callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
+fun <T> Class<T>.onceHookMethodAfter(methodName: String, vararg parameterTypes: Class<*>, callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
     return XposedHelpers.findMethodExactIfExists(this, methodName, *parameterTypes)?.onceHookAfter(callback)
 }
 
@@ -157,9 +154,9 @@ fun <T> Class<T>.onceHookMethodAfter(methodName: String, vararg parameterTypes: 
  *
  * @return Unhook object, you can use it to unhook the method.
  */
-fun <T> Class<T>.onceHookDoNothingMethod(methodName: String, vararg parameterTypes: Class<*>, shouldDoNothing: XC_MethodHook.MethodHookParam.() -> Boolean): XC_MethodHook.Unhook? {
+fun <T> Class<T>.onceHookDoNothingMethod(methodName: String, vararg parameterTypes: Class<*>, shouldDoNothing: MethodHookParam.() -> Boolean): MethodHook.Unhook? {
     return onceHookMethodBefore(methodName, *parameterTypes) {
-        if (kotlin.runCatching { shouldDoNothing() }.onFailure { XposedBridge.log(it) }.getOrNull() == true) {
+        if (kotlin.runCatching { shouldDoNothing() }.onFailure { Hooks.log(it) }.getOrNull() == true) {
             result = null
         }
     }
@@ -169,21 +166,21 @@ fun <T> Class<T>.onceHookDoNothingMethod(methodName: String, vararg parameterTyp
  * This method will be hooked.
  * @return set of Unhook object, you can use it to unhook the method
  */
-fun <T> Class<T>.hookAllMethods(methodName: String, callback: XC_MethodHook): Set<XC_MethodHook.Unhook> {
-    return XposedBridge.hookAllMethods(this, methodName, callback)
+fun <T> Class<T>.hookAllMethods(methodName: String, callback: MethodHook): Set<MethodHook.Unhook> {
+    return Hooks.hookAllMethods(this, methodName, callback)
 }
 
 /**
  * This method will be hooked,
  * but the callback will only be executed before the original method
  */
-fun <T> Class<T>.hookAllMethodsBefore(methodName: String, callback: XC_MethodHook.MethodHookParam.() -> Unit): Set<XC_MethodHook.Unhook> {
-    return hookAllMethods(methodName, object : XC_MethodHook() {
+fun <T> Class<T>.hookAllMethodsBefore(methodName: String, callback: MethodHookParam.() -> Unit): Set<MethodHook.Unhook> {
+    return hookAllMethods(methodName, object : MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     })
@@ -193,13 +190,13 @@ fun <T> Class<T>.hookAllMethodsBefore(methodName: String, callback: XC_MethodHoo
  * This method will be hooked,
  * but the callback will only be executed after the original method
  */
-fun <T> Class<T>.hookAllMethodsAfter(methodName: String, callback: XC_MethodHook.MethodHookParam.() -> Unit): Set<XC_MethodHook.Unhook> {
-    return hookAllMethods(methodName, object : XC_MethodHook() {
+fun <T> Class<T>.hookAllMethodsAfter(methodName: String, callback: MethodHookParam.() -> Unit): Set<MethodHook.Unhook> {
+    return hookAllMethods(methodName, object : MethodHook() {
         override fun afterHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     })
@@ -212,21 +209,21 @@ fun <T> Class<T>.hookAllMethodsAfter(methodName: String, callback: XC_MethodHook
  *
  * @return Unhook object, you can use it to unhook the method
  */
-fun Method.hook(callback: XC_MethodHook): XC_MethodHook.Unhook? {
-    return XposedBridge.hookMethod(this, callback)
+fun Method.hook(callback: MethodHook): MethodHook.Unhook? {
+    return Hooks.hookMethod(this, callback)
 }
 
 /**
  * This method will be hooked,
  * but the callback will only be executed before the original method
  */
-fun Method.hookBefore(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
-    return hook(object : XC_MethodHook() {
+fun Method.hookBefore(callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
+    return hook(object : MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     })
@@ -236,13 +233,13 @@ fun Method.hookBefore(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_Me
  * This method will be hooked,
  * but the callback will only be executed after the original method
  */
-fun Method.hookAfter(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
-    return hook(object : XC_MethodHook() {
+fun Method.hookAfter(callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
+    return hook(object : MethodHook() {
         override fun afterHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     })
@@ -255,7 +252,7 @@ fun Method.hookAfter(callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_Met
  *
  * @return Unhook object, you can use it to unhook the method
  */
-fun <T> Class<T>.hookMethod(methodName: String, vararg parameterTypes: Class<*>, callback: XC_MethodHook): XC_MethodHook.Unhook? {
+fun <T> Class<T>.hookMethod(methodName: String, vararg parameterTypes: Class<*>, callback: MethodHook): MethodHook.Unhook? {
     return XposedHelpers.findMethodExactIfExists(this, methodName, *parameterTypes)?.hook(callback)
 }
 
@@ -263,7 +260,7 @@ fun <T> Class<T>.hookMethod(methodName: String, vararg parameterTypes: Class<*>,
  * This method will be hooked,
  * but the callback will only be executed before the original method
  */
-fun <T> Class<T>.hookMethodBefore(methodName: String, vararg parameterTypes: Class<*>, callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
+fun <T> Class<T>.hookMethodBefore(methodName: String, vararg parameterTypes: Class<*>, callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
     return XposedHelpers.findMethodExactIfExists(this, methodName, *parameterTypes)?.hookBefore(callback)
 }
 
@@ -271,7 +268,7 @@ fun <T> Class<T>.hookMethodBefore(methodName: String, vararg parameterTypes: Cla
  * This method will be hooked,
  * but the callback will only be executed after the original method
  */
-fun <T> Class<T>.hookMethodAfter(methodName: String, vararg parameterTypes: Class<*>, callback: XC_MethodHook.MethodHookParam.() -> Unit): XC_MethodHook.Unhook? {
+fun <T> Class<T>.hookMethodAfter(methodName: String, vararg parameterTypes: Class<*>, callback: MethodHookParam.() -> Unit): MethodHook.Unhook? {
     return XposedHelpers.findMethodExactIfExists(this, methodName, *parameterTypes)?.hookAfter(callback)
 }
 
@@ -282,43 +279,43 @@ fun <T> Class<T>.hookMethodAfter(methodName: String, vararg parameterTypes: Clas
  *
  * @return Unhook object, you can use it to unhook the method
  */
-fun <T> Class<T>.hookDoNothingMethod(methodName: String, vararg parameterTypes: Class<*>, shouldDoNothing: XC_MethodHook.MethodHookParam.() -> Boolean): XC_MethodHook.Unhook? {
+fun <T> Class<T>.hookDoNothingMethod(methodName: String, vararg parameterTypes: Class<*>, shouldDoNothing: MethodHookParam.() -> Boolean): MethodHook.Unhook? {
     return hookMethodBefore(methodName, *parameterTypes) {
-        if (kotlin.runCatching { shouldDoNothing() }.onFailure { XposedBridge.log(it) }.getOrNull() == true) {
+        if (kotlin.runCatching { shouldDoNothing() }.onFailure { Hooks.log(it) }.getOrNull() == true) {
             result = null
         }
     }
 }
 
 /**
- * @return XC_MethodHook object, you can use it to hook some method
+ * @return MethodHook object, you can use it to hook some method
  */
 fun beforeHook(
-    callback: XC_MethodHook.MethodHookParam.() -> Unit
-): XC_MethodHook {
-    return object: XC_MethodHook() {
+    callback: MethodHookParam.() -> Unit
+): MethodHook {
+    return object: MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     }
 }
 
 /**
- * @return XC_MethodHook object, you can use it to hook some method
+ * @return MethodHook object, you can use it to hook some method
  */
 fun afterHook(
-    callback: XC_MethodHook.MethodHookParam.() -> Unit
-): XC_MethodHook {
-    return object: XC_MethodHook() {
+    callback: MethodHookParam.() -> Unit
+): MethodHook {
+    return object: MethodHook() {
         override fun afterHookedMethod(param: MethodHookParam) {
             kotlin.runCatching {
                 param.callback()
             }.onFailure {
-                XposedBridge.log(it)
+                Hooks.log(it)
             }
         }
     }
@@ -382,17 +379,17 @@ fun String.toClassOrThrow(classLoader: ClassLoader?): Class<*> {
 fun Method.diyHook(
     hookOnce: Boolean = false,
     soleHook: Boolean = false,
-    before: XC_MethodHook.MethodHookParam.() -> Boolean = { false },
-    after: XC_MethodHook.MethodHookParam.() -> Unit = {},
-): XC_MethodHook.Unhook? {
-    var unhook: XC_MethodHook.Unhook? = null
+    before: MethodHookParam.() -> Boolean = { false },
+    after: MethodHookParam.() -> Unit = {},
+): MethodHook.Unhook? {
+    var unhook: MethodHook.Unhook? = null
     val unhookCallback = {
         if (soleHook) {
             hookedMethods.remove(generateOnceHookMethodKey(declaringClass.name, name, parameterTypes))
         }
     }
     val baseHooker = {
-        unhook = XposedBridge.hookMethod(this, object: XC_MethodHook() {
+        unhook = Hooks.hookMethod(this, object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 kotlin.runCatching {
                     if (before(param)) {
@@ -400,7 +397,7 @@ fun Method.diyHook(
                         unhookCallback()
                     }
                 }.onFailure {
-                    XposedBridge.log(it)
+                    Hooks.log(it)
                 }
             }
 
@@ -412,7 +409,7 @@ fun Method.diyHook(
                         unhookCallback()
                     }
                 }.onFailure {
-                    XposedBridge.log(it)
+                    Hooks.log(it)
                 }
             }
         })
