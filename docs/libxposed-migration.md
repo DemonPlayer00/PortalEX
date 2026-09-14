@@ -21,7 +21,7 @@
 | 框架实例 | `ModuleRuntime.attach(module)` / `framework()` | `utils/ModuleRuntime.kt` |
 | 日志 | `log(priority, "PortalEX", msg)` | `utils/Hooks.kt`（`Logger` 映射级别） |
 | 元数据 | `module.prop`：`minApiVersion=101` / `targetApiVersion=101` / `exceptionMode=protective` | 同上 |
-| 语义回归 | `HooksChainTest`（9 例，假框架 + JVM） | `xposed/src/test/.../HooksChainTest.kt` |
+| 语义回归 | `HooksChainTest`（8 例，假框架 + JVM） | `xposed/src/test/.../HooksChainTest.kt` |
 
 **为什么 `compileOnly`**：这些类由框架的 `framework.dex` 注入目标进程，打进模块就是第二份实现
 （还会和框架的类冲突）。验证方法不是靠猜：`baksmali list classes <dex>` 对 APK 里 24 个 dex
@@ -61,7 +61,7 @@ libxposed 的 `Hooker.intercept(chain)` 是**一个**回调；旧 API 是 before
 
 真机日志只能证明"钩子装上了"，证明不了"语义对"。所以用**假框架**（`FakeXposedModule`
 实现 `XposedInterface`；测试自己驱动 `hooker.intercept(chain)`，chain 真去反射调目标方法）
-把规则钉死，9 个用例：
+把规则钉死，8 个用例：
 
 1. before 赋 `result` 必须短路原方法（且原方法体确实没跑）；
 2. before 改 `args` 必须传给原方法；
@@ -70,8 +70,7 @@ libxposed 的 `Hooker.intercept(chain)` 是**一个**回调；旧 API 是 before
 5. 原方法抛异常 ⇒ after 仍执行、且异常照旧抛出（after 里 `hasThrowable()` 为真）；
 6. 回调抛异常不许穿给宿主（原方法照旧执行，且记一条"钩子回调异常"）；
 7. `invokeOriginalMethod` 绕开钩子调原方法（挂短路钩子后仍能拿到真值、且原方法体跑到）；
-8. `hookAllMethods` 同名只挂一次、且挂到真实方法对象上；
-9. 构造器挂钩数量正确。
+8. `hookAllMethods` 同名只挂一次、且挂到真实方法对象上（构造器挂钩数量一并在内）。
 
 跑法：`./gradlew :xposed:testDebugUnitTest`（含在 `sh scripts/test-all.sh` 里）。
 
