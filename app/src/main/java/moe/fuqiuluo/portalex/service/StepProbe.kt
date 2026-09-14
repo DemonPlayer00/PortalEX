@@ -172,6 +172,9 @@ object StepProbe {
         if (started) return
         synchronized(this) {
             if (started) return
+            // 每次尝试都先清掉上一次的失败原因：用户可能在"被拒之后"补授权，
+            // 那时若不清理，本页会一直显示过期的"缺少权限"（陈旧状态比没状态更误导）。
+            unavailable = null
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION)
                 != PackageManager.PERMISSION_GRANTED
             ) {
