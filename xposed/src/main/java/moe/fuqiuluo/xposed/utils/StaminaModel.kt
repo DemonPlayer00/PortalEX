@@ -134,17 +134,35 @@ class StaminaModel {
     /**
      * 推进模型并返回**本拍的速度系数**（乘以基础速度 = 本拍实际速度）。
      *
+     * ## `running` 是唯一的状态入口（"空闲不衰减、也不恢复"）
+     *
+     * 状态只有两种，且都由调用方按**真实运动**给出：
+     *
+     * | [running] | [resting] | 行为 |
+     * | --- | --- | --- |
+     * | true | false | **跑动**：按真实速度掉体力，系数随体力平滑下滑 |
+     * | true | true | **休息**：速度降到走路低值，体力按恢复速度回升 |
+     * | false | 任意 | **空闲**：体力**冻结**（不衰减、也不恢复），系数保持上一拍 |
+     *
+     * 为什么空闲必须冻结：
+     * - 只判 `resting` 就会出现"自动播放已播完/摇杆没按住，却还在'休息恢复'"——那是凭空的体力；
+     * - 无条件衰减则会出现"会话开着但人没动，体力照样掉"——用户看到的是一开模拟就在掉血。
+     * 两者都违反"体力是运动的函数"这条基本口径。
+     *
      * @param config 当前参数（内部会 [StaminaConfig.sanitized]）
      * @param dtSec 本拍时长（秒）。≤0 视为无效，直接返回上一拍的系数
      * @param baseSpeed 基础速度（m/s）—— 休息时的系数 = 走路速度/基础速度，
      *   所以模型**必须知道基础速度**才能给出正确系数（否则只能给个近似常量，
      *   那会与调用点自己换算的结果不一致，等于同一件事两套口径）。
+     * @param running 本拍**是否真的在运动**（由调用方按自动播放/摇杆门给出）。
+     *   体力只随运动变化 —— 空闲时冻结。
      * @param random 随机源（单测可注入固定种子；生产用 [Random.Default]）
      */
     fun tick(
         config: StaminaConfig,
         dtSec: Double,
         baseSpeed: Double,
+        running: Boolean,
         random: Random = Random.Default,
     ): Double {
         if (dtSec <= 0.0) return synchronized(lock) { currentScale }
@@ -152,6 +170,9 @@ class StaminaModel {
         val base = if (baseSpeed > 0.05) baseSpeed else 1.0
 
         synchronized(lock) {
+            // 空闲：体力冻结、系数保持不变（既不衰减也不恢复）
+            if (!running) return currentScale
+
             if (resting) {
                 restRemainingSec -= dtSec
                 restTotalSec += dtSec
@@ -169,6 +190,10 @@ class StaminaModel {
                 }
                 val f = runFactor(c)
                 currentScale = f
+                // 衰减与**本拍真实速度**挂钩：f 即"本拍实际速度 / 基础速度"，
+                // 所以 slow-pace 时消耗按比例变小（配速越慢越省体力）。
+                // 顺序有意如此：先定本拍速度、再据此扣体力 —— 反过来会用上一拍的速度，
+                // 在降速/提速的转折点上多扣或少扣一拍。
                 staminaPercent -= decayThisRun * f * (dtSec / 60.0)
                 if (staminaPercent <= c.restAtPercent) {
                     staminaPercent = c.restAtPercent
