@@ -232,8 +232,10 @@ class StaminaFragment : Fragment() {
                 "休息中：还剩 %.0f 秒（速度降到走路 %.2f m/s）".format(
                     snapshot.restRemainingSec, StaminaController.config().walkSpeed
                 )
-            StaminaController.isRunning() -> "跑动中"
-            else -> "空闲（体力冻结：既不衰减也不恢复）"
+            StaminaController.isRunning() -> "跑动中（消耗中）"
+            // 空闲 = 没有表象位移：**体力仍在持续恢复**（消耗才需要有位移）。
+            // 这里明确写出恢复速率，免得用户看到数字在涨却不知道是不是正常。
+            else -> "空闲（恢复中：约 %.1f 点/分）".format(StaminaController.recoveringPerMinute())
         }
         binding.staminaEffective.text = "基础 %.2f m/s ⇒ 当前 %.2f m/s".format(
             base, StaminaController.effectiveSpeed(base)
