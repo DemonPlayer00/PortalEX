@@ -234,19 +234,41 @@ internal object LocationServiceHook: BaseLocationHook() {
     /** 无位置底子时的提示只打一次，别刷日志（会话刚开始、还没设点时会走到） */
     private val noOriginWarned = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /**
+     * **`onLocationChanged` 的方法解析缓存**（按监听器类）。
+     *
+     * 为什么必须有：`findMethodBestMatch` 是**反射查找**（沿类层次比对参数类型），
+     * 而交付是"每帧 × 每个监听器"各来一次 —— 10Hz 投递下这一项就能吃掉几毫秒/帧。
+     * 实测（2026-09-16，摇杆持续移动）：推进时钟占 **~9% 单核**，几乎全在这里；
+     * 顺带还有"旧 AIDL 监听器每帧都要先失败一次（抛异常再退到单帧版）"的开销。
+     * 缓存后每类只解析一次，且**记住哪个重载可用**，不再每帧试错。
+     */
+    private val onChangeMethodCache =
+        java.util.concurrent.ConcurrentHashMap<Class<*>, java.lang.reflect.Method>()
+
     /** 向单个监听器投一帧；返回是否成功 */
     private fun deliverFrame(listener: IInterface, frame: Location): Boolean {
+        onChangeMethodCache[listener.javaClass]?.let { cached ->
+            return try {
+                invokeDelivery(cached, listener, frame)
+                true
+            } catch (t: Throwable) {
+                if (t.isDeadObject()) return false
+                logDeliverFailure(t, listener)
+                false
+            }
+        }
+
         var error: Throwable? = null
         kotlin.runCatching {
             val locations = listOf(frame)
             val mOnLocationChanged =
                 XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", locations, null)
             Hooks.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
+            onChangeMethodCache[listener.javaClass] = mOnLocationChanged
             return true
         }.onFailure {
-            if (it is InvocationTargetException && it.targetException is DeadObjectException) {
-                return false
-            }
+            if (it.isDeadObject()) return false
             error = it
         }
 
@@ -254,17 +276,34 @@ internal object LocationServiceHook: BaseLocationHook() {
             val mOnLocationChanged =
                 XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", frame)
             Hooks.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(frame))
+            onChangeMethodCache[listener.javaClass] = mOnLocationChanged
             return true
         }.onFailure {
-            if (it is InvocationTargetException && it.targetException is DeadObjectException) {
-                return false
-            }
+            if (it.isDeadObject()) return false
             error = it
         }
 
         Logger.error("deliverFrame failed: " + error?.stackTraceToString())
         Logger.error("The listener all methods: " + listener.javaClass.declaredMethods.joinToString { it.name })
         return false
+    }
+
+    /** 按解析到的方法签名决定实参形态（新 AIDL 是 `onLocationChanged(List, Bundle)`） */
+    private fun invokeDelivery(m: java.lang.reflect.Method, listener: IInterface, frame: Location) {
+        val args: Array<Any?> = if (m.parameterTypes.isNotEmpty() && m.parameterTypes[0] == List::class.java) {
+            arrayOf<Any?>(listOf(frame), null)
+        } else {
+            arrayOf<Any?>(frame)
+        }
+        Hooks.invokeOriginalMethod(m, listener, args)
+    }
+
+    private fun Throwable.isDeadObject(): Boolean =
+        this is InvocationTargetException && targetException is DeadObjectException
+
+    private fun logDeliverFailure(t: Throwable, listener: IInterface) {
+        Logger.error("deliverFrame(cached) failed: ${t.stackTraceToString()}")
+        onChangeMethodCache.remove(listener.javaClass)
     }
 
     // A random command is generated to prevent some apps from detecting Portal
