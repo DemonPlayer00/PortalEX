@@ -1,6 +1,5 @@
 system
 com.android.phone
-com.android.settings
 com.android.location.fused
 com.xiaomi.location.fused
 com.oplus.location
