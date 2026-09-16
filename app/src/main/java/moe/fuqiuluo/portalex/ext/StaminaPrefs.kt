@@ -26,6 +26,10 @@ object StaminaPrefs {
      * "冷却时间系数"。老设备上存的值会被**当成新语义读进来**：实测 `rest_sec=35` 被读成
      * "冷却 35 倍"，恢复慢到几乎看不见（体力只掉不回的假象）。
      * 键名没变，所以只能靠版本号识别"这是老数据"，一次性重置成新默认。
+     *
+     * **什么时候不用 +1**：只是**新增**一个键（例如 `resume` = 开跑阈值）时不必动它 ——
+     * 老数据里没有这个键，取默认值即可，旧键的语义一点没变。反之，只要有任何**旧键换了含义**，
+     * 就必须 +1（否则老值会被当成新语义读进来，且完全静默）。
      */
     private const val VERSION_KEY = "stamina_version"
     private const val VERSION = 1
@@ -44,6 +48,7 @@ object StaminaPrefs {
             enabled = sp.getBoolean(P + "enabled", d.enabled),
             decayPerMinute = sp.getFloat(P + "decay", d.decayPerMinute.toFloat()).toDouble(),
             restAtPercent = sp.getFloat(P + "rest_at", d.restAtPercent.toFloat()).toDouble(),
+            resumeAtPercent = sp.getFloat(P + "resume", d.resumeAtPercent.toFloat()).toDouble(),
             restSpeedFactor = sp.getFloat(P + "rest_factor", d.restSpeedFactor.toFloat()).toDouble(),
             restSecondsCoefficient = sp.getFloat(P + "rest_sec", d.restSecondsCoefficient.toFloat()).toDouble(),
             recoverCoefficient = sp.getFloat(P + "recover", d.recoverCoefficient.toFloat()).toDouble(),
@@ -61,6 +66,7 @@ object StaminaPrefs {
             putBoolean(P + "enabled", c.enabled)
             putFloat(P + "decay", c.decayPerMinute.toFloat())
             putFloat(P + "rest_at", c.restAtPercent.toFloat())
+            putFloat(P + "resume", c.resumeAtPercent.toFloat())
             putFloat(P + "rest_factor", c.restSpeedFactor.toFloat())
             putFloat(P + "rest_sec", c.restSecondsCoefficient.toFloat())
             putFloat(P + "recover", c.recoverCoefficient.toFloat())

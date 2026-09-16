@@ -1,7 +1,6 @@
 package moe.fuqiuluo.xposed.utils
 
 import kotlin.math.abs
-import kotlin.math.min
 import kotlin.random.Random
 
 /**
@@ -15,21 +14,28 @@ import kotlin.random.Random
  *   若 表象速度 > 忽略阈值（或窗口内平均 > 阈值）⇒ 本拍只走恢复、不计消耗
  *   恢复: 体力 += 恢复速度系数 × 恢复倍率(体力) ÷ 冷却系数 × Δt   ← 一直在发生
  *   消耗: 体力 -= 衰减系数 × (表象速度/基础速度) × Δt/60
- *   低于休息体力值 ⇒ 速度倍率再 × 休息系数（回到阈值以上自动解除）
+ *   体力 ≤ 休息体力值 ⇒ 进入**疲劳状态**：速度倍率再 × 休息降速系数（以走路值为下限）
+ *   疲劳状态里：冷却进度 += (体力 − 开跑阈值)/100 × Δt
+ *              低于开跑阈值 ⇒ 反向计数（越远越快）；达到/超过 ⇒ 正向计数（越远越快）
+ *              进度回到 ≥ 0 ⇒ **开跑**（退出疲劳），**不再看体力阈值本身**
  *   ⚠️ 恢复**不受"是否有位移"影响**：空闲（完全不动）时只有恢复生效，体力照样回满
  *      —— 只有**消耗**才需要有位移。
  * ```
  *
- * ## 三条由用户定的关键口径
+ * ## 四条由用户定的关键口径
  *
  * 1. **恢复是连续的背景过程**，不是"只有休息段才回血"：
  *    `恢复速度 = 恢复速度系数 × 恢复倍率(体力) ÷ 冷却时间系数`，其中
  *    `恢复倍率(体力) = 2.0 - 体力% / 100` ⇒ 满体力 1.0、半血 1.5、**空血 2.0（最快）**。
- * 2. **休息不是状态机，而是倍率惩罚**：低于 [StaminaConfig.restAtPercent] 后，
- *    速度倍率 = 疲劳倍率 × [StaminaConfig.restSpeedFactor]，直到体力回到阈值以上。
- *    [StaminaConfig.restSecondsCoefficient] 不再是"休息多少秒"，而是**冷却时间系数**
- *    （乘在恢复上：越大冷却越久）。
- * 3. **忽略"过快"的表象移动**：单拍速度或窗口内平均速度超过
+ * 2. **疲劳是倍率惩罚 + 一个冷却计数器**：进入条件是体力 ≤ [StaminaConfig.restAtPercent]，
+ *    速度倍率 = `max(疲劳倍率 × 休息降速系数, 走路/基础)`（走路值是**下限**）；
+ *    **退出条件与体力阈值无关**，只看"冷却进度"是否回到 ≥ 0。
+ *    ⚠️ 这条是必须的：进/出若用同一个体力阈值（无迟滞），两个模式的净速率方向相反
+ *    ⇒ 必然退化成"进一拍、出一拍"的继电器振荡（实测 45 分钟 795 次、每次都只有一拍）。
+ * 3. **开跑阈值必须高于休息体力值**：低于它进度反向计数（欠账变大），
+ *    达到/超过它进度正向计数（还账），两边速率都正比于偏离量（"越远越快"）。
+ *    两者相等时迟滞消失 —— 这就是 [StaminaConfig.sanitized] 里那条派生夹取的理由。
+ * 4. **忽略"过快"的表象移动**：单拍速度或窗口内平均速度超过
  *    [StaminaConfig.moveIgnoreSpeed] 时，本拍**只走恢复、不计消耗** —— 这是**异常帧防护**
  *    （瞬移/位置跳变/补帧会算出几百 m/s，不该一瞬把体力抽干）。
  *    ⚠️ 忽略的是**快**，不是慢；慢速照样消耗（只是按比例变小）。
@@ -38,10 +44,14 @@ import kotlin.random.Random
  *
  * 基础速度默认 3.05 m/s（≈5:28/km）。要让"恢复−消耗"的净效果像个人：
  * - 满速跑动消耗 = [StaminaConfig.decayPerMinute] × 1.0 = 11 点/分；
- * - 满体力恢复 = [StaminaConfig.recoverCoefficient] × 1.0 = 4 点/分 ⇒ 净掉 7 点/分，
- *   100→20 约 11.4 分钟歇一次；
+ * - 满体力恢复 = [StaminaConfig.recoverCoefficient] × 1.0 = 4 点/分；
  * - 体力 20% 时恢复 = 4 × 1.8 = 7.2 点/分，仍低于满速消耗 ⇒ 一直跑一定会累（不会自愈）；
  * - 降到走路（倍率 0.36 ⇒ 1.1 m/s）时消耗 = 11 × 0.36 ≈ 4 点/分 < 恢复 ⇒ **走着就在回血**。
+ *
+ * ⚠️ **别用"80 点 ÷ 7 点/分 = 11.4 分钟"估算第一次休息**：净掉速率不是常数 ——
+ * 体力越低恢复越快、而且降速本身又减少了消耗，两个效应都让后半段掉得越来越慢。
+ * 按 [StaminaCurve] 积分实测（默认参数）：**第一次休息在 3.9 km / 25.5 分钟**。
+ * 这个数字由 `StaminaCurveTest` 钉住，改参数后那条例会红。
  */
 data class StaminaConfig(
     var enabled: Boolean = false,
@@ -51,6 +61,14 @@ data class StaminaConfig(
     var recoverCoefficient: Double = 4.0,
     /** 休息体力值：低于它就对速度倍率再乘 [restSpeedFactor] */
     var restAtPercent: Double = 20.0,
+    /**
+     * **开跑阈值**：疲劳状态里"冷却进度"计数的**方向分界**。
+     *
+     * 体力低于它 ⇒ 进度反向计数（越远越快）；达到/超过它 ⇒ 正向计数（越远越快）；
+     * 进度回到 ≥ 0 就开跑（退出疲劳）。它必须**高于** [restAtPercent]：
+     * 两者相等时迟滞消失，退化成"进一拍、出一拍"的抖动。
+     */
+    var resumeAtPercent: Double = 30.0,
     /** 休息降速系数：休息期间在疲劳倍率上再乘它 */
     var restSpeedFactor: Double = 0.25,
     /** 冷却时间系数：乘在恢复上（越大则回到阈值以上越慢） */
@@ -66,19 +84,29 @@ data class StaminaConfig(
     /** 忽略阈值（m/s）：快于它的表象移动不计消耗 */
     var moveIgnoreSpeed: Double = 12.0,
 ) {
-    /** 夹取到有意义的范围：防界面输入 0/负数/离谱值把模拟弄成静止或瞬移 */
-    fun sanitized(): StaminaConfig = copy(
-        decayPerMinute = decayPerMinute.coerceIn(0.1, 600.0),
-        recoverCoefficient = recoverCoefficient.coerceIn(0.01, 600.0),
-        restAtPercent = restAtPercent.coerceIn(0.0, 99.0),
-        restSpeedFactor = restSpeedFactor.coerceIn(0.01, 1.0),
-        restSecondsCoefficient = restSecondsCoefficient.coerceIn(0.05, 10.0),
-        walkSpeed = walkSpeed.coerceIn(0.1, 10.0),
-        minSpeedFactor = minSpeedFactor.coerceIn(0.05, 1.0),
-        randomPercent = randomPercent.coerceIn(0.0, 60.0),
-        moveIgnoreWindowSec = moveIgnoreWindowSec.coerceIn(0.0, 60.0),
-        moveIgnoreSpeed = moveIgnoreSpeed.coerceIn(0.5, 200.0),
-    )
+    /**
+     * 夹取到有意义的范围：防界面输入 0/负数/离谱值把模拟弄成静止或瞬移。
+     *
+     * [resumeAtPercent] 是**派生夹取**：它必须比休息体力值至少高 1 个百分点。
+     * 这不是"顺手做的校验"，而是语义要求 —— 两者相等/倒挂时"冷却进度"在进入疲劳的
+     * 当拍就会 ≥ 0，"疲劳"退化成一拍进一拍出的抖动（实测每 1.5 秒一次、45 分钟 795 次）。
+     */
+    fun sanitized(): StaminaConfig {
+        val restAt = restAtPercent.coerceIn(0.0, 98.0)
+        return copy(
+            decayPerMinute = decayPerMinute.coerceIn(0.1, 600.0),
+            recoverCoefficient = recoverCoefficient.coerceIn(0.01, 600.0),
+            restAtPercent = restAt,
+            resumeAtPercent = resumeAtPercent.coerceIn(restAt + 1.0, 99.0),
+            restSpeedFactor = restSpeedFactor.coerceIn(0.01, 1.0),
+            restSecondsCoefficient = restSecondsCoefficient.coerceIn(0.05, 10.0),
+            walkSpeed = walkSpeed.coerceIn(0.1, 10.0),
+            minSpeedFactor = minSpeedFactor.coerceIn(0.05, 1.0),
+            randomPercent = randomPercent.coerceIn(0.0, 60.0),
+            moveIgnoreWindowSec = moveIgnoreWindowSec.coerceIn(0.0, 60.0),
+            moveIgnoreSpeed = moveIgnoreSpeed.coerceIn(0.5, 200.0),
+        )
+    }
 }
 
 /**
@@ -94,6 +122,11 @@ data class StaminaConfig(
  * - **休息是倍率惩罚而非状态**：省掉一套"进/出休息"的计时状态机，
  *   而且"休息多久"由"恢复多久能越过阈值"自然决定（受冷却系数调节）。
  * - **忽略过快的拍**：位置跳变会算出荒谬速度，照单全收就会"什么都没干、体力被抽干"。
+ *
+ * ## 倍率公式在哪
+ *
+ * 三条倍率公式（恢复倍率 / 疲劳倍率 / 最终倍率）都在 [StaminaMath] —— 因为
+ * [StaminaCurve] 那张"倍率 × 距离"预览图要算同一组公式。这里只负责**状态推进**。
  */
 class StaminaModel {
 
@@ -104,7 +137,16 @@ class StaminaModel {
     private var restCount: Int = 0
     private var restTotalSec: Double = 0.0
     private var decayThisRun: Double = Double.NaN
-    private var coolingSec: Double = 0.0
+
+    /**
+     * **冷却进度**（归一化秒）。单位说明：`(体力 − 开跑阈值) / 100 × Δt` 的累计量，
+     * 除以 100 纯粹是让数字落在人能读的范围 —— 任何常数因子都会在"收支平衡"里约掉，
+     * **不影响疲劳时长**。
+     *
+     * 语义：进入疲劳时归零；低于开跑阈值时为负（欠账，越远越快地变大），
+     * 达到/超过阈值时向 0 回升（越远越快）；回到 ≥ 0 就开跑。
+     */
+    private var cooldownSec: Double = 0.0
 
     /** 忽略窗口里的速度采样（拍长秒, 表象速度 m/s） */
     private val window = ArrayDeque<Pair<Double, Double>>()
@@ -115,7 +157,8 @@ class StaminaModel {
     data class Snapshot(
         val staminaPercent: Double,
         val resting: Boolean,
-        val restRemainingSec: Double,
+        /** 冷却进度（归一化秒）：负数 = 还欠多少，≥ 0 = 可以开跑。见 [StaminaModel.cooldownSec] */
+        val cooldownSec: Double,
         val speedScale: Double,
         val restCount: Int,
         val restTotalSec: Double,
@@ -127,7 +170,7 @@ class StaminaModel {
 
     fun snapshot(): Snapshot = synchronized(lock) {
         Snapshot(
-            staminaPercent, resting, coolingSec, currentMultiplier,
+            staminaPercent, resting, cooldownSec, currentMultiplier,
             restCount, restTotalSec, lastApparent, ignoredTicks,
         )
     }
@@ -140,7 +183,7 @@ class StaminaModel {
         restCount = 0
         restTotalSec = 0.0
         decayThisRun = Double.NaN
-        coolingSec = 0.0
+        cooldownSec = 0.0
         window.clear()
         ignoredTicks = 0
         lastApparent = 0.0
@@ -178,11 +221,11 @@ class StaminaModel {
             // ⚠️ 系数单位是「点/分钟」，必须 /60 换成每秒再乘 Δt。漏这一步恢复会快 60 倍，
             // 表现是「体力永远满」（实测踩过：恢复 2.0/拍 压过消耗 0.09/拍，8 条单测同时红）。
             val recoverPerSecond =
-                c.recoverCoefficient / 60.0 * recoveryFactor(staminaPercent) / c.restSecondsCoefficient
+                c.recoverCoefficient / 60.0 * StaminaMath.recoveryFactor(staminaPercent) /
+                        c.restSecondsCoefficient
             staminaPercent += recoverPerSecond * dtSec
 
             // 3) 消耗：只在"本拍确有位移"且未被忽略时
-            val fatigue = fatigueFactor(c)
             if (!ignoring && moved > 0.0) {
                 if (decayThisRun.isNaN()) decayThisRun = jitter(c.decayPerMinute, c.randomPercent, random)
                 // 消耗系数同样是「点/分钟」+ 与表象速度成正比
@@ -190,51 +233,31 @@ class StaminaModel {
             }
             staminaPercent = staminaPercent.coerceIn(0.0, 100.0)
 
-            // 4) 休息：低于阈值施加额外降速，回到阈值以上自动解除
+            // 4) 疲劳状态：进看体力阈值，**出看冷却进度**（用户口径的"开跑阈值"）
+            //    ⚠️ 出如果也看体力阈值（无迟滞），两侧净速率方向相反 ⇒ 必然退化成继电器振荡：
+            //    实测默认参数下 45 分钟 795 次、每次都只有一拍、速度每 1.5 秒在 0.57↔2.29 之间跳。
             if (!resting && staminaPercent <= c.restAtPercent) {
                 resting = true
                 restCount += 1
+                cooldownSec = 0.0            // 归零起步：欠账从这一拍之后开始累积
                 decayThisRun = Double.NaN    // 下一段跑动重新抽消耗速率
-            } else if (resting && staminaPercent > c.restAtPercent) {
-                resting = false
+            } else if (resting) {
+                // 低于开跑阈值 ⇒ 反向计数（欠账变大）；达到/超过 ⇒ 正向计数（还账）
+                // 两边速率都正比于偏离量 ⇒ "越远越快"
+                cooldownSec += (staminaPercent - c.resumeAtPercent) / 100.0 * dtSec
+                if (cooldownSec >= 0.0) resting = false     // 欠账补平 ⇒ 开跑
             }
-            if (resting) {
-                restTotalSec += dtSec
-                coolingSec += dtSec
-            } else {
-                coolingSec = 0.0
-            }
+            if (resting) restTotalSec += dtSec
 
-            currentMultiplier = multiplierFor(c, base, fatigue)
+            // 5) 倍率：用**本拍结算之后的体力**。
+            // ⚠️ 这里原先读的是"扣消耗之前"的体力（fatigue 在消耗之前算），于是倍率慢一拍：
+            // 同一拍里已经扣掉的体力不影响该拍的降速。偏差很小（单拍 <1e-4），但它是"图与实跑
+            // 对不上"的根源 —— StaminaCurve 按结算后体力积分，两边差在第 1 拍就能看见。
+            currentMultiplier = StaminaMath.multiplierFor(
+                c, base, StaminaMath.fatigueFactor(c, staminaPercent), resting
+            )
             return currentMultiplier
         }
-    }
-
-    /**
-     * 恢复倍率：体力 100% → 1.0，50% → 1.5，**0% → 2.0（最快）**。
-     * 线性反向加权，乘在 [StaminaConfig.recoverCoefficient] 上。
-     */
-    private fun recoveryFactor(stamina: Double): Double = 2.0 - stamina.coerceIn(0.0, 100.0) / 100.0
-
-    /** 疲劳速度倍率：体力从 100 降到阈值时，从 1.0 平滑降到 [StaminaConfig.minSpeedFactor] */
-    private fun fatigueFactor(c: StaminaConfig): Double {
-        val span = (100.0 - c.restAtPercent).coerceAtLeast(1e-6)
-        val t = ((staminaPercent - c.restAtPercent) / span).coerceIn(0.0, 1.0)
-        return c.minSpeedFactor + (1.0 - c.minSpeedFactor) * t
-    }
-
-    /**
-     * 最终倍率 = 疲劳倍率（休息时再 × [StaminaConfig.restSpeedFactor]）。
-     *
-     * 休息时**不直接跳到走路速度**：它是"当前疲劳倍率再乘系数"（用户口径）。
-     * 但与走路速度取小 —— 走路低值是速度地板，不是目标值；不取小的话
-     * "低体力 + 小休息系数"会算出比走路还慢得离谱的速度。
-     */
-    private fun multiplierFor(c: StaminaConfig, baseSpeed: Double, fatigue: Double): Double {
-        val walk = c.walkSpeed / baseSpeed
-        val target = if (resting) fatigue * c.restSpeedFactor else fatigue
-        val capped = if (resting) min(target, walk) else min(target, 1.0)
-        return capped.coerceIn(0.02, 1.0)
     }
 
     /** 维护忽略窗口：保留最近 [StaminaConfig.moveIgnoreWindowSec] 秒内的采样 */
