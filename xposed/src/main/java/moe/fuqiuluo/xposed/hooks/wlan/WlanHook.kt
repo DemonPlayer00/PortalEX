@@ -5,7 +5,7 @@ import android.net.wifi.WifiInfo
 import android.os.Build
 import android.util.ArrayMap
 import dalvik.system.PathClassLoader
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger

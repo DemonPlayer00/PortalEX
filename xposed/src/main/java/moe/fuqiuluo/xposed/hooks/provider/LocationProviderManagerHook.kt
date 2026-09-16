@@ -5,9 +5,9 @@ import android.location.LocationManager
 import android.os.Build
 import android.telephony.CellIdentity
 import android.telephony.CellInfo
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.hooks.BasicLocationHook.injectLocation
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -20,6 +20,7 @@ import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
 import java.util.Collections
 import kotlin.random.Random
+import moe.fuqiuluo.xposed.utils.Hooks
 
 object LocationProviderManagerHook {
     /**
@@ -85,7 +86,7 @@ object LocationProviderManagerHook {
             val cInternalState = XposedHelpers.findClassIfExists("com.android.server.location.provider.AbstractLocationProvider\$InternalState", classLoader)
                 ?: return@run
 
-            XposedBridge.hookAllConstructors(cInternalState, object: XC_MethodHook() {
+            Hooks.hookAllConstructors(cInternalState, object: MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val listener = param.args[0] ?: return
 
@@ -139,7 +140,7 @@ object LocationProviderManagerHook {
             ?: return
         BlindHookLocation(cLocationProviderManager, classLoader)
 
-        XposedBridge.hookAllMethods(cLocationProviderManager, "setRealProvider", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cLocationProviderManager, "setRealProvider", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val locationProvider = param.args[0]
                 if (FakeLoc.enableDebugLog) {
@@ -147,7 +148,7 @@ object LocationProviderManagerHook {
                 }
             }
         })
-        XposedBridge.hookAllMethods(cLocationProviderManager, "setMockProvider", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cLocationProviderManager, "setMockProvider", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val locationProvider = param.args[0]
                 if (FakeLoc.enableDebugLog) {
@@ -155,7 +156,7 @@ object LocationProviderManagerHook {
                 }
             }
         })
-        XposedBridge.hookAllMethods(cLocationProviderManager, "sendExtraCommand", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cLocationProviderManager, "sendExtraCommand", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if(param.args.size < 4) return
                 val command = param.args[2]
@@ -174,7 +175,7 @@ object LocationProviderManagerHook {
 
         run {
             val hookedListeners = Collections.synchronizedSet(HashSet<String>())
-            if(cLocationProviderManager.onceHookAllMethod("getCurrentLocation", object: XC_MethodHook() {
+            if(cLocationProviderManager.onceHookAllMethod("getCurrentLocation", object: MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     // 回调不写死索引：新签名 (provider, request, ILocationCallback, packageName, …)
                     // 的 args[3] 是包名字符串，旧签名 (request, ILocationCallback, packageName) 是 args[2]。
@@ -193,7 +194,7 @@ object LocationProviderManagerHook {
 
                     val classCallback = callback.javaClass
                     if (hookedListeners.contains(classCallback.name)) return // Prevent repeated hooking
-                    if (XposedBridge.hookAllMethods(classCallback, "onLocation", object: XC_MethodHook() {
+                    if (Hooks.hookAllMethods(classCallback, "onLocation", object: MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam?) {
                             if (param == null || param.args.isEmpty()) return
                             val location = (param.args[0] ?: return) as Location

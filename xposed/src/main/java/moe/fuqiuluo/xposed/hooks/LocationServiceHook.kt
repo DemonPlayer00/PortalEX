@@ -11,9 +11,10 @@ import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
 import android.os.SystemClock
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.Hooks
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.RemoteCommandHandler
 import moe.fuqiuluo.xposed.hooks.gnss.GnssHook
@@ -240,7 +241,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             val locations = listOf(frame)
             val mOnLocationChanged =
                 XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", locations, null)
-            XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
+            Hooks.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
             return true
         }.onFailure {
             if (it is InvocationTargetException && it.targetException is DeadObjectException) {
@@ -252,7 +253,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         kotlin.runCatching {
             val mOnLocationChanged =
                 XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", frame)
-            XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(frame))
+            Hooks.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(frame))
             return true
         }.onFailure {
             if (it is InvocationTargetException && it.targetException is DeadObjectException) {
@@ -350,7 +351,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         if (FakeLoc.enableDebugLog)
             Logger.debug("will hook ILocationListener: ${classListener.name}")
 
-        if(XposedBridge.hookAllMethods(classListener, "onLocationChanged", object: XC_MethodHook() {
+        if(Hooks.hookAllMethods(classListener, "onLocationChanged", object: MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     // 框架投递到达（无论是否开模拟）：刷新「最近收到位置」时刻
                     markFrameworkDelivery(param.thisObject)
@@ -457,7 +458,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             var error: Throwable? = null
             kotlin.runCatching {
                 val mOnLocation = XposedHelpers.findMethodBestMatch(oneShot.callback.javaClass, "onLocation", frame)
-                XposedBridge.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
+                Hooks.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
                 called = true
             }.onFailure {
                 if (it is InvocationTargetException && it.targetException is DeadObjectException) {
@@ -610,7 +611,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                         m.parameterTypes[0].name == "android.location.GnssStatus"
                 } ?: listener.javaClass.methods.firstOrNull { it.name == "onSvStatusChanged" }
                     ?: return@runCatching
-                XposedBridge.invokeOriginalMethod(method, listener, arrayOf(status))
+                Hooks.invokeOriginalMethod(method, listener, arrayOf(status))
             }.onFailure { e ->
                 if (e is InvocationTargetException && e.targetException is DeadObjectException) return@forEach
                 Logger.error("pushGnssStatus failed for ${listener.javaClass.name}", e)
@@ -693,7 +694,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                             Logger.error("onSvStatusChanged: unsupported version: ${method}, constructor not found")
                         }
                     }.onFailure {
-                        XposedBridge.log(it)
+                        Hooks.log(it)
                     }
                     return@beforeHook
                 }
@@ -717,7 +718,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }.onSuccess {
             fun hookOnTransactForServiceInstance(m: Method) {
                 val isHooked = AtomicBoolean(false)
-                XposedBridge.hookMethod(m, object : XC_MethodHook() {
+                Hooks.hookMethod(m, object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param?.thisObject == null || param.args.size < 4) return
 
@@ -764,11 +765,11 @@ internal object LocationServiceHook: BaseLocationHook() {
 //            XposedHelpers.findClass("android.location.ILocationManager\$Stub\$Proxy", cLocationManager.classLoader)
 //        }.onSuccess {
 //            it.declaredMethods.forEach {
-//                XposedBridge.hookMethod(it, object : XC_MethodHook() {
+//                Hooks.hookMethod(it, object : MethodHook() {
 //                    override fun beforeHookedMethod(param: MethodHookParam?) {
 //                        if (param == null) return
 //
-//                        XposedBridge.log("[Portal] ILocationManager.Stub.Proxy: c = ${param.thisObject?.javaClass}, m = ${param.method}")
+//                        Hooks.log("[Portal] ILocationManager.Stub.Proxy: c = ${param.thisObject?.javaClass}, m = ${param.method}")
 //                    }
 //                })
 //            }
@@ -930,10 +931,10 @@ internal object LocationServiceHook: BaseLocationHook() {
     private fun hookProviderEnabled(cILocationManager: Class<*>) {
         if(
         // boolean isProviderEnabledForUser(String provider, int userId); from android 9.0.0
-            XposedBridge.hookAllMethods(
+            Hooks.hookAllMethods(
                 cILocationManager,
                 "isProviderEnabledForUser",
-                object : XC_MethodHook() {
+                object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param == null || param.args.size < 2 || param.args[0] == null) return
                         val provider = param.args[0] as String
@@ -957,10 +958,10 @@ internal object LocationServiceHook: BaseLocationHook() {
                 }).isEmpty()
         ) {
             // boolean isProviderEnabled(String provider);
-            XposedBridge.hookAllMethods(
+            Hooks.hookAllMethods(
                 cILocationManager,
                 "isProviderEnabled",
-                object : XC_MethodHook() {
+                object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param == null || param.args.isEmpty() || param.args[0] == null) return
                         val provider = param.args[0] as String
@@ -989,7 +990,7 @@ internal object LocationServiceHook: BaseLocationHook() {
      */
     private fun hookVendorControllerPackage(cILocationManager: Class<*>) {
         // F**k You! AMAP Service!
-        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if (FakeLoc.enable) {
                     param.args[0] = false
@@ -997,7 +998,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         })
 
-        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackage", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cILocationManager, "setExtraLocationControllerPackage", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if (FakeLoc.enable) {
                     param.result = null
@@ -1302,7 +1303,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         // 3) 模拟开启时立即主动推送一次。
         // 主动推送由 GnssStatusPusher 守护线程驱动：即使室内 GNSS 引擎闲置、系统从不回调，
         // 雷达也能持续收到模拟卫星数据（与 callOnLocationChanged 同机制）。
-        XposedBridge.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam?) {
                     if(param == null || param.args.isEmpty() || param.args[0] == null) return
 
