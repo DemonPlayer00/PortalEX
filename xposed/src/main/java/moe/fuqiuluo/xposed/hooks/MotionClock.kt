@@ -156,12 +156,37 @@ object MotionClock {
         }
     }
 
+    /**
+     * **分段计时**（纳秒累加 + 拍数），只在调试开关打开时统计。
+     *
+     * 为什么留着它：实测"会话开 + 持续移动"时本线程占 **~8% 单核**，而推进数学本身只有几微秒；
+     * 我先后猜过两处（交付的方法解析、落点记录）都被实测否掉（见 `docs/perf-audit.md` 第 6 节）。
+     * 于是把一拍拆成四段计时，让**下一次判断有数据**而不是继续猜。开销是每拍多几次
+     * `elapsedRealtimeNanos`（vDSO，几十纳秒）。
+     */
+    private var tMotion = 0L
+    private var tStamina = 0L
+    private var tPlace = 0L
+    private var tDeliver = 0L
+    private var timedBeats = 0L
+
+    /** 分段计时汇总（Test 页的 `motion` 行会带上它） */
+    fun timingLine(): String {
+        val n = timedBeats.coerceAtLeast(1)
+        return "每拍分段(µs 平均/总ns): 推进=%.0f/%d 体力=%.0f/%d 落点=%.0f/%d 投递=%.0f/%d 拍数=%d".format(
+            tMotion / 1000.0 / n, tMotion, tStamina / 1000.0 / n, tStamina,
+            tPlace / 1000.0 / n, tPlace, tDeliver / 1000.0 / n, tDeliver, timedBeats,
+        )
+    }
+
     private fun beat() {
+        val timing = FakeLoc.enableDebugLog
         val now = SystemClock.elapsedRealtimeNanos()
         val dt = if (lastBeatNanos == 0L) BEAT_MS / 1000.0 else (now - lastBeatNanos) / 1e9
         lastBeatNanos = now
 
         // 1) 推进：位移 = 速度 × 体力倍率 × Δt（缩放就在这一处发生）
+        val t0 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
         val step = MotionEngine.beat(
             dtSec = dt,
             speed = FakeLoc.speed,
@@ -169,19 +194,36 @@ object MotionClock {
             curLat = FakeLoc.latitude,
             curLon = FakeLoc.longitude,
         )
+        val t1 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
         // 2) 体力：用**本拍真实推进的位移**结算（不是名义值）——旧实现同一口径
         StaminaRuntime.tick(FakeLoc.speed, step.meters)
+        val t2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
-        if (!step.moved) return
+        if (!step.moved) {
+            if (timing) {
+                tMotion += t1 - t0
+                tStamina += t2 - t1
+                timedBeats++
+            }
+            return
+        }
 
         // 3) 落点：走唯一入口（记录位移历史，供速度推算/静止检测/步频使用）
         RemoteCommandHandler.applyMotionCoordinate(step.lat, step.lon, step.bearing)
+        val t3 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
         // 4) 投递：按「上报间隔」出帧（客户端观测到的帧率与迁移前一致）
         if (lastDeliverNanos == 0L || now - lastDeliverNanos >= deliverIntervalMs() * 1_000_000L) {
             lastDeliverNanos = now
             LocationServiceHook.callOnLocationChanged(force = true)
+        }
+        if (timing) {
+            tMotion += t1 - t0
+            tStamina += t2 - t1
+            tPlace += t3 - t2
+            tDeliver += SystemClock.elapsedRealtimeNanos() - t3
+            timedBeats++
         }
     }
 }

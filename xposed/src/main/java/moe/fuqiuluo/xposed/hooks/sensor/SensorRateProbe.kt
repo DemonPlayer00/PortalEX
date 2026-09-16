@@ -28,10 +28,96 @@ import java.io.FileInputStream
  * 安全边界：只用公开 binder 接口 `IBinder.dump(fd, args)`（调用方是 system_server，天然持有
  * DUMP 权限），解析失败/权限不足一律降级为一行说明，绝不影响注入本身。
  */
+import moe.fuqiuluo.xposed.utils.Hooks
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+
 internal object SensorRateProbe {
 
     /** dump 有点重（本机约 40KB 文本），缓存住，别让 UI 每秒都去拉一次 */
     private const val CACHE_NANOS = 2_000_000_000L
+
+    // ------------------------------------------------------------------
+    // 「订阅变化驱动」：把 40KB 的 dump 从"每 2s 轮询"改成"订阅变了才取"
+    //
+    // 实测（2026-09-16）：一次 dump 20~30ms。会话开着但静止时监督线程的 0.20% 单核
+    // 几乎全部来自每 10s 一次的它；移动时 2s 一次 ≈ 1~1.5% 单核 —— 而解析结果极少变化。
+    // 现在在框架侧挂"谁订了/退了/改速率"的钩子，事件到了才防抖取一次。
+    // ------------------------------------------------------------------
+
+    /** 事件到达后的防抖窗口：一次订阅风暴（一个应用注册十几个传感器）只取一次 */
+    private const val DEBOUNCE_NANOS = 300_000_000L
+
+    /** 钩子装不上时的兜底周期（旧 ROM/结构不同）：短一些，宁可多花点也别让速率长期不对 */
+    private const val FALLBACK_UNHOOKED_NANOS = 3_000_000_000L
+
+    /** 钩子装上了以后的兜底周期：只防"漏事件"，可以很长 */
+    private const val FALLBACK_HOOKED_NANOS = 60_000_000_000L
+
+    @Volatile private var refreshRequestedNanos = 0L
+    @Volatile private var lastRefreshNanos = 0L
+    @Volatile private var hooksInstalled = false
+
+    /** 订阅集合变了（由框架侧钩子调用）：任何线程可调，只做一次原子写 + 唤醒监督线程 */
+    fun requestRefresh() {
+        refreshRequestedNanos = android.os.SystemClock.elapsedRealtimeNanos()
+        BinderSensorMock.wakeSupervisor()
+    }
+
+    /** 该不该重新取一次（监督线程每拍问一次；事件驱动为主，兜底周期为辅） */
+    fun dueForRefresh(nowNanos: Long): Boolean {
+        val req = refreshRequestedNanos
+        if (req != 0L && nowNanos - req >= DEBOUNCE_NANOS) {
+            refreshRequestedNanos = 0L
+            return true
+        }
+        val fallback = if (hooksInstalled) FALLBACK_HOOKED_NANOS else FALLBACK_UNHOOKED_NANOS
+        return nowNanos - lastRefreshNanos >= fallback
+    }
+
+    fun markRefreshed(nowNanos: Long) {
+        lastRefreshNanos = nowNanos
+    }
+
+    /**
+     * 在框架侧挂"订阅集合变化"的钩子（装载原生层时调一次）。
+     *
+     * 目标（都按名字找，找不到就只记一行日志、退回兜底周期）：
+     *  · `SensorService.createSensorEventConnection` / `destroySensorEventConnection` —— 订阅/退订；
+     *  · 内部连接类的 `enableDisable` —— 已有连接上改速率（框架采用值的落点）。
+     * 回调只做 [requestRefresh]（一次原子写），**不在钩子里做 dump**。
+     */
+    fun installSubscriptionHooks(serviceCls: Class<*>?) {
+        if (hooksInstalled || serviceCls == null) return
+        val targets = LinkedHashSet<Pair<Class<*>, String>>()
+        val wanted = listOf("createSensorEventConnection", "destroySensorEventConnection")
+        serviceCls.declaredMethods.filter { it.name in wanted }
+            .forEach { targets += serviceCls to it.name }
+        val conn = runCatching {
+            serviceCls.declaredClasses.firstOrNull { it.simpleName.contains("SensorEventConnection") }
+                ?: Class.forName(serviceCls.name + "\$SensorEventConnection", false, serviceCls.classLoader)
+        }.getOrNull()
+        conn?.declaredMethods?.filter { it.name == "enableDisable" }
+            ?.forEach { targets += conn to it.name }
+
+        var hooked = 0
+        targets.forEach { (cls, name) ->
+            runCatching {
+                Hooks.hookAllMethods(cls, name, object : MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam?) {
+                        requestRefresh()
+                    }
+                })
+            }.onSuccess { if (it.isNotEmpty()) hooked += it.size }
+                .onFailure { Logger.debug("SensorRateProbe: 挂 $name 失败：${it.message}") }
+        }
+        hooksInstalled = hooked > 0
+        Logger.info(
+            "SensorRateProbe: 订阅变化钩子 hooked=$hooked（候选 ${targets.size}）—— " +
+                    "速率提示改为事件驱动，兜底周期 " +
+                    "${if (hooksInstalled) FALLBACK_HOOKED_NANOS / 1_000_000_000 else FALLBACK_UNHOOKED_NANOS / 1_000_000_000}s"
+        )
+    }
 
     /** 只展示我们接管的这些传感器（框架 dump 里 42 个传感器全打出来没人看） */
     private const val MAX_ENTRIES = 6
