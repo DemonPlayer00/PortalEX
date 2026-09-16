@@ -192,6 +192,25 @@ object MockServiceHelper {
         return false
     }
 
+    /**
+     * **App 重启后的职责重挂**（迁移后"App 重启而会话还在"是常态：世界与状态都在系统侧）。
+     *
+     * App 自己那一半职责不属于会话状态，重启后不会自动回来：传感器轮询保活（撑住框架的
+     * 事件投递节奏，见 [startSensorPollKeepAlive]）与（可选的）位置循环广播。
+     * 不重挂的后果是"会话在跑、事件却半天来一批" —— 应用按到达时间算步频就会读飞
+     * （项目历史上踩过：注入计数 emitted/dropped 1:38）。
+     *
+     * @return 是否真的重挂了（会话没在跑时什么都不做）
+     */
+    fun reattachIfRunning(context: Context, locationManager: LocationManager?): Boolean {
+        if (locationManager == null || !isServiceInit()) return false
+        if (!isMockStart(locationManager)) return false
+        startSensorPollKeepAlive(context)
+        if (context.loopBroadcastlocation) startLoopBroadcastLocation(locationManager)
+        Log.i("MockServiceHelper", "App 重启后已重挂观察者职责（传感器轮询保活）")
+        return true
+    }
+
     fun getLocation(locationManager: LocationManager): Pair<Double, Double>? {
         if (!::randomKey.isInitialized) {
             return null
