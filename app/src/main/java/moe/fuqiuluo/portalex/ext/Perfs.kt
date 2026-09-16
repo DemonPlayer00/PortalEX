@@ -267,9 +267,10 @@ var Context.sensorNoiseReport: String
  * 触发条件**不是"会话开着"**，而是"没有人操作但位置还在走"：自动播放、摇杆锁定后继续走。
  * 空闲（会话开着但没动）、手指按着摇杆、关掉本项时都不占前台、不持锁 —— 遵循系统省电策略。
  *
- * 为什么这几条需要它：App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结 ——
- * 冻结期间运动循环整段停摆（实测灭屏/后台场景下 tick 空洞 25.6s/47.7s），而 system_server
- * 仍在按保活节奏推帧（位置不动、vel≈0），目标跑步应用看到"原地不动"。
+ * 为什么"无人值守"仍需要它（迁移后理由已经变了）：**推进不再需要 App 活着**
+ * （世界在 system_server，App 被冻也照样走），但"播完要放提示音/振动、把悬停按钮状态收回来"
+ * 需要一个活着的观察者 —— 而 App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结。
+ * 顺带它也让 App 的**位置订阅**（普通客户端视角，地图蓝点）继续收帧。
  */
 var Context.keepAliveInBackground: Boolean
     get() = sharedPrefs.getBoolean("keepAliveInBackground", true)
