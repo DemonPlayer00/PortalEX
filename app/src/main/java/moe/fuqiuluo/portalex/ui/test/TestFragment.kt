@@ -143,6 +143,16 @@ class TestFragment : Fragment() {
             appendLine(moe.fuqiuluo.xposed.hooks.sensor.frozen.SystemSensorManagerHook.stepTraceText())
             appendLine(StepProbe.status())
             appendLine()
+            // 体力与推进：迁移后都在 system_server（App 只回读）——所以这里是
+            // "页面看到的"与"实跑的"是否同一个世界的唯一现场证据
+            appendLine("── 体力（系统侧状态机）──")
+            appendLine(status.getString("stamina") ?: "（旧版模块无此字段）")
+            appendLine("参数已同步     ${yn(status.getBoolean("stamina_wire"))}")
+            appendLine()
+            appendLine("── 推进（系统侧引擎）──")
+            appendLine(status.getString("motion") ?: "（旧版模块无此字段）")
+            appendLine("路线进度       ${"%.0f".format(status.getDouble("route_travelled"))} / ${"%.0f".format(status.getDouble("route_distance"))} m")
+            appendLine()
             appendLine("── 位置模拟 ──")
             appendLine("坐标           ${"%.6f".format(status.getDouble("lat"))}, ${"%.6f".format(status.getDouble("lon"))}")
             appendLine("海拔           ${"%.2f".format(status.getDouble("altitude"))} m")
