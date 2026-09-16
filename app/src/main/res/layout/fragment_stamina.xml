@@ -111,6 +111,14 @@
                 android:layout_height="190dp"
                 android:layout_marginTop="6dp" />
 
+            <!-- 理论页：这套参数跑出来的结果 + 体检（生成页隐藏，那里显示本次实际跑法） -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_chart_metrics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textSize="11sp" />
+
             <!-- 生成页的本次跑法摘要（理论页隐藏） -->
             <com.google.android.material.textview.MaterialTextView
                 android:id="@+id/stamina_chart_sample"
@@ -153,13 +161,28 @@
                 android:layout_height="wrap_content"
                 android:textSize="12sp" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/stamina_reset"
-                style="@style/Widget.Material3.Button.TonalButton"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="@string/stamina_reset" />
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_reset"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/stamina_reset" />
+
+                <!-- 重置数据：恢复出厂参数（破坏性 ⇒ 弹窗确认） -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_reset_data"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/stamina_reset_data" />
+            </LinearLayout>
 
             <!-- 参数区（行由代码插入） -->
             <com.google.android.material.textview.MaterialTextView

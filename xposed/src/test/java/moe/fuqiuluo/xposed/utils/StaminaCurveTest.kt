@@ -21,14 +21,13 @@ class StaminaCurveTest {
         decay: Double = 11.0,
         recover: Double = 4.0,
         restAt: Double = 20.0,
-        restFactor: Double = 0.25,
-        cooling: Double = 1.0,
+        fatigueSec: Double = 120.0,
         walk: Double = 1.10,
         floor: Double = 0.75,
         randomPct: Double = 0.0,
     ) = StaminaConfig(
         enabled = true, decayPerMinute = decay, recoverCoefficient = recover,
-        restAtPercent = restAt, restSpeedFactor = restFactor, restSecondsCoefficient = cooling,
+        restAtPercent = restAt, fatigueSec = fatigueSec,
         walkSpeed = walk, minSpeedFactor = floor, randomPercent = randomPct,
         moveIgnoreWindowSec = 3.0, moveIgnoreSpeed = 12.0,
     )

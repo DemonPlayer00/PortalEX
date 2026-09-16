@@ -33,8 +33,7 @@ class StaminaModelTest {
         decay: Double = 11.0,
         recover: Double = 4.0,
         restAt: Double = 20.0,
-        restFactor: Double = 0.25,
-        cooling: Double = 1.0,
+        fatigueSec: Double = 120.0,
         walk: Double = 1.10,
         floor: Double = 0.75,
         randomPct: Double = 0.0,
@@ -42,7 +41,7 @@ class StaminaModelTest {
         ignoreSpeed: Double = 12.0,
     ) = StaminaConfig(
         enabled = true, decayPerMinute = decay, recoverCoefficient = recover,
-        restAtPercent = restAt, restSpeedFactor = restFactor, restSecondsCoefficient = cooling,
+        restAtPercent = restAt, fatigueSec = fatigueSec,
         walkSpeed = walk, minSpeedFactor = floor, randomPercent = randomPct,
         moveIgnoreWindowSec = ignoreWindow, moveIgnoreSpeed = ignoreSpeed,
     )
@@ -182,47 +181,48 @@ class StaminaModelTest {
         assertTrue("恢复增量应随体力降低而增大：$gains", last > first)
     }
 
-    // ------------------------------------------------------------------ 休息（倍率惩罚）
+    // ------------------------------------------------------------------ 疲劳（速度档 + 倒计时预算）
 
     @Test
-    fun `低于休息体力值时 倍率再乘休息系数`() {
+    fun `低于疲劳体力值 速度切到疲劳档（就是配置的那个速度）`() {
         val m = StaminaModel().apply { reset() }
-        val c = cfg(decay = 60.0, recover = 1.0, restFactor = 0.25, walk = 0.01)
+        val c = cfg(decay = 60.0, recover = 1.0, walk = 0.10)
         val t = m.runUntilRest(c, base)
-        assertTrue("应在合理时间内进入休息（实得 $t 秒）", t > 0)
+        assertTrue("应在合理时间内进入疲劳（实得 $t 秒）", t > 0)
         val s = m.snapshot()
-        assertTrue("应记录休息次数", s.restCount >= 1)
-        assertTrue("休息时倍率应显著低于疲劳倍率，实得 ${s.speedScale}", s.speedScale < 0.75)
+        assertTrue("应记录疲劳次数", s.restCount >= 1)
+        // 过渡要几拍才走完，所以这里推进到过渡结束再看：疲劳速度**就是** walkSpeed
+        m.hold(c, 30.0)
+        assertEquals("疲劳速度应恰为配置的疲劳时速度", 0.10, m.snapshot().speedScale * base, 1e-6)
     }
 
     @Test
-    fun `体力回到阈值以上 自动解除休息`() {
+    fun `疲劳会按倒计时预算结束（不再有永不结束的参数悬崖）`() {
         val m = StaminaModel().apply { reset() }
-        val c = cfg(decay = 60.0, recover = 30.0, restAt = 20.0)
-        // 记录 resting 的状态转移序列：应为 false → true（掉到阈值）→ false（恢复越过阈值）
-        // 直接断言"某一刻不是 resting"是不可靠的：体力会在阈值附近来回穿越，
-        // 断言到哪一侧取决于恰好停在哪一拍（第一版就是这么写错的）。
-        var transitions = 0
-        var last = m.snapshot().resting
+        // 衰减远大于恢复：旧口径下这种参数会让疲劳永不结束
+        val c = cfg(decay = 600.0, recover = 0.5, fatigueSec = 60.0)
+        m.runUntilRest(c, base)
+        assertTrue("应进入疲劳", m.snapshot().resting)
+
         var secs = 0.0
-        while (secs < 3600.0 && transitions < 2) {
-            m.tick(c, 0.5, base, if (last) 0.0 else base * 0.5, rnd)   // 休息时静止、跑动时前进
-            val now = m.snapshot().resting
-            if (now != last) { transitions++; last = now }
+        while (secs < 1200.0 && m.snapshot().resting) {
+            m.hold(c, 0.5)
             secs += 0.5
         }
-        assertEquals("应完成 false→true→false 两次转移（实得 $transitions 次，用时 ${secs}s）", 2, transitions)
-        assertFalse("最终应回到非休息", m.snapshot().resting)
+        assertFalse("倒计时走完必须开跑（等了 ${secs}s）", m.snapshot().resting)
+        // 速率地板 0.25 ⇒ 最长不超过预算的约 4 倍（+ 随机余量）
+        assertTrue("实际疲劳时长应在预算的 0.8~5 倍之间（实得 ${"%.1f".format(secs)}s）",
+            secs in 40.0..320.0)
     }
 
     @Test
-    fun `冷却时间系数越大 回到阈值以上越慢`() {
-        val cQuick = cfg(decay = 60.0, recover = 20.0, cooling = 1.0)
-        val cSlow = cfg(decay = 60.0, recover = 20.0, cooling = 4.0)
-        val quick = StaminaModel().apply { reset() }.let { it.runUntilRest(cQuick, base); it.holdUntilRestOver(cQuick) }
-        val slow = StaminaModel().apply { reset() }.let { it.runUntilRest(cSlow, base); it.holdUntilRestOver(cSlow) }
-        assertTrue("两者都应成功解除（quick=$quick slow=$slow）", quick > 0 && slow > 0)
-        assertTrue("冷却系数大应更慢：quick=${quick}s slow=${slow}s", slow > quick * 1.5)
+    fun `疲劳时长越大 疲劳越久`() {
+        val quick = StaminaModel().apply { reset() }
+            .let { it.runUntilRest(cfg(fatigueSec = 30.0), base); it.holdUntilRestOver(cfg(fatigueSec = 30.0)) }
+        val slow = StaminaModel().apply { reset() }
+            .let { it.runUntilRest(cfg(fatigueSec = 240.0), base); it.holdUntilRestOver(cfg(fatigueSec = 240.0)) }
+        assertTrue("两者都应结束（quick=$quick slow=$slow）", quick > 0 && slow > 0)
+        assertTrue("疲劳时长旋钮必须单调有效：quick=${quick}s slow=${slow}s", slow > quick * 1.5)
     }
 
     // ------------------------------------------------------------------ 忽略"过快"
@@ -262,15 +262,15 @@ class StaminaModelTest {
     fun `参数被夹取 极端输入不会把模拟弄成静止或瞬移`() {
         val wild = StaminaConfig(
             enabled = true, decayPerMinute = -5.0, recoverCoefficient = -1.0,
-            restAtPercent = 500.0, restSpeedFactor = 9.0, restSecondsCoefficient = 0.0,
+            restAtPercent = 500.0, fatigueSec = -10.0,
             walkSpeed = 0.0, minSpeedFactor = 9.0, randomPercent = 999.0,
             moveIgnoreWindowSec = -3.0, moveIgnoreSpeed = -1.0,
         ).sanitized()
         assertTrue(wild.decayPerMinute > 0)
         assertTrue(wild.recoverCoefficient > 0)
         assertTrue(wild.restAtPercent in 0.0..99.0)
-        assertTrue(wild.restSpeedFactor in 0.01..1.0)
-        assertTrue(wild.restSecondsCoefficient >= 0.05)
+        assertTrue(wild.fatigueSec >= 1.0)
+        assertTrue("开跑阈值必须被夹到疲劳体力值之上", wild.resumeAtPercent > wild.restAtPercent)
         assertTrue(wild.walkSpeed > 0)
         assertTrue(wild.minSpeedFactor in 0.05..1.0)
         assertTrue(wild.randomPercent <= 60.0)

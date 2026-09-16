@@ -28,14 +28,19 @@ internal object StaminaMath {
      * 最终倍率 = **跑动档与疲劳档之间的混合**。
      *
      * ```
-     * 跑动档 = min(疲劳倍率, 1.0)
-     * 疲劳档 = max(疲劳倍率 × 休息降速系数, 走路/基础)      ← 走路值是下限（用户口径）
+     * 跑动档 = min(疲劳倍率(体力), 1.0)
+     * 疲劳档 = 走路速度 / 基础速度
      * 最终   = 跑动档 + (疲劳档 − 跑动档) × blend          ← blend ∈ [0,1]
      * ```
      *
-     * [blend] 是**状态**（谁在推进谁维护：模型里是逐拍收敛，曲线里是同一步长积分），
+     * [blend] 是**状态**（谁在推进谁维护：模型里逐拍收敛，曲线里同一步长积分），
      * 不是一次性插值 —— 否则"过渡途中又反向"会算出不属于任何一档的速度。
-     * `blend = 0/1` 时结果与"没有过渡"逐位相同，所以关掉过渡（过渡时间 = 0）时行为不变。
+     * `blend = 0/1` 时结果与"没有过渡"逐位相同。
+     *
+     * ⚠️ 疲劳档**只有走路速度一个来源**（2026-09-17 重设计）：原先还有
+     * `疲劳倍率 × 休息降速系数`，于是"休息时速度"与"休息降速系数"抢同一个结果 ——
+     * 默认参数下系数赢（实际 0.57 m/s），系数一调大就换成走路值赢，**总有一个是死的**。
+     * 用户口径：一个旋钮一个结果。
      */
     fun multiplierFor(
         c: StaminaConfig,
@@ -43,12 +48,38 @@ internal object StaminaMath {
         fatigue: Double,
         blend: Double,
     ): Double {
-        val walk = c.walkSpeed / baseSpeed
         val run = min(fatigue, 1.0)
-        val rest = max(fatigue * c.restSpeedFactor, walk)
+        val rest = c.walkSpeed / baseSpeed
         val b = blend.coerceIn(0.0, 1.0)
         return (run + (rest - run) * b).coerceIn(0.02, 1.0)
     }
+
+    /**
+     * 疲劳倒计时的**速率**（用户口径：越远越快，方向在开跑阈值处翻转）。
+     *
+     * ```
+     * d = (体力 − 开跑阈值) / (开跑阈值 − 疲劳体力值)    ← 刚进疲劳 d = −1，到阈值 d = 0
+     * 速率 = 1 + d ，夹在 [FLOOR, CAP]
+     * ```
+     *
+     *  · 体力低于开跑阈值 ⇒ 速率 < 1（"反向"：倒计时几乎停滞，越深越慢）；
+     *  · 达到/超过 ⇒ 速率 > 1（"正向"：烧得更快，越远越快）。
+     *
+     * **为什么要有 FLOOR**：地板保证倒计时**一定会走完**，于是"疲劳永不结束"这一整类
+     * 参数悬崖在结构上消失了（旧口径下冷却系数越过边界就会永不结束，实测 3 小时窗口里
+     * 一次疲劳持续 10072 秒）。代价是"反向"表现为 0.25× 而不是负速率。
+     */
+    fun fatigueTickRate(c: StaminaConfig, staminaPercent: Double): Double {
+        val span = (c.resumeAtPercent - c.restAtPercent).coerceAtLeast(1.0)
+        val d = (staminaPercent - c.resumeAtPercent) / span
+        return (1.0 + d).coerceIn(FATIGUE_RATE_FLOOR, FATIGUE_RATE_CAP)
+    }
+
+    /** 倒计时速率下限：保证疲劳一定会结束（见 [fatigueTickRate]） */
+    const val FATIGUE_RATE_FLOOR = 0.25
+
+    /** 倒计时速率上限：防止体力远高于阈值时把预算瞬间烧完 */
+    const val FATIGUE_RATE_CAP = 3.0
 }
 
 /**
@@ -90,6 +121,26 @@ object StaminaCurve {
     /** 预览的可见窗口（米）：用户口径 2km */
     const val DEFAULT_WINDOW_M = 2_000.0
 
+    /**
+     * **体检**：疲劳期"能不能回血"的衰减上限（点/分）。
+     *
+     * 疲劳期以 [StaminaConfig.walkSpeed] 前进，消耗 = `衰减 × 走路/基础`；恢复 =
+     * `恢复系数 × 恢复倍率(体力)`。要能回血，两者在**疲劳体力值**处就得交叉：
+     * 超过本值 ⇒ 疲劳期体力一路下滑、最终卡在 0%（曲线变成"永远很累"）。
+     */
+    fun decayLimitForRecovery(c: StaminaConfig, baseSpeed: Double): Double {
+        val base = if (baseSpeed > 0.05) baseSpeed else 1.0
+        val walkRatio = c.walkSpeed / base
+        return if (walkRatio <= 0.0 || c.restAtPercent >= 100.0) Double.MAX_VALUE
+        else c.recoverCoefficient * StaminaMath.recoveryFactor(c.restAtPercent) / walkRatio
+    }
+
+    /** **体检**：疲劳时速度是否真的比跑动慢（否则"疲劳"等于没降速） */
+    fun fatigueSlowsDown(c: StaminaConfig, baseSpeed: Double): Boolean {
+        val base = if (baseSpeed > 0.05) baseSpeed else 1.0
+        return c.walkSpeed < base * c.minSpeedFactor
+    }
+
     /** 模拟时长上限（秒）：3 小时。超了就直接截断，见类注释 */
     const val MAX_SECONDS = 3.0 * 3600.0
 
@@ -105,6 +156,8 @@ object StaminaCurve {
     class Curve(
         val distanceM: FloatArray,
         val multiplier: FloatArray,
+        /** 从这条曲线量出来的结果指标（页面直接显示，见 [Metrics]） */
+        val metrics: Metrics,
         /** 这一程进入疲劳的次数 */
         val restCount: Int,
         /** 这一程累计处于疲劳的时长（秒） */
@@ -115,6 +168,78 @@ object StaminaCurve {
         val staminaEndPercent: Double,
     ) {
         val size: Int get() = minOf(distanceM.size, multiplier.size)
+    }
+
+    /**
+     * **结果指标**：从曲线上量出来的"用户真正关心的那几个数"。
+     *
+     * 为什么要它：参数的相互耦合让"我想 20 分钟累一次、歇 3 分钟"没法靠反推公式得到
+     * （要联立衰减/恢复/阈值/时长/速度五项）。于是干脆**把结果算出来显示**：
+     * 改一个旋钮 → 直接读这几个数变了多少，不用在脑子里解方程。
+     *
+     * @param firstFatigueDistanceM 第一次进疲劳的距离（米）；-1 = 全程没进疲劳
+     * @param firstFatigueStartSec 第一次进疲劳的时刻（秒）
+     * @param firstFatigueSec 第一次疲劳的实际时长（秒）；-1 = 没量到（没结束）
+     * @param firstFatigueEntryPercent / [firstFatigueExitPercent] 进/出疲劳时的体力
+     * @param firstCycleSec 首次疲劳开始 → 下一次疲劳开始（秒）；-1 = 窗口内没量到
+     * @param fatigueSpeedMps 疲劳期间的平均实际速度
+     * @param averageSpeedMps 全程平均实际速度
+     */
+    class Metrics(
+        val firstFatigueDistanceM: Double,
+        val firstFatigueStartSec: Double,
+        val firstFatigueSec: Double,
+        val firstFatigueEntryPercent: Double,
+        val firstFatigueExitPercent: Double,
+        val firstCycleSec: Double,
+        val fatigueSpeedMps: Double,
+        val averageSpeedMps: Double,
+    ) {
+        val hasFatigue: Boolean get() = firstFatigueDistanceM >= 0.0
+    }
+
+    /** 边跑边量指标（[simulate] 与 [sample] 共用，保证两条路径的口径一致） */
+    private class MetricsTracker(private val base: Double) {
+        private var firstDistance = -1.0
+        private var firstStartSec = -1.0
+        private var firstSec = -1.0
+        private var entryPercent = 0.0
+        private var exitPercent = 0.0
+        private var firstCycleSec = -1.0
+        private var speedSum = 0.0
+        private var fatigueTicks = 0L
+        private var wasResting = false
+
+        fun tick(distance: Double, elapsed: Double, stamina: Double, resting: Boolean, multiplier: Double) {
+            if (resting) {
+                if (!wasResting) {                      // 刚进疲劳
+                    if (firstStartSec < 0.0) {
+                        firstDistance = distance
+                        firstStartSec = elapsed
+                        entryPercent = stamina
+                    } else if (firstCycleSec < 0.0) {
+                        firstCycleSec = elapsed - firstStartSec
+                    }
+                }
+                speedSum += base * multiplier
+                fatigueTicks++
+            } else if (wasResting && firstSec < 0.0) {   // 刚出疲劳
+                firstSec = elapsed - firstStartSec
+                exitPercent = stamina
+            }
+            wasResting = resting
+        }
+
+        fun build(elapsed: Double, distance: Double) = Metrics(
+            firstFatigueDistanceM = firstDistance,
+            firstFatigueStartSec = if (firstStartSec < 0.0) -1.0 else firstStartSec,
+            firstFatigueSec = firstSec,
+            firstFatigueEntryPercent = entryPercent,
+            firstFatigueExitPercent = exitPercent,
+            firstCycleSec = firstCycleSec,
+            fatigueSpeedMps = if (fatigueTicks > 0) speedSum / fatigueTicks else 0.0,
+            averageSpeedMps = if (elapsed > 0.0) distance / elapsed else 0.0,
+        )
     }
 
     /** 生成页用的积分步长：**取 App 的报点间隔**（`reportDuration` 默认 100ms），保证同一口径 */
@@ -155,6 +280,7 @@ object StaminaCurve {
         var elapsed = 0.0
         val distanceList = ArrayList<Float>(4096)
         val multiplierList = ArrayList<Float>(4096)
+        val tracker = MetricsTracker(base)
         distanceList.add(0f)
         multiplierList.add(multiplier.toFloat())
 
@@ -163,6 +289,8 @@ object StaminaCurve {
             multiplier = model.tick(c, step, base, moved, random)
             distance += moved
             elapsed += step
+            val snap = model.snapshot()
+            tracker.tick(distance, elapsed, snap.staminaPercent, snap.resting, multiplier)
             distanceList.add(distance.toFloat())
             multiplierList.add(multiplier.toFloat())
         }
@@ -171,6 +299,7 @@ object StaminaCurve {
         return Curve(
             distanceM = distanceList.toFloatArray(),
             multiplier = multiplierList.toFloatArray(),
+            metrics = tracker.build(elapsed, distance),
             restCount = s.restCount,
             restTotalSec = s.restTotalSec,
             elapsedSec = elapsed,
@@ -183,7 +312,8 @@ object StaminaCurve {
      *
      * @param decayScale 衰减系数的整体倍数：1.0 = 无随机，1±p = 随机极值
      * @param transitionScale 过渡时长的整体倍数：极值线要和衰减**同向取极**才有意义 ——
-     *   速度下界 = 衰减取大 + 过渡取快（1+p / 1−p），上界反之
+     *   速度下界 = 衰减取大 + 过渡取快 + 疲劳取长，上界反之（三个随机源互相独立）
+     * @param fatigueScale 疲劳时长的整体倍数（同上）
      * @param dtSec 积分步长（秒）。测试里会传 0.1 与 [StaminaModel] 对齐逐拍比对
      */
     fun simulate(
@@ -193,6 +323,7 @@ object StaminaCurve {
         maxDistanceMeters: Double = DEFAULT_MAX_DISTANCE_M,
         dtSec: Double = DEFAULT_DT_SEC,
         transitionScale: Double = 1.0,
+        fatigueScale: Double = 1.0,
     ): Curve {
         val c = config.sanitized()
         val base = if (baseSpeed > 0.05) baseSpeed else 1.0
@@ -205,7 +336,10 @@ object StaminaCurve {
         var resting = false
         var restCount = 0
         var totalRestSec = 0.0
-        var cooldown = 0.0
+        var fatigueRemaining = 0.0
+        val fatigueBudget = (c.fatigueSec *
+                (if (fatigueScale.isFinite() && fatigueScale > 0.0) fatigueScale else 1.0))
+            .coerceAtLeast(0.0)
         var blend = 0.0
         var blendTarget = 0.0
         val transitionSec = (c.transitionSec *
@@ -219,6 +353,7 @@ object StaminaCurve {
 
         val distanceList = ArrayList<Float>(4096)
         val multiplierList = ArrayList<Float>(4096)
+        val tracker = MetricsTracker(base)
         distanceList.add(0f)
         multiplierList.add(multiplier.toFloat())
 
@@ -227,19 +362,20 @@ object StaminaCurve {
             val moved = base * multiplier * step
 
             // ↓↓↓ 以下与 StaminaModel.tick 的结算顺序逐条对应，改一处必须改另一处 ↓↓↓
-            stamina += c.recoverCoefficient / 60.0 *
-                    StaminaMath.recoveryFactor(stamina) / c.restSecondsCoefficient * step
+            stamina += c.recoverCoefficient / 60.0 * StaminaMath.recoveryFactor(stamina) * step
             stamina -= decayPerMinute / 60.0 * multiplier * step
             stamina = stamina.coerceIn(0.0, 100.0)
             if (!resting && stamina <= c.restAtPercent) {
                 resting = true
                 restCount += 1
-                cooldown = 0.0
+                fatigueRemaining = fatigueBudget          // 进疲劳：按下预算起倒计时
             } else if (resting) {
-                // 疲劳状态：出看"冷却进度回到 ≥ 0"，**不看体力阈值本身**
-                // （两侧都用体力阈值 = 无迟滞 ⇒ 必然抖成继电器振荡）
-                cooldown += (stamina - c.resumeAtPercent) / 100.0 * step
-                if (cooldown >= 0.0) resting = false
+                // 出看**倒计时预算**，不看体力阈值本身（两侧都用阈值 ⇒ 无迟滞 ⇒ 继电器振荡）
+                fatigueRemaining -= StaminaMath.fatigueTickRate(c, stamina) * step
+                if (fatigueRemaining <= 0.0) {
+                    resting = false
+                    fatigueRemaining = 0.0
+                }
             }
             // 过渡：与 StaminaModel 同一套（目标档变化即"本次过渡"，时长 = 名义时长 × 本次倍数）
             val target = if (resting) 1.0 else 0.0
@@ -257,6 +393,7 @@ object StaminaCurve {
 
             distance += moved
             elapsed += step
+            tracker.tick(distance, elapsed, stamina, resting, multiplier)
             distanceList.add(distance.toFloat())
             multiplierList.add(multiplier.toFloat())
         }
@@ -264,6 +401,7 @@ object StaminaCurve {
         return Curve(
             distanceM = distanceList.toFloatArray(),
             multiplier = multiplierList.toFloatArray(),
+            metrics = tracker.build(elapsed, distance),
             restCount = restCount,
             restTotalSec = totalRestSec,
             elapsedSec = elapsed,
