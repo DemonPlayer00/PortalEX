@@ -59,11 +59,26 @@
     <string name="allow_landscape_desc">横屏下部分界面可能显示异常</string>
     <string name="hide_developer_mode">隐藏开发者模式</string>
     <string name="menu_stamina">Stamina Mock</string>
+    <string name="menu_cadence">Cadence Mock</string>
+    <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
     <string name="stamina_enable">启用体力模拟</string>
     <string name="stamina_enable_desc">体力随跑动衰减、空闲时持续恢复；低了会降速并进入疲劳，冷却还完才重新开跑</string>
     <string name="stamina_status">当前体力</string>
     <string name="stamina_chart_title">速度倍率 / 距离</string>
     <string name="stamina_chart_desc">横轴=距离（窗口 2 km，左右滑动看更远），纵轴=速度倍率</string>
+    <!-- 步频模拟页 -->
+    <string name="cadence_page_desc">决定"目标应用看到的步频"：由 速度 × 步频倍率 得出。这一页只放属于本域、且不与其它设置耦合的项（步频倍率）；传感器上报频率与位置上报间隔是全局项，仍在 Setting 页。</string>
+    <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>
+    <string name="cadence_scale">步频倍率</string>
+    <string name="cadence_scale_desc">微调「步频 ↔ 速度」的关系；1 = 不调整（0.2~3.0）</string>
+    <string name="cadence_footer">步频公式只有一处（FakeLoc.cadenceForSpeed，钳在 30~300 步/分）。步进事件由系统框架侧按"步间隔"分摊下发，目标应用不需要进入作用域。要调事件密度去 Setting 页：传感器上报频率（全局事件网格）与位置上报间隔（运动循环拍长，体力页也在读）。</string>
+
+    <!-- 角度计和指南针模拟页 -->
+    <string name="angle_page_desc">角度计与指南针相关设置的归属页。**当前没有从「Setting」页搬过来的设置项**：方向/角度类的数值（磁场 σ、方向角 σ、旋转矢量 σ）是传感器噪声档，按用户口径仍留在「Calibration」页。</string>
+    <string name="angle_readout_injection">注入开关（Binder 外周传感器模拟）：%1$s</string>
+    <string name="angle_readout_bearing">当前下发朝向：%1$s</string>
+    <string name="angle_footer">这一页只做只读状态显示。要改数值请去：Calibration（磁场/方向角/旋转矢量噪声 σ、一键校准）与 Setting（Binder 外周传感器模拟开关）。</string>
+
     <string name="stamina_chart_mode_theory">理论</string>
     <string name="stamina_chart_mode_generated">生成</string>
     <string name="stamina_chart_sample">本次生成：%1$s km 用 %2$s 分钟 · 平均配速 %3$s/km · 疲劳 %4$d 次（共 %5$s 分钟）</string>

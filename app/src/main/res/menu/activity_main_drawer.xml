@@ -30,6 +30,14 @@
             android:icon="@drawable/baseline_directions_run_24"
             android:title="@string/menu_stamina" />
         <item
+            android:id="@+id/nav_cadence"
+            android:icon="@drawable/baseline_directions_walk_24"
+            android:title="@string/menu_cadence" />
+        <item
+            android:id="@+id/nav_angle_compass"
+            android:icon="@drawable/baseline_explore_24"
+            android:title="@string/menu_angle_compass" />
+        <item
             android:id="@+id/nav_settings"
             android:icon="@drawable/baseline_settings_24"
             android:title="@string/menu_setting" />

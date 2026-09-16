@@ -22,8 +22,9 @@ import moe.fuqiuluo.portalex.databinding.FragmentStaminaBinding
 import moe.fuqiuluo.portalex.ext.StaminaPrefs
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
-import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.service.StaminaController
+import moe.fuqiuluo.portalex.ui.common.NumberRow
+import moe.fuqiuluo.portalex.ui.common.renderNumberRows
 import moe.fuqiuluo.xposed.utils.StaminaConfig
 
 /**
@@ -237,29 +238,29 @@ class StaminaFragment : Fragment() {
     }
 
     /** 把参数行按 [rows] 铺进容器（每次改参数后重建，保证显示与内存一致） */
+    /**
+     * 行渲染与输入对话框都在 [renderNumberRows]（与步频 / 角度指南针页共用一套）——
+     * 本页只负责"从配置读值、写回配置"这两件事。
+     */
     private fun renderRows() {
-        val container = binding.staminaRows
-        container.removeAllViews()
-        val config = StaminaController.config()
-        rows.forEach { row ->
-            container.addView(buildRow(row, config))
-        }
-    }
-
-    private fun buildRow(row: Row, config: StaminaConfig): View {
-        val rowView = layoutInflater.inflate(R.layout.item_stamina_value, binding.staminaRows, false)
-        rowView.findViewById<TextView>(R.id.stamina_row_title).text = row.title
-        rowView.findViewById<TextView>(R.id.stamina_row_desc).text = row.desc
-        rowView.findViewById<TextView>(R.id.stamina_row_value).text = row.format(row.get(config))
-        rowView.setOnClickListener {
-            showNumberDialog(row.title, row.get(StaminaController.config()), row.hint) { value ->
-                val updated = row.set(StaminaController.config(), value)
-                StaminaController.applyConfig(requireContext(), updated)
-                renderRows()
-                refreshStatus()
-            }
-        }
-        return rowView
+        renderNumberRows(
+            layoutInflater, binding.staminaRows,
+            rows.map { row ->
+                NumberRow(
+                    title = row.title,
+                    desc = row.desc,
+                    display = { row.format(row.get(StaminaController.config())) },
+                    current = { row.get(StaminaController.config()) },
+                    hint = { row.hint },
+                    commit = { value ->
+                        val updated = row.set(StaminaController.config(), value)
+                        StaminaController.applyConfig(requireContext(), updated)
+                        renderRows()
+                        refreshStatus()
+                    },
+                )
+            },
+        )
     }
 
     private var chartConfig: StaminaConfig? = null
@@ -408,25 +409,6 @@ class StaminaFragment : Fragment() {
         binding.staminaStats.text = "疲劳 %d 次 / 共 %.1f 分钟".format(
             snapshot.restCount, snapshot.restTotalSec / 60.0
         )
-    }
-
-    private fun showNumberDialog(titleText: String, current: Double, hint: String, handler: (Double) -> Unit) {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_input, null)
-        dialogView.findViewById<TextView>(R.id.title).text = titleText
-        val value = dialogView.findViewById<TextInputEditText>(R.id.value)
-        value.setText(if (current == current.toLong().toDouble()) current.toLong().toString() else current.toString())
-
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(null)
-            .setMessage(hint)
-            .setView(dialogView)
-            .setPositiveButton("保存") { _, _ ->
-                val parsed = value.text.toString().trim().toDoubleOrNull()
-                if (parsed != null) handler(parsed)
-            }
-            .setNegativeButton("取消", null)
-            .show()
-            .also { it.shiftAboveIme(requireActivity().window.decorView) }
     }
 
     override fun onDestroyView() {
