@@ -106,6 +106,53 @@ data class StaminaConfig(
     var moveIgnoreSpeed: Double = 12.0,
 ) {
     /**
+     * **上线顺序**（App → 模块的 `PUT_CONFIG`，见 `Key.STAMINA_CONFIG`）。
+     *
+     * 为什么集中在这里：这是跨进程的**协议面**，两侧各写一份顺序必然会错位，
+     * 而错位不会报错、只会让参数悄悄对不上。改字段必须同时改这里，
+     * `StaminaWireTest` 会用"字段数 = 元素数"把漏改钉住。
+     *
+     * ⚠️ 与 [sanitized] 一样：**只增不减不改序**，否则两侧要同时升级。
+     */
+    fun toWire(): FloatArray = floatArrayOf(
+        if (enabled) 1f else 0f,
+        decayPerMinute.toFloat(),
+        recoverCoefficient.toFloat(),
+        restAtPercent.toFloat(),
+        resumeAtPercent.toFloat(),
+        fatigueSec.toFloat(),
+        transitionSec.toFloat(),
+        walkSpeed.toFloat(),
+        minSpeedFactor.toFloat(),
+        randomPercent.toFloat(),
+        moveIgnoreWindowSec.toFloat(),
+        moveIgnoreSpeed.toFloat(),
+    )
+
+    companion object {
+        /** 与 [toWire] 配对的**唯一**解析处；长度不符一律返回 null（宁可保持旧值，不要读半个配置） */
+        fun fromWire(w: FloatArray?): StaminaConfig? {
+            if (w == null || w.size != WIRE_SIZE) return null
+            return StaminaConfig(
+                enabled = w[0] != 0f,
+                decayPerMinute = w[1].toDouble(),
+                recoverCoefficient = w[2].toDouble(),
+                restAtPercent = w[3].toDouble(),
+                resumeAtPercent = w[4].toDouble(),
+                fatigueSec = w[5].toDouble(),
+                transitionSec = w[6].toDouble(),
+                walkSpeed = w[7].toDouble(),
+                minSpeedFactor = w[8].toDouble(),
+                randomPercent = w[9].toDouble(),
+                moveIgnoreWindowSec = w[10].toDouble(),
+                moveIgnoreSpeed = w[11].toDouble(),
+            ).sanitized()
+        }
+
+        const val WIRE_SIZE = 12
+    }
+
+    /**
      * 夹取到有意义的范围：防界面输入 0/负数/离谱值把模拟弄成静止或瞬移。
      *
      * [resumeAtPercent] 是**派生夹取**：它必须比休息体力值至少高 1 个百分点。

@@ -20,6 +20,7 @@ import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
@@ -119,6 +120,8 @@ object ConfigSync {
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
         rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
+        // 体力参数：App 是此刻唯一的模型持有者，把参数镜像给模块（迁移步骤①建通路）
+        rely.putFloatArray(Key.STAMINA_CONFIG, StaminaController.config().toWire())
 
         return resultOf(MockServiceHelper.send(locationManager, rely))
     }

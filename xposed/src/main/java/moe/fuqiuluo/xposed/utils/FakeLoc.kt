@@ -39,6 +39,11 @@ object FakeLoc {
     var enableBinderSensorMock: Boolean
         get() = LocConfig.enableBinderSensorMock
         set(value) { LocConfig.enableBinderSensorMock = value }
+    /** 体力参数（定序数组；见 [LocConfig.staminaWire]） */
+    var staminaWire: FloatArray
+        get() = LocConfig.staminaWire
+        set(value) { LocConfig.staminaWire = value }
+
     var noiseProfile: FloatArray
         get() = LocConfig.noiseProfile
         set(value) { LocConfig.noiseProfile = value }

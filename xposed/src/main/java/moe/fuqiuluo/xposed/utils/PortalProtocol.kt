@@ -62,6 +62,8 @@ object PortalProtocol {
         const val BEARING                   = "bearing"
         const val BINDER_SENSOR_MOCK        = "binder_sensor_mock"
         const val CADENCE_SCALE             = "cadence_scale"
+        /** 体力参数（`StaminaConfig.toWire()` 的定序数组；模块侧只存不解释，见迁移方案） */
+        const val STAMINA_CONFIG            = "stamina_config"
         const val COMMAND_ID                = "command_id"
         const val DISABLE_FUSED_LOCATION    = "disable_fused_location"
         const val DISABLE_GET_FROM_LOCATION = "disable_get_from_location"
