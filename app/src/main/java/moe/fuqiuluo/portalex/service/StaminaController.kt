@@ -126,7 +126,7 @@ object StaminaController {
                 "StaminaController",
                 "体力 %.1f%% 阶段=%s 倍率 %.3f ⇒ 实速 %.2f m/s（基础 %.2f）休息%d次".format(
                     s.staminaPercent,
-                    if (s.resting) "疲劳(冷却%.1f)".format(s.cooldownSec) else "跑动",
+                    if (s.resting) "疲劳(剩%.0fs)".format(s.fatigueRemainingSec) else "跑动",
                     multiplier, baseSpeed * multiplier, baseSpeed, s.restCount,
                 )
             )
@@ -169,7 +169,7 @@ object StaminaController {
         if (!c.enabled) return 0.0
         val s = model.snapshot()
         val factor = 2.0 - s.staminaPercent.coerceIn(0.0, 100.0) / 100.0
-        return c.recoverCoefficient * factor / c.restSecondsCoefficient
+        return c.recoverCoefficient * factor
     }
 
     /** 当前实际速度（配置速度 × 倍率），供界面显示 */

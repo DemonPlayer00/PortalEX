@@ -27,9 +27,12 @@ object StaminaPrefs {
      * "冷却 35 倍"，恢复慢到几乎看不见（体力只掉不回的假象）。
      * 键名没变，所以只能靠版本号识别"这是老数据"，一次性重置成新默认。
      *
-     * **什么时候不用 +1**：只是**新增**一个键（例如 `resume` = 开跑阈值）时不必动它 ——
-     * 老数据里没有这个键，取默认值即可，旧键的语义一点没变。反之，只要有任何**旧键换了含义**，
-     * 就必须 +1（否则老值会被当成新语义读进来，且完全静默）。
+     * **什么时候不用 +1**：只是**新增/停用**键时不必动它 ——
+     * 老数据里没有这个键，取默认值即可；停用的键（`rest_sec` = 旧"冷却时间系数"、
+     * `rest_factor` = 旧"休息降速系数"）只是不再读，留在盘上无害。
+     * 反之，只要有任何**旧键换了含义**（例如把 `rest_sec` 从"系数"改读成"秒"），就**必须 +1**，
+     * 否则老值会被当成新语义读进来，而且完全静默 —— 这正是新键叫 `fatigue_sec` 而不是复用
+     * `rest_sec` 的原因。
      */
     private const val VERSION_KEY = "stamina_version"
     private const val VERSION = 1
@@ -49,8 +52,7 @@ object StaminaPrefs {
             decayPerMinute = sp.getFloat(P + "decay", d.decayPerMinute.toFloat()).toDouble(),
             restAtPercent = sp.getFloat(P + "rest_at", d.restAtPercent.toFloat()).toDouble(),
             resumeAtPercent = sp.getFloat(P + "resume", d.resumeAtPercent.toFloat()).toDouble(),
-            restSpeedFactor = sp.getFloat(P + "rest_factor", d.restSpeedFactor.toFloat()).toDouble(),
-            restSecondsCoefficient = sp.getFloat(P + "rest_sec", d.restSecondsCoefficient.toFloat()).toDouble(),
+            fatigueSec = sp.getFloat(P + "fatigue_sec", d.fatigueSec.toFloat()).toDouble(),
             transitionSec = sp.getFloat(P + "transition", d.transitionSec.toFloat()).toDouble(),
             recoverCoefficient = sp.getFloat(P + "recover", d.recoverCoefficient.toFloat()).toDouble(),
             moveIgnoreWindowSec = sp.getFloat(P + "ignore_window", d.moveIgnoreWindowSec.toFloat()).toDouble(),
@@ -61,6 +63,19 @@ object StaminaPrefs {
         ).sanitized()
     }
 
+    /**
+     * 删掉**已废弃**的旧键（`rest_sec` = 旧"冷却时间系数"、`rest_factor` = 旧"休息降速系数"）。
+     *
+     * 只在用户点「重置数据」时调用：平时留着无害（不再读），但一个"重置"要是还留下一堆
+     * 看不懂的旧键，下次排查的人会以为它们还在生效 —— 顺手清干净。
+     */
+    fun clearObsolete(context: Context) {
+        context.sharedPrefs.edit {
+            remove(P + "rest_sec")
+            remove(P + "rest_factor")
+        }
+    }
+
     fun save(context: Context, config: StaminaConfig) {
         val c = config.sanitized()
         context.sharedPrefs.edit {
@@ -68,8 +83,7 @@ object StaminaPrefs {
             putFloat(P + "decay", c.decayPerMinute.toFloat())
             putFloat(P + "rest_at", c.restAtPercent.toFloat())
             putFloat(P + "resume", c.resumeAtPercent.toFloat())
-            putFloat(P + "rest_factor", c.restSpeedFactor.toFloat())
-            putFloat(P + "rest_sec", c.restSecondsCoefficient.toFloat())
+            putFloat(P + "fatigue_sec", c.fatigueSec.toFloat())
             putFloat(P + "transition", c.transitionSec.toFloat())
             putFloat(P + "recover", c.recoverCoefficient.toFloat())
             putFloat(P + "ignore_window", c.moveIgnoreWindowSec.toFloat())

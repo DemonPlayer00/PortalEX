@@ -134,13 +134,16 @@ class StaminaChartView @JvmOverloads constructor(
 
         val p = (config.randomPercent / 100.0).coerceIn(0.0, 1.0)
         baseCurve = StaminaCurve.simulate(config, base, decayScale = 1.0)
-        // 运行时随机有两处：每段跑动抽一次衰减速率、每次过渡抽一次过渡时长。
-        // 两者独立 ⇒ 极值组合同样可达：下界 = 衰减最大 + 过渡最快，上界反之。
+        // 运行时随机有三处：每段跑动抽一次衰减速率、每次方向变化抽一次过渡时长、
+        // 每次疲劳抽一次疲劳时长。三者独立 ⇒ 极值组合同样可达：
+        // 速度下界 = 衰减最大 + 过渡最快 + 疲劳最长，上界反之。
         lowerBoundCurve = StaminaCurve.simulate(
-            config, base, decayScale = 1.0 + p, transitionScale = (1.0 - p).coerceAtLeast(0.05)
+            config, base, decayScale = 1.0 + p, transitionScale = (1.0 - p).coerceAtLeast(0.05),
+            fatigueScale = 1.0 + p,
         )
         upperBoundCurve = StaminaCurve.simulate(
-            config, base, decayScale = 1.0 - p, transitionScale = 1.0 + p
+            config, base, decayScale = 1.0 - p, transitionScale = 1.0 + p,
+            fatigueScale = (1.0 - p).coerceAtLeast(0.05),
         )
         clampScroll()
         invalidate()
@@ -148,6 +151,12 @@ class StaminaChartView @JvmOverloads constructor(
 
     /** 当前是哪一页 */
     fun mode(): Mode = mode
+
+    /**
+     * 理论曲线的结果指标（页面用它显示"这套参数跑出来什么样"）。
+     * 直接取 [submit] 已经算好的那条，**不重复跑一遍积分**。
+     */
+    fun theoryMetrics(): StaminaCurve.Metrics? = baseCurve?.metrics
 
     /**
      * 切到「生成」页：显示**真实引擎**（[StaminaCurve.sample]）跑出来的一条曲线，
