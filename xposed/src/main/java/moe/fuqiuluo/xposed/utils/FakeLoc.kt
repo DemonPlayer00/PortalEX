@@ -71,6 +71,9 @@ object FakeLoc {
     var hideMock: Boolean
         get() = LocConfig.hideMock
         set(value) { LocConfig.hideMock = value }
+    var hideDeveloperMode: Boolean
+        get() = LocConfig.hideDeveloperMode
+        set(value) { LocConfig.hideDeveloperMode = value }
     var hookWifi: Boolean
         get() = LocConfig.hookWifi
         set(value) { LocConfig.hookWifi = value }

@@ -10,6 +10,7 @@ import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
+import moe.fuqiuluo.portalex.ext.hideDeveloperMode
 import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
@@ -115,6 +116,8 @@ object ConfigSync {
         rely.putBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
         rely.putBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
         rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+        // 隐藏开发者模式：系统侧钩子常驻、命中时才看这个开关，所以下发即生效
+        rely.putBoolean(Key.HIDE_DEVELOPER_MODE, context.hideDeveloperMode)
         rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
