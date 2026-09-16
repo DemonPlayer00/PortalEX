@@ -223,6 +223,13 @@ object BinderSensorMock {
         StaminaRuntime.writeStatus(rely)
         rely.putString("stamina", StaminaRuntime.statusLine())
         val motion = MotionEngine.status()
+        // 结构化字段（Test 页/诊断用）：与 `motion` 那行同一来源
+        rely.putString(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.MOTION_MODE, motion.mode.name.lowercase())
+        rely.putBoolean(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.MOTION_PLAYING, motion.playing)
+        rely.putBoolean(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.MOTION_COMPLETED, motion.completed)
+        rely.putDouble(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.ROUTE_TRAVELLED, motion.travelledMeters)
+        rely.putDouble(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.ROUTE_DISTANCE, motion.distanceMeters)
+        rely.putInt(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.ROUTE_POINTS, motion.points)
         rely.putString(
             "motion",
             "推进=%s 路线=%.0f/%.0fm(%d点) 时钟=%s 上报=%dms".format(

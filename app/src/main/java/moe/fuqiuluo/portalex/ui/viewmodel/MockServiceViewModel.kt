@@ -341,6 +341,10 @@ class MockServiceViewModel : ViewModel() {
 
     private fun step() {
         val lm = locationManager ?: return
+        // 非阻塞地消费暂停门（`pause()`/`resume()` 只是入队，**必须有人 drain 才会生效**）：
+        // 旧实现是运动循环在推进前调 `consume()`；合并到遥控循环后若不 drain，
+        // "按住摇杆"就永远读成暂停 —— 位置一动不动，而且不报任何错。
+        val paused = rockerCoroutineController.consume()
         val auto = isAutoPlaying
 
         if (auto && selectedRoute != null && pathPoints.size >= 2) {
@@ -361,8 +365,8 @@ class MockServiceViewModel : ViewModel() {
                 MockServiceHelper.setRoutePlaying(lm, false)
                 routePlayingPushed = false
             }
-            // 摇杆意图：暂停门关着（手指按住或锁定后继续走）才算"在走"
-            pushRockerIntent(lm, active = !rockerCoroutineController.isPaused)
+            // 摇杆意图：暂停门开着（手指按住或锁定后继续走）才算"在走"
+            pushRockerIntent(lm, active = !paused)
         }
 
         // 低频回读：进度显示、播完收尾、坐标镜像
