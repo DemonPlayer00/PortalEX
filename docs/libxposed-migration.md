@@ -131,10 +131,22 @@ com.oplus.location
 
 ### 隐藏开发者模式：作用域与"设置应用不读那两条路"（2026-09-16 实测）
 
-**已成立**：
-- 模块的推荐清单（`scope.list` + legacy `arrays.xml`）里加了 `com.android.settings`；
-- 目的达成 —— 设置应用确实被注入：`libxposed 入口就绪：进程=com.android.settings`
-  （还有它的 `:background` 子进程）；
+**已撤销（2026-09-16，`dd1a60a`）**：曾把 `com.android.settings` 加进推荐清单，
+理由写的是"设置应用是这组键的主要读取者"。**A/B 实测证明这个做法两个判据都不成立**：
+
+| 场景 | 注入进程 | 框架侧命中 |
+| --- | --- | --- |
+| 设置应用在作用域内 | system + phone + **settings** | ✅ `development_settings_enabled ⇒ 0` ×5 |
+| 设置应用移出作用域 | system + phone（**0 注入**） | ❌ 零命中 |
+
+⇒ 命中来自**设置应用进程自己的客户端读取**，不是 system_server 的内部读取。
+要让设置界面显示"未开启"就必须注入设置应用，而"对目标应用零注入"是红线 ⇒ **选红线**，
+`com.android.settings` 已移出两处清单。
+
+**仍然成立的部分**：
+- `DeveloperModeHook` 本身合规：安装点只在 `install()` 的 `"android"` 分支，非系统分支直接 return；
+- 对**已在作用域内**的目标应用（其进程本身就是被注入的）读 `Settings.Global` 时依然生效 ——
+  这是既有作用域的自然结果，不是新增注入；
 - 钩子装上：`DeveloperModeHook: 已挂 5 个 Settings.Global 读取口`；
 - 开关链路通：`put_config` 里 `hide_developer_mode=false → true` 可见。
 
