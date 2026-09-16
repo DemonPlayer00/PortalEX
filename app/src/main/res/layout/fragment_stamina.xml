@@ -59,6 +59,30 @@
                     app:useMaterialThemeColors="true" />
             </LinearLayout>
 
+            <!--
+              倍率 × 距离预览图（用户口径）：
+              横向窗口 2km、可左右滑动看更远；一条实线=无随机，两条半透明=±随机极值。
+              图自己处理横向滚动与刻度栏，见 StaminaChartView 的类注释。
+            -->
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="@string/stamina_chart_title"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/stamina_chart_desc"
+                android:textSize="11sp" />
+
+            <moe.fuqiuluo.portalex.android.widget.StaminaChartView
+                android:id="@+id/stamina_chart"
+                android:layout_width="match_parent"
+                android:layout_height="190dp"
+                android:layout_marginTop="6dp" />
+
             <!-- 当前状态 -->
             <com.google.android.material.textview.MaterialTextView
                 android:layout_width="wrap_content"

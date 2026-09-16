@@ -77,10 +77,20 @@ class StaminaModelTest {
 
     // ------------------------------------------------------------------ 基础
 
+    /**
+     * 起手不调制 —— 但注意"第一拍"的倍率**不是精确的 1.0**：
+     * 那一拍自己扣掉的体力会立刻反映到该拍的倍率上（倍率取自本拍结算之后的体力）。
+     * 旧实现把 fatigue 算在消耗之前，于是第一拍返回精确 1.0 —— 那正是
+     * "预览曲线与实跑对不上"的根源（见 StaminaCurveTest 的逐拍一致性用例）。
+     */
     @Test
-    fun `满体力开始跑动 倍率为 1`() {
+    fun `满体力开始跑动 倍率贴着 1 但已扣掉本拍的消耗`() {
         val m = StaminaModel().apply { reset() }
-        assertEquals(1.0, m.tick(cfg(), 0.5, base, base * 0.5, rnd), 1e-6)
+        val first = m.tick(cfg(), 0.5, base, base * 0.5, rnd)
+        assertTrue("起手倍率应贴着 1（实得 $first）", first <= 1.0 && first > 0.999)
+        // 静止那一拍没有任何消耗 ⇒ 倍率必须仍是精确的 1.0
+        val still = StaminaModel().apply { reset() }
+        assertEquals(1.0, still.tick(cfg(), 0.5, base, 0.0, rnd), 1e-12)
     }
 
     @Test
