@@ -1,0 +1,452 @@
+package moe.fuqiuluo.portalex.ui.settings
+
+import android.annotation.SuppressLint
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.CompoundButton
+import android.widget.TextView
+import android.widget.Toast
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.MainActivity
+import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
+import moe.fuqiuluo.portalex.ext.accuracy
+import moe.fuqiuluo.portalex.ext.allowLandscape
+import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.debug
+import moe.fuqiuluo.portalex.ext.fusedMode
+import moe.fuqiuluo.portalex.ext.hideDeveloperMode
+import moe.fuqiuluo.portalex.ext.disableWifiScan
+import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
+import moe.fuqiuluo.portalex.ext.minSatelliteCount
+import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
+import moe.fuqiuluo.portalex.ext.needOpenSELinux
+import moe.fuqiuluo.portalex.ext.keepAliveInBackground
+import moe.fuqiuluo.portalex.ext.reportDuration
+
+import moe.fuqiuluo.portalex.ext.shiftAboveIme
+import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.service.MockKeepAliveService
+import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.xposed.utils.FusedMode
+import moe.fuqiuluo.xposed.utils.PortalProtocol
+import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
+
+class SettingsFragment : Fragment() {
+    private var _binding: FragmentSettingsBinding? = null
+    private val binding get() = _binding!!
+
+    private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
+
+    @SuppressLint("SetTextI18n")
+    /** 本机是否有融合定位（`refreshFusedState` 查得；无则整行禁用） */
+    private var fusedAvailable = true
+
+    /**
+     * 查询系统侧的融合定位状态：决定本行**是否可用**，并把当前处置写在右侧（与其它设置项一致）。
+     *
+     * · 没有融合定位的机型 ⇒ 整行置灰 + 显示"不适用"，不做"看着能点其实没用"的假设置；
+     * · 有 ⇒ 右侧显示当前档位（拒绝 / 放行（不推荐） / 伪装）；调试模式打开时把系统侧的
+     *   hook 状态单行诊断显示在标题下（同时系统侧也会打一条 debug 日志）。
+     */
+    private fun refreshFusedState() {
+        val ctx = context ?: return
+        val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
+            as? android.location.LocationManager
+        if (lm == null) {
+            setFusedRow(enabled = false, value = "不适用", desc = null)
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val state = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { MockServiceHelper.getFusedState(lm) }.getOrNull()
+            }
+            if (_binding == null) return@launch
+            if (state == null) {
+                // 系统侧没应答（模块未生效/未重启）：保持可用，但如实说明
+                setFusedRow(
+                    enabled = true,
+                    value = FusedMode.label(ctx.fusedMode),
+                    desc = "系统侧未应答（模块需重启生效）"
+                )
+                return@launch
+            }
+            fusedAvailable = state.getBoolean(PortalProtocol.Key.FUSED_AVAILABLE, false)
+            val mode = FusedMode.sanitize(
+                state.getInt(PortalProtocol.Key.FUSED_MODE, ctx.fusedMode)
+            )
+            setFusedRow(
+                enabled = fusedAvailable,
+                value = if (fusedAvailable) FusedMode.label(mode) else "不适用",
+                desc = if (!fusedAvailable) "本机无融合定位，此项不适用"
+                else if (ctx.debug) state.getString(PortalProtocol.Key.FUSED_STATUS)
+                else null
+            )
+        }
+    }
+
+    /** 更新本行的可用性/右侧值/说明（说明为空则用默认文案） */
+    private fun setFusedRow(enabled: Boolean, value: String, desc: String?) {
+        val b = _binding ?: return
+        b.dfusedLayout.isEnabled = enabled
+        b.dfusedLayout.isClickable = enabled
+        b.dfusedLayout.alpha = if (enabled) 1f else 0.5f
+        b.dfusedValue.text = value
+        b.dfusedDesc.text = desc ?: getString(R.string.dfused_desc)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (_binding != null) {
+            refreshBatteryOptimizationState()
+            refreshFusedState()
+        }
+    }
+
+    /** 电池优化白名单状态：文案如实反映，不做假成功 */
+    private fun refreshBatteryOptimizationState() {
+        val ctx = context ?: return
+        val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        val exempt = pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+        binding.batteryOptimizationState.text = if (exempt) {
+            "已加入（系统不会限制后台运行）"
+        } else {
+            "未加入 — 点此申请（部分 ROM 会限制后台，导致模拟中途停住）"
+        }
+    }
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        _binding = FragmentSettingsBinding.inflate(inflater, container, false)
+        val root: View = binding.root
+
+        val context = requireContext()
+        binding.selinuxSwitch.isChecked = context.needOpenSELinux
+        binding.selinuxSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
+            override fun onCheckedChanged(
+                buttonView: CompoundButton,
+                isChecked: Boolean
+            ) {
+                context.needOpenSELinux = isChecked
+                showToast(if (isChecked) "已开启SELinux" else "已关闭SELinux")
+            }
+        })
+
+        binding.altitudeValue.text = "%.2f米".format(context.altitude)
+        binding.speedValue.text = "%.2f米/秒".format(context.speed)
+        binding.accuracyValue.text = "%.2f米".format(context.accuracy)
+        binding.reportDurationValue.text = "%dms".format(context.reportDuration)
+        binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
+
+        binding.altitudeLayout.setOnClickListener {
+            showDialog("设置海拔高度", binding.altitudeValue.text.toString().let { it.substring(0, it.length - 1) }) {
+                val value = it.toDoubleOrNull()
+                if (value == null || value < 0.0) {
+                    showToast("海拔高度不合法")
+                    return@showDialog
+                } else if (value > 10000) {
+                    showToast("海拔高度不能超过10000米")
+                    return@showDialog
+                }
+                context.altitude = value
+                binding.altitudeValue.text = "%.2f米".format(value)
+            }
+        }
+
+        binding.speedLayout.setOnClickListener {
+            showDialog("设置速度", binding.speedValue.text.toString().let { it.substring(0, it.length - 3) }) {
+                val value = it.toDoubleOrNull()
+                if (value == null || value < 0.0) {
+                    showToast("速度不合法")
+                    return@showDialog
+                } else if (value > 1000) {
+                    showToast("速度不能超过1000米/秒")
+                    return@showDialog
+                }
+                context.speed = value
+                binding.speedValue.text = "%.2f米/秒".format(value)
+            }
+        }
+
+        binding.accuracyLayout.setOnClickListener {
+            showDialog("设置精度", binding.accuracyValue.text.toString().let { it.substring(0, it.length - 1) }) {
+                val value = it.toFloatOrNull()
+                if (value == null || value < 0.0) {
+                    Toast.makeText(context, "精度不合法", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                } else if (value > 1000) {
+                    Toast.makeText(context, "精度不能超过1000米", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                context.accuracy = value
+                binding.accuracyValue.text = "%.2f米".format(value)
+            }
+        }
+
+        binding.debugSwitch.isChecked = context.debug
+        binding.debugSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
+            override fun onCheckedChanged(
+                buttonView: CompoundButton,
+                isChecked: Boolean
+            ) {
+                context.debug = isChecked
+                showToast(if (isChecked) "已开启调试模式" else "已关闭调试模式")
+                updateRemoteConfig()
+                // 融合处置那一行的说明位在调试模式下显示 hook 状态诊断 ⇒ 开关一变就要重画，
+                // 否则会停在旧文案上（看着像"状态没变"）
+                refreshFusedState()
+            }
+        })
+
+        // 允许获取当前位置（新）：语义已定为「允许并注入」——不再提供拦截开关。
+        // 开关保留在设置页仅作说明（布局里 checked=true / enabled=false），不再写任何配置。
+
+        // 允许注册位置监听器：语义已定为「允许并注入」——持续拒绝回调在真机上不存在，
+        // 本身就是特征；开关保留在设置页仅作说明（布局里 checked=true / enabled=false）。
+
+        // 「融合定位处置」：与其它设置项同一交互 —— 点一行，弹三选一（拒绝 / 放行 / 伪装）。
+        binding.dfusedLayout.setOnClickListener {
+            if (!fusedAvailable) {
+                showToast("本机无融合定位，此项不适用")
+                return@setOnClickListener
+            }
+            val modes = intArrayOf(FusedMode.REJECT, FusedMode.ALLOW, FusedMode.DISGUISE)
+            val labels = modes.map { FusedMode.label(it) }.toTypedArray()
+            val checked = modes.indexOf(requireContext().fusedMode).coerceAtLeast(0)
+            val dialog = MaterialAlertDialogBuilder(requireContext())
+                .setTitle("融合定位处置")
+                .setSingleChoiceItems(labels, checked) { d, which ->
+                    val mode = modes[which]
+                    requireContext().fusedMode = mode
+                    binding.dfusedValue.text = FusedMode.label(mode)
+                    showToast("融合定位处置：${FusedMode.label(mode)}")
+                    updateRemoteConfig()
+                    refreshFusedState()
+                    d.dismiss()
+                }
+                .setNegativeButton("取消", null)
+                .create()
+            // **点空白处不关闭**：这是"改设置"的对话框，误触空白关掉会让人以为没生效/白操作一次。
+            // 退出路径保持明确：选中某一档，或按「取消」/返回键。
+            dialog.setCanceledOnTouchOutside(false)
+            dialog.show()
+        }
+        refreshFusedState()
+
+        binding.cdmaSwitch.isChecked = context.needDowngradeToCdma
+
+        binding.cdmaSwitch.isChecked = context.needDowngradeToCdma
+        binding.cdmaSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
+            override fun onCheckedChanged(
+                buttonView: CompoundButton,
+                isChecked: Boolean
+            ) {
+                context.needDowngradeToCdma = isChecked
+                showToast(if (isChecked) "已降级为CDMA" else "已取消降级为CDMA")
+                updateRemoteConfig()
+            }
+        })
+
+        // 「传感器模拟」开关已移除：传感器 hook 恒安装（仅由 LSPosed 作用域决定是否注入），
+        // 偏好项从未被模块读取——留着就是一个骗人的开关。
+        //
+        // 「Binder 外周传感器模拟」（**默认开**）：打开后模拟改由 system_server 侧的
+        // 原生注入层在系统框架层完成——目标应用一个 hook 都不装，也不依赖底层传感器是
+        // 否在工作。开关下发到系统侧失败（原生层挂不上）时会明确提示，不做假成功。
+        binding.binderSensorMockSwitch.isChecked = requireContext().binderSensorMock
+        binding.binderSensorMockSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().binderSensorMock = isChecked
+            showToast(if (isChecked) "已开启外周传感器模拟" else "已关闭外周传感器模拟")
+            updateRemoteConfig()
+        }
+
+        // 「后台保活」（默认开）：前台服务 + partial wake lock，防止 :app 被 Cached Apps Freezer 冻结。
+        // 关掉时立刻撤服务；开着且模拟在跑时立刻起服务（不必等下次开模拟）。
+        binding.keepAliveSwitch.isChecked = requireContext().keepAliveInBackground
+        binding.keepAliveSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().keepAliveInBackground = isChecked
+            val ctx = requireContext()
+            if (isChecked) {
+                // 只有"无人值守仍在推进"（自动播放）才需要立刻起服务；
+                // 仅仅开着会话不算 —— 空闲时保持系统默认省电行为
+                if (mockServiceViewModel.isAutoPlaying) {
+                    MockKeepAliveService.start(ctx)
+                }
+                showToast("已开启后台保活")
+            } else {
+                MockKeepAliveService.stop(ctx)
+                showToast("已关闭后台保活（退后台可能被系统冻结）")
+            }
+        }
+
+        // 「电池优化白名单」：点一下申请系统豁免（这就是"后台活跃权限"的系统入口）
+        binding.batteryOptimizationLayout.setOnClickListener {
+            val pm = requireContext().getSystemService(android.content.Context.POWER_SERVICE)
+                as? android.os.PowerManager
+            if (pm?.isIgnoringBatteryOptimizations(requireContext().packageName) == true) {
+                showToast("已在电池优化白名单中")
+                return@setOnClickListener
+            }
+            runCatching {
+                startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.net.Uri.parse("package:${requireContext().packageName}")
+                    )
+                )
+            }.onFailure {
+                // 个别 ROM 没有这个 Activity：退回「电池优化」列表页，让用户手动加白
+                runCatching {
+                    startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }.onFailure { e -> showToast("无法打开电池优化设置：${e.message}") }
+            }
+        }
+        refreshBatteryOptimizationState()
+
+        // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
+        binding.reportDurationLayout.setOnClickListener {
+            showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
+                it.substring(0, it.length - 2)
+            }) {
+                val value = it.toIntOrNull()
+                // 下限 1ms：0 会让摇杆/播放循环 delay(0) 空转并触发除零
+                if (value == null || value < 1) {
+                    Toast.makeText(context, "上报间隔不合法", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                } else if (value > 1000) {
+                    Toast.makeText(context, "上报间隔不能大于1s", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                context.reportDuration = value
+                binding.reportDurationValue.text = "%dms".format(value)
+            }
+        }
+
+        binding.satelliteCountLayout.setOnClickListener {
+            showDialog("设置最小模拟卫星数量", binding.satelliteCountValue.text.toString().let {
+                it.substring(0, it.length - 1)
+            }) {
+                val value = it.toIntOrNull()
+                if (value == null || value < 0) {
+                    Toast.makeText(context, "数量不合法", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                } else if (value > 35) {
+                    Toast.makeText(context, "卫星数量不能超过35", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                context.minSatelliteCount = value
+                binding.satelliteCountValue.text = "%d颗".format(value)
+                updateRemoteConfig()
+            }
+        }
+
+        binding.disableWlanScanSwitch.isChecked = requireContext().disableWifiScan
+        binding.disableWlanScanSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().disableWifiScan = isChecked
+            with(mockServiceViewModel) {
+                val lm = locationManager
+                if (lm == null) {
+                    showToast("定位服务加载异常，无法切换WLAN扫描")
+                    return@setOnCheckedChangeListener
+                }
+                if (isChecked) {
+                    if(!MockServiceHelper.startWifiMock(lm)) {
+                        showToast("禁用WLAN扫描失败: 无法连接到系统服务")
+                    }
+                } else {
+                    if(!MockServiceHelper.stopWifiMock(lm)) {
+                        showToast("启用WLAN扫描失败: 无法连接到系统服务")
+                    }
+                }
+            }
+        }
+
+        binding.loopBroadcastLocationSwitch.isChecked = requireContext().loopBroadcastlocation
+        binding.loopBroadcastLocationSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().loopBroadcastlocation = isChecked
+        }
+
+        binding.allowLandscapeSwitch.isChecked = requireContext().allowLandscape
+        binding.allowLandscapeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().allowLandscape = isChecked
+            // 立即生效：MainActivity 是 configChanges 的单 Activity，不会重建
+            (activity as? MainActivity)?.applyOrientationPreference()
+        }
+
+        binding.hideDeveloperModeSwitch.isChecked = requireContext().hideDeveloperMode
+        binding.hideDeveloperModeSwitch.setOnCheckedChangeListener { _, isChecked ->
+            requireContext().hideDeveloperMode = isChecked
+            // 下发到系统侧：钩子是"命中时才看开关"，所以切换后无需重启模拟
+            updateRemoteConfig()
+            // 说清边界：这条只作用于**被注入的进程**，作用域由 LSPosed 决定
+            showToast(
+                if (isChecked) "已开启：被注入进程将按「未开启开发者模式」返回（设置应用需在 LSPosed 作用域内）"
+                else "已关闭：恢复真实开发者模式状态"
+            )
+        }
+        return root
+    }
+
+    private fun showToast(message: String) {
+        lifecycleScope.launch(Dispatchers.Main) {
+            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun updateRemoteConfig() {
+        val context = requireContext()
+        with(mockServiceViewModel) {
+            val lm = locationManager
+            if (lm == null) {
+                showToast("定位服务加载异常，配置未同步")
+                return
+            }
+            // 三态结果：成功 / 没握手 / 系统侧拒绝 —— 后者绝不能说"成功"（那是假成功）
+            showToast(ConfigSync.push(context, lm).message(context))
+        }
+    }
+
+    @SuppressLint("MissingInflatedId")
+    private fun showDialog(titleText: String, valueText: String, handler: (String) -> Unit) {
+        val inflater = LayoutInflater.from(requireContext())
+        val dialogView = inflater.inflate(R.layout.dialog_input, null)
+
+        val title = dialogView.findViewById<TextView>(R.id.title)
+        title.text = titleText
+
+        val value = dialogView.findViewById<TextInputEditText>(R.id.value)
+        value.setText(valueText)
+
+        val builder = MaterialAlertDialogBuilder(requireContext())
+        builder.setTitle(null)
+        val dialog = builder
+            .setCancelable(false)
+            .setView(dialogView)
+            .setPositiveButton("保存") { _, _ ->
+                handler(value.text.toString())
+            }
+            .setNegativeButton("取消", null)
+            .show()
+        dialog.shiftAboveIme(requireActivity().window.decorView)
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+}
