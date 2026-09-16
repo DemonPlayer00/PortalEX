@@ -19,6 +19,7 @@ import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockKeepAliveService
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ui.mock.Rocker
@@ -323,6 +324,9 @@ class MockServiceViewModel : ViewModel() {
         // 分支，不经过暂停门，故不受影响。
         rockerCoroutineController.pause()
         lastMotionNanos = 0L
+        // 体力参数入内存 + 复位体力：**循环启动 = 一次会话开始**，所以复位放在这里
+        // （放在 Home/设置页的 onCreate 会把"跑到一半"的人重置，那是错的）
+        StaminaController.load(activity)
         motionJob = viewModelScope.launch {
             while (isActive) {
                 // 间隔每次重新读：设置页改完立即生效，且钳制下限 1ms（避免 delay(0) 空转与除零）
@@ -351,6 +355,9 @@ class MockServiceViewModel : ViewModel() {
                         "运动循环被阻塞 ${"%.0f".format(dtMs)}ms（上限 ${MAX_ADVANCE_MS.toInt()}ms），本 tick 按上限推进"
                     )
                 }
+                // 体力模拟：**每拍推进一次**（两种运动模式共用），随后两种推进都会用它缩放位移。
+                // 放在这里而不是各自的推进函数里，是为了保证"一拍只掉一次体力"。
+                StaminaController.tickAndGetScale(FakeLoc.speed)
                 if (isAutoPlaying) {
                     advanceRoutePlayback(activity, advanceMs)
                 } else {
@@ -410,7 +417,10 @@ class MockServiceViewModel : ViewModel() {
         // 每 tick 位移 = 速度 × **本 tick 的真实时长**（见 ensureMotionLoop 的说明）。
         // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
         // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、0 → 除零崩溃。
-        if (!MockServiceHelper.move(lm, FakeLoc.speed * advanceMs / 1000.0, FakeLoc.bearing)) {
+        // 位移按体力系数缩放：注入速度由**实际位移**反推 ⇒ 降速会自然体现在速度/步频上
+        // （只改报数不改位移会造出"位移与速度自相矛盾"，那是可被检测的指纹）
+        val mps = FakeLoc.speed * StaminaController.currentScale
+        if (!MockServiceHelper.move(lm, mps * advanceMs / 1000.0, FakeLoc.bearing)) {
             Log.e("MockServiceViewModel", "Failed to move")
         }
     }
@@ -436,7 +446,8 @@ class MockServiceViewModel : ViewModel() {
 
         // 按速度推进弧长，直接在路线上插值出本 tick 的目标点并设置位置：
         // 不再盲推 + 距离检测（盲推在曲线密集采样点上会失准、批量跳点）。
-        val advanceMeters = FakeLoc.speed * (advanceMs / 1000.0)
+        // 同摇杆：按体力系数缩放弧长推进（体力挂在推进量上，报数自然跟随）
+        val advanceMeters = FakeLoc.speed * StaminaController.currentScale * (advanceMs / 1000.0)
         routeTravelled += advanceMeters
 
         if (routeTravelled >= routeDistance) {
