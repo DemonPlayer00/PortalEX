@@ -122,11 +122,14 @@ void vw_set_acc_via_poll(int on);
 /** 当前是否有任何类型走 poll 路径（决定 poll 出口要不要注入） */
 int vw_poll_types_enabled(void);
 
-/** 固定注入栅格（纳秒；0 = 自动跟随采用值）。钳在 2.5ms~50ms */
-void vw_set_tick_override(long long ns);
+/**
+ * 下一个"该出事件的时刻"（纳秒；0 = 当前没有到点的源）。
+ * Java 泵睡到该时刻即可 —— 事件是被推出去的，不再由固定栅格轮询出来。
+ */
+long long vw_next_due_ns(long long now_nanos);
 
-/** 当前栅格（纳秒）与延迟队列统计（诊断） */
-int vw_tick_ns_dbg(void);
+/** 当前**最细的活跃周期**（纳秒；0 = 没有周期通道）与延迟队列统计（诊断） */
+int vw_finest_period_dbg(void);
 int vw_defer_stats(int *pending, long long *dropped);
 
 /** 生成期间的统计（诊断用） */
@@ -157,19 +160,19 @@ long long vw_real_step_counter(void);
 void vw_note_real_event(int32_t type, const float *data);
 
 /**
- * 「按应用期望出数据」：把框架观测到的采用速率与活跃状态灌进栅格通道。
+ * 「按应用期望出数据」：把框架观测到的采用速率与活跃状态灌进周期通道。
  *
  * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播给所有人；这里照同一个模型走。
- * `period_ns` = 框架 dump 的 `selected`（0 = 未指定 ⇒ 用默认栅格）；`active` = 是否有人订阅。
+ * `period_ns` = 框架 dump 的 `selected`（0 = 未指定 ⇒ 用默认周期）；`active` = 是否有人订阅。
  * 没人订阅（且近期也没有真实事件）时该类型**静默**——真机 HAL 没被启用时同样一条都不出。
- * 只对栅格通道生效；步数两条流是 on-change，不受影响。
+ * 只对周期通道生效；步数两条流是 on-change，不受影响。
  */
 void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, int active);
 
 /** 先把所有栅格通道标成不活跃，再按 dump 灌活跃者（缺席即静默，见实现注释） */
 void vw_clear_channel_hints(void);
 
-/** 各栅格通道的生效速率（诊断字符串："1:20ms 2:40ms(idle) …"），返回写入长度 */
+/** 各周期通道的生效速率（诊断字符串："1:20ms 2:40ms(idle) …"），返回写入长度 */
 int vw_dump_rates(char *out, size_t out_size);
 
 /*

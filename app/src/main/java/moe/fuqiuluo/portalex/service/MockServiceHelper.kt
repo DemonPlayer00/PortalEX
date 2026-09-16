@@ -7,7 +7,6 @@ import android.util.Log
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
-import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.debug

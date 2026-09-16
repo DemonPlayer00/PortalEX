@@ -192,16 +192,9 @@ object RemoteCommandHandler {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
                 val enabled = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 FakeLoc.enableBinderSensorMock = enabled
-                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档与注入栅格随它一起恢复
-                // （否则系统进程重启后栅格退回自动，噪声档也会退回内置默认）
+                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档随它一起恢复
+                // （否则系统进程重启后噪声档会退回内置默认）
                 applyNoiseProfile(rely)
-                val gridHz = rely.getInt(Key.SENSOR_GRID_HZ, -1)
-                if (gridHz >= 0) {
-                    FakeLoc.sensorGridHz = gridHz
-                    if (BinderSensorMock.isNativeReady) {
-                        pushToNative("栅格恢复") { BinderSensorNative.setGridHz(gridHz) }
-                    }
-                }
                 if (!BinderSensorMock.onConfigChanged()) {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
                     return false
@@ -363,8 +356,6 @@ object RemoteCommandHandler {
                 val binderSensorMock = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
                 // 隐藏开发者模式：同样"读不到键保持当前值"；钩子常驻，这里只更新开关
                 val hideDeveloperMode = rely.getBoolean(Key.HIDE_DEVELOPER_MODE, FakeLoc.hideDeveloperMode)
-                // 注入栅格分辨率（Hz，0=自动）：读不到键时保持当前值（旧版 App 不下发）
-                val sensorGridHz = rely.getInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
                 // 步频倍率（微调步频↔速度）：读不到键时保持当前值
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
                 // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
@@ -390,11 +381,7 @@ object RemoteCommandHandler {
                 // 非 system_server 进程只镜像开关值，不做任何安装。
                 FakeLoc.enableBinderSensorMock = binderSensorMock
                 FakeLoc.hideDeveloperMode = hideDeveloperMode
-                FakeLoc.sensorGridHz = sensorGridHz
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
-                if (BinderSensorMock.isNativeReady) {
-                    pushToNative("栅格设置下发") { BinderSensorNative.setGridHz(sensorGridHz) }
-                }
                 if (noiseProfile != null) {
                     FakeLoc.noiseProfile = noiseProfile
                     if (BinderSensorMock.isNativeReady) {

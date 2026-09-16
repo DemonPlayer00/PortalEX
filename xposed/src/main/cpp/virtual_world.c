@@ -35,12 +35,20 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-/* ---- 时间网格 ---- */
-/* 10ms 基准栅格：所有周期都是它的整数倍，事件天然按时间升序交织，
- * 应用侧按相邻事件时间戳算 dt 不会出现负值（真机 HAL 也是按时序交织的）。*/
-/* 实际栅格：默认 10ms；有通道要求更快（如 FASTEST=2.5ms）时自动调细，见 vw_set_channel_hint */
-long long g_tick_ns = TICK_NS;
-#define MIN_TICK_NS 2500000LL
+/*
+ * ---- 没有栅格了：每通道"下次应发时刻" ----
+ *
+ * 历史：这里曾有一层固定时间栅格（10ms 基准，周期写成 tick 数），事件被量子化到栅格点上，
+ * 再给时间戳加抖动去掩盖 `%10ms==0` 这个指纹。那是"用一层假时间轴去藏另一层假时间轴"。
+ * 现在改成**每通道各走各的到点时刻**（相位自由累加，能精确落在框架采用值上，例如 66.7ms），
+ * 事件就发在它自己到点的那一刻：世界状态按变步长惰性推进到该时刻再取值。
+ *
+ * 两个不变量由 host 测试守着（`sh xposed/src/main/cpp/test/run.sh`）：
+ *   · 时间戳全局不回退（静默→恢复时重锚相位，不补旧账）；
+ *   · 记账守恒（发出去的每一条都算进 emitted，丢掉的每一条都算进 dropped）。
+ */
+#define MAX_EVENTS_PER_CALL 128      /* 单次生成的硬上限（安全阀；正常一次只有几条） */
+#define STALE_WINDOW_NS 2000000000LL /* 过期到不可能再送达的步事件（2s）直接清掉 */
 
 /* 前向声明：vw_is_poll_type 用得到（定义在文件下方） */
 static int type_uses_accuracy(int32_t t);
@@ -50,7 +58,9 @@ static int type_uses_accuracy(int32_t t);
 
 typedef struct {
     int32_t type;
-    int period_ticks;
+    /* 默认周期（纳秒；0 = 不参与周期推送，即步数两条 on-change 流）。
+     * **只是兜底**：框架 dump 给出采用值（period_ns）后一律以采用值为准。 */
+    long long def_period_ns;
     int32_t handle;
     uint32_t flags;
     int known;
@@ -78,22 +88,27 @@ typedef struct {
     long long batch_due_ns;
     portal_sensor_event_t pend[8];
     int pend_n;
+    /* 上一拍是否"活着"（有人订/刚看到真实事件）：用于在"静默→恢复"时重锚相位，
+     * 否则恢复后会把静默期间的旧到点时刻补发出来，时间戳就会回退。 */
+    int was_live;
 } vw_channel_t;
 
 static vw_channel_t g_chan[MAX_CHANNELS] = {
-    {PS_TYPE_ACCELEROMETER, 2, -1, 0, 0},
-    {PS_TYPE_ACCELEROMETER_UNCALIBRATED, 2, -1, 0, 0},
-    {PS_TYPE_LINEAR_ACCELERATION, 2, -1, 0, 0},
-    {PS_TYPE_GYROSCOPE, 2, -1, 0, 0},
-    {PS_TYPE_GYROSCOPE_UNCALIBRATED, 2, -1, 0, 0},
-    {PS_TYPE_ORIENTATION, 2, -1, 0, 0},
-    {PS_TYPE_ROTATION_VECTOR, 2, -1, 0, 0},
-    {PS_TYPE_GAME_ROTATION_VECTOR, 2, -1, 0, 0},
-    {PS_TYPE_GRAVITY, 4, -1, 0, 0},
-    {PS_TYPE_MAGNETIC_FIELD, 4, -1, 0, 0},
-    {PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED, 4, -1, 0, 0},
-    {PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR, 4, -1, 0, 0},
-    /* 步数两兄弟不在栅格上（on-change，由步事件队列驱动），period 0 = 不参与栅格 */
+    /* 快档 20ms（50Hz）、慢档 40ms（25Hz）：与真机 HAL 的常见默认一致。
+     * 有了框架采用值之后这些数只在"还没有 hint"的极短窗口里用到。 */
+    {PS_TYPE_ACCELEROMETER, 20000000LL, -1, 0, 0},
+    {PS_TYPE_ACCELEROMETER_UNCALIBRATED, 20000000LL, -1, 0, 0},
+    {PS_TYPE_LINEAR_ACCELERATION, 20000000LL, -1, 0, 0},
+    {PS_TYPE_GYROSCOPE, 20000000LL, -1, 0, 0},
+    {PS_TYPE_GYROSCOPE_UNCALIBRATED, 20000000LL, -1, 0, 0},
+    {PS_TYPE_ORIENTATION, 20000000LL, -1, 0, 0},
+    {PS_TYPE_ROTATION_VECTOR, 20000000LL, -1, 0, 0},
+    {PS_TYPE_GAME_ROTATION_VECTOR, 20000000LL, -1, 0, 0},
+    {PS_TYPE_GRAVITY, 40000000LL, -1, 0, 0},
+    {PS_TYPE_MAGNETIC_FIELD, 40000000LL, -1, 0, 0},
+    {PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED, 40000000LL, -1, 0, 0},
+    {PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR, 40000000LL, -1, 0, 0},
+    /* 步数两兄弟不在周期推送里（on-change，由步事件队列驱动） */
     {PS_TYPE_STEP_COUNTER, 0, -1, 0, 0},
     {PS_TYPE_STEP_DETECTOR, 0, -1, 0, 0},
 };
@@ -326,56 +341,11 @@ int vw_poll_types_enabled(void) {
     return vw_is_poll_type(PS_TYPE_ACCELEROMETER) || vw_is_poll_type(PS_TYPE_STEP_COUNTER);
 }
 
-int vw_tick_ns_dbg(void) { return (int) g_tick_ns; }
-
-static void refresh_tick_locked(void);
-
-/* 固定栅格覆盖（0 = 自动）：设置页「注入栅格分辨率」下发，单位纳秒 */
-static long long g_tick_override_ns = 0;
-
-void vw_set_tick_override(long long ns) {
-    if (ns > 0) {
-        if (ns < MIN_TICK_NS) ns = MIN_TICK_NS;      /* 上限 400Hz */
-        if (ns > 50000000LL) ns = 50000000LL;        /* 下限 20Hz */
-    }
-    pthread_mutex_lock(&g_lock);
-    g_tick_override_ns = ns > 0 ? ns : 0;
-    refresh_tick_locked();
-    pthread_mutex_unlock(&g_lock);
-}
-
-/** 依据当前活跃通道里最快的采用值调细栅格（2.5ms ~ 10ms；有覆盖时以覆盖为准） */
-static void refresh_tick_locked(void) {
-    if (g_tick_override_ns > 0) {
-        if (g_tick_override_ns != g_tick_ns) {
-            LOGI("tick -> %.2f ms (override)", g_tick_override_ns / 1e6);
-            g_tick_ns = g_tick_override_ns;
-        }
-        return;
-    }
-    long long fastest = 0;
-    for (int i = 0; i < MAX_CHANNELS; i++) {
-        if (g_chan[i].period_ticks <= 0) continue;
-        if (!g_chan[i].hinted || !g_chan[i].active_hint) continue;
-        long long p = g_chan[i].period_ns > 0 ? g_chan[i].period_ns
-                                             : (long long) g_chan[i].period_ticks * TICK_NS;
-        if (p <= 0) continue;
-        if (fastest == 0 || p < fastest) fastest = p;
-    }
-    long long want = fastest > 0 ? fastest : TICK_NS;
-    if (want < MIN_TICK_NS) want = MIN_TICK_NS;
-    if (want > TICK_NS) want = TICK_NS;
-    if (want != g_tick_ns) {
-        LOGI("tick -> %.2f ms (fastest adopted %.1f ms)", want / 1e6, fastest / 1e6);
-        g_tick_ns = want;
-    }
-}
-
 void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, int active) {
     pthread_mutex_lock(&g_lock);
     for (int i = 0; i < MAX_CHANNELS; i++) {
         if (g_chan[i].type != type) continue;
-        if (g_chan[i].period_ticks > 0) {
+        if (g_chan[i].def_period_ns > 0) {
             long long p = period_ns > 0 ? period_ns : 0;
             long long b = batch_ns > 0 ? batch_ns : 0;
             int changed = !g_chan[i].hinted || g_chan[i].period_ns != p ||
@@ -394,12 +364,11 @@ void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, 
         }
         break;
     }
-    refresh_tick_locked();
     pthread_mutex_unlock(&g_lock);
 }
 
 /**
- * 把所有栅格通道先标成"不活跃"（随后由 [vw_set_channel_hint] 按框架 dump 覆盖）。
+ * 把所有周期通道先标成"不活跃"（随后由 [vw_set_channel_hint] 按框架 dump 覆盖）。
  *
  * 用途：一次 dump 只列出**有订阅者**的传感器，所以"没被列到"就等于没人订 ⇒
  * 先清空再灌，缺席的类型自然静默，调用方不需要在 Kotlin 侧复制一份类型清单。
@@ -407,18 +376,40 @@ void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, 
 void vw_clear_channel_hints(void) {
     pthread_mutex_lock(&g_lock);
     for (int i = 0; i < MAX_CHANNELS; i++) {
-        if (g_chan[i].period_ticks <= 0) continue; /* 步数不在栅格上 */
+        if (g_chan[i].def_period_ns <= 0) continue; /* 步数不是周期通道 */
         g_chan[i].hinted = 1;
         g_chan[i].active_hint = 0;
     }
     pthread_mutex_unlock(&g_lock);
 }
 
-/** 该栅格通道此刻是否应该出数据（没人订就静默——真机 HAL 也是这样） */
+/**
+ * 该通道的**生效周期**（纳秒；0 = 不是周期通道）。
+ * 框架采用值优先；没 hint 或采用值为 0（FASTEST/未指定）时退回默认周期。
+ */
+static long long channel_period_ns(const vw_channel_t *ch) {
+    if (ch->def_period_ns <= 0) return 0;
+    return ch->period_ns > 0 ? ch->period_ns : ch->def_period_ns;
+}
+
+/** 该通道此刻是否应该出数据（没人订就静默——真机 HAL 也是这样） */
 static int channel_live(const vw_channel_t *ch, long long now_ns) {
     if (!ch->hinted) return 1;                 /* 还没收到提示：保持原行为 */
     if (ch->active_hint) return 1;             /* 框架说有人订 */
     return (now_ns - ch->last_real_ns) < REAL_FRESH_NS; /* 刚看到真实事件 ⇒ 立刻恢复 */
+}
+
+/** 诊断：当前**最细的活跃周期**（纳秒；0 = 没有周期通道在跑）。取代了旧的"栅格"读数 */
+int vw_finest_period_dbg(void) {
+    long long finest = 0;
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        long long p = channel_period_ns(&g_chan[i]);
+        if (p <= 0 || !channel_live(&g_chan[i], g_state_nanos)) continue;
+        if (finest == 0 || p < finest) finest = p;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return (int) finest;
 }
 
 /** 各栅格通道的生效速率（诊断：Test 页/状态字符串） */
@@ -428,9 +419,8 @@ int vw_dump_rates(char *out, size_t out_size) {
     out[0] = '\0';
     pthread_mutex_lock(&g_lock);
     for (int i = 0; i < MAX_CHANNELS; i++) {
-        if (g_chan[i].period_ticks <= 0 || !g_chan[i].known) continue;
-        long long p = g_chan[i].period_ns > 0 ? g_chan[i].period_ns
-                                             : (long long) g_chan[i].period_ticks * g_tick_ns;
+        long long p = channel_period_ns(&g_chan[i]);
+        if (p <= 0 || !g_chan[i].known) continue;
         used += (size_t) snprintf(out + used, out_size - used, "%s%d:%.0fms%s%s",
                                   used ? " " : "", g_chan[i].type, p / 1e6,
                                   g_chan[i].batch_ns > 0 ? "/batch" : "",
@@ -711,10 +701,39 @@ int vw_defer_stats(int *pending, long long *dropped) {
 }
 
 /** @param want_poll 0=只要运行时通道那批（非 poll 类型） 1=只要 poll 类型 2=全都要 */
+/**
+ * 下一个"该出事件的时刻"（纳秒；0 = 当前没有任何到点的源）。
+ *
+ * 给 Java 泵用：**睡到下一个到点时刻**，事件因此是被推出去的，而不是被固定节拍轮询出来的。
+ * 只读扫描，不改状态（真正的相位推进在 [vw_generate] 里）。
+ */
+long long vw_next_due_ns(long long now_nanos) {
+    long long best = 0;
+    pthread_mutex_lock(&g_lock);
+    for (int i = 0; i < STEP_QUEUE_CAP; i++) {
+        if (!g_steps_q[i].used) continue;
+        long long ts = g_steps_q[i].ts;
+        if (ts <= now_nanos) ts = now_nanos;            /* 已经到点：立刻 */
+        if (best == 0 || ts < best) best = ts;
+    }
+    for (int c = 0; c < MAX_CHANNELS; c++) {
+        vw_channel_t *ch = &g_chan[c];
+        if (!ch->known || ch->def_period_ns <= 0) continue;
+        if (!channel_live(ch, now_nanos)) continue;
+        long long due = ch->next_due_ns == 0 ? now_nanos : ch->next_due_ns;
+        if (due < now_nanos) due = now_nanos;
+        if (best == 0 || due < best) best = due;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return best;
+}
+
 int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int want_poll) {
     if (cap <= 0) return 0;
     int n = 0;
     pthread_mutex_lock(&g_lock);
+
+    /* ① 先把上一轮留给本消费者的延迟事件交出（两个消费者各有自己的调用时机） */
     for (int i = 0; i < g_defer_n; ) {
         int is_poll = vw_is_poll_type(g_defer[i].type);
         if (want_poll == 2 || ((want_poll == 1) == (is_poll != 0))) {
@@ -726,74 +745,101 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
             i++;
         }
     }
-    if (!g_active || !g_have_state || g_last_tick == 0) {
-        /*
-         * 未激活/无状态：**不能把上面已经从延迟队列取进 out 的事件发出去**
-         * （总开关关着，发出去就是凭空多一份数据），但也不能像旧实现那样直接 return 0 ——
-         * 那样事件既不发、也不计 dropped，账实不符。这里明确丢弃并记账。
-         */
+
+    /* ② 未激活/无状态：**不能把已经从延迟队列取进 out 的事件发出去**（总开关关着就是凭空多
+     *    一份数据），但也不能直接 return 0 —— 那样事件既不发也不计 dropped，账实不符。 */
+    if (!g_active || !g_have_state) {
         if (n > 0) {
             g_dropped += n;
             n = 0;
         }
-        g_last_tick = now_nanos;
         pthread_mutex_unlock(&g_lock);
         return 0;
     }
 
-    /* 积压过多（HAL 静默一段）→ 直接跳到窗口起点，只保留最近 2s */
-    long long earliest = now_nanos - (long long) MAX_TICKS_PER_CALL * g_tick_ns;
-    if (g_last_tick < earliest) {
-        long long skipped = (earliest - g_last_tick) / g_tick_ns;
-        g_dropped += skipped;
-        g_last_tick += skipped * g_tick_ns;
-        /* 丢弃过期的步事件 */
-        for (int i = 0; i < STEP_QUEUE_CAP; i++) {
-            if (g_steps_q[i].used && g_steps_q[i].ts < g_last_tick) g_steps_q[i].used = 0;
-        }
-    }
+    /*
+     * ③ **多路归并**（取代旧的固定栅格循环）：
+     *    每轮挑"最早到点"的那个源（周期通道的 next_due_ns / 步事件队列头），把世界状态
+     *    **惰性推进到它的到点时刻**，再按该时刻取值发事件。
+     *
+     *    为什么这样更自然：事件的时间戳就是它自己到点的那一刻，相位在每个通道里自由累加
+     *    （框架采用值常不是任何基准的整数倍，实测 66.7ms），不存在"先量子化到栅格点、再给
+     *    时间戳加抖动去掩盖指纹"这层伪装；合并顺序天然保证时间戳全局不回退。
+     */
+    int budget = MAX_EVENTS_PER_CALL;
+    while (budget-- > 0) {
+        int step_idx = -1;
+        long long step_due = 0;
+        long long best_due = 0;
+        int best_ch = -1;
 
-    long long t = g_last_tick;
-    while (t + g_tick_ns <= now_nanos) {
-        t += g_tick_ns;
-        /* 步事件优先按时序插入（on-change，与栅格无关） */
+        /* 步事件：只挑属于本次消费者的；不属于的**留在队列里**等对方来取
+         * （旧实现先清 used 后判归属，两处丢事件，host 回归测试抓过）。 */
         for (int i = 0; i < STEP_QUEUE_CAP; i++) {
-            if (!g_steps_q[i].used || g_steps_q[i].ts > t) continue;
-            /*
-             * 归属判定必须在**清 used 之前**（旧实现先清后判）：这两个消费者各有自己的调用
-             * 时机，不属于本次的那一对要**留在队列里**等对方来取；先清掉再 continue，
-             * 事件既不入 out 也不入延迟队列 —— 凭空消失，而且一条都不计。
-             * 默认配置（步数归运行时通道、poll 侧 want_poll=1，5ms 泵与之并发）下，
-             * 这正是"步频偏低/走 poll 只到 ~48 步/分"的形态。
-             * ⚠️ 光改这里不够：队尾还有一处"按 due 清扫"（见函数末尾），会把留下的那份吃掉。
-             */
+            if (!g_steps_q[i].used || g_steps_q[i].ts > now_nanos) continue;
             if (want_poll != 2 &&
                 ((want_poll == 1) != (vw_is_poll_type(PS_TYPE_STEP_COUNTER) != 0))) {
                 continue;
             }
+            if (step_idx < 0 || g_steps_q[i].ts < step_due) {
+                step_idx = i;
+                step_due = g_steps_q[i].ts;
+            }
+        }
+
+        /* 周期通道：静默的相位作废（恢复时重锚），追不上的重锚并记账 */
+        for (int c = 0; c < MAX_CHANNELS; c++) {
+            vw_channel_t *ch = &g_chan[c];
+            if (!ch->known || ch->def_period_ns <= 0) continue;
+            if (!channel_live(ch, now_nanos)) {
+                ch->was_live = 0;
+                ch->next_due_ns = 0;
+                continue;
+            }
+            long long period = channel_period_ns(ch);
+            if (ch->next_due_ns == 0) ch->next_due_ns = now_nanos;   /* 首次/刚恢复：立即出，不补旧账 */
+            if (ch->next_due_ns < now_nanos - period * 2) {
+                long long skipped = (now_nanos - ch->next_due_ns) / period;
+                g_dropped += skipped;
+                ch->next_due_ns = now_nanos;
+            }
+            if (ch->next_due_ns > now_nanos) continue;
+            if (best_ch < 0 || ch->next_due_ns < best_due) {
+                best_ch = c;
+                best_due = ch->next_due_ns;
+            }
+        }
+
+        if (step_idx < 0 && best_ch < 0) break;      /* 没有到点的源 */
+
+        long long t;
+        if (step_idx >= 0 && (best_ch < 0 || step_due <= best_due)) {
+            t = step_due;
+        } else {
+            t = best_due;
+            step_idx = -1;
+        }
+        vw_advance_to(t);   /* 世界状态（方位平滑/微抖/步态相位）按变步长推进到该时刻 */
+
+        if (step_idx >= 0) {
             if (n + 2 > cap) {
-                /* 容量不足：这次确实发不出去，丢弃并计数（连同入队标记一起清） */
-                g_steps_q[i].used = 0;
+                g_steps_q[step_idx].used = 0;
                 g_dropped += 2;
                 continue;
             }
-            g_steps_q[i].used = 0;
-            long long ts = jitter_ts(g_steps_q[i].ts, 300000000LL, now_nanos);
-            long long cnt = g_steps_q[i].count;
-            /* 计数器与检测器 = **同一次步事件、同一时间戳**：
-             * 一个在涨而另一个不响，会被交叉比对看出来。 */
+            long long ts = jitter_ts(step_due, 300000000LL, now_nanos);
+            long long cnt = g_steps_q[step_idx].count;
+            g_steps_q[step_idx].used = 0;
+            /* 计数器与检测器 = **同一次步事件、同一时间戳**：一个在涨而另一个不响，
+             * 会被交叉比对看出来。 */
             portal_sensor_event_t *ec = &out[n++];
             memset(ec, 0, sizeof(*ec));
             ec->version = (int32_t) sizeof(portal_sensor_event_t);
             ec->type = PS_TYPE_STEP_COUNTER;
             ec->timestamp = ts;
-            /*
-             * **int64 视图，不是 float**：真机 HAL 把步数写在
-             * `sensors_event_t.u64.step_counter`（占满 data[0..1]），框架与客户端 Java 侧
-             * 都按 int64 读。按 float 写会让客户端把 float 的**位模式**当成步数
-             * —— 实测把计数器顶到 700000 时，客户端读到 1227548160 = bits(700000.0f)。
-             * （真机步数事件的 float 视图实测为 0.000，正是"int64 小整数被当 float 读"的样子。）
-             */
+            /* **int64 视图，不是 float**：真机 HAL 把步数写在
+             * `sensors_event_t.u64.step_counter`（占满 data[0..1]），框架与客户端 Java 侧都按
+             * int64 读；按 float 写会让客户端把 float 的位模式当成步数。 */
             ec->data.u64[0] = (uint64_t) cnt;
             g_last_counter_value = cnt; /* 诊断：客户端看到的"开机总步数" */
             portal_sensor_event_t *ed = &out[n++];
@@ -815,39 +861,19 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
             /* 这一步在 IMU 上也必须正好是一个峰（见 gait_note_step） */
             gait_note_step(ts);
             step_emitted(ts);
+            continue;
         }
 
-        advance_one_tick(t);
-        for (int c = 0; c < MAX_CHANNELS; c++) {
-            if (!g_chan[c].known) continue;
-            if (g_chan[c].period_ticks <= 0) continue; /* 步数传感器不参与栅格 */
-            /*
-             * 没人订阅 ⇒ 静默（真机 HAL 不会被启用，自然一条事件都没有）。
-             * "有人订阅" 有两个来源：框架 dump 报活跃，或刚刚看到该类型的真实事件
-             * （应用刚 registerListener 时 HAL 立刻开始出数据，这条让我们**即时**恢复，
-             *   不必等下一次 dump）。
-             */
-            if (!channel_live(&g_chan[c], t)) continue;
-            long long period = g_chan[c].period_ns > 0
-                               ? g_chan[c].period_ns
-                               : (long long) g_chan[c].period_ticks * g_tick_ns;
-            /*
-             * **按"下次应发时刻"累积，而不是 tick_index % period_ticks**：
-             * 应用的采用值常常不是 10ms 栅格的整数倍（实测 66.7ms、20ms…），
-             * 取模只能把它凑成 60/70ms 的整数倍；这里让相位自己累积，
-             * 平均速率就精确落在采用值上（66.7ms ⇒ 6/7 tick 交替）。
-             */
-            if (g_chan[c].next_due_ns == 0) {
-                g_chan[c].next_due_ns = t; /* 首次：当拍立即出，不补旧账 */
-            } else if (g_chan[c].next_due_ns < t - period * 4) {
-                g_chan[c].next_due_ns = t; /* 长时间没出（刚恢复）：对齐，别补一串 */
-            }
-            if (t < g_chan[c].next_due_ns) continue;
-            g_chan[c].next_due_ns += period;
+        {
+            vw_channel_t *ch = &g_chan[best_ch];
+            long long period = channel_period_ns(ch);
+            ch->next_due_ns += period;
+            ch->was_live = 1;
             portal_sensor_event_t ev;
-            fill_event(&ev, &g_chan[c], t);
-            fill_values(&ev, t);
-            ev.timestamp = jitter_ts(t, period, now_nanos); /* 去掉 10ms 栅格指纹 */
+            fill_event(&ev, ch, 0);
+            ev.timestamp = jitter_ts(best_due, period, now_nanos);
+            fill_values(&ev, best_due);   /* 数值采样在"到点时刻"，时间戳在它附近抖动 */
+
             if (want_poll != 2 && ((want_poll == 1) != (vw_is_poll_type(ev.type) != 0))) {
                 /* 不属于本次请求的那批：留给另一个消费者（满了丢最旧，与 FIFO 溢出一致） */
                 if (g_defer_n >= DEFER_CAP) {
@@ -859,23 +885,17 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
                 g_defer[g_defer_n++] = ev;
                 continue;
             }
-            if (g_chan[c].batch_ns > 0) {
-                /*
-                 * 批量上报：先攒在通道自己的小队列里，到批量边界一次性放出去
-                 * （真机是 HAL 在 FIFO 里攒够了再一次性上报）。队列满了丢**最旧**的，
-                 * 与 FIFO 溢出行为一致，并计入 g_dropped。
-                 */
-                int pcap = (int) (sizeof(g_chan[c].pend) / sizeof(g_chan[c].pend[0]));
-                if (g_chan[c].pend_n >= pcap) {
-                    memmove(&g_chan[c].pend[0], &g_chan[c].pend[1],
-                            sizeof(g_chan[c].pend[0]) * (size_t) (pcap - 1));
-                    g_chan[c].pend_n = pcap - 1;
+            if (ch->batch_ns > 0) {
+                /* 批量上报：攒在通道自己的小队列里，到批量边界一次性放出去
+                 * （真机是 HAL 在 FIFO 里攒够了再上报）。满了丢**最旧**的并记账。 */
+                int pcap = (int) (sizeof(ch->pend) / sizeof(ch->pend[0]));
+                if (ch->pend_n >= pcap) {
+                    memmove(&ch->pend[0], &ch->pend[1], sizeof(ch->pend[0]) * (size_t) (pcap - 1));
+                    ch->pend_n = pcap - 1;
                     g_dropped++;
                 }
-                g_chan[c].pend[g_chan[c].pend_n++] = ev;
-                if (g_chan[c].batch_due_ns == 0) {
-                    g_chan[c].batch_due_ns = t + g_chan[c].batch_ns;
-                }
+                ch->pend[ch->pend_n++] = ev;
+                if (ch->batch_due_ns == 0) ch->batch_due_ns = now_nanos + ch->batch_ns;
                 continue;
             }
             if (n >= cap) {
@@ -884,37 +904,37 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
             }
             out[n++] = ev;
         }
-
-        /* 批量边界到了：把攒下的一次性放出（各自保留自己的时间戳 = 一次上报多帧） */
-        for (int c = 0; c < MAX_CHANNELS; c++) {
-            if (g_chan[c].batch_ns <= 0 || g_chan[c].pend_n == 0) continue;
-            if (t < g_chan[c].batch_due_ns) continue;
-            for (int k = 0; k < g_chan[c].pend_n; k++) {
-                if (n >= cap) {
-                    g_dropped++;
-                    continue;
-                }
-                out[n++] = g_chan[c].pend[k];
-            }
-            g_chan[c].pend_n = 0;
-            g_chan[c].batch_due_ns = t + g_chan[c].batch_ns;
-        }
     }
-    g_last_tick = t;
+
+    /* ④ 批量边界到了：把攒下的一次性放出（各自保留自己的时间戳 = 一次上报多帧） */
+    for (int c = 0; c < MAX_CHANNELS; c++) {
+        if (g_chan[c].batch_ns <= 0 || g_chan[c].pend_n == 0) continue;
+        if (g_chan[c].batch_due_ns > 0 && now_nanos < g_chan[c].batch_due_ns) continue;
+        for (int k = 0; k < g_chan[c].pend_n; k++) {
+            if (n >= cap) {
+                g_dropped++;
+                continue;
+            }
+            out[n++] = g_chan[c].pend[k];
+        }
+        g_chan[c].pend_n = 0;
+        g_chan[c].batch_due_ns = now_nanos + g_chan[c].batch_ns;
+    }
+
     /*
-     * 队尾清扫**不能**按"ts <= t 就清"：上面刻意把**属于另一个消费者**的步事件留在队列里
-     * 等对方来取（见本轮归属判定的注释），按 due 一律清掉等于把那批事件又丢一次，
-     * 而且一条都不计数 —— 两个消费者谁先跑到，谁就把对方那份吃掉。
-     * （这个 bug 是 host 回归测试抓出来的：只修归属判定那一处，事件照样消失。）
-     * 这里只清"早就过期到不可能再送达"的：保留 2s 窗口，与追赶上限 MAX_TICKS_PER_CALL 一致。
+     * ⑤ 队尾清扫**不能**按"ts <= now 就清"：上面刻意把**属于另一个消费者**的步事件留在
+     *    队列里等对方来取，按 due 一律清掉等于把那批事件又丢一次、而且一条都不计数
+     *    （两个消费者谁先跑到，谁就把对方那份吃掉 —— host 回归测试抓过这个 bug）。
+     *    这里只清"早就过期到不可能再送达"的：保留 2s 窗口。
      */
-    long long stale_before = now_nanos - (long long) MAX_TICKS_PER_CALL * g_tick_ns;
+    long long stale_before = now_nanos - STALE_WINDOW_NS;
     for (int i = 0; i < STEP_QUEUE_CAP; i++) {
         if (g_steps_q[i].used && g_steps_q[i].ts < stale_before) {
             g_steps_q[i].used = 0;
             g_dropped += 2; /* 计数器 + 检测器 */
         }
     }
+
     g_emitted += n;
     pthread_mutex_unlock(&g_lock);
     return n;

@@ -234,19 +234,6 @@ var Context.cadenceScale: Float
     }
 
 /**
- * 注入栅格分辨率（Hz）。**0 = 自动**（跟随框架采用值，上限 400Hz）。
- *
- * 语义：栅格只是"能表现出来的最快速率"——调细**不会**改变任何传感器自己的采用速率
- * （每个通道仍按框架仲裁后的周期发数据），只是让更快的档位能落地；调粗则会把它压慢。
- * 钳在 20~400Hz。（原生层还会再钳一次 2.5~50ms，防手滑。）
- */
-var Context.sensorGridHz: Int
-    get() = sharedPrefs.getInt("sensorGridHz", 0)
-    set(value) = sharedPrefs.edit(commit = true) {
-        putInt("sensorGridHz", if (value <= 0) 0 else value.coerceIn(20, 400))
-    }
-
-/**
  * 注入噪声档（Calibration 页）：[SensorNoise.COUNT] 个槽（逐轴 σ + 陀螺零偏），见 SensorNoise。
  *
  * 存成 "a,b,c,…" 串（而不是 putFloatArray）：读取路径要能容错——长度不符/损坏/
