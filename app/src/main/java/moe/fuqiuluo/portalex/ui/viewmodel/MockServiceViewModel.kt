@@ -355,9 +355,12 @@ class MockServiceViewModel : ViewModel() {
                         "运动循环被阻塞 ${"%.0f".format(dtMs)}ms（上限 ${MAX_ADVANCE_MS.toInt()}ms），本 tick 按上限推进"
                     )
                 }
-                // 体力模拟：**每拍推进一次**（两种运动模式共用），随后两种推进都会用它缩放位移。
-                // 放在这里而不是各自的推进函数里，是为了保证"一拍只掉一次体力"。
-                StaminaController.tickAndGetScale(FakeLoc.speed)
+                // 体力模拟：**每拍推进一次**（两种运动模式共用）。
+                // running 由**本处**按真实运动判定：自动播放中、或摇杆门未暂停（= 摇杆被按住/
+                // 锁定后继续走）。空闲时不推进 ⇒ 体力冻结（既不衰减也不恢复）。
+                // 判定放在这里而不是体力内部：体力代码不该知道"摇杆/自动播放"这种运动学概念。
+                val moving = isAutoPlaying || !rockerCoroutineController.consume()
+                StaminaController.tick(moving, FakeLoc.speed)
                 if (isAutoPlaying) {
                     advanceRoutePlayback(activity, advanceMs)
                 } else {
@@ -417,9 +420,10 @@ class MockServiceViewModel : ViewModel() {
         // 每 tick 位移 = 速度 × **本 tick 的真实时长**（见 ensureMotionLoop 的说明）。
         // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
         // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、0 → 除零崩溃。
-        // 位移按体力系数缩放：注入速度由**实际位移**反推 ⇒ 降速会自然体现在速度/步频上
-        // （只改报数不改位移会造出"位移与速度自相矛盾"，那是可被检测的指纹）
-        val mps = FakeLoc.speed * StaminaController.currentScale
+        // 位移按体力倍率缩放：注入速度由**实际位移**反推 ⇒ 降速会自然体现在速度/步频上
+        // （只改报数不改位移会造出"位移与速度自相矛盾"，那是可被检测的指纹）。
+        // 倍率只从体力接口读 —— 这里不判断休不休息、也不碰模型。
+        val mps = FakeLoc.speed * StaminaController.speedMultiplier()
         if (!MockServiceHelper.move(lm, mps * advanceMs / 1000.0, FakeLoc.bearing)) {
             Log.e("MockServiceViewModel", "Failed to move")
         }
@@ -446,8 +450,8 @@ class MockServiceViewModel : ViewModel() {
 
         // 按速度推进弧长，直接在路线上插值出本 tick 的目标点并设置位置：
         // 不再盲推 + 距离检测（盲推在曲线密集采样点上会失准、批量跳点）。
-        // 同摇杆：按体力系数缩放弧长推进（体力挂在推进量上，报数自然跟随）
-        val advanceMeters = FakeLoc.speed * StaminaController.currentScale * (advanceMs / 1000.0)
+        // 同摇杆：按体力倍率缩放弧长推进（体力挂在推进量上，报数自然跟随）
+        val advanceMeters = FakeLoc.speed * StaminaController.speedMultiplier() * (advanceMs / 1000.0)
         routeTravelled += advanceMeters
 
         if (routeTravelled >= routeDistance) {

@@ -199,18 +199,20 @@ class StaminaFragment : Fragment() {
     private fun refreshStatus() {
         val snapshot = StaminaController.snapshot()
         val base = requireContext().speed
-        val effective = base * StaminaController.currentScale
+        // 阶段与倍率都从体力接口读（本页不自己判断"算不算在跑"）
         binding.staminaValue.text = "%.1f %%".format(snapshot.staminaPercent)
-        binding.staminaPhase.text = if (snapshot.resting) {
-            "休息中：还剩 %.0f 秒（速度降到走路 %.2f m/s）".format(
-                snapshot.restRemainingSec, StaminaController.config().walkSpeed
-            )
-        } else if (StaminaController.config().enabled) {
-            "跑动中"
-        } else {
-            "未启用（体力不参与调制）"
+        binding.staminaPhase.text = when {
+            !StaminaController.config().enabled -> "未启用（体力不参与调制）"
+            StaminaController.isResting() ->
+                "休息中：还剩 %.0f 秒（速度降到走路 %.2f m/s）".format(
+                    snapshot.restRemainingSec, StaminaController.config().walkSpeed
+                )
+            StaminaController.isRunning() -> "跑动中"
+            else -> "空闲（体力冻结：既不衰减也不恢复）"
         }
-        binding.staminaEffective.text = "基础 %.2f m/s ⇒ 当前 %.2f m/s".format(base, effective)
+        binding.staminaEffective.text = "基础 %.2f m/s ⇒ 当前 %.2f m/s".format(
+            base, StaminaController.effectiveSpeed(base)
+        )
         binding.staminaStats.text = "休息 %d 次 / 共 %.1f 分钟".format(
             snapshot.restCount, snapshot.restTotalSec / 60.0
         )
