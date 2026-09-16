@@ -54,6 +54,17 @@ internal object ModulePrefs {
         readBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, def = true)
     }
 
+    /**
+     * 读任意布尔开关（**不缓存**，由调用方决定要不要缓存）。
+     *
+     * 存在的理由：不是每个开关都能靠 `put_config` 送达（那条路要求系统侧已握手），
+     * 而 App 侧偏好一落盘就是权威。调用方拿它做"下发值之外的第二判据"，
+     * 于是"刚打开开关、下发还没到"这段窗口不会读到旧结论。
+     *
+     * @return true/false = 读到了；null = 通道不可用（调用方按"未开启"处理）
+     */
+    fun enabled(key: String, def: Boolean = false): Boolean? = readBoolean(key, def)
+
     private fun readBoolean(key: String, def: Boolean): Boolean? {
         // libxposed 远程偏好：框架把模块 App 的偏好投递进被注入进程（只读）。
         // 这是**唯一**通道 —— 旧 XSharedPreferences 那条反射链已随旧入口一起删除：
