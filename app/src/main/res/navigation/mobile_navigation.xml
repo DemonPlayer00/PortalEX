@@ -36,6 +36,18 @@
         tools:layout="@layout/fragment_route_edit" />
 
     <fragment
+        android:id="@+id/nav_cadence"
+        android:name="moe.fuqiuluo.portalex.ui.cadence.CadenceFragment"
+        android:label="@string/menu_cadence"
+        tools:layout="@layout/fragment_cadence" />
+
+    <fragment
+        android:id="@+id/nav_angle_compass"
+        android:name="moe.fuqiuluo.portalex.ui.anglecompass.AngleCompassFragment"
+        android:label="@string/menu_angle_compass"
+        tools:layout="@layout/fragment_angle_compass" />
+
+    <fragment
         android:id="@+id/nav_calibration"
         android:name="moe.fuqiuluo.portalex.ui.calibration.CalibrationFragment"
         android:label="@string/menu_calibration"

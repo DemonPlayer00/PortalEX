@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 体力参数行模板：标题 / 说明 / 当前值（点击整行弹输入框） -->
+<!--
+  数值设置行模板（体力 / 步频 / 角度指南针三个页面共用）：标题 / 说明 / 当前值，
+  点击整行弹输入框。渲染与对话框在 ui/common/SettingRows.kt —— 三个页面各写一份必然漂移。
+-->
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -11,25 +14,25 @@
     android:padding="8dp">
 
     <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/stamina_row_title"
+        android:id="@+id/value_row_title"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:textColor="?attr/colorOnSurfaceVariant"
-        app:layout_constraintEnd_toStartOf="@id/stamina_row_value"
+        app:layout_constraintEnd_toStartOf="@id/value_row_value"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
     <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/stamina_row_desc"
+        android:id="@+id/value_row_desc"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:textSize="11sp"
-        app:layout_constraintEnd_toStartOf="@id/stamina_row_value"
+        app:layout_constraintEnd_toStartOf="@id/value_row_value"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/stamina_row_title" />
+        app:layout_constraintTop_toBottomOf="@id/value_row_title" />
 
     <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/stamina_row_value"
+        android:id="@+id/value_row_value"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:minWidth="88dp"
