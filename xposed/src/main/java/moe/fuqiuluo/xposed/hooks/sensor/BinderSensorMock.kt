@@ -653,7 +653,7 @@ object BinderSensorMock {
          */
         // 速率提示：**订阅变化驱动**（钩子在 SensorRateProbe 里），周期只作兜底 ——
         // 一次 dump 20~30ms，靠轮询做就是白烧（实测移动时 2s 一次 ≈1~1.5% 单核）
-        if (SensorRateProbe.dueForRefresh(now)) {
+        if (SensorRateProbe.dueForRefresh(now, moving)) {
             SensorRateProbe.markRefreshed(now)
             val ok = runCatching { SensorRateProbe.pushHints() }.getOrDefault(false)
             if (ok && !rateHintLogged) {

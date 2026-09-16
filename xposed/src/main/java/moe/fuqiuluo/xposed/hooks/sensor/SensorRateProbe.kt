@@ -48,8 +48,15 @@ internal object SensorRateProbe {
     /** 事件到达后的防抖窗口：一次订阅风暴（一个应用注册十几个传感器）只取一次 */
     private const val DEBOUNCE_NANOS = 300_000_000L
 
-    /** 钩子装不上时的兜底周期（旧 ROM/结构不同）：短一些，宁可多花点也别让速率长期不对 */
-    private const val FALLBACK_UNHOOKED_NANOS = 3_000_000_000L
+    /**
+     * 钩子装不上时的兜底周期（按"世界在不在动"分档）。
+     *
+     * 本机的传感器服务是 **native 实现**（`services.jar` 里只有壳类，没有连接管理的 Java 方法），
+     * 所以事件源拿不到，只能靠轮询 —— 那就至少别在"没人走路"时也 2s 一拉：
+     * 移动时速率提示才有意义（2s），静止时放宽到 10s。
+     */
+    private const val FALLBACK_UNHOOKED_MOVING_NANOS = 2_000_000_000L
+    private const val FALLBACK_UNHOOKED_IDLE_NANOS = 10_000_000_000L
 
     /** 钩子装上了以后的兜底周期：只防"漏事件"，可以很长 */
     private const val FALLBACK_HOOKED_NANOS = 60_000_000_000L
@@ -65,13 +72,17 @@ internal object SensorRateProbe {
     }
 
     /** 该不该重新取一次（监督线程每拍问一次；事件驱动为主，兜底周期为辅） */
-    fun dueForRefresh(nowNanos: Long): Boolean {
+    fun dueForRefresh(nowNanos: Long, moving: Boolean): Boolean {
         val req = refreshRequestedNanos
         if (req != 0L && nowNanos - req >= DEBOUNCE_NANOS) {
             refreshRequestedNanos = 0L
             return true
         }
-        val fallback = if (hooksInstalled) FALLBACK_HOOKED_NANOS else FALLBACK_UNHOOKED_NANOS
+        val fallback = when {
+            hooksInstalled -> FALLBACK_HOOKED_NANOS
+            moving -> FALLBACK_UNHOOKED_MOVING_NANOS
+            else -> FALLBACK_UNHOOKED_IDLE_NANOS
+        }
         return nowNanos - lastRefreshNanos >= fallback
     }
 
@@ -115,7 +126,8 @@ internal object SensorRateProbe {
         Logger.info(
             "SensorRateProbe: 订阅变化钩子 hooked=$hooked（候选 ${targets.size}）—— " +
                     "速率提示改为事件驱动，兜底周期 " +
-                    "${if (hooksInstalled) FALLBACK_HOOKED_NANOS / 1_000_000_000 else FALLBACK_UNHOOKED_NANOS / 1_000_000_000}s"
+                    "${if (hooksInstalled) FALLBACK_HOOKED_NANOS / 1_000_000_000 else FALLBACK_UNHOOKED_MOVING_NANOS / 1_000_000_000}s(移动)/" +
+                    "${FALLBACK_UNHOOKED_IDLE_NANOS / 1_000_000_000}s(静止)"
         )
     }
 

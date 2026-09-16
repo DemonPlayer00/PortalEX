@@ -56,10 +56,17 @@ kotlin.runCatching {
   也就是说：静止时的全部开销 ≈ 这个 dump。
 - **移动时**：`RATE_HINT_INTERVAL_NANOS = 2s` ⇒ 每 2 秒 20~30ms ≈ **1~1.5% 单核**，
   而解析结果极少变化（`pushHints` 已加了"结果没变就不下发"，但**dump 本身照做**）。
-- **修法（事件驱动）**：hook 框架侧 `SensorService.(un)registerListener`
-  （`com.android.server.sensors.SensorService` 在 system_server 可见 —— 我们本来就解析过它）
-  ⇒ 订阅集合变化时防抖 ~200ms 重取一次，取消周期 dump。顺带**提示更准**（新订阅立刻生效）。
-- **状态**：待改（本项是"轮询浪费"里最值钱的一条）。
+- **修法（事件驱动）**：hook 框架侧"订阅集合变化"⇒ 事件到达后防抖取一次。
+- **已落地**：`SensorRateProbe` 里已实现事件驱动骨架（请求/防抖/兜底周期），并在装载原生层时
+  尝试挂 `SensorService.createSensorEventConnection` / `destroySensorEventConnection` /
+  内部连接类 `enableDisable`。
+- **实测结果**：本机 `hooked=0（候选 0）` —— **`services.jar` 里
+  `com.android.server.sensors.SensorService` 只是个壳类**（把 smali 拉下来看过：方法只有
+  `onStart/onBootPhase/getWrapper` 与一堆 native 桥），连接管理在 **native 实现**里，
+  没有可挂的 Java 方法。于是本机退回兜底轮询（移动 2s / 静止 10s）。
+- **下一步（需要 native 周期）**：native 侧本来就 patch 了连接相关入口（`patched=7 targets=4`）
+  ⇒ 让它在那里置一个 `g_sub_dirty` 标志，Java 侧每拍问一次（移动时 20Hz、静止时靠兜底），
+  脏了才 `requestRefresh()`。这才是本机唯一可行的事件源。
 
 ## 4. P3 —— 会话外仍在转的常驻轮询线程
 
@@ -88,7 +95,25 @@ kotlin.runCatching {
   ③ 拒绝日志按 uid 限流（模块里已有 `warnedDeniedUids` 的先例，`isLocationProviderEnabled` 这条漏了）。
 - **状态**：待改（低频，但零风险）。
 
-## 6. P5 —— 移动时剩余的 ~8% 尚未定位
+## 6. P5 —— 移动成本定位：**95% 在交付**（已分段实测）
+
+`MotionClock.beat()` 已加分段计时（调试开关下显示在 Test 页的 `motion` 行）。真机数据
+（会话开 + 摇杆持续移动，607 拍累计）：
+
+```
+每拍分段(µs 平均/总ns): 推进=58/35.5ms 体力=190/115.2ms 落点=67/40.8ms 投递=5992/3637ms 拍数=607
+```
+
+- **投递 = 3.64s / 全部 3.83s ≈ 95%**，平均 **5992µs/次**（`callOnLocationChanged(force=true)`）；
+- 推进 58µs、落点 67µs、体力 190µs —— 全是噪声级，**不该再优化**。
+- 同轮对照：加 P0（`makeComplete` 缓存）后移动时 `MotionClock` 从 **8.13% → 5.13%**，
+  `Supervisor` 1.2% → 0.967% ⇒ 交付里确实有一大块是"每帧反射"，但**剩下仍有 ~6ms/帧**。
+- **下一步**：把 `callOnLocationChanged` 内部再分段（`buildFrame` / 监听器循环 / GNSS 推送），
+  一次重启周期就能读出这 6ms 归谁。**在那之前不动手**（本轮已经因为"看起来贵"猜错两次）。
+
+## 6.1 原始记录（保留）
+
+## 6. 原始判断（已被实测修正）
 
 - **实测**：会话开 + 摇杆持续移动时，`MotionClock` 占 **8.1% 单核**（30s 窗口 244 jiffies）。
 - **已知不在这里**：`deliverFrame` 的反射查找只值 **13%**（9.3% → 8.1%）—— 我先前"反射是主因"
