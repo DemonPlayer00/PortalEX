@@ -1,13 +1,14 @@
 package moe.fuqiuluo.xposed.hooks.sensor
 
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import java.lang.reflect.Field
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
+import moe.fuqiuluo.xposed.utils.Hooks
 
 /**
  * 运行时投递通道（**只在 system_server 内**）—— 「投递 100% 由我们掌握」的那条路。
@@ -210,7 +211,7 @@ internal object SystemRuntimeChannel {
     /** 构造函数 hook：boot 期实例化时把实例抓住（`mPtr` 随后由异步任务写入）。 */    private fun installCtorHook() {
         val cls = serviceCls ?: return
         runCatching {
-            XposedBridge.hookAllConstructors(cls, object : XC_MethodHook() {
+            Hooks.hookAllConstructors(cls, object : MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     serviceInstance = param.thisObject
                     Logger.info("SystemRuntimeChannel: 捕获 SensorService 实例（构造函数）")

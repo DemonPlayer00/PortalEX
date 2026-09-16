@@ -1,6 +1,7 @@
 package moe.fuqiuluo.xposed.hooks.telephony.miui
 
 import moe.fuqiuluo.xposed.hooks.telephony.BaseTelephonyHook
+import moe.fuqiuluo.xposed.utils.Hooks
 
 object MiuiTelephonyManagerHook: BaseTelephonyHook() {
     operator fun invoke(classLoader: ClassLoader) {
@@ -15,7 +16,7 @@ object MiuiTelephonyManagerHook: BaseTelephonyHook() {
 //        cMiuiTelephonyManager?.let { clazz ->
 //            println("[Portal] found " + clazz.declaredMethods.mapNotNull {
 //                if (it.returnType == CellLocation::class.java) {
-//                    XposedBridge.hookMethod(it, hookGetCellLocation)
+//                    Hooks.hookMethod(it, hookGetCellLocation)
 //                } else null
 //            }.size + " methods to hook in MiuiTelephonyManager")
 //        }
@@ -23,13 +24,13 @@ object MiuiTelephonyManagerHook: BaseTelephonyHook() {
 //        cTelephonyManagerEx?.let { clazz ->
 //            println("[Portal] found " + clazz.declaredMethods.mapNotNull {
 //                if (it.returnType == CellLocation::class.java) {
-//                    XposedBridge.hookMethod(it, hookGetCellLocation)
+//                    Hooks.hookMethod(it, hookGetCellLocation)
 //                } else null
 //            }.size + " methods to hook in MiuiTelephonyManagerEx")
 //
-//            var sizeGetNeighboringCellInfoMethod = XposedBridge.hookAllMethods(clazz, "getNeighboringCellInfo", hookGetNeighboringCellInfoList).size
-//            sizeGetNeighboringCellInfoMethod += XposedBridge.hookAllMethods(clazz, "getNeighboringCellInfoForSlot", hookGetNeighboringCellInfoList).size
-//            sizeGetNeighboringCellInfoMethod += XposedBridge.hookAllMethods(clazz, "getNeighboringCellInfoForSubscription", hookGetNeighboringCellInfoList).size
+//            var sizeGetNeighboringCellInfoMethod = Hooks.hookAllMethods(clazz, "getNeighboringCellInfo", hookGetNeighboringCellInfoList).size
+//            sizeGetNeighboringCellInfoMethod += Hooks.hookAllMethods(clazz, "getNeighboringCellInfoForSlot", hookGetNeighboringCellInfoList).size
+//            sizeGetNeighboringCellInfoMethod += Hooks.hookAllMethods(clazz, "getNeighboringCellInfoForSubscription", hookGetNeighboringCellInfoList).size
 //            println("[Portal] found $sizeGetNeighboringCellInfoMethod methods to hook in MiuiTelephonyManagerEx")
 //        }
     }

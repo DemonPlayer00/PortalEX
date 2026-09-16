@@ -73,6 +73,8 @@ object PortalProtocol {
         const val ENABLE_NMEA               = "enable_nmea"
         const val HAS_BEARINGS              = "has_bearings"
         const val HIDE_MOCK                 = "hide_mock"
+        /** 隐藏开发者模式（应用侧设置项 → 系统侧 hook 的开关） */
+        const val HIDE_DEVELOPER_MODE       = "hide_developer_mode"
         const val HOOK_WIFI                 = "hook_wifi"
         const val IS_GNSS_START             = "is_gnss_start"
         const val IS_START                  = "is_start"
@@ -105,5 +107,9 @@ object PortalProtocol {
     /** 偏好键名（app 写、模块侧反射读同一份 prefs 文件） */
     object Pref {
         const val BINDER_SENSOR_MOCK = "binderSensorMock"
+
+        /** 隐藏开发者模式。键名与 [Key.HIDE_DEVELOPER_MODE] 不同：这条既做 prefs 键
+         *  （app 侧读写 + 模块侧 remote 偏好兜底），也做 put_config 的下发键。 */
+        const val HIDE_DEVELOPER_MODE = "hideDeveloperMode"
     }
 }
