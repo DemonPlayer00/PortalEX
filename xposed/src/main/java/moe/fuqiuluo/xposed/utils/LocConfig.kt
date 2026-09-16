@@ -117,15 +117,6 @@ internal object LocConfig {
     var hideMock = true
 
     /**
-     * 隐藏开发者模式：把 `Settings.Global` 里"开发者选项/ADB 是否开启"的读取
-     * 拦成未开启（见 `hooks/settings/DeveloperModeHook.kt`）。
-     *
-     * **默认关闭**：它改变的是系统设置读到的事实，会影响使用者自己（连他自己读
-     * `adb_enabled` 也会得到假值），不适合默认替用户打开。
-     */
-    var hideDeveloperMode = false
-
-    /**
      * may cause system to crash
      */
     var hookWifi = true
