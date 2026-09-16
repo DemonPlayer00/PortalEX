@@ -832,19 +832,19 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
                         active ? 1 : 0);
 }
 
-/** 设置页「注入栅格分辨率」：Hz → 纳秒（0 = 自动） */
-JNIEXPORT void JNICALL
-Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setGridHz(
-        JNIEnv *env, jobject thiz, jint hz) {
-    (void) env;
-    (void) thiz;
-    long long ns = 0;
-    if (hz > 0) ns = 1000000000LL / (long long) hz;
-    vw_set_tick_override(ns);
-    LOGI("grid override -> %d Hz (%lld ns)", (int) hz, ns);
-}
 
 /** 先清空活跃标记（缺席的类型即静默），随后由 Kotlin 按 dump 灌入活跃者 */
+/*
+ * 下一个到点时刻（纳秒；0 = 没有）。泵用它"睡到下一个事件"，于是投递是事件驱动的：
+ * 既不会把事件攒到固定节拍一起发（旧的 5ms 栅格轮询），也不会自作主张改速率。
+ */
+JNIEXPORT jlong JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_nextDueNs(JNIEnv *env, jobject thiz,
+                                                                  jlong now_nanos) {
+    (void) env; (void) thiz;
+    return (jlong) vw_next_due_ns((long long) now_nanos);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_clearChannelHints(
         JNIEnv *env, jobject thiz) {
@@ -917,7 +917,7 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
         int pend = 0;
         long long dropped = 0;
         vw_defer_stats(&pend, &dropped);
-        APPEND(" tick=%.2fms polltypes=%d defer=%d/%lld", vw_tick_ns_dbg() / 1e6,
+        APPEND(" 最细周期=%.1fms polltypes=%d defer=%d/%lld", vw_finest_period_dbg() / 1e6,
                vw_poll_types_enabled(), pend, dropped);
     }
     {

@@ -25,9 +25,6 @@ extern "C" {
  */
 extern pthread_mutex_t g_lock;
 
-/** 世界的基础时间栅格（10ms）：所有周期都是它的整数倍，事件天然按时间升序交织 */
-#define TICK_NS 10000000LL
-
 /* ---- PRNG（vw_rand.c） ---- */
 /** 进程级播种（常量种子 ⊕ 启动时间 ⊕ pid）：`vw_init` 调一次；不调也能跑，只是各进程同序列 */
 void vw_rng_seed_process(void);
@@ -48,13 +45,17 @@ static inline double rng_range(double lo, double hi) { return vw_rng_range(lo, h
  */
 extern int g_moving;
 extern double g_speed;
-extern long long g_tick_ns;
 extern double g_target_azimuth;
 
 
-/** 推进虚拟世界一拍（相位 PLL、摆动、微抖、方位平滑、角速度低通） */
+/** 初始化步态/朝向状态 */
 void vw_gait_init(void);
-void advance_one_tick(long long now);
+/**
+ * 把虚拟世界推进到 [now]（相位 PLL、摆动、微抖、方位平滑）——**步长可变**。
+ * 旧实现是按固定栅格一拍一拍推（`advance_one_tick`，dt = 栅格）；没有栅格之后
+ * 由生成器按"事件到点时刻"惰性推进，公式本身都是 dt 参数化的（指数平滑），换步长等价。
+ */
+void vw_advance_to(long long now);
 /** 记一次"这一步在 IMU 上也必须正好是一个峰" */
 void gait_note_step(long long ts);
 /** 当前步态加速度（设备坐标；静止时全 0） */
