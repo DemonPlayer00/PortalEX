@@ -14,7 +14,6 @@ import moe.fuqiuluo.xposed.utils.StaminaCurve
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.roundToInt
 
 /**
  * **速度倍率 × 距离**预览图（体力页用）。
@@ -29,11 +28,11 @@ import kotlin.math.roundToInt
  *
  *  · **横轴是距离而不是时间**：用户要问的是"跑多远会掉到什么速度"。倍率会反过来改变
  *    单位时间走过的距离，两个轴互相耦合 ⇒ 数据由 [StaminaCurve] 积分得到，不在本类里算。
- *  · **两页共用一套固定量程**（用户口径："两个图表应使用一致且固定的量程"）：
- *    纵轴恒为 0~1.0 的**倍率**线性映射，与数据无关、与页签无关；生成页只是把同一批刻度
- *    的标签换成配速（min/km）。这样切页签时同一速度落在同一高度，两张图能直接对着看。
- *    ⚠️ 曾经生成页按"本次采样的实际范围"自适配配速量程 —— 每点一次"生成"纵轴都会跳，
- *    而且和理论页对不上；已删除。
+ *  · **两页共用一套固定量程与同一单位**（用户口径："两个图表应使用一致且固定的量程"、
+ *    "生成表格的纵轴使用和理论表格一致的单位（倍率）"）：纵轴恒为 0~1.0 的**倍率**线性映射，
+ *    刻度、单位、量程三样都与数据、页签无关 ⇒ 切页签时同一速度落在同一高度，两张图可直接对照。
+ *    ⚠️ 曾经生成页按"本次采样的实际范围"自适配**配速**量程 —— 每点一次"生成"纵轴都会跳，
+ *    单位也和理论页不同；两处都已删除。配速读数保留在图下的"本次生成"摘要里。
  *  · **自己处理横向滚动，不套 HorizontalScrollView**：套一层滚动容器的话，纵轴刻度会跟着
  *    滑出屏幕（那些数字是读图的前提）。这里只把**绘图区**裁剪后按 scrollMeters 平移，
  *    刻度栏钉在原地。与上层纵向 ScrollView 的冲突靠"横向起手即 disallowIntercept"解决。
@@ -159,8 +158,11 @@ class StaminaChartView @JvmOverloads constructor(
     fun theoryMetrics(): StaminaCurve.Metrics? = baseCurve?.metrics
 
     /**
-     * 切到「生成」页：显示**真实引擎**（[StaminaCurve.sample]）跑出来的一条曲线，
-     * 纵轴换成配速（min/km）。每次调用都是一条新曲线（随机源不同）⇒ 点一次刷新一次。
+     * 切到「生成」页：显示**真实引擎**（[StaminaCurve.sample]）跑出来的一条曲线。
+     * 每次调用都是一条新曲线（随机源不同）⇒ 点一次刷新一次。
+     *
+     * 纵轴与理论页**完全一致**（同一单位、同一量程、同一刻度），换的只是数据来源与图例
+     * —— 这样两张图能直接叠着看。
      */
     fun submitGenerated(curve: StaminaCurve.Curve, baseSpeed: Double) {
         val base = if (baseSpeed > 0.05) baseSpeed else 1.0
@@ -169,17 +171,6 @@ class StaminaChartView @JvmOverloads constructor(
         this.baseSpeed = base
         clampScroll()
         invalidate()
-    }
-
-    /**
-     * 倍率 ⇒ 配速（min/km）。倍率越高速度越快、配速数字越小。
-     *
-     * 它**只用来给刻度写标签**：纵轴的位置映射两页共用同一套（见 onDraw 的 yOf），
-     * 所以切换页签时曲线不会跳高度。
-     */
-    private fun paceOf(multiplier: Double): Double {
-        val v = baseSpeed * multiplier.coerceAtLeast(0.02)
-        return 1000.0 / (v * 60.0)
     }
 
     /** 当前滚动位置（米）—— 诊断用 */
@@ -198,9 +189,8 @@ class StaminaChartView @JvmOverloads constructor(
 
         val perPx = metersPerPx()
         val theory = mode == Mode.THEORY
-        // **两页共用同一套固定量程**：纵轴恒为 0~[Y_MAX] 的倍率线性映射，与数据无关。
-        // 生成页只是把同一批刻度的**标签**换成配速（min/km）—— 于是切换页签时同一速度
-        // 落在同一高度，两张图可以直接对着看（用户口径：量程一致且固定）。
+        // **两页共用同一套固定量程与同一单位**：纵轴恒为 0~[Y_MAX] 的倍率线性映射，
+        // 与数据无关、与页签无关 ⇒ 切换页签时同一速度落在同一高度，两张图可直接对照。
         val yOf: (Double) -> Float = { m -> plotBottom - plotH * (m / Y_MAX).toFloat() }
         val xOf: (Double) -> Float = { d -> plotLeft + ((d - scrollMeters) / perPx).toFloat() }
 
@@ -244,15 +234,10 @@ class StaminaChartView @JvmOverloads constructor(
         label.color = colorLabel
         label.textSize = sp(9f)
         label.textAlign = Paint.Align.RIGHT
+        // 两页刻度**一律标倍率**（用户口径：生成页也用与理论页一致的单位）——
+        // 配速读数放在图下的"本次生成"摘要里，纵轴不再承担第二套单位。
         hTicks.forEach { v ->
-            // 理论页标倍率；生成页标**同一位置的配速**（0 处速度为 0，配速无意义 ⇒ 标 "—"）
-            val text = if (theory) tickText(v) else if (v <= 0.0) "—" else paceText(paceOf(v))
-            canvas.drawText(text, plotLeft - dp(4f), yOf(v) + dp(3.5f), label)
-        }
-        if (!theory) {
-            // 纵轴单位：光看"5:28"不知道是什么
-            label.textAlign = Paint.Align.LEFT
-            canvas.drawText("min/km", paddingLeft.toFloat(), plotTop - dp(3f), label)
+            canvas.drawText(tickText(v), plotLeft - dp(4f), yOf(v) + dp(3.5f), label)
         }
 
         // 横轴刻度：整 km 才标字
@@ -280,12 +265,6 @@ class StaminaChartView @JvmOverloads constructor(
         if (scrollMeters < maxScroll - 1.0) {
             drawChevron(canvas, plotRight - dp(6f), midY, pointingLeft = false)
         }
-    }
-
-    /** 配速文字：5.5 ⇒ "5:30" */
-    private fun paceText(pace: Double): String {
-        val total = (pace * 60.0).roundToInt()
-        return "%d:%02d".format(total / 60, total % 60)
     }
 
     private fun tickText(v: Double): String =

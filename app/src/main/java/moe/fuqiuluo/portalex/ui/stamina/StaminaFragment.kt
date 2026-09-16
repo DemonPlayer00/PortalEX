@@ -350,7 +350,8 @@ class StaminaFragment : Fragment() {
         val curve = StaminaCurve.sample(config, base, dtSec = dtSec)
 
         binding.staminaChartMetrics.visibility = View.GONE
-        binding.staminaChartDesc.text = getString(R.string.stamina_chart_desc_generated)
+        // 两页同一句描述：纵轴单位与量程都一致（生成页的身份由图例与摘要体现）
+        binding.staminaChartDesc.text = getString(R.string.stamina_chart_desc)
         binding.staminaChart.submitGenerated(curve, base)
 
         val km = curve.distanceM.last() / 1000.0
