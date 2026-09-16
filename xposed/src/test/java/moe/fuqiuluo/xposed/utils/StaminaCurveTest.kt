@@ -81,32 +81,6 @@ class StaminaCurveTest {
         assertTrue("第一段应该真的在掉速", declined)
     }
 
-    /**
-     * 默认参数下**第一次休息落在哪里**。
-     *
-     * 这个数字用户会直接感受到（"跑多远开始掉到走路速度"），也是参数提示文案的依据，
-     * 所以钉成区间。⚠️ 注意它不是"80 点 ÷ 7 点/分 = 11.4 分钟"那种线性外推：
-     * 体力越低恢复越快、且降速本身又减少了消耗 ⇒ 实际要跑得**久得多也远得多**。
-     */
-    @Test
-    fun `默认参数第一次休息落在 3_5km 一带`() {
-        val curve = StaminaCurve.simulate(cfg(), base, maxDistanceMeters = 6_000.0)
-        val walkFloor = 1.10 / base
-        val idx = (0 until curve.size).firstOrNull { curve.multiplier[it].toDouble() <= walkFloor + 1e-6 }
-
-        assertTrue("6km 内应该进过休息（实际 ${curve.restCount} 次）", curve.restCount >= 1)
-        assertTrue("应该有一拍降到走路地板", idx != null)
-
-        // 积分步长固定 ⇒ 第 i 个采样点的时刻 = i × dt
-        val km = curve.distanceM[idx!!] / 1000.0
-        val min = idx * StaminaCurve.DEFAULT_DT_SEC / 60.0
-        println("默认参数第一次休息：%.2f km / %.1f 分钟；全程 %.2f km 用 %.0f 分钟，休息 %d 次"
-            .format(km, min, curve.distanceM.last() / 1000.0, curve.elapsedSec / 60.0, curve.restCount))
-
-        assertTrue("第一次休息不该早于 2.5km（实际 %.2f km）".format(km), km >= 2.5)
-        assertTrue("第一次休息不该晚于 5km（实际 %.2f km）".format(km), km <= 5.0)
-    }
-
     /** ±随机包络：无随机线必须被夹在中间，且两端要真的分得开（否则那两条线是装饰） */
     @Test
     fun `随机包络夹住无随机线且在 2km 处已分开`() {

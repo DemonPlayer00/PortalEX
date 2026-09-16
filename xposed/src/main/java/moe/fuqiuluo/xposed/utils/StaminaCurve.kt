@@ -194,8 +194,19 @@ object StaminaCurve {
         val firstCycleSec: Double,
         val fatigueSpeedMps: Double,
         val averageSpeedMps: Double,
+        /** 每一次疲劳**开始**时的累计距离（米），按时间顺序 */
+        val fatigueStartDistancesM: FloatArray,
     ) {
         val hasFatigue: Boolean get() = firstFatigueDistanceM >= 0.0
+
+        /**
+         * 前 [meters] 米内进入了多少次疲劳。
+         *
+         * 这是用户直接关心的那个数（"1.5 km 内 1 次、2 km 内 2 次"），
+         * 所以由曲线自己数出来显示在页面上，而不是让人去图上比划。
+         */
+        fun fatigueCountWithin(meters: Double): Int =
+            fatigueStartDistancesM.count { it <= meters }
     }
 
     /** 边跑边量指标（[simulate] 与 [sample] 共用，保证两条路径的口径一致） */
@@ -209,10 +220,12 @@ object StaminaCurve {
         private var speedSum = 0.0
         private var fatigueTicks = 0L
         private var wasResting = false
+        private val startsM = ArrayList<Float>(16)
 
         fun tick(distance: Double, elapsed: Double, stamina: Double, resting: Boolean, multiplier: Double) {
             if (resting) {
                 if (!wasResting) {                      // 刚进疲劳
+                    startsM.add(distance.toFloat())
                     if (firstStartSec < 0.0) {
                         firstDistance = distance
                         firstStartSec = elapsed
@@ -239,6 +252,7 @@ object StaminaCurve {
             firstCycleSec = firstCycleSec,
             fatigueSpeedMps = if (fatigueTicks > 0) speedSum / fatigueTicks else 0.0,
             averageSpeedMps = if (elapsed > 0.0) distance / elapsed else 0.0,
+            fatigueStartDistancesM = startsM.toFloatArray(),
         )
     }
 

@@ -97,7 +97,7 @@
     <string name="stamina_fatigue_sec">疲劳时长</string>
     <string name="stamina_fatigue_sec_desc">一次疲劳的倒计时预算（秒）；低于开跑阈值倒得慢、高于倒得快</string>
     <string name="stamina_metrics_label">这套参数跑出来</string>
-    <string name="stamina_metrics">首次疲劳 %1$s km（跑 %2$s 分）· 一次疲劳 %3$s 分 · 周期 %4$s 分（跑 %5$s / 歇 %6$s）· 疲劳时 %7$s m/s</string>
+    <string name="stamina_metrics">首次疲劳 %1$s km（跑 %2$s 分）· 一次疲劳 %3$s 分 · 周期 %4$s 分 · 疲劳时 %5$s m/s · 1.5km 内 %6$d 次 / 2km 内 %7$d 次</string>
     <string name="stamina_metrics_no_fatigue">10 km 内不会进疲劳（疲劳体力值 %.0f%% 太低，或体力衰减太小）</string>
     <string name="stamina_metrics_unknown_cycle">周期：窗口内只出现过一次疲劳</string>
     <string name="stamina_health_decay">⚠ 体力衰减过高：疲劳期体力净下降（上限约 %1$s 点/分），曲线会一路掉到 0 并卡住</string>

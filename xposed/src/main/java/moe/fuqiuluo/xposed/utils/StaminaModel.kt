@@ -44,27 +44,29 @@ import kotlin.random.Random
  *    （瞬移/位置跳变/补帧会算出几百 m/s，不该一瞬把体力抽干）。
  *    ⚠️ 忽略的是**快**，不是慢；慢速照样消耗（只是按比例变小）。
  *
- * ## 默认值怎么推出来的
+ * ## 默认值怎么推出来的（2026-09-17 按"疲劳密度"重定）
  *
- * 基础速度默认 3.05 m/s（≈5:28/km）。要让"恢复−消耗"的净效果像个人：
- * - 满速跑动消耗 = [StaminaConfig.decayPerMinute] × 1.0 = 11 点/分；
- * - 满体力恢复 = [StaminaConfig.recoverCoefficient] × 1.0 = 4 点/分；
- * - 体力 20% 时恢复 = 4 × 1.8 = 7.2 点/分，仍低于满速消耗 ⇒ 一直跑一定会累（不会自愈）；
- * - 降到走路（倍率 0.36 ⇒ 1.1 m/s）时消耗 = 11 × 0.36 ≈ 4 点/分 < 恢复 ⇒ **走着就在回血**。
+ * 基础速度默认 3.05 m/s（≈5:28/km）。用户口径：**1.5 km 内出现 1 次疲劳、2 km 内出现 2 次**
+ * —— 也就是默认那 2 km 窗口里就要看得见这个模式，而不用左右滑动。
+ * 于是要的不是"多久累一次"的直觉值，而是**每公里约 1 次**的节奏：
+ * - 衰减 22 点/分（满速）+ 恢复 6 点/分 ⇒ 首次疲劳在 **1.36 km / 8.7 分**；
+ * - 疲劳体力值 15%、开跑阈值 25%（差 10 个点，迟滞带）；疲劳时长 80 秒（预算）；
+ * - 一次疲劳实测 175 秒、周期 262 秒 ≈ 1.6 个/km ⇒ 1.5 km 内 1 次、2 km 内 2 次。
  *
- * ⚠️ **别用"80 点 ÷ 7 点/分 = 11.4 分钟"估算第一次休息**：净掉速率不是常数 ——
- * 体力越低恢复越快、而且降速本身又减少了消耗，两个效应都让后半段掉得越来越慢。
- * 按 [StaminaCurve] 积分实测（默认参数）：**第一次休息在 3.9 km / 25.5 分钟**。
- * 这个数字由 `StaminaCurveTest` 钉住，改参数后那条例会红。
+ * 这组值由 `StaminaCycleAnalysisTest` 的 `出厂默认必须落在健康区间` 钉住（含随机采样的命中率），
+ * 改默认值时那条例会红。
+ *
+ * ⚠️ 别用"80 点 ÷ 净速率"线性外推首次疲劳：净掉速率随体力下降而变小（恢复变快、消耗变慢），
+ * 后半段掉得比前半段慢得多 —— 早期版本就是这么把 3.9 km 估成 11.4 分钟的。
  */
 data class StaminaConfig(
     var enabled: Boolean = false,
     /** 消耗系数：满速跑动时每分钟消耗多少点 */
-    var decayPerMinute: Double = 11.0,
+    var decayPerMinute: Double = 22.0,
     /** 恢复速度系数：实际恢复 = 本值 × 恢复倍率(体力) ÷ 冷却时间系数 */
-    var recoverCoefficient: Double = 4.0,
+    var recoverCoefficient: Double = 6.0,
     /** 休息体力值：低于它就对速度倍率再乘 [restSpeedFactor] */
-    var restAtPercent: Double = 20.0,
+    var restAtPercent: Double = 15.0,
     /**
      * **开跑阈值**：疲劳状态里"冷却进度"计数的**方向分界**。
      *
@@ -72,7 +74,7 @@ data class StaminaConfig(
      * 进度回到 ≥ 0 就开跑（退出疲劳）。它必须**高于** [restAtPercent]：
      * 两者相等时迟滞消失，退化成"进一拍、出一拍"的抖动。
      */
-    var resumeAtPercent: Double = 30.0,
+    var resumeAtPercent: Double = 25.0,
     /** 休息降速系数：休息期间在疲劳倍率上再乘它 */
     var restSpeedFactor: Double = 0.25,
     /**
@@ -83,7 +85,7 @@ data class StaminaConfig(
      * 进疲劳时按下这个秒数起倒计时，倒完即开跑；每拍的实际速率见
      * [StaminaMath.fatigueTickRate]（低于开跑阈值更慢、高于更快，越远越快）。
      */
-    var fatigueSec: Double = 120.0,
+    var fatigueSec: Double = 80.0,
     /**
      * **过渡时间（秒）**：进出疲劳时速度从一档平滑到另一档所用的时长。
      *

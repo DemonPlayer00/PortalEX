@@ -70,8 +70,8 @@ class StaminaFragment : Fragment() {
                 get = { it.decayPerMinute },
                 set = { c, v -> c.copy(decayPerMinute = v) },
                 format = { "%.1f 点/分".format(it) },
-                hint = "满速跑动时每分钟掉多少体力。默认 11 ⇒ 首次疲劳大约在 3.9 km / 25 分" +
-                        "（不是线性外推：体力越低恢复越快，后半段掉得更慢）",
+                hint = "满速跑动时每分钟掉多少体力。默认 22 ⇒ 首次疲劳约在 1.4 km / 9 分" +
+                        "（别按线性外推：体力越低恢复越快、消耗也降，后半段掉得更慢）",
             ),
             Row(
                 title = getString(R.string.stamina_rest_at),
@@ -79,7 +79,7 @@ class StaminaFragment : Fragment() {
                 get = { it.restAtPercent },
                 set = { c, v -> c.copy(restAtPercent = v) },
                 format = { "%.0f %%".format(it) },
-                hint = "体力降到该值就进入疲劳。默认 20%",
+                hint = "体力降到该值就进入疲劳。默认 15%（配合开跑阈值 25% 形成迟滞带）",
             ),
             Row(
                 title = getString(R.string.stamina_resume),
@@ -88,7 +88,7 @@ class StaminaFragment : Fragment() {
                 set = { c, v -> c.copy(resumeAtPercent = v) },
                 format = { "%.0f %%".format(it) },
                 hint = "疲劳倒计时的**速率参考点**：体力低于它 ⇒ 倒计时变慢（最低 0.25x），" +
-                        "达到/超过 ⇒ 变快（最多 3x），越远越快。必须高于疲劳体力值。默认 30%",
+                        "达到/超过 ⇒ 变快（最多 3x），越远越快。必须高于疲劳体力值。默认 25%",
             ),
             Row(
                 title = getString(R.string.stamina_fatigue_sec),
@@ -97,7 +97,7 @@ class StaminaFragment : Fragment() {
                 set = { c, v -> c.copy(fatigueSec = v) },
                 format = { "%.0f 秒".format(it) },
                 hint = "一次疲劳的**倒计时预算**：进疲劳按下这个秒数，倒完即开跑。" +
-                        "实际时长还会随「离参考点多远」与随机浮动（约 0.8~3 倍）。默认 120 秒",
+                        "实际时长通常更长（低于开跑阈值时倒得慢，默认约 2 倍），看下面结果行。默认 80 秒",
             ),
             Row(
                 title = getString(R.string.stamina_walk_speed),
@@ -121,7 +121,7 @@ class StaminaFragment : Fragment() {
                 get = { it.recoverCoefficient },
                 set = { c, v -> c.copy(recoverCoefficient = v) },
                 format = { "%.1f 点/分".format(it) },
-                hint = "恢复速度系数：体力 100% 时按本值回，0% 时翻倍（越低回得越快）。默认 4.0 点/分",
+                hint = "恢复速度系数：体力 100% 时按本值回，0% 时翻倍（越低回得越快）。默认 6.0 点/分",
             ),
             Row(
                 title = getString(R.string.stamina_transition),
@@ -305,17 +305,16 @@ class StaminaFragment : Fragment() {
             sb.append(getString(R.string.stamina_metrics_no_fatigue, config.restAtPercent))
         } else {
             sb.append(getString(R.string.stamina_metrics_label)).append("：")
-            val cycle = metrics.firstCycleSec
             sb.append(
                 getString(
                     R.string.stamina_metrics,
                     "%.1f".format(metrics.firstFatigueDistanceM / 1000.0),
                     "%.1f".format(metrics.firstFatigueStartSec / 60.0),
                     "%.1f".format(metrics.firstFatigueSec / 60.0),
-                    if (cycle > 0) "%.1f".format(cycle / 60.0) else "—",
-                    if (cycle > 0) "%.1f".format((cycle - metrics.firstFatigueSec) / 60.0) else "—",
-                    "%.1f".format(metrics.firstFatigueSec / 60.0),
+                    if (metrics.firstCycleSec > 0) "%.1f".format(metrics.firstCycleSec / 60.0) else "—",
                     "%.2f".format(metrics.fatigueSpeedMps),
+                    metrics.fatigueCountWithin(1_500.0),
+                    metrics.fatigueCountWithin(2_000.0),
                 )
             )
         }

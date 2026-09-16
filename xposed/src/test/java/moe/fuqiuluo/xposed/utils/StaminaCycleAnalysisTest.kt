@@ -332,32 +332,50 @@ class StaminaCycleAnalysisTest {
     /**
      * **默认值必须落在健康区间**（页面上的「重置数据」就是恢复到这组值）。
      *
-     * 这条防的是"改默认值时顺手把开箱体验弄坏"：默认参数一旦越过体检线，
-     * 新用户看到的就是一条永远平坦（或永远很累）的曲线，而没人会去读公式。
+     * 用户口径（2026-09-17）：**1.5 km 内 1 次疲劳、2 km 内 2 次** —— 默认那 2 km 窗口里
+     * 就要看得见这个模式。这条同时防"改默认值顺手把开箱体验弄坏"。
      */
     @Test
     fun `出厂默认必须落在健康区间`() {
         val c = StaminaConfig(enabled = true)
         val limit = StaminaCurve.decayLimitForRecovery(c, base)
-        val curve = StaminaCurve.simulate(c, base, maxDistanceMeters = 10_000.0)
+        val curve = StaminaCurve.simulate(c, base, maxDistanceMeters = 3_000.0)
         val m = curve.metrics
 
         println(
-            "出厂默认：衰减 %.1f（回血上限 %.1f）｜首次疲劳 %.2f km / %.1f 分 ⇒ 疲劳 %.0f 秒｜周期 %.1f 分｜疲劳时 %.2f m/s"
+            "出厂默认：衰减 %.1f（回血上限 %.1f）｜疲劳体力值 %.0f%% / 开跑阈值 %.0f%% ｜ 首次疲劳 %.2f km / %.1f 分 ⇒ 疲劳 %.0f 秒 ｜ 周期 %.0f 秒 ｜ 均速 %.2f m/s ｜ 1.5km 内 %d 次 / 2km 内 %d 次"
                 .format(
-                    c.decayPerMinute, limit, m.firstFatigueDistanceM / 1000.0,
-                    m.firstFatigueStartSec / 60.0, m.firstFatigueSec,
-                    m.firstCycleSec / 60.0, m.fatigueSpeedMps
+                    c.decayPerMinute, limit, c.restAtPercent, c.resumeAtPercent,
+                    m.firstFatigueDistanceM / 1000.0, m.firstFatigueStartSec / 60.0,
+                    m.firstFatigueSec, m.firstCycleSec, m.averageSpeedMps,
+                    m.fatigueCountWithin(1_500.0), m.fatigueCountWithin(2_000.0),
                 )
         )
         assertTrue("默认衰减必须留下余量：%.1f < %.1f".format(c.decayPerMinute, limit),
             c.decayPerMinute < limit * 0.9)
         assertTrue("默认疲劳速度必须真的比跑动慢", StaminaCurve.fatigueSlowsDown(c, base))
         assertTrue("默认参数必须会疲劳", m.hasFatigue)
-        assertTrue("首次疲劳应在 2~6 km（实得 %.2f km）".format(m.firstFatigueDistanceM / 1000.0),
-            m.firstFatigueDistanceM in 2_000.0..6_000.0)
+        // 目标 1：1.5 km 内 1 次、2 km 内 2 次（名义曲线必须**正好**是这样）
+        assertEquals("1.5 km 内的疲劳次数", 1, m.fatigueCountWithin(1_500.0))
+        assertEquals("2 km 内的疲劳次数", 2, m.fatigueCountWithin(2_000.0))
+        assertTrue("首次疲劳应在 1.0~1.5 km（实得 %.2f km）".format(m.firstFatigueDistanceM / 1000.0),
+            m.firstFatigueDistanceM in 1_000.0..1_500.0)
         assertTrue("单次疲劳应在 1~5 分钟（实得 %.0f 秒）".format(m.firstFatigueSec),
             m.firstFatigueSec in 60.0..300.0)
-        assertTrue("周期应大于 5 分钟（实得 %.0f 秒）".format(m.firstCycleSec), m.firstCycleSec > 300.0)
+
+        // 目标 2：带随机时也要**大多数情况**满足，而不只是名义值满足
+        var hit15 = 0
+        var hit20 = 0
+        val samples = 30
+        for (seed in 1..samples) {
+            val s = StaminaCurve.sample(
+                c, base, maxDistanceMeters = 2_500.0, dtSec = 0.1, random = Random(seed.toLong())
+            ).metrics
+            if (s.fatigueCountWithin(1_500.0) >= 1) hit15++
+            if (s.fatigueCountWithin(2_000.0) >= 2) hit20++
+        }
+        println("随机采样 $samples 次：1.5km 内 ≥1 次 $hit15/$samples；2km 内 ≥2 次 $hit20/$samples")
+        assertTrue("带随机也应多数命中：1.5km 内 ≥1（实得 $hit15/$samples）", hit15 >= samples / 2)
+        assertTrue("带随机也应多数命中：2km 内 ≥2（实得 $hit20/$samples）", hit20 >= samples / 2)
     }
 }
