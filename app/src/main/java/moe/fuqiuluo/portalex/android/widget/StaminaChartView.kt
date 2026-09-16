@@ -25,12 +25,15 @@ import kotlin.math.roundToInt
  *  · 一条**默认颜色**实线 = **无随机**状态下的速度倍率；
  *  · 两条**半透明**同色线 = **最高正随机 / 最高负随机**的边界（上下包络）。
  *
- * ## 三个设计取舍
+ * ## 两个设计取舍
  *
  *  · **横轴是距离而不是时间**：用户要问的是"跑多远会掉到什么速度"。倍率会反过来改变
  *    单位时间走过的距离，两个轴互相耦合 ⇒ 数据由 [StaminaCurve] 积分得到，不在本类里算。
- *  · **纵轴固定在 0~1.0**：倍率是有绝对含义的量（1.0 = 不调制），固定量程才能让
- *    "改了参数之后图变了"一眼看出来；自动量程会把任何曲线都拉满，反而看不出变化。
+ *  · **两页共用一套固定量程**（用户口径："两个图表应使用一致且固定的量程"）：
+ *    纵轴恒为 0~1.0 的**倍率**线性映射，与数据无关、与页签无关；生成页只是把同一批刻度
+ *    的标签换成配速（min/km）。这样切页签时同一速度落在同一高度，两张图能直接对着看。
+ *    ⚠️ 曾经生成页按"本次采样的实际范围"自适配配速量程 —— 每点一次"生成"纵轴都会跳，
+ *    而且和理论页对不上；已删除。
  *  · **自己处理横向滚动，不套 HorizontalScrollView**：套一层滚动容器的话，纵轴刻度会跟着
  *    滑出屏幕（那些数字是读图的前提）。这里只把**绘图区**裁剪后按 scrollMeters 平移，
  *    刻度栏钉在原地。与上层纵向 ScrollView 的冲突靠"横向起手即 disallowIntercept"解决。
@@ -56,9 +59,6 @@ class StaminaChartView @JvmOverloads constructor(
     /** 生成页的数据（一条真实引擎跑出来的曲线） */
     private var generatedCurve: StaminaCurve.Curve? = null
 
-    /** 生成页的纵轴（配速 min/km）量程，按本次数据的实际范围取整 */
-    private var paceMin: Double = 5.0
-    private var paceMax: Double = 16.0
 
     /** 可见窗口（米）与全表长度（米） */
     private var windowMeters: Double = StaminaCurve.DEFAULT_WINDOW_M
@@ -167,41 +167,19 @@ class StaminaChartView @JvmOverloads constructor(
         mode = Mode.GENERATED
         generatedCurve = curve
         this.baseSpeed = base
-        computePaceRange(curve)
         clampScroll()
         invalidate()
     }
 
     /**
-     * 配速量程：取本次曲线的实际倍率范围换算成 min/km，再向外取整到 0.5 分钟。
-     * 下限夹在 0.1 倍率上 —— 否则"倍率趋近 0"会把量程拉到几百 min/km，整条曲线挤成一条线。
+     * 倍率 ⇒ 配速（min/km）。倍率越高速度越快、配速数字越小。
+     *
+     * 它**只用来给刻度写标签**：纵轴的位置映射两页共用同一套（见 onDraw 的 yOf），
+     * 所以切换页签时曲线不会跳高度。
      */
-    private fun computePaceRange(curve: StaminaCurve.Curve) {
-        var lo = Double.MAX_VALUE
-        var hi = -Double.MAX_VALUE
-        for (i in 0 until curve.size) {
-            val m = curve.multiplier[i].toDouble().coerceAtLeast(0.1)
-            val pace = paceOf(m)
-            if (pace < lo) lo = pace
-            if (pace > hi) hi = pace
-        }
-        if (lo > hi) { lo = 5.0; hi = 16.0 }
-        val pad = (hi - lo) * 0.05 + 0.25
-        paceMin = floor((lo - pad) * 2.0) / 2.0
-        paceMax = ceil((hi + pad) * 2.0) / 2.0
-        if (paceMax - paceMin < 2.0) paceMax = paceMin + 2.0
-    }
-
-    /** 倍率 ⇒ 配速（min/km）。倍率越高速度越快、配速数字越小 */
     private fun paceOf(multiplier: Double): Double {
         val v = baseSpeed * multiplier.coerceAtLeast(0.02)
         return 1000.0 / (v * 60.0)
-    }
-
-    /** 配速 ⇒ 纵轴 y：慢（大数）在下、快（小数）在上 */
-    private fun yOfPace(pace: Double, plotBottom: Float, plotH: Float): Float {
-        val t = ((paceMax - pace) / (paceMax - paceMin)).coerceIn(0.0, 1.0)
-        return plotBottom - plotH * t.toFloat()
     }
 
     /** 当前滚动位置（米）—— 诊断用 */
@@ -220,13 +198,10 @@ class StaminaChartView @JvmOverloads constructor(
 
         val perPx = metersPerPx()
         val theory = mode == Mode.THEORY
-        // 两页共用同一个"倍率 ⇒ 纵坐标"方向（倍率越高越靠上），只是换算方式不同：
-        // 理论页直接线性映射倍率；生成页先换成配速（min/km）再线性映射。
-        val yOf: (Double) -> Float = if (theory) {
-            { m -> plotBottom - plotH * (m / Y_MAX).toFloat() }
-        } else {
-            { m -> yOfPace(paceOf(m), plotBottom, plotH) }
-        }
+        // **两页共用同一套固定量程**：纵轴恒为 0~[Y_MAX] 的倍率线性映射，与数据无关。
+        // 生成页只是把同一批刻度的**标签**换成配速（min/km）—— 于是切换页签时同一速度
+        // 落在同一高度，两张图可以直接对着看（用户口径：量程一致且固定）。
+        val yOf: (Double) -> Float = { m -> plotBottom - plotH * (m / Y_MAX).toFloat() }
         val xOf: (Double) -> Float = { d -> plotLeft + ((d - scrollMeters) / perPx).toFloat() }
 
         // ── 绘图区：网格 + 曲线（裁剪后按滚动位置平移）────────────────────────
@@ -234,18 +209,10 @@ class StaminaChartView @JvmOverloads constructor(
         canvas.clipRect(plotLeft, plotTop, plotRight, plotBottom)
 
         grid.color = colorGrid
-        // 横向网格线：理论页 = 倍率刻度，生成页 = 配速刻度
-        val hTicks: List<Double> = if (theory) {
+        // 横向网格线：两页同一批刻度（倍率 0~1.0 每 0.25 一条）
+        val hTicks: List<Double> =
             generateSequence(0.0) { it + Y_STEP }.takeWhile { it <= Y_MAX + 1e-9 }.toList()
-        } else {
-            val paceStep = paceTickStep()
-            generateSequence(ceil(paceMin / paceStep) * paceStep) { it + paceStep }
-                .takeWhile { it <= paceMax + 1e-9 }.toList()
-        }
-        hTicks.forEach { v ->
-            val y = if (theory) yOf(v) else yOfPace(v, plotBottom, plotH)
-            canvas.drawLine(plotLeft, y, plotRight, y, grid)
-        }
+        hTicks.forEach { v -> canvas.drawLine(plotLeft, yOf(v), plotRight, yOf(v), grid) }
         // 纵向：每 0.5km 一条（整 km 才标字，半 km 只给线 —— 2km 窗口里塞 4 个数字就挤了）
         var d = floor(scrollMeters / X_TICK_M) * X_TICK_M
         while (d <= scrollMeters + windowMeters + X_TICK_M) {
@@ -277,16 +244,13 @@ class StaminaChartView @JvmOverloads constructor(
         label.color = colorLabel
         label.textSize = sp(9f)
         label.textAlign = Paint.Align.RIGHT
-        if (theory) {
-            hTicks.forEach { v -> canvas.drawText(tickText(v), plotLeft - dp(4f), yOf(v) + dp(3.5f), label) }
-        } else {
-            hTicks.forEach { pace ->
-                canvas.drawText(
-                    paceText(pace), plotLeft - dp(4f),
-                    yOfPace(pace, plotBottom, plotH) + dp(3.5f), label
-                )
-            }
-            // 纵轴单位：配速的数字光看"5:28"不知道是什么
+        hTicks.forEach { v ->
+            // 理论页标倍率；生成页标**同一位置的配速**（0 处速度为 0，配速无意义 ⇒ 标 "—"）
+            val text = if (theory) tickText(v) else if (v <= 0.0) "—" else paceText(paceOf(v))
+            canvas.drawText(text, plotLeft - dp(4f), yOf(v) + dp(3.5f), label)
+        }
+        if (!theory) {
+            // 纵轴单位：光看"5:28"不知道是什么
             label.textAlign = Paint.Align.LEFT
             canvas.drawText("min/km", paddingLeft.toFloat(), plotTop - dp(3f), label)
         }
@@ -316,15 +280,6 @@ class StaminaChartView @JvmOverloads constructor(
         if (scrollMeters < maxScroll - 1.0) {
             drawChevron(canvas, plotRight - dp(6f), midY, pointingLeft = false)
         }
-    }
-
-    /** 配速刻度步长：让纵轴落在 3~6 条线上（0.5 / 1 / 2 / 5 分钟里挑） */
-    private fun paceTickStep(): Double {
-        val span = (paceMax - paceMin).coerceAtLeast(0.5)
-        for (step in doubleArrayOf(0.5, 1.0, 2.0, 5.0)) {
-            if (span / step <= 6.0) return step
-        }
-        return 10.0
     }
 
     /** 配速文字：5.5 ⇒ "5:30" */
