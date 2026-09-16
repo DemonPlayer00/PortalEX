@@ -26,7 +26,7 @@ import moe.fuqiuluo.xposed.utils.StaminaConfig
  *
  * ## 这一页负责什么
  *
- * 只负责"看与改"：显示当前体力/速度/休息状态，以及编辑模型参数。
+ * 只负责"看与改"：显示当前体力/速度/休息状态、**倍率×距离预览图**，以及编辑模型参数。
  * **模型本身与状态在 [StaminaController]**，运动循环每拍驱动它
  * （见 `MockServiceViewModel.ensureMotionLoop`）—— 这一页不参与推进，
  * 所以关掉页面也不会让模拟停下。
@@ -65,7 +65,8 @@ class StaminaFragment : Fragment() {
                 get = { it.decayPerMinute },
                 set = { c, v -> c.copy(decayPerMinute = v) },
                 format = { "%.1f 点/分".format(it) },
-                hint = "满速跑动时每分钟掉多少体力。默认 11 ⇒ 100→20 约 7.3 分钟歇一次",
+                hint = "满速跑动时每分钟掉多少体力。默认 11 ⇒ 实测第一次休息在 3.9 km / 25 分左右" +
+                        "（不是线性外推：体力越低恢复越快，后半段掉得更慢）",
             ),
             Row(
                 title = getString(R.string.stamina_rest_at),
@@ -74,6 +75,16 @@ class StaminaFragment : Fragment() {
                 set = { c, v -> c.copy(restAtPercent = v) },
                 format = { "%.0f %%".format(it) },
                 hint = "体力降到该值就进入休息。默认 20%",
+            ),
+            Row(
+                title = getString(R.string.stamina_resume),
+                desc = getString(R.string.stamina_resume_desc),
+                get = { it.resumeAtPercent },
+                set = { c, v -> c.copy(resumeAtPercent = v) },
+                format = { "%.0f %%".format(it) },
+                hint = "疲劳状态里的开跑线：体力低于它时冷却**反向**计数（欠账变大），达到/超过它时" +
+                        "**正向**计数（还账），两边都越远越快；冷却回到 ≥0 就重新开跑。" +
+                        "必须高于休息体力值（否则迟滞消失、会抖）。默认 30%",
             ),
             Row(
                 title = getString(R.string.stamina_rest_coefficient),
@@ -114,7 +125,8 @@ class StaminaFragment : Fragment() {
                 get = { it.restSpeedFactor },
                 set = { c, v -> c.copy(restSpeedFactor = v) },
                 format = { "%.2f ×".format(it) },
-                hint = "休息降速系数：低于休息体力值后，在当前疲劳倍率上再乘它。默认 0.25",
+                hint = "疲劳时在当前疲劳倍率上再乘它；结果若低于「休息时速度」就以那个值为下限。" +
+                        "默认 0.25（默认参数下由走路下限接管）",
             ),
             Row(
                 title = getString(R.string.stamina_ignore_window),
@@ -224,13 +236,17 @@ class StaminaFragment : Fragment() {
     private fun refreshStatus() {
         val snapshot = StaminaController.snapshot()
         val base = requireContext().speed
+        // 图与状态一起刷：submit 内部对"参数没变"直接返回，所以每秒调也无成本，
+        // 却能顺带覆盖"在设置页改了基础速度"这种从外部发生的变化。
+        binding.staminaChart.submit(StaminaController.config(), base)
         // 阶段与倍率都从体力接口读（本页不自己判断"算不算在跑"）
         binding.staminaValue.text = "%.1f %%".format(snapshot.staminaPercent)
         binding.staminaPhase.text = when {
             !StaminaController.config().enabled -> "未启用（体力不参与调制）"
             StaminaController.isResting() ->
-                "休息中：还剩 %.0f 秒（速度降到走路 %.2f m/s）".format(
-                    snapshot.restRemainingSec, StaminaController.config().walkSpeed
+                // 冷却进度：负数 = 还欠多少，回到 ≥0 就开跑（见 StaminaModel.cooldownSec）
+                "疲劳中（冷却 %.1f｜阈值 %.0f%%｜回到 0 开跑）".format(
+                    snapshot.cooldownSec, StaminaController.config().resumeAtPercent
                 )
             StaminaController.isRunning() -> "跑动中（消耗中）"
             // 空闲 = 没有表象位移：**体力仍在持续恢复**（消耗才需要有位移）。
@@ -240,7 +256,7 @@ class StaminaFragment : Fragment() {
         binding.staminaEffective.text = "基础 %.2f m/s ⇒ 当前 %.2f m/s".format(
             base, StaminaController.effectiveSpeed(base)
         )
-        binding.staminaStats.text = "休息 %d 次 / 共 %.1f 分钟".format(
+        binding.staminaStats.text = "疲劳 %d 次 / 共 %.1f 分钟".format(
             snapshot.restCount, snapshot.restTotalSec / 60.0
         )
     }

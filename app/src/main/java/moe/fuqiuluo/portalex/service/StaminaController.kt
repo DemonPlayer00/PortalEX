@@ -126,7 +126,7 @@ object StaminaController {
                 "StaminaController",
                 "体力 %.1f%% 阶段=%s 倍率 %.3f ⇒ 实速 %.2f m/s（基础 %.2f）休息%d次".format(
                     s.staminaPercent,
-                    if (s.resting) "休息(剩%.0fs)".format(s.restRemainingSec) else "跑动",
+                    if (s.resting) "疲劳(冷却%.1f)".format(s.cooldownSec) else "跑动",
                     multiplier, baseSpeed * multiplier, baseSpeed, s.restCount,
                 )
             )
