@@ -21,16 +21,36 @@ object BinderUtils {
         }
     }
 
+    /**
+     * 系统 Context（**按进程缓存**）。
+     *
+     * 为什么必须缓存：这条路径每次要做 3 次反射查找 + 2 次 invoke
+     * （`Class.forName("android.app.ActivityThread")` / `currentActivityThread` / `getSystemContext`），
+     * 而它经 [getUidPackageNames] 的默认实参被 [gateAllows] 用在**门禁判定**上 ——
+     * 也就是每一次 `provider == "portal"` 的查询、每一次非 owner 探测都会付一遍。
+     * system_server 里 system context 是进程级单例，缓存没有失效问题。
+     */
+    @Volatile
+    private var cachedSystemContext: Context? = null
+    @Volatile
+    private var systemContextFailed = false
+
     fun getSystemContext(): Context? {
-        try {
+        cachedSystemContext?.let { return it }
+        if (systemContextFailed) return null      // 取不到就别每帧重试（反射 + 异常开销）
+        val ctx = try {
             val cActivityThread = Class.forName("android.app.ActivityThread")
             val activityThread = cActivityThread.getMethod("currentActivityThread")
                 .invoke(null) ?: return null
-            return (cActivityThread.getMethod("getSystemContext").invoke(activityThread) as? Context) ?: getActivityContext()
+            (cActivityThread.getMethod("getSystemContext").invoke(activityThread) as? Context)
+                ?: getActivityContext()
         } catch (e: Throwable) {
-            e.printStackTrace()
+            Logger.debug("BinderUtils: 取系统 Context 失败（不再重试）：${e.message}")
+            systemContextFailed = true
+            null
         }
-        return null
+        if (ctx != null) cachedSystemContext = ctx
+        return ctx
     }
 
     fun getUidPackageNames(context: Context? = getSystemContext(), uid: Int = getCallerUid()): Array<String>? {
@@ -65,13 +85,27 @@ object BinderUtils {
      */
     fun isLocationProviderEnabled(uid: Int): Boolean {
         if (uid < 0) return false
-        if (gateAllows(uid)) return true
-        Logger.warn(
-            "Someone try to find Portal: uid = $uid, packageName = ${getUidPackageNames(uid = uid)?.joinToString()}," +
-                    " ownerUid = ${moduleOwnerUid() ?: "unknown"}（已拒绝）"
-        )
-        return false
+        gateCache[uid]?.let { return it }
+        val allowed = gateAllows(uid)
+        gateCache[uid] = allowed
+        if (!allowed) {
+            // 拒绝日志**按 uid 限流**：每个 uid 只记一次（旧实现每次都 warn，还要再查一次包名 ——
+            // 被人循环探测时日志本身就成了成本，而这条信息第一次就已经说完了）
+            if (warnedDeniedUids.add(uid)) {
+                Logger.warn(
+                    "Someone try to find Portal: uid = $uid, packageName = ${getUidPackageNames(uid = uid)?.joinToString()}," +
+                            " ownerUid = ${moduleOwnerUid() ?: "unknown"}（后续同 uid 的拒绝不再重复记录）"
+                )
+            }
+        }
+        return allowed
     }
+
+    /** 门禁结论按 uid 缓存（同一进程里 uid→包名 不会变；模块自身是 owner，永远 allow） */
+    private val gateCache = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
+    /** 已记过"拒绝"告警的 uid（限流用） */
+    private val warnedDeniedUids = java.util.Collections.synchronizedSet(HashSet<Int>())
 
     /** 门禁判定本体（不写日志，便于自检反复调用） */
     private fun gateAllows(uid: Int): Boolean {

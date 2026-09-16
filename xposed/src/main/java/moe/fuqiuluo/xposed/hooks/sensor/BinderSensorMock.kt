@@ -201,6 +201,8 @@ object BinderSensorMock {
         // S1 探针：只解析 + 读 mPtr，不注册任何东西（零副作用；解析可重试）
         Logger.info("BinderSensorMock: ${SystemRuntimeChannel.probe()}")
         reportRuntimeChannelUnavailable()
+        // 速率提示的事件源：框架侧的"谁订了/退了/改速率"（拿不到类就退回兜底周期）
+        SensorRateProbe.installSubscriptionHooks(SystemRuntimeChannel.sensorServiceClass())
         return ok
     }
 
@@ -291,10 +293,12 @@ object BinderSensorMock {
         rely.putInt(moe.fuqiuluo.xposed.utils.PortalProtocol.Key.ROUTE_POINTS, motion.points)
         rely.putString(
             "motion",
-            "推进=%s 路线=%.0f/%.0fm(%d点) 时钟=%s 上报=%dms".format(
+            "推进=%s 路线=%.0f/%.0fm(%d点) 时钟=%s 上报=%dms%s".format(
                 motion.mode.name.lowercase(), motion.travelledMeters, motion.distanceMeters,
                 motion.points, if (MotionClock.isRunning) "在跑" else "停",
                 FakeLoc.reportDurationMs,
+                // 分段计时只在调试开关打开时统计；关着就是个空串（不占诊断面板）
+                if (FakeLoc.enableDebugLog) "\n" + MotionClock.timingLine() else "",
             )
         )
     }
@@ -540,8 +544,9 @@ object BinderSensorMock {
     /**
      * 叫醒停摆的监督线程（幂等）：**会话启动、开关变化、配置到达**时调用。
      * 不叫醒的后果是"开了会话却要等 30s 兜底才开始推流"。
+     * 也由 [SensorRateProbe.requestRefresh] 调用（订阅变化 ⇒ 立刻刷新速率提示）。
      */
-    private fun wakeSupervisor() {
+    fun wakeSupervisor() {
         synchronized(idleLock) { idleLock.notifyAll() }
     }
 
@@ -646,9 +651,10 @@ object BinderSensorMock {
          * 没人订阅的类型随之静默。dump 有缓存（2s）且**解析结果没变就不下发**（见 pushHints），
          * 所以这里静止时放到 10s：没人走路时速率提示不急，别为它每 2s 拉一次 40KB 的 dump。
          */
-        val hintInterval = if (moving) RATE_HINT_INTERVAL_NANOS else RATE_HINT_IDLE_NANOS
-        if (now - lastRateHintNanos > hintInterval) {
-            lastRateHintNanos = now
+        // 速率提示：**订阅变化驱动**（钩子在 SensorRateProbe 里），周期只作兜底 ——
+        // 一次 dump 20~30ms，靠轮询做就是白烧（实测移动时 2s 一次 ≈1~1.5% 单核）
+        if (SensorRateProbe.dueForRefresh(now)) {
+            SensorRateProbe.markRefreshed(now)
             val ok = runCatching { SensorRateProbe.pushHints() }.getOrDefault(false)
             if (ok && !rateHintLogged) {
                 rateHintLogged = true
