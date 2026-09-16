@@ -181,6 +181,48 @@ class StaminaCycleAnalysisTest {
         return longest * dt
     }
 
+    /**
+     * **疲劳状态下的速度到底是固定值还是跟剩余体力有关**（用户问）。
+     *
+     * 公式是 `max(疲劳倍率(体力) × 休息降速系数, 走路/基础)`：
+     *  - 前半段**确实**与体力有关（疲劳倍率随体力线性上升）；
+     *  - 后半段是**走路下限**（用户口径），一旦下限咬住，速度就被钉成一个常数。
+     *
+     * 咬住的边界是 `系数 > 走路/基础 ÷ 疲劳倍率(体力)`，而疲劳倍率本身随体力从
+     * [minSpeedFactor] 升到 1.0 ⇒ 边界从 `走路/基础 ÷ minSpeedFactor` 一路降到 `走路/基础`。
+     * 默认参数：走路/基础 = 0.3607、minSpeedFactor = 0.75 ⇒ 边界在 **0.481 ~ 0.361** 之间，
+     * 而默认系数是 0.25 ⇒ **全程被下限咬住 ⇒ 疲劳速度是固定值 = 走路速度**。
+     */
+    @Test
+    fun `疲劳速度：默认参数下是固定值 系数够大才随体力变化`() {
+        val c = cfg()
+        val walkSpeed = c.walkSpeed
+
+        // 默认参数：疲劳期可能出现的整个体力区间内，实速恒定
+        val speeds = (c.restAtPercent.toInt()..100 step 2).map { s ->
+            StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s.toDouble()), true) * base
+        }
+        println("默认系数 %.2f：疲劳速度 min=%.4f max=%.4f m/s（走路值 %.2f）"
+            .format(c.restSpeedFactor, speeds.min(), speeds.max(), walkSpeed))
+        assertEquals("疲劳速度必须恒等于走路值", walkSpeed, speeds.min(), 1e-9)
+        assertEquals("疲劳速度必须恒等于走路值", walkSpeed, speeds.max(), 1e-9)
+
+        // 系数够大时下限松开，速度开始随体力上升
+        val loose = c.copy(restSpeedFactor = 0.60)
+        val atLow = StaminaMath.multiplierFor(loose, base, StaminaMath.fatigueFactor(loose, 30.0), true) * base
+        val atHigh = StaminaMath.multiplierFor(loose, base, StaminaMath.fatigueFactor(loose, 100.0), true) * base
+        println("系数 %.2f：体力 30%% 时 %.3f m/s ⇒ 体力 100%% 时 %.3f m/s（随体力上升）"
+            .format(loose.restSpeedFactor, atLow, atHigh))
+        assertTrue("系数够大时必须随体力上升（%.3f ⇒ %.3f）".format(atLow, atHigh), atHigh > atLow)
+
+        // 边界：咬住/松开的临界系数
+        val kLow = c.walkSpeed / base / StaminaMath.fatigueFactor(c, c.restAtPercent)   // 体力=阈值
+        val kHigh = c.walkSpeed / base / StaminaMath.fatigueFactor(c, 100.0)            // 体力=100%
+        println("边界系数：体力在阈值 %.1f%% 时 %.3f，体力 100%% 时 %.3f".format(c.restAtPercent, kLow, kHigh))
+        assertEquals("阈值处边界", 0.481, kLow, 0.005)
+        assertEquals("满体力边界", 0.361, kHigh, 0.005)
+    }
+
     /** 语义守卫：开跑阈值必须高于休息体力值，否则迟滞消失（夹取兜底） */
     @Test
     fun `开跑阈值被夹在休息体力值之上`() {
