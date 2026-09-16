@@ -233,6 +233,8 @@ object RemoteCommandHandler {
                 val bearing = rely.numberOr(Key.BEARING, FakeLoc.bearing)
                 val changed = Math.abs(bearing - FakeLoc.bearing) > 0.5
                 MotionEngine.setRocker(active, bearing)
+                // 摇杆起来了 ⇒ 世界要开始动：叫醒停摆的推进时钟（空闲时它不转）
+                MotionClock.wake()
                 // 朝向立即生效：摇杆只转向不位移时（暂停中/极慢速），若不写朝向、不投递，
                 // 应用侧要等下一帧位移才看到新朝向——就是"转了半天不动，然后跳一下"。
                 FakeLoc.bearing = ((bearing % 360.0) + 360.0) % 360.0
@@ -256,6 +258,7 @@ object RemoteCommandHandler {
             }
             Cmd.ROUTE_CONTROL -> {
                 val play = rely.getBoolean(Key.ENABLE, false)
+                MotionClock.wake()
                 if (play && !MotionEngine.setPlaying(true)) {
                     Logger.warn("MotionEngine: 收到播放指令但没有路线数据，忽略")
                     return false
@@ -306,6 +309,7 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.SET_SPEED -> {
+                MotionClock.wake()
                 FakeLoc.speed = rely.numberOr("speed", FakeLoc.speed)
                 return true
             }

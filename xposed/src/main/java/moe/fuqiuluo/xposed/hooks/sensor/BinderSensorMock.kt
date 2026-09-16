@@ -83,6 +83,25 @@ object BinderSensorMock {
     /** 兜底回灌上限（纳秒）：即使什么都没变也要喂一次，免得原生层里的 `now` 无限陈旧 */
     private const val STATE_HEARTBEAT_NANOS = 2_000_000_000L
 
+    /**
+     * **静止时的拍长（毫秒）**：世界没动就没必要 20Hz 醒着。
+     *
+     * 为什么不是"直接停摆"：朝向上的摆动（±3°、半周期 0.35~0.75s）一直在演化，传感器侧
+     * 得有人喂才像真机磁罗盘。1Hz 足够把"缓慢游走"带出来（20Hz 只能让同样的摆动更平滑）。
+     * 于是稳态是：**移动 20Hz、静止 1Hz**，而停摆（0Hz）留给"会话不在跑"。
+     */
+    private const val IDLE_PUSH_INTERVAL_MS = 1_000L
+
+    /** 连续多少拍没有位移就切到静止拍长（20 拍 = 移动停止后 1s 内仍然按原节奏收尾） */
+    private const val MOVING_STREAK_TICKS = 20
+
+    /** 连续无位移的拍数（决定下一拍睡多久；一旦有位移立刻清零） */
+    @Volatile private var idleStreak = 0
+
+    /** 下一拍的睡眠时长：见 [IDLE_PUSH_INTERVAL_MS] */
+    private fun currentIntervalMs(): Long =
+        if (idleStreak >= MOVING_STREAK_TICKS) IDLE_PUSH_INTERVAL_MS else PUSH_INTERVAL_MS
+
     /** 静止时速率提示的刷新间隔（纳秒）：没人走路时"按应用期望出数据"不急 */
     private const val RATE_HINT_IDLE_NANOS = 10_000_000_000L
 
@@ -494,10 +513,10 @@ object BinderSensorMock {
                 if (!FakeLoc.enableBinderSensorMock || !FakeLoc.enable) {
                     // 收尾一次（幂等）再睡：注入层置 inactive、停泵、撤销载体引导
                     deactivate()
-                    park()
+                    if (!park()) return
                     continue
                 }
-                Thread.sleep(PUSH_INTERVAL_MS)
+                Thread.sleep(currentIntervalMs())
                 tick()
             } catch (_: InterruptedException) {
                 return
@@ -507,11 +526,15 @@ object BinderSensorMock {
         }
     }
 
-    /** 停摆：等到被叫醒或兜底超时（wait 会释放锁，不占 CPU、不产生周期唤醒） */
-    private fun park() {
-        synchronized(idleLock) {
-            runCatching { idleLock.wait(IDLE_RECHECK_MS) }
-        }
+    /**
+     * 停摆：等到被叫醒或兜底超时（wait 会释放锁，不占 CPU、不产生周期唤醒）。
+     * @return false = 被中断 —— 中断**不能吞**，否则线程再也退不出来
+     */
+    private fun park(): Boolean = try {
+        synchronized(idleLock) { idleLock.wait(IDLE_RECHECK_MS) }
+        true
+    } catch (_: InterruptedException) {
+        false
     }
 
     /**
@@ -590,6 +613,8 @@ object BinderSensorMock {
         val lon = FakeLoc.longitude
         val bearingNow = FakeLoc.processedBearing()
         val worldChanged = lat != lastPushLat || lon != lastPushLon
+        // 拍长自适应：有位移 ⇒ 全速 20Hz；连续没位移 ⇒ 降到 1Hz（见 IDLE_PUSH_INTERVAL_MS）
+        idleStreak = if (worldChanged) 0 else idleStreak + 1
         val bearingChanged = lastPushBearing.isNaN() ||
                 Math.abs(((bearingNow - lastPushBearing + 540.0) % 360.0) - 180.0) > BEARING_EPS_DEG
         val sincePush = now - lastPushNanos
