@@ -237,11 +237,13 @@ internal object LocationServiceHook: BaseLocationHook() {
     /**
      * **`onLocationChanged` 的方法解析缓存**（按监听器类）。
      *
-     * 为什么必须有：`findMethodBestMatch` 是**反射查找**（沿类层次比对参数类型），
-     * 而交付是"每帧 × 每个监听器"各来一次 —— 10Hz 投递下这一项就能吃掉几毫秒/帧。
-     * 实测（2026-09-16，摇杆持续移动）：推进时钟占 **~9% 单核**，几乎全在这里；
-     * 顺带还有"旧 AIDL 监听器每帧都要先失败一次（抛异常再退到单帧版）"的开销。
-     * 缓存后每类只解析一次，且**记住哪个重载可用**，不再每帧试错。
+     * 为什么这么做：`findMethodBestMatch` 是**反射查找**（沿类层次比对参数类型），
+     * 而交付是"每帧 × 每个监听器"各来一次；旧 AIDL 监听器还要每帧先失败一次
+     * （抛异常再退到单帧版）。缓存后每类只解析一次，并**记住哪个重载可用**。
+     *
+     * ⚠️ **别高估它的收益**：我当初判它是"移动时 9% 单核的主因"，加缓存后实测只到 8.1%
+     * （−13%，见 `docs/perf-audit.md` 第 6 节）。它是对的做法，但不是那个热点。
+     * 教训：凭"看起来贵"断定热点，是这一轮最贵的一次误判 —— 先量再改。
      */
     private val onChangeMethodCache =
         java.util.concurrent.ConcurrentHashMap<Class<*>, java.lang.reflect.Method>()
