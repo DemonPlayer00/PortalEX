@@ -22,9 +22,9 @@ import moe.fuqiuluo.xposed.utils.StaminaModel
  * ## 状态只有三态，且由"真实运动"驱动
  *
  * ```
- * running=true  且 未休息 → 跑动：掉体力、倍率随体力下滑
- * running=true  且 休息中 → 休息：速度=走路低值、体力回升
- * running=false           → 空闲：**体力冻结、倍率保持**
+ * 本拍有表象位移 → 消耗与恢复同时进行（净效果 = 恢复 − 消耗）
+ * 本拍无位移      → 只走恢复（体力照样回，"恢复是持续的"）
+ * 位移"过快"      → 判为异常帧，本拍只走恢复、不计消耗（防瞬移抽干体力）
  * ```
  *
  * ## 为什么体力放在 App 侧
@@ -53,6 +53,9 @@ object StaminaController {
     @Volatile private var running: Boolean = false
 
     @Volatile private var lastTickNanos: Long = 0L
+
+    /** 本拍累计的表象位移（由 [noteMoved] 写入、[tick] 读取后清零） */
+    @Volatile private var movedThisFrame: Double = 0.0
 
     fun config(): StaminaConfig = config
 
@@ -91,16 +94,17 @@ object StaminaController {
     /**
      * 运动循环每拍调用一次。**体力只在 [tick] 里推进。**
      *
-     * @param running 本拍**是否真的在运动**（自动播放中、或摇杆门未暂停）。
-     *   由运动循环给出 —— 体力代码不去猜"动没动"，移动代码也不去猜"累不累"。
-     * @param baseSpeed 基础速度（m/s，配置速度）。模型需要它把"走路低值"这样的绝对量
-     *   换算成倍率（走路 1.1 / 基础 3.05 = 0.36）；该换算只在模型内部发生一次。
+     * @param movedMeters 上一拍**表象位移**（米）——体力绑定的就是它，而不是"会话开着"。
+     *   0 表示那一拍位置没动（空闲/暂停）。由运动循环在推进时记账（见 [noteMoved]）。
+     * @param baseSpeed 基础速度（m/s，配置速度）。模型用它把"走路低值"这类绝对量换算成倍率
+     *   （走路 1.1 / 基础 3.05 = 0.36）；换算只在模型内部发生一次。
      */
-    fun tick(running: Boolean, baseSpeed: Double) {
+    fun tick(movedMeters: Double, baseSpeed: Double) {
         val now = System.nanoTime()
         val dtSec = if (lastTickNanos == 0L) 0.0 else (now - lastTickNanos) / 1_000_000_000.0
         lastTickNanos = now
-        this.running = running
+        val moved = movedMeters
+        this.running = moved > 0.0
 
         val c = config
         if (!c.enabled) {
@@ -110,10 +114,10 @@ object StaminaController {
         // 上限 5s：长时间冻结后不补出一个巨大的 Δt（与运动循环的 MAX_ADVANCE_MS 同思路）
         val dt = dtSec.coerceIn(0.0, 5.0)
         val before = multiplier
-        multiplier = model.tick(c, dt, baseSpeed, running)
+        multiplier = model.tick(c, dt, baseSpeed, moved)
         // 可观测性：倍率**变化时**打一条（调试开关下）。没有这条日志，"体力有没有真的生效"
         // 就只能靠肉眼看配速 —— 那是无法在测试里复现的证据形式。
-        if (running && FakeLoc.enableDebugLog && kotlin.math.abs(multiplier - before) > 5e-3) {
+        if (moved > 0.0 && FakeLoc.enableDebugLog && kotlin.math.abs(multiplier - before) > 5e-3) {
             val s = model.snapshot()
             android.util.Log.i(
                 "StaminaController",
@@ -124,6 +128,29 @@ object StaminaController {
                 )
             )
         }
+    }
+
+    /**
+     * 运动循环在**推进位置之后**记账：本拍实际推进了多少米。
+     *
+     * 为什么要记账而不是让 tick 直接参数化：位移是"推进的结果"（路线播完、摇杆门关闭、
+     * 位置未初始化都可能使实际推进小于名义值），只有推进方自己知道真实值。
+     * 记账制让两边都不必互相知道对方算到了哪一步。
+     */
+    /**
+     * **取走**本拍累计的表象位移并清零。运动循环在每一步推进之后调用它，
+     * 再把结果喂给 [tick] —— "取并清零"必须是显式操作，
+     * 不能靠外部字段读取（否则 tick 里的清理会把它抹掉，这类错很隐蔽）。
+     */
+    fun takeMovedMeters(): Double {
+        val m = movedThisFrame
+        movedThisFrame = 0.0
+        return m
+    }
+
+    fun noteMoved(meters: Double) {
+        if (meters.isNaN() || meters <= 0.0) return
+        movedThisFrame += meters
     }
 
     fun snapshot(): StaminaModel.Snapshot = model.snapshot()

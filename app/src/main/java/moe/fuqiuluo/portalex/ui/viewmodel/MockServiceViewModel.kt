@@ -355,17 +355,19 @@ class MockServiceViewModel : ViewModel() {
                         "运动循环被阻塞 ${"%.0f".format(dtMs)}ms（上限 ${MAX_ADVANCE_MS.toInt()}ms），本 tick 按上限推进"
                     )
                 }
-                // 体力模拟：**每拍推进一次**（两种运动模式共用）。
-                // running 由**本处**按真实运动判定：自动播放中、或摇杆门未暂停（= 摇杆被按住/
-                // 锁定后继续走）。空闲时不推进 ⇒ 体力冻结（既不衰减也不恢复）。
-                // 判定放在这里而不是体力内部：体力代码不该知道"摇杆/自动播放"这种运动学概念。
-                val moving = isAutoPlaying || !rockerCoroutineController.consume()
-                StaminaController.tick(moving, FakeLoc.speed)
                 if (isAutoPlaying) {
                     advanceRoutePlayback(activity, advanceMs)
                 } else {
                     advanceRockerMove(advanceMs)
                 }
+                // 体力：**按表象位移推进**（两个 advance 各自把"实际推进了多少米"记进
+                // StaminaController）。顺序有意如此 —— 先产生位移、再让体力读它，
+                // 于是"路线播完/摇杆门关闭/位置未初始化"这些"没真的动"的情况天然为 0，
+                // 体力也就不会凭"会话还开着"掉血。空闲时照样恢复（这是本轮的口径：恢复是持续的）。
+                StaminaController.tick(
+                    movedMeters = StaminaController.takeMovedMeters(),
+                    baseSpeed = FakeLoc.speed,
+                )
                 // ★ 保活只服务"无人值守的推进"：
                 //   · 自动播放（路线自己走，可能灭屏/后台）；
                 //   · 摇杆锁定后松手继续走（touched=false 但暂停门开着）。
@@ -424,9 +426,13 @@ class MockServiceViewModel : ViewModel() {
         // （只改报数不改位移会造出"位移与速度自相矛盾"，那是可被检测的指纹）。
         // 倍率只从体力接口读 —— 这里不判断休不休息、也不碰模型。
         val mps = FakeLoc.speed * StaminaController.speedMultiplier()
-        if (!MockServiceHelper.move(lm, mps * advanceMs / 1000.0, FakeLoc.bearing)) {
+        val meters = mps * advanceMs / 1000.0
+        if (!MockServiceHelper.move(lm, meters, FakeLoc.bearing)) {
             Log.e("MockServiceViewModel", "Failed to move")
+            return
         }
+        // 只有真的下发出去了才算"表象移动"（失败那一拍不该扣体力）
+        StaminaController.noteMoved(meters)
     }
 
     /** 自动模式：按速度推进弧长，在路线上插值出位置并下发切线朝向 */
@@ -453,6 +459,7 @@ class MockServiceViewModel : ViewModel() {
         // 同摇杆：按体力倍率缩放弧长推进（体力挂在推进量上，报数自然跟随）
         val advanceMeters = FakeLoc.speed * StaminaController.speedMultiplier() * (advanceMs / 1000.0)
         routeTravelled += advanceMeters
+        StaminaController.noteMoved(advanceMeters)
 
         if (routeTravelled >= routeDistance) {
             // 完成：精确落在终点，停播并彻底重置（下次播放从头开始）
