@@ -79,3 +79,30 @@ App（遥控器 + 普通客户端）
 3. 体力：杀掉 App 重启后体力**延续**（证明状态在系统侧）；体力页数值与模块回读一致；
 4. 位置：App 地图点位与第三方客户端收到的点位一致（普通客户端视角自证）；
 5. App 侧代码里**不再有**任何模拟状态机与推进逻辑（grep 可证）。
+
+## 七、步骤① 正刀：逐处落点（下一轮照单执行）
+
+> 铁律：**同一提交内**完成"谁推进、谁缩放"的切换；下面 1–4 必须在同一个 commit 里。
+
+**模块侧（新增）**
+- `xposed/.../utils/StaminaRuntime.kt`：`object StaminaRuntime { fun load(wire: FloatArray); fun tick(dtSec, baseSpeed, movedMeters): Double; fun snapshot(): Stamp }`。
+  内部持 `StaminaModel`；参数来自 `LocConfig.staminaWire`（`StaminaConfig.fromWire`）。
+- **时钟点**：`BinderSensorMock` 的 50ms 状态推送线程（`PUSH_INTERVAL_MS`，行 31/394/404 那段）——
+  它是模块侧唯一的固定节拍，且已经每次采 `FakeLoc` 的运动学量 ⇒ 在那里 `StaminaRuntime.tick(dt, FakeLoc.speed, movedMeters)`。
+  `movedMeters` 用**交付位移**（`FakeLoc.averageSpeedOverWindow` 同源，避免第二套口径）。
+- **状态回传**：`BinderSensorMock.status()`（行 222）追加 `stamina=xx.x% mult=0.97 resting=0`；
+  页面通过既有 remote-prefs 通路读取（`ModulePrefs.remotePreferences`）。
+
+**App 侧（删除/变瘦）**
+- `MockServiceViewModel`：删 `StaminaController.tick(...)`（行 367）、`noteMoved`（行 435/462）、
+  以及两处 `speedMultiplier()` 缩放（行 428/460）—— 推进改回按 `FakeLoc.speed` 名义步进，
+  位移缩放由模块侧在**交付处**完成（`BaseLocationHook.injectLocation`：按倍率缩放本次交付的位移并同步 speed）。
+- `StaminaController`：保留 `config()`/`applyConfig()`（写参数 → `ConfigSync` 下发）与
+  `snapshot()`（改读模块回传），删掉 `model`/`tick`/`noteMoved`/`takeMovedMeters`/`speedMultiplier`。
+- `StaminaFragment`：数值与阶段改读模块回传（字段名不变，实现换成 remote）。
+
+**验收（判据）**
+1. 会话运行中杀 App → 重开：体力**不回满**（证明状态在系统侧，App 生命周期无关）；
+2. 页面显示的体力/阶段与模块 `status()` 回传逐项一致；
+3. `sh scripts/test-all.sh` 全绿（`MockServiceViewModel` 无体力调用后，相关单测同步调整）；
+4. 位移与 delivered speed 仍一致（模块侧缩放点唯一：`injectLocation`）。
