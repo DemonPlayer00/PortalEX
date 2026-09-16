@@ -39,8 +39,8 @@ class PortalProtocolTest {
     @Test
     fun keyCount_isPinned() {
         // 新增/删除键 ⇒ 改这条断言（`hide_developer_mode` 是"隐藏开发者模式"那条下发键）
-        // 41 → 40：`sensor_grid_hz` 随"注入栅格"一起去掉了（投递速率改为跟随框架采用值）
-        assertEquals(40, key.size)
+        // 40 → 41：`stamina_config` 是统一架构迁移步骤①新加的（体力参数由 App 镜像给模块）
+        assertEquals(41, key.size)
     }
 
     @Test

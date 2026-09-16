@@ -160,6 +160,14 @@ internal object LocConfig {
     var cadenceScale = 1.0
 
     /**
+     * 体力参数（`StaminaConfig.toWire()` 的定序数组）。
+     *
+     * 迁移步骤①的第一刀：**先把通路建起来**（App 下发 → 模块保存）。模块侧此刻还不解释它，
+     * 推进仍归 App —— 于是"谁推进"没有被改动，不构成双写。
+     */
+    var staminaWire: FloatArray = FloatArray(0)
+
+    /**
      * 模拟会话期间的速度保底（m/s）。
      *
      * 为什么需要：真机语义下**静止定位没有有效航向**（speed==0 ⇒ `hasBearing()` 无意义），
