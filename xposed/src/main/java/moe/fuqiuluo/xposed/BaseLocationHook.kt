@@ -4,6 +4,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
+import moe.fuqiuluo.xposed.utils.Hooks
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
@@ -154,17 +155,52 @@ abstract class BaseLocationHook: BaseDivineService() {
                 location.mslAltitudeAccuracyMeters = Random.nextDouble(1.0, 5.0).toFloat()
             }
         }
-        kotlin.runCatching {
-            XposedHelpers.callMethod(location, "makeComplete")
-        }.onFailure {
-            Logger.error("makeComplete failed", it)
-        }
+        completeLocation(location)
 
         if (FakeLoc.enableDebugLog) {
             Logger.debug("injectLocation success! $location")
         }
 
         return location
+    }
+
+    /**
+     * `Location.makeComplete()` 的**方法解析缓存**（按类）。
+     *
+     * 为什么必须缓存：这是注入路径上**每个应用、每一帧**都要走的一次调用，
+     * 而 `XposedHelpers.callMethod` = 反射查找（沿类层次比对参数类型）+ invoke。
+     * 早期实现在这里逐帧 `callMethod` + `runCatching`：反射查找之外还要为"这个方法不存在"
+     * 的 ROM 每帧造一次异常。现在每类只解析一次，并**把"不存在"也缓存下来**
+     * （`CACHE_MISS` 哨兵），失败路径不再有异常构造。
+     */
+    private companion object {
+        /** 负结果哨兵：该类没有 makeComplete（部分 ROM/低版本），别再每帧找一次 */
+        private val CACHE_MISS = Any()
+
+        /** key = Location 的实际类（子类也各自解析一次，避免把子类的方法挂错） */
+        private val completeCache = java.util.concurrent.ConcurrentHashMap<Class<*>, Any>()
+    }
+
+    private fun completeLocation(location: Location) {
+        val cls = location.javaClass
+        val cached = completeCache[cls]
+        if (cached === CACHE_MISS) return
+        val method = (cached as? java.lang.reflect.Method) ?: run {
+            val found = runCatching {
+                XposedHelpers.findMethodBestMatch(cls, "makeComplete")
+            }.getOrNull()
+            completeCache[cls] = found ?: CACHE_MISS
+            if (found == null) {
+                Logger.debug("makeComplete 不存在（$cls），本类不再重试")
+            }
+            found ?: return
+        }
+        runCatching { Hooks.invokeOriginalMethod(method, location, arrayOf()) }
+            .onFailure {
+                // 调用失败（方法签名不符/内部异常）：把缓存摘掉，下次重新解析一次
+                completeCache.remove(cls)
+                Logger.error("makeComplete failed", it)
+            }
     }
 
     /**

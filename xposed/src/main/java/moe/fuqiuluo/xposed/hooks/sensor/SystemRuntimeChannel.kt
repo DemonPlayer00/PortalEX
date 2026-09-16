@@ -98,6 +98,12 @@ internal object SystemRuntimeChannel {
      * **可重试**：失败只记日志并退避 [RESOLVE_RETRY_NANOS]，下次（开关变化/载体引导时）
      * 再试——失败原因常常只是时序（类还没加载）。
      */
+    /** 已解析到的框架 ClassLoader（供其它组件挂框架侧钩子；未解析时为 null） */
+    fun frameworkLoader(): ClassLoader? = loader
+
+    /** 已解析到的 `com.android.server.sensors.SensorService`（未解析时为 null） */
+    fun sensorServiceClass(): Class<*>? = serviceCls
+
     fun attach(classLoader: ClassLoader?) {
         if (resolved) return
         if (classLoader != null) hintLoader = classLoader
@@ -225,9 +231,19 @@ internal object SystemRuntimeChannel {
      * 1. 构造函数 hook 捕获的实例；
      * 2. `LocalServices.getService(SensorManagerInternal)` → `LocalService` → 其 `this$0`。
      */
+    /**
+     * 实例解析的**负结果 TTL**：取不到实例时这段时间内不再重试（避免每拍一轮反射）。
+     * 取不到的原因多半是 ROM 结构不同（本机 `LocalServices` 那条路走不通），
+     * 不是"下一毫秒就好了"。
+     */
+    private const val INSTANCE_RETRY_NANOS = 30_000_000_000L
+    @Volatile private var nextInstanceAttemptNanos = 0L
+
     private fun refreshInstance(): Any? {
         var inst = serviceInstance
         if (inst == null) {
+            if (System.nanoTime() < nextInstanceAttemptNanos) return null
+            nextInstanceAttemptNanos = System.nanoTime() + INSTANCE_RETRY_NANOS
             inst = runCatching {
                 val ls = Class.forName(CLS_LOCAL_SERVICES, false, serviceCls?.classLoader)
                 val getService = ls.getMethod("getService", Class::class.java)
@@ -292,8 +308,12 @@ internal object SystemRuntimeChannel {
                 return 0
             }
             if (ptr == 0L) {
-                // 原生服务在构造时异步启动（SystemServerInitThreadPool），早于此就是 0
+                // 原生服务在构造时异步启动（SystemServerInitThreadPool），早于此就是 0。
+                // ⚠️ 这里**也要退避**：否则每个调用点（BinderSensorMock 每拍 ×2）都会重新解析
+                // 一遍实例（Class.forName + getMethod + invoke + declaredFields 扫描）。
+                // 本机实测长期停在 ptr-pending，就是这条把"每拍一次反射"变成了常态。
                 phase = "ptr-pending"
+                failTicks = FAIL_BACKOFF_TICKS
                 return 0
             }
             val cb = callbackProxy ?: buildCallback().also { callbackProxy = it }
