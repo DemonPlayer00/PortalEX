@@ -18,6 +18,7 @@ import kotlin.random.Random
  *   疲劳状态里：冷却进度 += (体力 − 开跑阈值)/100 × Δt
  *              低于开跑阈值 ⇒ 反向计数（越远越快）；达到/超过 ⇒ 正向计数（越远越快）
  *              进度回到 ≥ 0 ⇒ **开跑**（退出疲劳），**不再看体力阈值本身**
+ *   过渡: 倍率 = 跑动档 + (疲劳档 − 跑动档) × 过渡量（过渡量按 1/过渡时长 逐拍收敛）
  *   ⚠️ 恢复**不受"是否有位移"影响**：空闲（完全不动）时只有恢复生效，体力照样回满
  *      —— 只有**消耗**才需要有位移。
  * ```
@@ -35,7 +36,10 @@ import kotlin.random.Random
  * 3. **开跑阈值必须高于休息体力值**：低于它进度反向计数（欠账变大），
  *    达到/超过它进度正向计数（还账），两边速率都正比于偏离量（"越远越快"）。
  *    两者相等时迟滞消失 —— 这就是 [StaminaConfig.sanitized] 里那条派生夹取的理由。
- * 4. **忽略"过快"的表象移动**：单拍速度或窗口内平均速度超过
+ * 4. **进出疲劳有过渡**：速度不是一步跳过去，而是按 [StaminaConfig.transitionSec] 平滑
+ *    （过渡量是模型状态，不是一次性插值）；每次方向变化重抽时长（× ±随机化幅度），
+ *    所以两次过渡不会一样长。过渡时间 = 0 时逐位回到"直接跳变"的旧行为。
+ * 5. **忽略"过快"的表象移动**：单拍速度或窗口内平均速度超过
  *    [StaminaConfig.moveIgnoreSpeed] 时，本拍**只走恢复、不计消耗** —— 这是**异常帧防护**
  *    （瞬移/位置跳变/补帧会算出几百 m/s，不该一瞬把体力抽干）。
  *    ⚠️ 忽略的是**快**，不是慢；慢速照样消耗（只是按比例变小）。
@@ -73,6 +77,14 @@ data class StaminaConfig(
     var restSpeedFactor: Double = 0.25,
     /** 冷却时间系数：乘在恢复上（越大则回到阈值以上越慢） */
     var restSecondsCoefficient: Double = 1.0,
+    /**
+     * **过渡时间（秒）**：进出疲劳时速度从一档平滑到另一档所用的时长。
+     *
+     * 0 = 立即切换（就是台阶：默认参数下 2.29 m/s 一步掉到 1.10，图上是一根竖线）。
+     * 每次**方向变化**都会重新抽一次时长（乘 ±[randomPercent]，见 [StaminaConfig.randomPercent]），
+     * 所以两次过渡不会是同一个秒数。
+     */
+    var transitionSec: Double = 3.0,
     /** 休息时速度（m/s，走路低值，同时是速度地板） */
     var walkSpeed: Double = 1.10,
     /** 疲劳降速下限：体力见底前最低降到基础速度的该比例 */
@@ -100,6 +112,7 @@ data class StaminaConfig(
             resumeAtPercent = resumeAtPercent.coerceIn(restAt + 1.0, 99.0),
             restSpeedFactor = restSpeedFactor.coerceIn(0.01, 1.0),
             restSecondsCoefficient = restSecondsCoefficient.coerceIn(0.05, 10.0),
+            transitionSec = transitionSec.coerceIn(0.0, 60.0),
             walkSpeed = walkSpeed.coerceIn(0.1, 10.0),
             minSpeedFactor = minSpeedFactor.coerceIn(0.05, 1.0),
             randomPercent = randomPercent.coerceIn(0.0, 60.0),
@@ -152,6 +165,18 @@ class StaminaModel {
     private val window = ArrayDeque<Pair<Double, Double>>()
     /** 因"过快"被忽略的拍数（诊断：能一眼看出有没有异常帧） */
     private var ignoredTicks: Long = 0
+
+    /**
+     * 跑动档 ↔ 疲劳档之间的混合量：0 = 完全跑动档，1 = 完全疲劳档。
+     * 用它把"进/出疲劳"的台阶变成斜坡；收敛速率 = 1 / 本次过渡时长。
+     */
+    private var blend: Double = 0.0
+
+    /** 本次过渡的目标档（0/1）。目标一变就重抽过渡时长 ⇒ 每次过渡都不一样 */
+    private var blendTarget: Double = 0.0
+
+    /** 本次过渡抽到的时长（秒），每次方向变化重抽 */
+    private var transitionThisEvent: Double = Double.NaN
     private var lastApparent = 0.0
 
     data class Snapshot(
@@ -159,6 +184,8 @@ class StaminaModel {
         val resting: Boolean,
         /** 冷却进度（归一化秒）：负数 = 还欠多少，≥ 0 = 可以开跑。见 [StaminaModel.cooldownSec] */
         val cooldownSec: Double,
+        /** 过渡混合量：0 = 跑动档，1 = 疲劳档，中间 = 正在过渡 */
+        val blend: Double,
         val speedScale: Double,
         val restCount: Int,
         val restTotalSec: Double,
@@ -170,7 +197,7 @@ class StaminaModel {
 
     fun snapshot(): Snapshot = synchronized(lock) {
         Snapshot(
-            staminaPercent, resting, cooldownSec, currentMultiplier,
+            staminaPercent, resting, cooldownSec, blend, currentMultiplier,
             restCount, restTotalSec, lastApparent, ignoredTicks,
         )
     }
@@ -184,6 +211,9 @@ class StaminaModel {
         restTotalSec = 0.0
         decayThisRun = Double.NaN
         cooldownSec = 0.0
+        blend = 0.0
+        blendTarget = 0.0
+        transitionThisEvent = Double.NaN
         window.clear()
         ignoredTicks = 0
         lastApparent = 0.0
@@ -249,12 +279,27 @@ class StaminaModel {
             }
             if (resting) restTotalSec += dtSec
 
-            // 5) 倍率：用**本拍结算之后的体力**。
+            // 5) 过渡：把"进/出疲劳"的台阶变成斜坡。
+            //    目标档一变（刚进或刚出疲劳）就重抽本次过渡时长 —— 乘 ±随机化幅度，
+            //    于是每次过渡的秒数都不同，不会看出"每次都一样慢下来"的机械感。
+            val target = if (resting) 1.0 else 0.0
+            if (target != blendTarget) {
+                blendTarget = target
+                transitionThisEvent = jitter(c.transitionSec, c.randomPercent, random)
+            }
+            if (blend != blendTarget) {
+                // 时长为 0 ⇒ 每拍走满 ⇒ 一步到位（等价于关掉过渡的旧行为）
+                val rate = if (transitionThisEvent <= 0.0) Double.MAX_VALUE else dtSec / transitionThisEvent
+                blend = if (blendTarget > blend) (blend + rate).coerceAtMost(1.0)
+                else (blend - rate).coerceAtLeast(0.0)
+            }
+
+            // 6) 倍率：用**本拍结算之后的体力**。
             // ⚠️ 这里原先读的是"扣消耗之前"的体力（fatigue 在消耗之前算），于是倍率慢一拍：
             // 同一拍里已经扣掉的体力不影响该拍的降速。偏差很小（单拍 <1e-4），但它是"图与实跑
             // 对不上"的根源 —— StaminaCurve 按结算后体力积分，两边差在第 1 拍就能看见。
             currentMultiplier = StaminaMath.multiplierFor(
-                c, base, StaminaMath.fatigueFactor(c, staminaPercent), resting
+                c, base, StaminaMath.fatigueFactor(c, staminaPercent), blend
             )
             return currentMultiplier
         }

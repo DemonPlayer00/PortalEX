@@ -72,6 +72,8 @@
     <string name="stamina_rest_at_desc">体力降到该值以下进入疲劳</string>
     <string name="stamina_resume">开跑阈值</string>
     <string name="stamina_resume_desc">疲劳中冷却计数的方向分界，回到 0 即开跑（须高于休息体力值）</string>
+    <string name="stamina_transition">过渡时间</string>
+    <string name="stamina_transition_desc">进出疲劳时速度平滑所用的秒数（每次过渡重新随机，0 = 直接跳变）</string>
     <string name="stamina_rest_coefficient">休息时间系数</string>
     <string name="stamina_rest_factor">休息降速系数</string>
     <string name="stamina_ignore_window">忽略窗口</string>
@@ -87,7 +89,7 @@
     <string name="stamina_floor">疲劳降速下限</string>
     <string name="stamina_floor_desc">体力见底前最低降到基础速度的比例</string>
     <string name="stamina_random">随机化幅度</string>
-    <string name="stamina_random_desc">施加在衰减速率与每次休息时长上的随机浮动</string>
+    <string name="stamina_random_desc">施加在衰减速率与每次过渡时长上的随机浮动</string>
     <string name="hide_developer_mode_desc">被注入进程读「开发者选项 / USB 调试」时按未开启返回</string>
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
