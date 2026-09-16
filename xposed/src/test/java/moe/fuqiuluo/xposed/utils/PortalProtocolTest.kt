@@ -33,14 +33,19 @@ class PortalProtocolTest {
     @Test
     fun commandCount_isPinned() {
         // 新增/删除命令 ⇒ 改这条断言（顺带提醒你两侧都要接上）
-        assertEquals(30, cmd.size)
+        // 30 → 36：统一架构迁移（推进搬到系统侧）新增 set_rocker / set_route / route_control
+        //          / get_motion / get_stamina / reset_stamina
+        assertEquals(36, cmd.size)
     }
 
     @Test
     fun keyCount_isPinned() {
         // 新增/删除键 ⇒ 改这条断言（`hide_developer_mode` 是"隐藏开发者模式"那条下发键）
-        // 40 → 41：`stamina_config` 是统一架构迁移步骤①新加的（体力参数由 App 镜像给模块）
-        assertEquals(41, key.size)
+        // 40 → 41：`stamina_config`（体力参数下发）
+        // 41 → 63：统一架构迁移 —— 推进/体力搬到系统侧后新增
+        //          report_duration、route_lat/lon/travelled/distance/points、
+        //          motion_mode/playing/completed，以及 stamina_* 状态回读 12 项
+        assertEquals(63, key.size)
     }
 
     @Test
