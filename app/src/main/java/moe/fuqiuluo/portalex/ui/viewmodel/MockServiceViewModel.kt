@@ -11,11 +11,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.android.coro.CoroutineController
 import moe.fuqiuluo.portalex.Portal
-import moe.fuqiuluo.portalex.ext.accuracy
-import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.reportDuration
-import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockKeepAliveService
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -23,27 +21,49 @@ import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ui.mock.Rocker
-import moe.fuqiuluo.portalex.ext.keepAliveInBackground
+import moe.fuqiuluo.xposed.RemoteCommandHandler
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import net.sf.geographiclib.Geodesic
 import kotlin.math.abs
 
+/**
+ * 模拟会话的 App 侧控制器 —— **迁移后是遥控器，不是执行器**。
+ *
+ * ## 这一层还剩下什么（统一架构：`docs/sensor-architecture.md`）
+ *
+ * | 留下 | 交出去了 |
+ * | --- | --- |
+ * | 路线编辑：把选中路线展开成播放路径点并**上传** | 沿路径推进（谁走、走多快） |
+ * | 摇杆意图：按住/锁定 + 方向 | 每拍位移的积分与体力倍率缩放 |
+ * | 显示与收尾：进度回读、播完提示音/振动、后台保活 | 位置流本身 |
+ *
+ * 交出去的理由只有一条：**位置流只能在生成它的地方被缩放**。交付给应用的坐标是绝对量，
+ * 模块侧事后缩放只能做出永远落后的滞后积分器（路线走不到终点）；所以推进与体力一起
+ * 搬进了 system_server，App 只表达意图、只读回结果。
+ *
+ * 副作用是好的那一种：**灭屏/被冻结时路线照样走**（位置流的连续性不再依赖 App 进程活着），
+ * 而"上报间隔"仍由 App 的设置项决定（[moe.fuqiuluo.portalex.ext.reportDuration] 会下发）。
+ */
 class MockServiceViewModel : ViewModel() {
+
     lateinit var rocker: Rocker
-    /** 唯一运动推进器（摇杆步进 / 路线播放共用一条循环） */
-    private lateinit var motionJob: Job
+
+    /** 遥控循环：每拍**只在下发内容变化时**发命令 + 低频回读状态 */
+    private lateinit var directorJob: Job
+
     var isRockerLocked = false
     val rockerCoroutineController = CoroutineController()
 
     /**
      * 播放路径点：路线按段展开（平滑段 = 贝塞尔曲线采样序列，普通段 = 端点直连）。
-     * [segment] = 所属段索引 i（段 = 端点 i → i+1）。
      * [spacing] = 与前一播放点的距离；[cum] = 自路径起点的累计距离（米）。
+     *
+     * 这是 App 侧**唯一**与推进有关的数据 —— 它由路线编辑器产生，上传后即交给系统侧。
      */
     private class PathPoint(
         val lat: Double,
         val lon: Double,
-        val segment: Int,
         val spacing: Double,
         val cum: Double
     )
@@ -51,74 +71,81 @@ class MockServiceViewModel : ViewModel() {
     /** 当前展开的播放路径（路线切换时重建） */
     private var cachedRoute: HistoricalRoute? = null
     private var pathPoints: List<PathPoint> = emptyList()
-
-    /** 弧长推进状态：已走距离、总长度、插值游标 */
-    private var routeTravelled = 0.0
     private var routeDistance = 0.0
-    private var pathCursor = 1
-    private var pathInitialized = false
 
-    /** 切线前视距离（米）：朝向取路径上向前该距离处的方向，短距离不会乱跳 */
-    private val TANGENT_LOOKAHEAD_M = 2.0
+    /** 是否已把当前路线/播放状态下发给系统侧（只在变化时发，见 [loop]） */
+    @Volatile private var routeUploaded = false
+    @Volatile private var routePlayingPushed = false
 
-    /** 上一次运动推进的时刻（nanoTime）。0 = 无锚点（循环刚起 / 刚重置），首个 tick 用名义间隔 */
-    private var lastMotionNanos = 0L
+    /** 摇杆意图（App 采集、系统侧执行） */
+    @Volatile private var rockerBearing = 0.0
+    @Volatile private var lastPushedBearing = Double.NaN
+    @Volatile private var lastPushedActive = false
 
     /**
      * 摇杆**是否有手指按着**。
      *
      * 用来区分两种"摇杆在走"：
      *  · 手指按着（true）—— 屏幕必然亮、进程必然在收触摸事件，不需要任何强保活；
-     *  · **锁定后松手继续走**（false 但暂停门开着）—— 无人值守，和自动播放一样需要
-     *    把进程钉住，否则会被系统冻结、位置停住。
+     *  · **锁定后松手继续走**（false 但暂停门开着）—— 无人值守。
      */
     private var joystickTouched = false
 
-    /** 后台保活服务的当前状态（避免每个 tick 都发一次 start/stopService） */
+    /**
+     * 后台保活服务的当前状态。
+     *
+     * 迁移后它的理由变了：**不再需要"钉住 App 以维持推进"**（推进在 system_server，
+     * App 被冻结也照样走），留下它是为了"无人值守的**收尾**"—— 播完要放提示音/振动、
+     * 要把悬停按钮的状态收回来，那需要一个活着的观察者。
+     */
     private var keepAliveOn = false
 
+    /** 上一次回读推进状态/卫星状态的时刻（各自节流） */
+    private var lastMotionPollNanos = 0L
+
     companion object {
+        /** 推进状态回读间隔（毫秒）：进度显示与"播完了"的收尾用，4Hz 足够 */
+        private const val MOTION_POLL_MS = 250L
+
         /**
-         * 单 tick 最大推进时长（ms）。超过就丢掉多余时长（模拟"那段时间没在跑"）。
-         *
-         * 为什么不无限补：位置推进按真实 Δt 补偿后，一次长冻结会产生一个大位移；
-         * 模块侧的瞬移判定（帧内隐含速度 > 80 m/s 才算瞬移）虽然放行合法大位移，
-         * 但目标应用自己的"跳点/空洞"过滤未必放行 —— 3s（≈10.5m）是"足够补偿抖动、
-         * 又不至于被读成跳点"的折中。
+         * 上传路线的点数上限。Bundle 走 binder（1MB 上限），路径点约 16 字节/点
+         * ⇒ 2 万点 ≈ 320KB，安全；超过就抽稀（[buildUpload] 里的 stride），
+         * 代价只是拐弯处的采样变粗 —— 总比整条路线发不出去好。
          */
-        private const val MAX_ADVANCE_MS = 3_000.0
+        private const val MAX_UPLOAD_POINTS = 20_000
     }
 
-    /** 自动播放中：手动摇杆不得写位置/朝向（避免与路线播放器双写互相打断） */
+    /** 自动播放中：手动摇杆不得抢占朝向（方向由路线切线接管，在系统侧算） */
     val isAutoPlaying: Boolean
         get() = ::rocker.isInitialized && rocker.autoStatus
 
-    /**
-     * 重置自动播放器全部状态（路线切换/重选、播完、异常后统一入口）：
-     * [route] 非空时同时重建播放路径；为 null 则清空（下次播放从零开始）。
-     */
-    private fun resetPlayback(route: HistoricalRoute?) {
-        cachedRoute = route
-        pathPoints = if (route == null) emptyList() else buildPath(route)
-        routeDistance = pathPoints.lastOrNull()?.cum ?: 0.0
-        routeTravelled = 0.0
-        pathCursor = 1
-        pathInitialized = false
-    }
-
-    /** 选中路线：立即完整重置自动播放器（重选同一条也从头播放，不残留旧进度） */
+    /** 选中路线：展开成播放路径并标记"待上传"（真正的上传在遥控循环里，失败会自动重试） */
     fun selectRouteForPlayback(route: HistoricalRoute) {
         selectedRoute = route
-        resetPlayback(route)
+        cachedRoute = route
+        pathPoints = buildPath(route)
+        routeDistance = pathPoints.lastOrNull()?.cum ?: 0.0
+        routeUploaded = false
+        routePlayingPushed = false
     }
 
     /**
-     * 清除选中路线（路线被删除等）：彻底重置播放器并关闭自动播放，
-     * 避免播放器继续持有已不存在的路线（幽灵路线）。
+     * 清除选中路线（路线被删除等）：彻底重置并关闭自动播放，
+     * 避免系统侧继续持有已不存在的路线（幽灵路线）。
      */
     fun clearSelectedRoute() {
         selectedRoute = null
-        resetPlayback(null)
+        cachedRoute = null
+        pathPoints = emptyList()
+        routeDistance = 0.0
+        routeUploaded = false
+        locationManager?.let {
+            // 系统侧也丢掉这条路线：否则"幽灵路线"会留在 system_server 里，
+            // 下次点播放走的是已经不存在的那条（路线删了还能自动跑 = 灵异事件）
+            MockServiceHelper.setRoute(it, DoubleArray(0), DoubleArray(0))
+            MockServiceHelper.setRoutePlaying(it, false)
+        }
+        routePlayingPushed = false
         if (::rocker.isInitialized) {
             rocker.autoStatus = false
         }
@@ -127,10 +154,8 @@ class MockServiceViewModel : ViewModel() {
     /**
      * 关闭悬浮摇杆窗口时的统一收尾：停下**全部**位置推进源。
      *
-     * 运动循环有两条写位置的路径：摇杆步进（走暂停门 [CoroutineController.consume]）
-     * 与路线自动播放（`isAutoPlaying` 分支，**不经过暂停门**）。只 `pause()` 只能拦住
-     * 前者，关窗后路线仍会一路播到终点。因此必须同时关掉 `autoStatus`——它还会顺带
-     * 把摇杆自身的自走 `auto(false)` 停掉（即“摇杆移动”）。
+     * 自动播放不看摇杆的暂停门，所以必须同时关掉 `autoStatus`；遥控循环下一拍就会
+     * 把"停止"下发给系统侧（[routePlayingPushed] 随之翻转）。
      */
     fun stopMotionForFloatingHidden() {
         if (::rocker.isInitialized) {
@@ -141,15 +166,13 @@ class MockServiceViewModel : ViewModel() {
     }
 
     /**
-     * 手动摇杆角度：自动播放中忽略——播放中方向由路线切线控制，
-     * 否则两者互相抢占（表现出来就是「碰一下摇杆播放就乱了」）。
+     * 手动摇杆角度：只**记录意图**（真正推动位置的是系统侧）。
+     * 自动播放中忽略——播放方向由路线切线控制，否则两者互相抢占。
      */
     fun handleRockerAngle(angle: Double) {
         if (isAutoPlaying) return
-        val lm = locationManager
-        if (lm != null) {
-            MockServiceHelper.setBearing(lm, angle)
-        }
+        rockerBearing = angle
+        // 本进程镜像同一次赋值：App 侧的朝向显示与系统侧同一口径
         FakeLoc.bearing = angle
         FakeLoc.hasBearings = true
     }
@@ -164,27 +187,27 @@ class MockServiceViewModel : ViewModel() {
     private fun buildPath(route: HistoricalRoute): List<PathPoint> {
         val points = route.route
         // 端点不足 2 个构不成任何线段（脏数据/未绘制路线）→ 返回空路径；
-        // 调用方 resetPlayback 对空路径一律按「不可播放」处理，绝不抛异常。
+        // 调用方对空路径一律按「不可播放」处理，绝不抛异常。
         if (points.size < 2) return emptyList()
         val path = mutableListOf<PathPoint>()
-        fun append(p: Pair<Double, Double>, segment: Int) {
+        fun append(p: Pair<Double, Double>) {
             val prev = path.lastOrNull()
             val spacing = if (prev == null) {
                 0.0
             } else {
                 Geodesic.WGS84.Inverse(prev.lat, prev.lon, p.first, p.second).s12
             }
-            path.add(PathPoint(p.first, p.second, segment, spacing, (prev?.cum ?: 0.0) + spacing))
+            path.add(PathPoint(p.first, p.second, spacing, (prev?.cum ?: 0.0) + spacing))
         }
         for (i in 0 until points.size - 1) {
             if (route.isSmooth(i)) {
-                sampleBezier(points, i).forEach { append(it, i) }
+                sampleBezier(points, i).forEach { append(it) }
             } else {
-                append(points[i], i)
+                append(points[i])
             }
         }
         // 末段终点（与最后一段共享 segment 索引）
-        append(points.last(), points.size - 2)
+        append(points.last())
         return path
     }
 
@@ -229,43 +252,22 @@ class MockServiceViewModel : ViewModel() {
         return if (az < 0) az + 360.0 else az
     }
 
-    /**
-     * 在路径上按累计距离线性插值出坐标（采样点 ~1m 间隔，误差可忽略）；
-     * 游标单调递增（已走距离只增不减）。
-     */
-    private fun pointAt(dist: Double): Pair<Double, Double> {
-        if (dist <= 0.0) return Pair(pathPoints[0].lat, pathPoints[0].lon)
-        pathCursor = pathIndexAt(dist, pathCursor)
-        return interpolateAt(pathCursor, dist)
-    }
-
-    /** 切线前视点（不推进主游标）：不改变播放位置游标，供朝向计算使用 */
-    private fun lookaheadPoint(dist: Double): Pair<Double, Double> {
-        if (dist >= routeDistance) {
-            return Pair(pathPoints.last().lat, pathPoints.last().lon)
+    /** 上传用的坐标数组（点数超限时按 stride 抽稀；抽稀后至少保留首末两点） */
+    private fun buildUpload(): Pair<DoubleArray, DoubleArray> {
+        val stride = maxOf(1, (pathPoints.size + MAX_UPLOAD_POINTS - 1) / MAX_UPLOAD_POINTS)
+        if (stride == 1) {
+            return Pair(
+                DoubleArray(pathPoints.size) { pathPoints[it].lat },
+                DoubleArray(pathPoints.size) { pathPoints[it].lon },
+            )
         }
-        val index = pathIndexAt(dist, pathCursor)
-        return interpolateAt(index, dist)
+        val idx = (pathPoints.indices step stride).toMutableList()
+        if (idx.last() != pathPoints.size - 1) idx.add(pathPoints.size - 1)
+        return Pair(
+            DoubleArray(idx.size) { pathPoints[idx[it]].lat },
+            DoubleArray(idx.size) { pathPoints[idx[it]].lon },
+        )
     }
-
-    /** 找到包含累计距离 [dist] 的区间右端点索引（从 [from] 起向后游标推进） */
-    private fun pathIndexAt(dist: Double, from: Int): Int {
-        var i = from.coerceAtLeast(1)
-        while (i < pathPoints.size - 1 && pathPoints[i].cum < dist) {
-            i++
-        }
-        return i
-    }
-
-    /** 在区间 [index-1, index] 内按累计距离插值 */
-    private fun interpolateAt(index: Int, dist: Double): Pair<Double, Double> {
-        val b = pathPoints[index]
-        val a = pathPoints[index - 1]
-        val seg = b.cum - a.cum
-        val t = if (seg <= 1e-9) 0.0 else ((dist - a.cum) / seg).coerceIn(0.0, 1.0)
-        return Pair(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
-    }
-
 
     var locationManager: LocationManager? = null
         set(value) {
@@ -273,8 +275,7 @@ class MockServiceViewModel : ViewModel() {
             if (value != null) {
                 MockServiceHelper.tryInitService(value)
                 // 实验性开关跨重启恢复：服务握手成功后把当前偏好同步给系统侧。
-                // 关闭时同样要下发——系统侧进程重启后不该残留"开着"的状态。
-                // 启动恢复：开关 + 栅格 + 噪声档一次下发（唯一出口，见 ConfigSync）
+                // 启动恢复：开关 + 噪声档 + 体力参数 + 上报间隔一次下发（唯一出口，见 ConfigSync）
                 ConfigSync.restoreAfterHandshake(Portal.appContext, value)
             }
         }
@@ -301,92 +302,129 @@ class MockServiceViewModel : ViewModel() {
             rocker = Rocker(activity)
         }
 
-        ensureMotionLoop(activity)
+        ensureDirectorLoop(activity)
 
-        // 只写本进程镜像（摇杆/运动循环读的是这份）；下发是另一件事，见 ConfigSync.push
+        // 只写本进程镜像（显示用）；下发是另一件事，见 ConfigSync.push
         ConfigSync.mirrorLocal(activity)
 
         return rocker
     }
 
     /**
-     * **唯一运动推进器**：摇杆步进与路线播放共用一条循环。
+     * **遥控循环**（唯一循环，取代旧的运动推进循环）。
      *
-     * 两种模式是「同一位置的两种来源」——此前是两个独立协程各自写位置，只靠 `isAutoPlaying`
-     * 标志互斥；合并后每条 tick **只有一个分支**会写位置，互斥从「共享标志」变成「结构互斥」。
+     * 每拍只做三件事：
+     *  1. 把**变化了的**意图下发给系统侧（路线数据 / 播放开关 / 摇杆方向与激活态）；
+     *  2. 低频回读推进状态（进度、是否播完、当前坐标）并同步本进程镜像；
+     *  3. 播完收尾（提示音/振动/收回按钮）与后台保活。
+     *
+     * 为什么"只发变化"：这个循环的节奏由上报间隔决定（默认 100ms），若每拍都发命令，
+     * 就是每秒 10 次 binder——旧实现每拍发一次 `move` 正是这样。意图不变就没必要说话。
      */
-    private fun ensureMotionLoop(activity: Activity) {
-        if (::motionJob.isInitialized && motionJob.isActive) return
-        // 循环启动即处于「暂停」：摇杆未按住时不推进位置。
-        // 上游 `initRocker` 在启动循环前显式调用 `pause()`，重构时该行遗失——那时
-        // 运动循环一启动就每 tick 位移，用户看到「第一次启动模拟，位置就朝一个方向
-        // 漂移，手动移动一次才恢复」。此处恢复该语义；自动播放走 [advanceRoutePlayback]
-        // 分支，不经过暂停门，故不受影响。
-        rockerCoroutineController.pause()
-        lastMotionNanos = 0L
-        // 体力参数入内存 + 复位体力：**循环启动 = 一次会话开始**，所以复位放在这里
-        // （放在 Home/设置页的 onCreate 会把"跑到一半"的人重置，那是错的）
+    private fun ensureDirectorLoop(activity: Activity) {
+        if (::directorJob.isInitialized && directorJob.isActive) return
+        // 参数入内存：**循环启动 = 一次会话开始**（复位体力不在这里 —— 状态在系统侧，
+        // 会话重启不该把"跑到一半的人"变回满体力）
         StaminaController.load(activity)
-        motionJob = viewModelScope.launch {
+        directorJob = viewModelScope.launch {
             while (isActive) {
-                // 间隔每次重新读：设置页改完立即生效，且钳制下限 1ms（避免 delay(0) 空转与除零）
                 val delayTime = activity.reportDuration.coerceIn(1, 1000).toLong()
                 delay(delayTime)
-                // ★ 位移按**真实经过时间**推进，不按名义间隔。
-                //
-                // 为什么（实测数据，2026-09-12 MI6）：delay(名义 100ms) + 每 tick 一次同步
-                // binder 往返，实测 tick 周期 124ms（jitter ±10%）⇒ 每 tick 只推 0.35m，
-                // 交付速度 = 0.35/0.124 = **2.82 m/s，而设定是 3.50 m/s（−19%）**。
-                // 跑步软件看到的配速因此系统性偏慢，且主线程任何抖动/节流都 1:1 变成配速误差
-                // （后台被限流时就是「每 ~25s 一次尖峰」）。按真实 Δt 推进后，delivered 速度
-                // 与设定速度无关地被调度影响：慢了就一次多走一点，快了就少走一点。
-                //
-                // 上限 + 重锚：长时间冻结（后台）后不补出一个 >50m 的跳变——那在模块侧会被
-                // 瞬移判定拦下、该帧速度归 0，反而制造尖峰。超限就丢掉多余时长（模拟"那段时间没在跑"）。
-                val now = System.nanoTime()
-                val dtMs = if (lastMotionNanos == 0L) delayTime.toDouble()
-                else (now - lastMotionNanos) / 1_000_000.0
-                lastMotionNanos = now
-                val advanceMs = dtMs.coerceIn(1.0, MAX_ADVANCE_MS)
-                if (dtMs > MAX_ADVANCE_MS) {
-                    // 只报一次级别：这是"模拟会话被系统冻结过"的证据，排查时要能看到
-                    Log.w(
-                        "MockServiceViewModel",
-                        "运动循环被阻塞 ${"%.0f".format(dtMs)}ms（上限 ${MAX_ADVANCE_MS.toInt()}ms），本 tick 按上限推进"
-                    )
+                try {
+                    step()
+                } catch (t: Throwable) {
+                    Log.e("MockServiceViewModel", "遥控循环异常", t)
                 }
-                if (isAutoPlaying) {
-                    advanceRoutePlayback(activity, advanceMs)
-                } else {
-                    advanceRockerMove(advanceMs)
-                }
-                // 体力：**按表象位移推进**（两个 advance 各自把"实际推进了多少米"记进
-                // StaminaController）。顺序有意如此 —— 先产生位移、再让体力读它，
-                // 于是"路线播完/摇杆门关闭/位置未初始化"这些"没真的动"的情况天然为 0，
-                // 体力也就不会凭"会话还开着"掉血。空闲时照样恢复（这是本轮的口径：恢复是持续的）。
-                StaminaController.tick(
-                    movedMeters = StaminaController.takeMovedMeters(),
-                    baseSpeed = FakeLoc.speed,
-                )
-                // ★ 保活只服务"无人值守的推进"：
-                //   · 自动播放（路线自己走，可能灭屏/后台）；
-                //   · 摇杆锁定后松手继续走（touched=false 但暂停门开着）。
-                // 手指按着摇杆时不占前台、不持锁（屏幕亮着、进程在收触摸事件）；
-                // 空闲（既没自动播放也没在走）时立刻撤掉 —— 遵循系统省电策略。
-                syncBackgroundKeepAlive(activity)
             }
         }
     }
 
+    private fun step() {
+        val lm = locationManager ?: return
+        val auto = isAutoPlaying
+
+        if (auto && selectedRoute != null && pathPoints.size >= 2) {
+            // 自动播放：路线数据先上传（一次），再打开播放；摇杆意图关掉（方向由切线接管）
+            if (!routeUploaded) {
+                val (lats, lons) = buildUpload()
+                routeUploaded = MockServiceHelper.setRoute(lm, lats, lons)
+                if (!routeUploaded) {
+                    Log.e("MockServiceViewModel", "路线上传失败（服务未就绪？），下拍重试")
+                }
+            }
+            if (routeUploaded && !routePlayingPushed) {
+                routePlayingPushed = MockServiceHelper.setRoutePlaying(lm, true)
+            }
+            pushRockerIntent(lm, active = false)
+        } else {
+            if (routePlayingPushed) {
+                MockServiceHelper.setRoutePlaying(lm, false)
+                routePlayingPushed = false
+            }
+            // 摇杆意图：暂停门关着（手指按住或锁定后继续走）才算"在走"
+            pushRockerIntent(lm, active = !rockerCoroutineController.isPaused)
+        }
+
+        // 低频回读：进度显示、播完收尾、坐标镜像
+        val now = System.nanoTime()
+        if (now - lastMotionPollNanos >= MOTION_POLL_MS * 1_000_000L) {
+            lastMotionPollNanos = now
+            pollMotion(lm)
+        }
+
+        // 保活只服务"无人值守"：自动播放（要有人听提示音、收尾）或摇杆锁定后松手继续走
+        syncBackgroundKeepAlive(Portal.appContext)
+    }
+
+    /** 摇杆意图下发（变化才发）：方向变化 >0.5° 或激活态翻转 */
+    private fun pushRockerIntent(lm: LocationManager, active: Boolean) {
+        val bearingChanged = lastPushedBearing.isNaN() ||
+                abs(rockerBearing - lastPushedBearing) > 0.5 ||
+                abs(rockerBearing - lastPushedBearing) > 359.5
+        if (active == lastPushedActive && !bearingChanged) return
+        if (MockServiceHelper.setRocker(lm, active, rockerBearing)) {
+            lastPushedBearing = rockerBearing
+            lastPushedActive = active
+        }
+    }
+
+    /** 回读推进状态：进度、播完（一次性）、坐标镜像。读不到就保持上次的值，不猜 */
+    private fun pollMotion(lm: LocationManager) {
+        val rely = MockServiceHelper.getMotion(lm) ?: return
+        val playing = rely.getBoolean(Key.MOTION_PLAYING, false)
+        val completed = rely.getBoolean(Key.MOTION_COMPLETED, false)
+        // 坐标镜像：App 侧显示（地图/坐标栏）读的是本进程的 FakeLoc
+        RemoteCommandHandler.applySyncedCoordinate(
+            rely.getDouble(Key.LAT, FakeLoc.latitude),
+            rely.getDouble(Key.LON, FakeLoc.longitude),
+        )
+        FakeLoc.bearing = rely.getDouble(Key.BEARING, FakeLoc.bearing)
+        FakeLoc.hasBearings = true
+
+        if (isAutoPlaying && (completed || (!playing && rely.getDouble(Key.ROUTE_DISTANCE, 0.0) > 0.0 &&
+                    rely.getDouble(Key.ROUTE_TRAVELLED, 0.0) >= rely.getDouble(Key.ROUTE_DISTANCE, 0.0) - 1e-6))
+        ) {
+            onRouteCompleted()
+        }
+    }
+
+    /** 播完收尾：停自动播放（下一拍会把停止下发给系统侧）、提示音 + 振动 */
+    private fun onRouteCompleted() {
+        Log.i("MockServiceViewModel", "路线播放完成（系统侧进度已到终点）")
+        if (::rocker.isInitialized) {
+            rocker.autoStatus = false
+        }
+        routePlayingPushed = false
+        lastPushedActive = false
+        playCompletionSound(Portal.appContext)
+    }
+
     /**
-     * 手动模式：摇杆步进一帧。
+     * 手动模式：摇杆按下/松开的**意图**（推进在系统侧，这里只改状态）。
      *
-     * 暂停门是**非阻塞**的（[CoroutineController.consume]）：暂停只表示「这一 tick 不动」，
-     * 循环必须继续转——否则「松开摇杆（暂停）→ 启动自动播放」会卡死在等待 Resume 上，
-     * 路线播放永远推进不了（就停在原地）。旧实现是两个独立协程，路线播放不受摇杆暂停影响，
-     * 合并后必须保住这一点。
+     * 暂停门是**非阻塞**的（[CoroutineController.consume]）：暂停只表示"这一拍不动"，
+     * 循环继续转——否则「松开摇杆（暂停）→ 启动自动播放」会卡死。
      */
-    /** 摇杆按下（触摸开始）：开门推进 + 标记"手指在" */
     fun onRockerStarted() {
         joystickTouched = true
         rockerCoroutineController.resume()
@@ -402,10 +440,10 @@ class MockServiceViewModel : ViewModel() {
     }
 
     /**
-     * 后台保活同步（每个 tick 调一次，内部只在状态变化时动作）。
+     * 后台保活同步（每拍调一次，内部只在状态变化时动作）。
      *
-     * 需要强保活的只有**无人值守仍在推进**的情况：自动播放、或摇杆锁定后松手继续走。
-     * 其余情况（手指按着摇杆、会话开着但没动、关掉设置项）都不占前台、不持锁。
+     * 需要它的只剩**无人值守仍在推进**的情况：自动播放、或摇杆锁定后松手继续走
+     * —— 不是为了"维持推进"（那在 system_server 里），而是为了让 App 活着完成收尾。
      */
     private fun syncBackgroundKeepAlive(ctx: android.content.Context) {
         val unattendedMoving = isAutoPlaying ||
@@ -416,92 +454,14 @@ class MockServiceViewModel : ViewModel() {
         if (want) MockKeepAliveService.start(ctx) else MockKeepAliveService.stop(ctx)
     }
 
-    private fun advanceRockerMove(advanceMs: Double) {
-        if (rockerCoroutineController.consume()) return
-        val lm = locationManager ?: return   // 定位服务未就绪：本 tick 跳过，下次自动重试
-        // 每 tick 位移 = 速度 × **本 tick 的真实时长**（见 ensureMotionLoop 的说明）。
-        // 旧实现 FakeLoc.speed / (1000 / delayTime) 是**整数除法**：
-        // 150ms → 除数被截断为 6（实际速度 +11%）、700ms → 除数 1（+43%）、0 → 除零崩溃。
-        // 位移按体力倍率缩放：注入速度由**实际位移**反推 ⇒ 降速会自然体现在速度/步频上
-        // （只改报数不改位移会造出"位移与速度自相矛盾"，那是可被检测的指纹）。
-        // 倍率只从体力接口读 —— 这里不判断休不休息、也不碰模型。
-        val mps = FakeLoc.speed * StaminaController.speedMultiplier()
-        val meters = mps * advanceMs / 1000.0
-        if (!MockServiceHelper.move(lm, meters, FakeLoc.bearing)) {
-            Log.e("MockServiceViewModel", "Failed to move")
-            return
-        }
-        // 只有真的下发出去了才算"表象移动"（失败那一拍不该扣体力）
-        StaminaController.noteMoved(meters)
-    }
-
-    /** 自动模式：按速度推进弧长，在路线上插值出位置并下发切线朝向 */
-    private fun advanceRoutePlayback(activity: Activity, advanceMs: Double) {
-        val lm = locationManager ?: return
-        val selected = selectedRoute
-        if (selected == null || selected.route.size < 2) return
-
-        // 路线变化 → 重建路径并完整重置（选中时已重置，此处兼容外部改选）
-        if (cachedRoute !== selected) resetPlayback(selected)
-
-        // 起点定位（每次重置后一次）：下发成功才算初始化，失败下个 tick 重试（不推进弧长）
-        if (!pathInitialized) {
-            if (MockServiceHelper.setLocation(lm, pathPoints[0].lat, pathPoints[0].lon)) {
-                pathInitialized = true
-            } else {
-                Log.e("MockServiceViewModel", "路线起点下发失败，下个 tick 重试")
-            }
-            return
-        }
-
-        // 按速度推进弧长，直接在路线上插值出本 tick 的目标点并设置位置：
-        // 不再盲推 + 距离检测（盲推在曲线密集采样点上会失准、批量跳点）。
-        // 同摇杆：按体力倍率缩放弧长推进（体力挂在推进量上，报数自然跟随）
-        val advanceMeters = FakeLoc.speed * StaminaController.speedMultiplier() * (advanceMs / 1000.0)
-        routeTravelled += advanceMeters
-        StaminaController.noteMoved(advanceMeters)
-
-        if (routeTravelled >= routeDistance) {
-            // 完成：精确落在终点，停播并彻底重置（下次播放从头开始）
-            val end = pathPoints.last()
-            MockServiceHelper.setLocation(lm, end.lat, end.lon)
-            resetPlayback(null)
-            rocker.autoStatus = false
-            playCompletionSound(activity)
-            return
-        }
-
-        val target = pointAt(routeTravelled)
-        // 朝向 = 路线切线（向前 2m 处的方向）——平滑段切线连续变化，
-        // 普通段即段方向；随位置显式下发，系统侧不再依赖位移推算。
-        val ahead = lookaheadPoint(
-            minOf(routeTravelled + TANGENT_LOOKAHEAD_M, routeDistance)
-        )
-        val bearing = if (ahead == target) null else azimuthOf(target, ahead)
-        if (FakeLoc.enableDebugLog) {
-            Log.d(
-                "MockServiceViewModel",
-                "弧长 $routeTravelled/$routeDistance → ${target.first}, ${target.second}, 朝向: $bearing"
-            )
-        }
-        if (!MockServiceHelper.setLocation(lm, target.first, target.second, bearing)) {
-            // 下发失败（服务未就绪 / 进程重建）：回退本 tick 推进量，下个 tick 重试同一位置——
-            // 否则会出现「进度在走、位置原地不动」并一路跑到终点（看起来就是卡在原位）
-            routeTravelled -= advanceMeters
-            Log.e("MockServiceViewModel", "设置位置失败，回退本 tick 推进量待重试")
-        }
-    }
-
-    private fun playCompletionSound(activity: Activity) {
+    private fun playCompletionSound(context: android.content.Context) {
         try {
-            // 1. 播放声音
             val ringtoneUri = android.provider.Settings.System.DEFAULT_NOTIFICATION_URI
-            val mediaPlayer = android.media.MediaPlayer.create(activity.applicationContext, ringtoneUri)
+            val mediaPlayer = android.media.MediaPlayer.create(context, ringtoneUri)
             mediaPlayer.setOnCompletionListener { it.release() }
             mediaPlayer.start()
 
-            // 2. 振动 0.5 秒，间隔 0.3 秒，共 2 次
-            val vibrator = activity.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+            val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
             if (vibrator.hasVibrator()) {
                 val pattern = longArrayOf(0, 500, 300, 500) // 等待0ms，振动500ms，暂停300ms，再振动500ms
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {

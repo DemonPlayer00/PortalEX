@@ -162,10 +162,21 @@ internal object LocConfig {
     /**
      * 体力参数（`StaminaConfig.toWire()` 的定序数组）。
      *
-     * 迁移步骤①的第一刀：**先把通路建起来**（App 下发 → 模块保存）。模块侧此刻还不解释它，
-     * 推进仍归 App —— 于是"谁推进"没有被改动，不构成双写。
+     * App 下发 → 模块解析（[StaminaRuntime.applyWire]）。**模块是体力状态机的持有者**：
+     * 状态不再挂在 App 的生命周期上（杀掉 App 再开，体力延续）。长度不符时模块保持旧值，
+     * 绝不读半个配置（见 `StaminaConfig.fromWire`）。
      */
     var staminaWire: FloatArray = FloatArray(0)
+
+    /**
+     * 定位**上报间隔（毫秒）**：App 的设置项，迁移后由模块时钟（[moe.fuqiuluo.xposed.hooks.MotionClock]）
+     * 按它对外出帧。
+     *
+     * 为什么必须下发：推进搬到系统侧之后，出帧节奏不再由 App 循环决定；
+     * 而"客户端每秒看到几帧"是用户可感知且可被检测的量，不该因为这次迁移而改变。
+     * 实际投递时再钳进 20~2000ms（设置页允许 1ms，那等于 1000Hz 刷帧）。
+     */
+    var reportDurationMs: Long = 100L
 
     /**
      * 模拟会话期间的速度保底（m/s）。

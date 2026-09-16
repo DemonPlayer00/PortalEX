@@ -8,6 +8,7 @@ import android.os.Parcel
 import android.os.Process
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
+import moe.fuqiuluo.xposed.hooks.MotionClock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
@@ -17,6 +18,8 @@ import moe.fuqiuluo.xposed.utils.FusedMode
 import moe.fuqiuluo.xposed.utils.FusedStatus
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.MotionEngine
+import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.SensorNoise
 import java.util.Collections
@@ -144,6 +147,9 @@ object RemoteCommandHandler {
                     FakeLoc.bearing = kotlin.random.Random.nextDouble(0.0, 360.0)
                 }
 
+                // 系统侧推进时钟：会话启动即起拍 —— 推进与体力都在这一侧（见 MotionClock）
+                MotionClock.start()
+
                 // 实验性：Binder 外周传感器模拟随会话开始推流（开关关闭时无动作）
                 BinderSensorMock.onSimulationChanged()
 
@@ -155,6 +161,8 @@ object RemoteCommandHandler {
             Cmd.STOP -> {
                 FakeLoc.enable = false
                 FakeLoc.hasBearings = false
+                // 停拍：路线/摇杆意图都不跨会话残留（体力**保留** —— 状态在系统侧，App 重启不回满）
+                MotionClock.stop()
                 BinderSensorMock.onSimulationChanged()
                 return true
             }
@@ -216,6 +224,56 @@ object RemoteCommandHandler {
             }
             Cmd.IS_SENSOR_MOCK -> {
                 rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+                return true
+            }
+            Cmd.SET_ROCKER -> {
+                // 摇杆意图：**只表达"往哪个方向走"**，走多少由系统侧按速度×体力倍率推进
+                // （旧实现每拍送一个 move 位移，推进在 App ⇒ 位置流的连续性依赖 App 进程活着）
+                val active = rely.getBoolean(Key.ENABLE, false)
+                val bearing = rely.numberOr(Key.BEARING, FakeLoc.bearing)
+                val changed = Math.abs(bearing - FakeLoc.bearing) > 0.5
+                MotionEngine.setRocker(active, bearing)
+                // 朝向立即生效：摇杆只转向不位移时（暂停中/极慢速），若不写朝向、不投递，
+                // 应用侧要等下一帧位移才看到新朝向——就是"转了半天不动，然后跳一下"。
+                FakeLoc.bearing = ((bearing % 360.0) + 360.0) % 360.0
+                FakeLoc.hasBearings = true
+                val nowNanos = SystemClock.elapsedRealtimeNanos()
+                if (changed && FakeLoc.isSystemServerProcess &&
+                    nowNanos - lastBearingPushNanos >= BEARING_PUSH_MIN_INTERVAL_NANOS
+                ) {
+                    lastBearingPushNanos = nowNanos
+                    LocationServiceHook.callOnLocationChanged(force = true)
+                }
+                return true
+            }
+            Cmd.SET_ROUTE -> {
+                // 路线数据（展开后的播放路径点）：App 只上传，不推进
+                val lat = rely.getDoubleArray(Key.ROUTE_LAT)
+                val lon = rely.getDoubleArray(Key.ROUTE_LON)
+                val points = MotionEngine.setRoute(lat, lon)
+                Logger.info("MotionEngine: 路线已上传 ${points} 点，全长 %.1f m".format(MotionEngine.distance()))
+                return true
+            }
+            Cmd.ROUTE_CONTROL -> {
+                val play = rely.getBoolean(Key.ENABLE, false)
+                if (play && !MotionEngine.setPlaying(true)) {
+                    Logger.warn("MotionEngine: 收到播放指令但没有路线数据，忽略")
+                    return false
+                }
+                if (!play) MotionEngine.setPlaying(false)
+                return true
+            }
+            Cmd.GET_MOTION -> {
+                fillMotionStatus(rely)
+                return true
+            }
+            Cmd.GET_STAMINA -> {
+                StaminaRuntime.writeStatus(rely)
+                return true
+            }
+            Cmd.RESET_STAMINA -> {
+                StaminaRuntime.reset()
+                Logger.info("StaminaRuntime: 已重置 —— ${StaminaRuntime.statusLine()}")
                 return true
             }
             Cmd.GET_LOCATION -> {
@@ -360,10 +418,18 @@ object RemoteCommandHandler {
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
                 // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
                 val noiseProfile = rely.getFloatArray(Key.NOISE_PROFILE)?.let { SensorNoise.sanitize(it) }
-                // 体力参数（迁移步骤①的通路；此刻模块只保存不解释，推进仍在 App）
+                // 体力参数：模块侧解析并生效（状态机在系统侧，见 StaminaRuntime）
                 val staminaWire = rely.getFloatArray(Key.STAMINA_CONFIG)
+                // 定位上报间隔（毫秒）：模块时钟按它出帧（读不到键保持当前值）
+                // 兼容 Int/Long/Float：Bundle.getLong 在类型不符时**静默返回默认值**
+                val reportDuration = (rely.get(Key.REPORT_DURATION) as? Number)?.toLong() ?: 0L
 
                 FakeLoc.enable = enable
+                // 推进会话与推进时钟同生共死：只改 enable 而不起拍，会造出"开关开着、位置不动"
+                // 的静默状态（旧实现没有时钟，这个坑是迁移带进来的）
+                if (FakeLoc.isSystemServerProcess) {
+                    if (enable) MotionClock.start() else MotionClock.stop()
+                }
                 FakeLoc.speed = speed
                 FakeLoc.altitude = altitude
                 FakeLoc.accuracy = accuracy
@@ -384,7 +450,11 @@ object RemoteCommandHandler {
                 FakeLoc.enableBinderSensorMock = binderSensorMock
                 FakeLoc.hideDeveloperMode = hideDeveloperMode
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
-                if (staminaWire != null) FakeLoc.staminaWire = staminaWire
+                if (staminaWire != null) {
+                    FakeLoc.staminaWire = staminaWire
+                    StaminaRuntime.applyWire(staminaWire)
+                }
+                if (reportDuration > 0L) FakeLoc.reportDurationMs = reportDuration
                 if (noiseProfile != null) {
                     FakeLoc.noiseProfile = noiseProfile
                     if (BinderSensorMock.isNativeReady) {
@@ -489,6 +559,31 @@ object RemoteCommandHandler {
      */
     fun applySyncedCoordinate(lat: Double, lon: Double) {
         updateCoordinate(lat, lon)
+    }
+
+    /**
+     * **系统侧推进引擎的落点入口**（见 [MotionClock]）：坐标 + 显式朝向一次写入。
+     *
+     * 走的是同一个 [updateCoordinate]（位移历史/静止检测都在里面），只是带上
+     * "本拍朝向由推进引擎给定"的语义 —— 路线切线、摇杆方向都不该再靠位移反推
+     * （弧长步长小，位移法的 1m 门控会挡住朝向更新）。
+     */
+    fun applyMotionCoordinate(lat: Double, lon: Double, bearing: Double?): Boolean =
+        updateCoordinate(lat, lon, updateBearing = bearing != null, explicitBearing = bearing)
+
+    /** 推进状态回传（App 的进度显示与"播完了"收尾都读它） */
+    private fun fillMotionStatus(rely: Bundle) {
+        val st = MotionEngine.status()
+        rely.putDouble(Key.LAT, FakeLoc.latitude)
+        rely.putDouble(Key.LON, FakeLoc.longitude)
+        rely.putDouble(Key.BEARING, FakeLoc.bearing)
+        rely.putString(Key.MOTION_MODE, st.mode.name.lowercase())
+        rely.putBoolean(Key.MOTION_PLAYING, st.playing)
+        rely.putBoolean(Key.MOTION_COMPLETED, st.completed)
+        rely.putDouble(Key.ROUTE_TRAVELLED, st.travelledMeters)
+        rely.putDouble(Key.ROUTE_DISTANCE, st.distanceMeters)
+        rely.putInt(Key.ROUTE_POINTS, st.points)
+        StaminaRuntime.writeStatus(rely)
     }
 
     /** 朝向变化推流的最小间隔：摇杆拖动事件很密，限到 ~12Hz 足够平滑且不异常 */

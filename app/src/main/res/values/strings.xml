@@ -83,6 +83,8 @@
     <string name="stamina_chart_mode_generated">生成</string>
     <string name="stamina_chart_sample">本次生成：%1$s km 用 %2$s 分钟 · 平均配速 %3$s/km · 疲劳 %4$d 次（共 %5$s 分钟）</string>
     <string name="stamina_reset">重置体力</string>
+    <string name="stamina_phase_unavailable">状态不可读（模块未装载或命令通道未握手）—— 体力模拟未生效</string>
+    <string name="stamina_phase_not_applied">参数尚未同步到系统侧（模拟会话未启动？）—— 当前数值来自内置默认</string>
     <string name="stamina_reset_data">重置数据</string>
     <string name="stamina_reset_data_confirm">把所有体力参数恢复为出厂默认，并重置当前体力与统计。\n\n开关状态会保留；旧参数不保留，之后只能手动调回。</string>
     <string name="stamina_reset_data_ok">恢复默认</string>

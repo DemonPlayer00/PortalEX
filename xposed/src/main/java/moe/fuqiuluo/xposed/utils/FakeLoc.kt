@@ -44,6 +44,11 @@ object FakeLoc {
         get() = LocConfig.staminaWire
         set(value) { LocConfig.staminaWire = value }
 
+    /** 定位上报间隔（毫秒）：App 设置项，模块时钟按它出帧（见 [LocConfig.reportDurationMs]） */
+    var reportDurationMs: Long
+        get() = LocConfig.reportDurationMs
+        set(value) { LocConfig.reportDurationMs = value }
+
     var noiseProfile: FloatArray
         get() = LocConfig.noiseProfile
         set(value) { LocConfig.noiseProfile = value }

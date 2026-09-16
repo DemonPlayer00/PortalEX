@@ -239,15 +239,6 @@ object MockServiceHelper {
         return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
-    fun setBearing(locationManager: LocationManager, bearing: Double): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.SET_BEARING)
-        rely.putDouble(Key.BEARING, bearing)
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
 
 
 
@@ -255,21 +246,6 @@ object MockServiceHelper {
 
 
 
-    fun move(locationManager: LocationManager, distance: Double, bearing: Double): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.MOVE)
-        rely.putDouble(Key.DISTANCE, distance)
-        rely.putDouble(Key.BEARING, bearing)
-
-        if (FakeLoc.enableDebugLog) {
-            Log.d("MockServiceHelper", "move: distance=$distance, bearing=$bearing")
-        }
-
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
 
     fun setLocation(locationManager: LocationManager, lat: Double, lon: Double): Boolean {
         return updateLocation(locationManager, lat, lon, "=")
@@ -313,6 +289,61 @@ object MockServiceHelper {
             rely.putDouble(Key.BEARING, bearing)
         }
         return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
+    }
+
+    /**
+     * 摇杆意图（`set_rocker`）：**只表达"往哪个方向走"**。
+     *
+     * 位移不再由 App 计算 —— 系统侧按 `速度 × 体力倍率 × Δt` 推进（见迁移方案）。
+     * 于是"位置流的连续性"不再依赖 App 进程活着（灭屏/被冻结时路线照样走）。
+     */
+    fun setRocker(locationManager: LocationManager, active: Boolean, bearing: Double): Boolean {
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.SET_ROCKER)
+        rely.putBoolean(Key.ENABLE, active)
+        rely.putDouble(Key.BEARING, bearing)
+        return send(locationManager, rely)
+    }
+
+    /**
+     * 上传路线播放路径（`set_route`）：**展开后的采样点**（平滑段已由路线编辑器展开）。
+     * 空的/少于 2 点视为清空路线。上传不启动播放（见 [setRoutePlaying]）。
+     */
+    fun setRoute(locationManager: LocationManager, lats: DoubleArray, lons: DoubleArray): Boolean {
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.SET_ROUTE)
+        rely.putDoubleArray(Key.ROUTE_LAT, lats)
+        rely.putDoubleArray(Key.ROUTE_LON, lons)
+        return send(locationManager, rely)
+    }
+
+    /** 路线播放开关（`route_control`）：起点对齐、终点判定、播完收尾都在系统侧 */
+    fun setRoutePlaying(locationManager: LocationManager, play: Boolean): Boolean {
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.ROUTE_CONTROL)
+        rely.putBoolean(Key.ENABLE, play)
+        return send(locationManager, rely)
+    }
+
+    /** 体力状态回读（`get_stamina`）：App 只显示，不持有状态 */
+    fun getStamina(locationManager: LocationManager): Bundle? = query(locationManager, Cmd.GET_STAMINA)
+
+    /** 推进状态回读（`get_motion`）：进度显示 + "播完了"的收尾动作都靠它 */
+    fun getMotion(locationManager: LocationManager): Bundle? = query(locationManager, Cmd.GET_MOTION)
+
+    /** 重置体力（`reset_stamina`）：回满并清空休息统计（状态在系统侧，所以必须下发） */
+    fun resetStamina(locationManager: LocationManager): Boolean {
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.RESET_STAMINA)
+        return send(locationManager, rely)
+    }
+
+    /** 只读查询：未握手或失败返回 null（调用方按"读不到"处理，不猜） */
+    private fun query(locationManager: LocationManager?, command: String): Bundle? {
+        if (locationManager == null || !::randomKey.isInitialized) return null
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, command)
+        return if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) rely else null
     }
 
     /**
