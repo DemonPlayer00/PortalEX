@@ -64,6 +64,10 @@
     <string name="stamina_status">当前体力</string>
     <string name="stamina_chart_title">速度倍率 / 距离</string>
     <string name="stamina_chart_desc">横轴=距离（窗口 2 km，左右滑动看更远），纵轴=速度倍率</string>
+    <string name="stamina_chart_mode_theory">理论</string>
+    <string name="stamina_chart_mode_generated">生成</string>
+    <string name="stamina_chart_desc_generated">横轴=距离（窗口 2 km，左右滑动看更远），纵轴=配速 min/km</string>
+    <string name="stamina_chart_sample">本次生成：%1$s km 用 %2$s 分钟 · 平均配速 %3$s/km · 疲劳 %4$d 次（共 %5$s 分钟）</string>
     <string name="stamina_reset">重置体力</string>
     <string name="stamina_params">参数（点击修改）</string>
     <string name="stamina_decay">体力衰减</string>

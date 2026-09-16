@@ -139,32 +139,43 @@ class StaminaCycleAnalysisTest {
 
     /**
      * **参数边界**：疲劳期间以走路速度前进，消耗 = `衰减 × 走路/基础`；恢复被
-     * [StaminaConfig.restSecondsCoefficient] 除。于是"歇着能不能回血"是有条件的：
+     * [StaminaConfig.restSecondsCoefficient] 除。于是"疲劳能不能结束"取决于
+     * **恢复曲线与消耗线有没有交点，且交点在开跑阈值之上**：
      *
      * ```
-     * 恢复(满体力) = 恢复速度系数 ÷ 冷却时间系数 × 1.0
-     * 疲劳期消耗    = 衰减系数 × 走路速度 ÷ 基础速度
-     * 必须  恢复 > 消耗  ⇒  冷却时间系数 < 恢复 ÷ (衰减 × 走路/基础)
-     * 默认代入：4 ÷ (11 × 1.10/3.05) = 1.008
+     * 恢复(体力) = 恢复速度系数 ÷ 冷却时间系数 × (2 − 体力/100)
+     * 消耗       = 衰减系数 × 走路速度 ÷ 基础速度
+     * 交点 体力* = 100 × (2 − 消耗 × 冷却 ÷ 恢复)
+     * 疲劳能结束 ⟺ 体力* > 开跑阈值
+     * ⇒ 冷却时间系数 < 恢复 × (2 − 开跑阈值/100) ÷ (衰减 × 走路/基础)
      * ```
-     * 也就是说**默认值只有 0.8% 的余量**：冷却时间系数一旦 ≥ 1.01，体力再也回不到
-     * 开跑阈值以上，疲劳状态**永远出不来**（图上就是一条从首次触阈开始的平线）。
+     *
+     * ⚠️ 这里纠正我先前说过的一个**更严的错数**：当时拿"体力=100%"那一点算，
+     * 得出 1.008。那只是"满体力时还回得动血"的条件；**疲劳能否结束看的是交点在不在
+     * 开跑阈值之上**，默认参数下真正的边界是 **1.713**（冷却在 1.008~1.713 之间时
+     * 疲劳仍然会结束，只是慢得多）。
      */
     @Test
     fun `边界：冷却时间系数过大时 疲劳永远出不来`() {
         val c = cfg()
-        val boundary = c.recoverCoefficient / (c.decayPerMinute * c.walkSpeed / base)
+        val consumption = c.decayPerMinute * c.walkSpeed / base
+        val boundaryAtFull = c.recoverCoefficient / consumption                       // 满体力还能回血
+        val boundaryEnds = c.recoverCoefficient * (2.0 - c.resumeAtPercent / 100.0) / consumption // 疲劳能结束
         val okLongest = longestFatigueSeconds(c, seconds = 3 * 3600.0)
-        val badCfg = c.copy(restSecondsCoefficient = 2.0)
-        val badLongest = longestFatigueSeconds(badCfg, seconds = 3 * 3600.0)
+        val slowLongest = longestFatigueSeconds(c.copy(restSecondsCoefficient = 1.6), 3 * 3600.0)
+        val badLongest = longestFatigueSeconds(c.copy(restSecondsCoefficient = 2.0), 3 * 3600.0)
 
         println(
-            "边界系数 = %.3f（= 恢复 ÷ (衰减 × 走路/基础)）；冷却=1.0 时最长疲劳 %.0f 秒；冷却=2.0 时最长疲劳 %.0f 秒"
-                .format(boundary, okLongest, badLongest)
+            ("边界：满体力可回血 %.3f；疲劳能结束 %.3f（交点须高于开跑阈值 %.0f%%）｜" +
+                    "冷却 1.0 最长疲劳 %.0f 秒；1.6 → %.0f 秒；2.0 → %.0f 秒")
+                .format(boundaryAtFull, boundaryEnds, c.resumeAtPercent, okLongest, slowLongest, badLongest)
         )
-        assertEquals("默认参数下的边界", 1.008, boundary, 0.01)
+        assertEquals("满体力可回血边界", 1.008, boundaryAtFull, 0.01)
+        assertEquals("疲劳能结束的边界", 1.713, boundaryEnds, 0.01)
         assertTrue("默认冷却下疲劳应能结束（最长 %.0f 秒）".format(okLongest), okLongest in 200.0..900.0)
-        assertTrue("冷却 2.0 时疲劳应当再也不结束（最长 %.0f 秒）".format(badLongest), badLongest > 3600.0)
+        assertTrue("冷却 1.6（在两条边界之间）疲劳仍能结束，但要久得多（最长 %.0f 秒）".format(slowLongest),
+            slowLongest > okLongest * 1.5 && slowLongest < 3600.0)
+        assertTrue("冷却 2.0 越过边界 ⇒ 疲劳再也不结束（最长 %.0f 秒）".format(badLongest), badLongest > 3600.0)
     }
 
     /** 跑 [seconds] 秒，返回**最长的一段连续疲劳**（秒） */

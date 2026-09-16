@@ -14,6 +14,7 @@ import moe.fuqiuluo.xposed.utils.StaminaCurve
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 /**
  * **速度倍率 × 距离**预览图（体力页用）。
@@ -45,8 +46,19 @@ class StaminaChartView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attributeSet, defStyleAttr) {
 
+    /** 图表的两页：理论 = 解析积分（含 ±随机包络）；生成 = 真实引擎跑出来的一条实际曲线 */
+    enum class Mode { THEORY, GENERATED }
+
+    private var mode = Mode.THEORY
     private var config: StaminaConfig? = null
     private var baseSpeed: Double = 3.05
+
+    /** 生成页的数据（一条真实引擎跑出来的曲线） */
+    private var generatedCurve: StaminaCurve.Curve? = null
+
+    /** 生成页的纵轴（配速 min/km）量程，按本次数据的实际范围取整 */
+    private var paceMin: Double = 5.0
+    private var paceMax: Double = 16.0
 
     /** 可见窗口（米）与全表长度（米） */
     private var windowMeters: Double = StaminaCurve.DEFAULT_WINDOW_M
@@ -115,7 +127,8 @@ class StaminaChartView @JvmOverloads constructor(
      */
     fun submit(config: StaminaConfig, baseSpeed: Double) {
         val base = if (baseSpeed > 0.05) baseSpeed else 1.0
-        if (this.config == config && this.baseSpeed == base) return
+        if (mode == Mode.THEORY && this.config == config && this.baseSpeed == base) return
+        mode = Mode.THEORY
         this.config = config
         this.baseSpeed = base
 
@@ -133,6 +146,55 @@ class StaminaChartView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** 当前是哪一页 */
+    fun mode(): Mode = mode
+
+    /**
+     * 切到「生成」页：显示**真实引擎**（[StaminaCurve.sample]）跑出来的一条曲线，
+     * 纵轴换成配速（min/km）。每次调用都是一条新曲线（随机源不同）⇒ 点一次刷新一次。
+     */
+    fun submitGenerated(curve: StaminaCurve.Curve, baseSpeed: Double) {
+        val base = if (baseSpeed > 0.05) baseSpeed else 1.0
+        mode = Mode.GENERATED
+        generatedCurve = curve
+        this.baseSpeed = base
+        computePaceRange(curve)
+        clampScroll()
+        invalidate()
+    }
+
+    /**
+     * 配速量程：取本次曲线的实际倍率范围换算成 min/km，再向外取整到 0.5 分钟。
+     * 下限夹在 0.1 倍率上 —— 否则"倍率趋近 0"会把量程拉到几百 min/km，整条曲线挤成一条线。
+     */
+    private fun computePaceRange(curve: StaminaCurve.Curve) {
+        var lo = Double.MAX_VALUE
+        var hi = -Double.MAX_VALUE
+        for (i in 0 until curve.size) {
+            val m = curve.multiplier[i].toDouble().coerceAtLeast(0.1)
+            val pace = paceOf(m)
+            if (pace < lo) lo = pace
+            if (pace > hi) hi = pace
+        }
+        if (lo > hi) { lo = 5.0; hi = 16.0 }
+        val pad = (hi - lo) * 0.05 + 0.25
+        paceMin = floor((lo - pad) * 2.0) / 2.0
+        paceMax = ceil((hi + pad) * 2.0) / 2.0
+        if (paceMax - paceMin < 2.0) paceMax = paceMin + 2.0
+    }
+
+    /** 倍率 ⇒ 配速（min/km）。倍率越高速度越快、配速数字越小 */
+    private fun paceOf(multiplier: Double): Double {
+        val v = baseSpeed * multiplier.coerceAtLeast(0.02)
+        return 1000.0 / (v * 60.0)
+    }
+
+    /** 配速 ⇒ 纵轴 y：慢（大数）在下、快（小数）在上 */
+    private fun yOfPace(pace: Double, plotBottom: Float, plotH: Float): Float {
+        val t = ((paceMax - pace) / (paceMax - paceMin)).coerceIn(0.0, 1.0)
+        return plotBottom - plotH * t.toFloat()
+    }
+
     /** 当前滚动位置（米）—— 诊断用 */
     fun scrollMetersNow(): Double = scrollMeters
 
@@ -148,20 +210,32 @@ class StaminaChartView @JvmOverloads constructor(
         if (plotW < dp(20f) || plotH < dp(20f)) return
 
         val perPx = metersPerPx()
-        val yOf: (Double) -> Float = { v -> plotBottom - plotH * (v / Y_MAX).toFloat() }
+        val theory = mode == Mode.THEORY
+        // 两页共用同一个"倍率 ⇒ 纵坐标"方向（倍率越高越靠上），只是换算方式不同：
+        // 理论页直接线性映射倍率；生成页先换成配速（min/km）再线性映射。
+        val yOf: (Double) -> Float = if (theory) {
+            { m -> plotBottom - plotH * (m / Y_MAX).toFloat() }
+        } else {
+            { m -> yOfPace(paceOf(m), plotBottom, plotH) }
+        }
         val xOf: (Double) -> Float = { d -> plotLeft + ((d - scrollMeters) / perPx).toFloat() }
 
-        // ── 绘图区：网格 + 三条曲线（裁剪后按滚动位置平移）────────────────────
+        // ── 绘图区：网格 + 曲线（裁剪后按滚动位置平移）────────────────────────
         canvas.save()
         canvas.clipRect(plotLeft, plotTop, plotRight, plotBottom)
 
         grid.color = colorGrid
-        // 横向：倍率刻度线（数字在左侧刻度栏，不随滚动）
-        var mv = 0.0
-        while (mv <= Y_MAX + 1e-9) {
-            val y = yOf(mv)
+        // 横向网格线：理论页 = 倍率刻度，生成页 = 配速刻度
+        val hTicks: List<Double> = if (theory) {
+            generateSequence(0.0) { it + Y_STEP }.takeWhile { it <= Y_MAX + 1e-9 }.toList()
+        } else {
+            val paceStep = paceTickStep()
+            generateSequence(ceil(paceMin / paceStep) * paceStep) { it + paceStep }
+                .takeWhile { it <= paceMax + 1e-9 }.toList()
+        }
+        hTicks.forEach { v ->
+            val y = if (theory) yOf(v) else yOfPace(v, plotBottom, plotH)
             canvas.drawLine(plotLeft, y, plotRight, y, grid)
-            mv += Y_STEP
         }
         // 纵向：每 0.5km 一条（整 km 才标字，半 km 只给线 —— 2km 窗口里塞 4 个数字就挤了）
         var d = floor(scrollMeters / X_TICK_M) * X_TICK_M
@@ -175,24 +249,37 @@ class StaminaChartView @JvmOverloads constructor(
             d += X_TICK_M
         }
 
-        // 先画包络（半透明），后画主曲线：重叠处主曲线要压在上面
-        lowerBoundCurve?.let {
-            drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight)
+        if (theory) {
+            // 先画包络（半透明），后画主曲线：重叠处主曲线要压在上面
+            lowerBoundCurve?.let {
+                drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight)
+            }
+            upperBoundCurve?.let {
+                drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight)
+            }
+            baseCurve?.let { drawCurve(canvas, it, xOf, yOf, colorLine, dp(2f), plotLeft, plotRight) }
+        } else {
+            // 生成页只有一条：真实引擎跑出来的那一条（含随机），没有再画包络的意义
+            generatedCurve?.let { drawCurve(canvas, it, xOf, yOf, colorLine, dp(2f), plotLeft, plotRight) }
         }
-        upperBoundCurve?.let {
-            drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight)
-        }
-        baseCurve?.let { drawCurve(canvas, it, xOf, yOf, colorLine, dp(2f), plotLeft, plotRight) }
         canvas.restore()
 
         // ── 刻度栏：纵轴数字（固定不动）──────────────────────────────────────
         label.color = colorLabel
         label.textSize = sp(9f)
         label.textAlign = Paint.Align.RIGHT
-        var ml = 0.0
-        while (ml <= Y_MAX + 1e-9) {
-            canvas.drawText(tickText(ml), plotLeft - dp(4f), yOf(ml) + dp(3.5f), label)
-            ml += Y_STEP
+        if (theory) {
+            hTicks.forEach { v -> canvas.drawText(tickText(v), plotLeft - dp(4f), yOf(v) + dp(3.5f), label) }
+        } else {
+            hTicks.forEach { pace ->
+                canvas.drawText(
+                    paceText(pace), plotLeft - dp(4f),
+                    yOfPace(pace, plotBottom, plotH) + dp(3.5f), label
+                )
+            }
+            // 纵轴单位：配速的数字光看"5:28"不知道是什么
+            label.textAlign = Paint.Align.LEFT
+            canvas.drawText("min/km", paddingLeft.toFloat(), plotTop - dp(3f), label)
         }
 
         // 横轴刻度：整 km 才标字
@@ -211,7 +298,7 @@ class StaminaChartView @JvmOverloads constructor(
         canvas.drawText("km", plotRight - dp(14f), plotBottom + dp(11f), label)
 
         // ── 图例（左上，用绘图区上方的留白）──────────────────────────────────
-        drawLegend(canvas, plotLeft, paddingTop + dp(9f))
+        drawLegend(canvas, plotLeft, paddingTop + dp(9f), theory)
 
         // ── 可滚动提示：还有内容的方向画箭头 ──────────────────────────────────
         val maxScroll = maxScrollMeters()
@@ -220,6 +307,21 @@ class StaminaChartView @JvmOverloads constructor(
         if (scrollMeters < maxScroll - 1.0) {
             drawChevron(canvas, plotRight - dp(6f), midY, pointingLeft = false)
         }
+    }
+
+    /** 配速刻度步长：让纵轴落在 3~6 条线上（0.5 / 1 / 2 / 5 分钟里挑） */
+    private fun paceTickStep(): Double {
+        val span = (paceMax - paceMin).coerceAtLeast(0.5)
+        for (step in doubleArrayOf(0.5, 1.0, 2.0, 5.0)) {
+            if (span / step <= 6.0) return step
+        }
+        return 10.0
+    }
+
+    /** 配速文字：5.5 ⇒ "5:30" */
+    private fun paceText(pace: Double): String {
+        val total = (pace * 60.0).roundToInt()
+        return "%d:%02d".format(total / 60, total % 60)
     }
 
     private fun tickText(v: Double): String =
@@ -257,7 +359,18 @@ class StaminaChartView @JvmOverloads constructor(
         canvas.drawPath(path, stroke)
     }
 
-    private fun drawLegend(canvas: Canvas, left: Float, baseline: Float) {
+    private fun drawLegend(canvas: Canvas, left: Float, baseline: Float, theory: Boolean) {
+        if (!theory) {
+            // 生成页：一条线，说明它是"跑出来的"而不是算出来的
+            stroke.color = colorLine
+            stroke.strokeWidth = dp(2f)
+            canvas.drawLine(left, baseline - dp(3f), left + dp(14f), baseline - dp(3f), stroke)
+            label.color = colorLabel
+            label.textSize = sp(10f)
+            label.textAlign = Paint.Align.LEFT
+            canvas.drawText("本次生成（真实引擎 · 含随机）", left + dp(18f), baseline, label)
+            return
+        }
         val pct = (config?.randomPercent ?: 0.0).toInt()
         val swatch = dp(14f)
         var x = left
