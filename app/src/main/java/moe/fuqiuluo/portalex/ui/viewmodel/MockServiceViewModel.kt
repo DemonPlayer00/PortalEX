@@ -277,6 +277,9 @@ class MockServiceViewModel : ViewModel() {
                 // 实验性开关跨重启恢复：服务握手成功后把当前偏好同步给系统侧。
                 // 启动恢复：开关 + 噪声档 + 体力参数 + 上报间隔一次下发（唯一出口，见 ConfigSync）
                 ConfigSync.restoreAfterHandshake(Portal.appContext, value)
+                // 会话可能是在**上一个 App 进程**里启动的（迁移后状态跨 App 生命周期存活）：
+                // 把 App 自己那一半职责重挂上（传感器轮询保活等），否则事件投递会退回"半天一批"
+                value.let { MockServiceHelper.reattachIfRunning(Portal.appContext, it) }
             }
         }
 
