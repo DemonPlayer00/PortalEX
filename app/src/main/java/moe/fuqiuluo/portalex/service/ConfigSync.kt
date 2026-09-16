@@ -18,7 +18,6 @@ import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
-import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -82,7 +81,6 @@ object ConfigSync {
         FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
         FakeLoc.disableGetFromLocation = !context.enableGetFromLocation
         FakeLoc.enableBinderSensorMock = context.binderSensorMock
-        FakeLoc.sensorGridHz = context.sensorGridHz
         FakeLoc.cadenceScale = context.cadenceScale.toDouble()
         FakeLoc.noiseProfile = context.sensorNoise
     }
@@ -118,7 +116,6 @@ object ConfigSync {
         rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
         // 隐藏开发者模式：系统侧钩子常驻、命中时才看这个开关，所以下发即生效
         rely.putBoolean(Key.HIDE_DEVELOPER_MODE, context.hideDeveloperMode)
-        rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
         rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
@@ -139,9 +136,7 @@ object ConfigSync {
         rely.putBoolean(Key.BINDER_SENSOR_MOCK, enabled)
         runCatching {
             FakeLoc.noiseProfile = context.sensorNoise
-            FakeLoc.sensorGridHz = context.sensorGridHz
             rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
-            rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
         }.onFailure { Log.w(TAG, "传感器侧配置恢复失败：${it.message}") }
         return resultOf(MockServiceHelper.send(locationManager, rely))
     }

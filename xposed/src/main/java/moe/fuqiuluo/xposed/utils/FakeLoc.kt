@@ -39,9 +39,6 @@ object FakeLoc {
     var enableBinderSensorMock: Boolean
         get() = LocConfig.enableBinderSensorMock
         set(value) { LocConfig.enableBinderSensorMock = value }
-    var sensorGridHz: Int
-        get() = LocConfig.sensorGridHz
-        set(value) { LocConfig.sensorGridHz = value }
     var noiseProfile: FloatArray
         get() = LocConfig.noiseProfile
         set(value) { LocConfig.noiseProfile = value }

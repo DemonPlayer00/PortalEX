@@ -97,10 +97,12 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
 
 | 项 | 值 | 出处 |
 |---|---|---|
-| 生成栅格 | 2.5 ~ 10 ms（有采用值时可低至 2.5ms） | `virtual_world.c` `MIN_TICK_NS` / `TICK_NS` |
+| 事件调度 | **每通道"下次应发时刻"**（无固定栅格）：周期取框架采用值，相位自由累加 | `virtual_world.c` `next_due_ns` / `channel_period_ns` |
+| 默认周期（无采用值时兜底） | 快档 20 ms、慢档 40 ms | `g_chan[]` 的 `def_period_ns` |
 | 延迟队列（两个消费者交接） | 96 条 | `DEFER_CAP` |
 | 步事件队列 | 64 条 | `STEP_QUEUE_CAP` |
-| 单次追赶上限 | 200 拍（≈2s） | `MAX_TICKS_PER_CALL` |
+| 单次生成上限 | 128 条（安全阀；正常一次只有几条） | `MAX_EVENTS_PER_CALL` |
+| 步事件过期窗口 | 2 s | `STALE_WINDOW_NS` |
 | 时间戳抖动 | 周期的 ±5%，钳 150µs~2ms，**严格不越过 now** | `jitter_ts` |
 | 步态波形 | 一个周期 = **9 步**（"波长 ×3"两次迭代而来） | `vw_gait.c` `g_gait_steps` |
 | 噪声档 | 逐轴 σ（20 槽：σ 与陀螺零偏）+ 高丝动态值 | `vw_noise.c` / `SensorNoise.kt` |

@@ -37,10 +37,21 @@ object BinderSensorMock {
     private const val FAIL_RETRY_TICKS = 100
 
     /**
-     * 运行时投递泵的周期。生成器自己按 20ms/40ms 的栅格决定谁该出事件
-     * （加速度 50Hz、磁场 25Hz、步数按步事件），所以泵只要比最密的栅格更密即可。
+     * 泵的睡眠上限（毫秒）。正常路径**睡到下一个事件到点**（见 [pumpLoop]），
+     * 这个上限只兜"原生层暂时没有到点源"和"提示还没回来"的情况。
      */
-    private const val PUMP_INTERVAL_MS = 5L
+    private const val PUMP_MAX_SLEEP_MS = 20L
+
+    /** 泵的最小睡眠：事件已经到点时不要空转（避免 100% CPU） */
+    private const val PUMP_MIN_SLEEP_MS = 1L
+
+    /**
+     * 老 .so 兜底：`nextDueNs` 是新加的 JNI，**旧的注入库没有这个符号**。
+     * 模块代码与注入库的重载时机不同（前者随进程、后者随系统启动），过渡期可能一边新一边旧；
+     * 一旦取不到就退回旧的 5ms 固定节拍，绝不变成"每次抛异常 + 1ms 空转"。
+     */
+    @Volatile private var nextDueAvailable = true
+    private const val PUMP_FALLBACK_SLEEP_MS = 5L
 
     @Volatile private var supervisorStarted = false
     @Volatile private var nativeReady = false
@@ -255,13 +266,11 @@ object BinderSensorMock {
      * 把**已经存在**的注入参数重新下发给刚装载好的原生层。
      *
      * 为什么必须有这一步：装载现在推迟到会话启动（开机不碰 HAL），而 App 的 `put_config`
-     * 通常在装载**之前**到达 —— 那一刻 `setGridHz` / `setNoise` 只会报
+     * 通常在装载**之前**到达 —— 那一刻 `setNoise` 只会报
      * `UnsatisfiedLinkError` 并被丢掉。少了这次重放，用户标定的噪声档与注入栅格会在
      * "开机后第一次开会话"时静默退回内置默认（值还在 [FakeLoc]，但原生层不知道）。
      */
     private fun applyStoredConfig() {
-        runCatching { BinderSensorNative.setGridHz(FakeLoc.sensorGridHz) }
-            .onFailure { Logger.warn("BinderSensorMock: 栅格重放失败：${it.message}") }
         runCatching {
             FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
         }.onFailure { Logger.warn("BinderSensorMock: 噪声档重放失败：${it.message}") }
@@ -297,7 +306,12 @@ object BinderSensorMock {
     }
 
     /**
-     * 运行时投递泵：每 [PUMP_INTERVAL_MS] 向原生层取一帧到期事件，逐条投递。
+     * 运行时投递泵：**睡到下一个事件到点**，醒来把到期事件逐条投递。
+     *
+     * 旧实现是固定 5ms 轮询：原生层按时间栅格决定谁该出，泵每 5ms 取一帧 —— 结果是
+     * 事件的**到达相位**被量化到 5ms（时间戳再精细也补不回来），而且栅格本身要跟应用
+     * 采用值对齐才"像"。现在改成事件驱动：原生层给出 [BinderSensorNative.nextDueNs]，
+     * 泵睡到那一刻精确唤醒，事件就发在它自己该发的时刻。
      *
      * 这是"投递 100% 可控"的落点：不再依赖 HAL 轮询（poll 只在被调用时才推进生成），
      * 改为我们自己的时钟推进。启动顺序必须是 **先切节拍、再起泵**（[SystemRuntimeChannel.startDelivery]），
@@ -329,9 +343,27 @@ object BinderSensorMock {
     private fun pumpLoop() {
         try {
             while (!Thread.currentThread().isInterrupted) {
-                Thread.sleep(PUMP_INTERVAL_MS)
                 if (!FakeLoc.enableBinderSensorMock || !FakeLoc.enable || !nativeReady) return
-                SystemRuntimeChannel.pump(SystemClock.elapsedRealtimeNanos())
+                val now = SystemClock.elapsedRealtimeNanos()
+                SystemRuntimeChannel.pump(now)
+                /*
+                 * 睡到"下一个到点时刻"：这是把轮询换成事件驱动的关键一步。
+                 * nextDueNs 返回 0（当前没有到点的源）时用一个很短的兜底间隔 ——
+                 * 状态推送/提示刷新仍按各自的节流跑，不能因为"没有事件"而睡死。
+                 */
+                val due = if (nextDueAvailable) {
+                    runCatching { BinderSensorNative.nextDueNs(now) }.getOrElse {
+                        nextDueAvailable = false
+                        Logger.warn("BinderSensorMock: 注入库没有 nextDueNs（旧 .so）⇒ 退回 5ms 固定节拍")
+                        0L
+                    }
+                } else 0L
+                val sleepMs = when {
+                    !nextDueAvailable -> PUMP_FALLBACK_SLEEP_MS
+                    due <= now -> PUMP_MIN_SLEEP_MS
+                    else -> ((due - now) / 1_000_000L).coerceIn(PUMP_MIN_SLEEP_MS, PUMP_MAX_SLEEP_MS)
+                }
+                Thread.sleep(sleepMs)
             }
         } catch (_: InterruptedException) {
             // 正常停止路径（stopPump 会 interrupt）

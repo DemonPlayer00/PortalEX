@@ -98,7 +98,6 @@ object PortalProtocol {
         const val NEED_DOWNGRADE_TO_2G      = "need_downgrade_to_2g"
         const val NOISE_PROFILE             = "noise_profile"
         const val PROXY_BINDER              = "proxy"
-        const val SENSOR_GRID_HZ            = "sensor_grid_hz"
         const val LISTENER_SIZE             = "size"
         const val SPEED                     = "speed"
         const val SPEED_AMPLITUDE           = "speed_amplitude"

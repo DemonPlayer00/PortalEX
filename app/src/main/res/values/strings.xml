@@ -67,11 +67,11 @@
     <string name="stamina_chart_title">速度倍率 / 距离</string>
     <string name="stamina_chart_desc">横轴=距离（窗口 2 km，左右滑动看更远），纵轴=速度倍率</string>
     <!-- 步频模拟页 -->
-    <string name="cadence_page_desc">决定"目标应用看到的步频"：由 速度 × 步频倍率 得出。这一页只放属于本域、且不与其它设置耦合的项（步频倍率）；传感器上报频率与位置上报间隔是全局项，仍在 Setting 页。</string>
+    <string name="cadence_page_desc">决定"目标应用看到的步频"：由 速度 × 步频倍率 得出。这一页只放属于本域、且不与其它设置耦合的项（步频倍率）。事件投递速率已改为**跟随框架采用值**（不再有"注入栅格分辨率"这个设置），步事件在框架侧按步间隔分摊下发。</string>
     <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>
     <string name="cadence_scale">步频倍率</string>
     <string name="cadence_scale_desc">微调「步频 ↔ 速度」的关系；1 = 不调整（0.2~3.0）</string>
-    <string name="cadence_footer">步频公式只有一处（FakeLoc.cadenceForSpeed，钳在 30~300 步/分）。步进事件由系统框架侧按"步间隔"分摊下发，目标应用不需要进入作用域。要调事件密度去 Setting 页：传感器上报频率（全局事件网格）与位置上报间隔（运动循环拍长，体力页也在读）。</string>
+    <string name="cadence_footer">步频公式只有一处（FakeLoc.cadenceForSpeed，钳在 30~300 步/分）。步进事件由系统框架侧按"步间隔"分摊下发，目标应用不需要进入作用域。事件投递速率跟随框架对每个传感器的采用值（真机 HAL 语义），无需手工调；位置上报间隔（运动循环拍长）仍在 Setting 页。</string>
 
     <!-- 角度计和指南针模拟页 -->
     <string name="angle_page_desc">角度计与指南针相关设置的归属页。**当前没有从「Setting」页搬过来的设置项**：方向/角度类的数值（磁场 σ、方向角 σ、旋转矢量 σ）是传感器噪声档，按用户口径仍留在「Calibration」页。</string>
