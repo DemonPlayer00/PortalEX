@@ -69,10 +69,14 @@
                             android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                             android:textColor="?attr/colorOnSurface"/>
 
+                        <!-- 同 layout_route_item：横向容器里用 0dp+weight，match_parent 会把行撑出视口 -->
                         <TextView
                             android:id="@+id/mock_location_latlon"
-                            android:layout_width="match_parent"
+                            android:layout_width="0dp"
                             android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:maxLines="1"
+                            android:ellipsize="end"
                             android:text="@string/default_latlon"
                             android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                             android:textColor="?attr/colorPrimary"/>
