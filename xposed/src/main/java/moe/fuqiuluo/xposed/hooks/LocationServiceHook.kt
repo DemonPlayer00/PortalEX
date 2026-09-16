@@ -482,13 +482,18 @@ internal object LocationServiceHook: BaseLocationHook() {
     private var dTail = 0L
     private var dFrames = 0L
 
-    /** 交付分段计时汇总（Test 页的 motion 行会带上它） */
+    /**
+     * 交付分段计时汇总（Test 页的 motion 行会带上它）。
+     * ⚠️ **读取即清零**：窗口口径（自上次读取以来），避免累计被暖机成本污染。
+     */
     fun deliveryTimingLine(): String {
         val n = dFrames.coerceAtLeast(1)
-        return "交付分段(µs 平均/总ns, 帧数=$dFrames): 造帧=%.0f/%d 监听器=%.0f/%d 一次性=%.0f/%d 收尾=%.0f/%d".format(
-            dBuild / 1000.0 / n, dBuild, dListeners / 1000.0 / n, dListeners,
-            dOneShot / 1000.0 / n, dOneShot, dTail / 1000.0 / n, dTail,
+        val line = "交付分段(µs 平均, 窗口=%d帧): 造帧=%.0f 监听器=%.0f 一次性=%.0f 收尾=%.0f".format(
+            dFrames, dBuild / 1000.0 / n, dListeners / 1000.0 / n,
+            dOneShot / 1000.0 / n, dTail / 1000.0 / n,
         )
+        dBuild = 0; dListeners = 0; dOneShot = 0; dTail = 0; dFrames = 0
+        return line
     }
 
     /** 一次性取位回调的方法解析缓存（同 [onChangeMethodCache] 的理由：别每帧解析一遍） */

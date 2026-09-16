@@ -170,13 +170,21 @@ object MotionClock {
     private var tDeliver = 0L
     private var timedBeats = 0L
 
-    /** 分段计时汇总（Test 页的 `motion` 行会带上它） */
+    /**
+     * 分段计时汇总（Test 页的 `motion` 行会带上它）。
+     *
+     * ⚠️ **读取即清零**：这是"自上次读取以来"的窗口，不是会话累计。
+     * 累计口径会被暖机成本污染（JIT、类加载、首次 binder 调用都算在前几十拍里，
+     * 实测把逐拍成本抬高了数倍），窗口口径才反映稳态。
+     */
     fun timingLine(): String {
         val n = timedBeats.coerceAtLeast(1)
-        return "每拍分段(µs 平均/总ns): 推进=%.0f/%d 体力=%.0f/%d 落点=%.0f/%d 投递=%.0f/%d 拍数=%d".format(
-            tMotion / 1000.0 / n, tMotion, tStamina / 1000.0 / n, tStamina,
-            tPlace / 1000.0 / n, tPlace, tDeliver / 1000.0 / n, tDeliver, timedBeats,
+        val line = "每拍分段(µs 平均, 窗口=%d拍): 推进=%.0f 体力=%.0f 落点=%.0f 投递=%.0f".format(
+            timedBeats, tMotion / 1000.0 / n, tStamina / 1000.0 / n,
+            tPlace / 1000.0 / n, tDeliver / 1000.0 / n,
         )
+        tMotion = 0; tStamina = 0; tPlace = 0; tDeliver = 0; timedBeats = 0
+        return line
     }
 
     private fun beat() {
