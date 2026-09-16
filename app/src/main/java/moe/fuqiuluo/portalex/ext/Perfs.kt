@@ -314,5 +314,25 @@ var Context.allowLandscape: Boolean
         putBoolean("allowLandscape", value)
     }
 
+/**
+ * 隐藏开发者模式。**默认关闭**。
+ *
+ * 打开后由 system_server 侧的 hook 把"开发者选项是否开启 / USB 调试是否开启"
+ * 这类查询拦成"未开启"（见 `hooks/settings/DeveloperModeHook.kt`），
+ * 于是**被注入进程**里的 `Settings.Global` 读取会得到未开启状态。
+ *
+ * 默认关闭是刻意的：它改变的是系统设置读到的事实（`adb_enabled` /
+ * `development_settings_enabled`），属于"会影响使用者自己"的开关，不适合默认替用户打开。
+ * 另：它只能作用于**被注入的进程**，注入范围由 LSPosed 作用域决定 —— 设置应用不在
+ * 作用域里时，它自己那一栏仍会显示真实状态（想一起盖住就把 `com.android.settings`
+ * 加进作用域；`scope.list` 里刻意不写，避免替用户改作用域）。
+ */
+var Context.hideDeveloperMode: Boolean
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.HIDE_DEVELOPER_MODE, false)
+    set(value) = sharedPrefs.edit {
+        putBoolean(PortalProtocol.Pref.HIDE_DEVELOPER_MODE, value)
+    }
+
+
 
 

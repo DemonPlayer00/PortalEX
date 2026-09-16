@@ -109,6 +109,26 @@ libxposed 的 `Hooker.intercept(chain)` 是**一个**回调；旧 API 是 before
 不写时清单的语义就是"推荐"（打标 + 默认勾上，用户仍可增减），与旧 `xposedscope` 一致。
 注意 `scope.list` 里**系统框架写 `system`**，而 legacy 的 `@array/xposed_scope` 里写的是 `android`。
 
+**当前清单**（`xposed/src/main/resources/META-INF/xposed/scope.list`，与
+`app/src/main/res/values/arrays.xml` 的 `xposed_scope` **两处必须一致**）：
+
+```
+system
+com.android.phone
+com.android.settings      ← 2026-09-16 加，见下
+com.android.location.fused
+com.xiaomi.location.fused
+com.oplus.location
+```
+
+**为什么加 `com.android.settings`**："隐藏开发者模式"那条钩子拦的是 `Settings.Global` 的读取
+（`development_settings_enabled` / `adb_enabled` / `adb_wifi_enabled` / `adb_authorization_timeout`），
+而**设置应用本身就是这组键的主要读取者与展示者** —— 它不在作用域里时，开发者选项那一栏
+照旧显示真实状态。要"系统框架里返回未开启"，这一项得在。
+
+⚠️ **清单里不写注释**：格式是"一行一个包名 / 一行一个入口类"，多写的行有被框架当成包名的风险
+（`Hide My Applist` 的 APK 里核出来的格式就是纯列表）。说明写在本文件里，不写进清单。
+
 ### 最近一次实测（2026-09-14 09:28 重启后）
 
 | 进程 | 现代入口 | 证据 |
