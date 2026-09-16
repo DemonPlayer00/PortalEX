@@ -24,25 +24,29 @@ internal object StaminaMath {
     }
 
     /**
-     * 最终倍率 = 疲劳倍率（疲劳状态下再 × [StaminaConfig.restSpeedFactor]）。
+     * 最终倍率 = **跑动档与疲劳档之间的混合**。
      *
-     * 疲劳速度**以走路值为下限**（用户口径：'休息时速度降至走路的低值'，且该值在
-     * 参数表里写着"速度地板"）：`max(疲劳×休息降速系数, 走路/基础)`。
+     * ```
+     * 跑动档 = min(疲劳倍率, 1.0)
+     * 疲劳档 = max(疲劳倍率 × 休息降速系数, 走路/基础)      ← 走路值是下限（用户口径）
+     * 最终   = 跑动档 + (疲劳档 − 跑动档) × blend          ← blend ∈ [0,1]
+     * ```
      *
-     * ⚠️ 曾经这里取的是 `min` —— 走路值被当成**上限**，于是默认参数下
-     * `min(0.75×0.25, 1.10/3.05) = 0.1875` ⇒ 实际疲劳速度 0.57 m/s，
-     * 而设置里写的 `休息时速度 = 1.10` 根本不生效（参数与文案互相打脸）。
+     * [blend] 是**状态**（谁在推进谁维护：模型里是逐拍收敛，曲线里是同一步长积分），
+     * 不是一次性插值 —— 否则"过渡途中又反向"会算出不属于任何一档的速度。
+     * `blend = 0/1` 时结果与"没有过渡"逐位相同，所以关掉过渡（过渡时间 = 0）时行为不变。
      */
     fun multiplierFor(
         c: StaminaConfig,
         baseSpeed: Double,
         fatigue: Double,
-        resting: Boolean,
+        blend: Double,
     ): Double {
         val walk = c.walkSpeed / baseSpeed
-        val target = if (resting) fatigue * c.restSpeedFactor else fatigue
-        val capped = if (resting) max(target, walk) else min(target, 1.0)
-        return capped.coerceIn(0.02, 1.0)
+        val run = min(fatigue, 1.0)
+        val rest = max(fatigue * c.restSpeedFactor, walk)
+        val b = blend.coerceIn(0.0, 1.0)
+        return (run + (rest - run) * b).coerceIn(0.02, 1.0)
     }
 }
 
@@ -114,6 +118,8 @@ object StaminaCurve {
      * 从满体力开始，跑到 [maxDistanceMeters] 为止。
      *
      * @param decayScale 衰减系数的整体倍数：1.0 = 无随机，1±p = 随机极值
+     * @param transitionScale 过渡时长的整体倍数：极值线要和衰减**同向取极**才有意义 ——
+     *   速度下界 = 衰减取大 + 过渡取快（1+p / 1−p），上界反之
      * @param dtSec 积分步长（秒）。测试里会传 0.1 与 [StaminaModel] 对齐逐拍比对
      */
     fun simulate(
@@ -122,6 +128,7 @@ object StaminaCurve {
         decayScale: Double = 1.0,
         maxDistanceMeters: Double = DEFAULT_MAX_DISTANCE_M,
         dtSec: Double = DEFAULT_DT_SEC,
+        transitionScale: Double = 1.0,
     ): Curve {
         val c = config.sanitized()
         val base = if (baseSpeed > 0.05) baseSpeed else 1.0
@@ -134,10 +141,15 @@ object StaminaCurve {
         var resting = false
         var restCount = 0
         var cooldown = 0.0
+        var blend = 0.0
+        var blendTarget = 0.0
+        val transitionSec = (c.transitionSec *
+                (if (transitionScale.isFinite() && transitionScale > 0.0) transitionScale else 1.0))
+            .coerceAtLeast(0.0)
         var elapsed = 0.0
         var distance = 0.0
         var multiplier = StaminaMath.multiplierFor(
-            c, base, StaminaMath.fatigueFactor(c, stamina), resting
+            c, base, StaminaMath.fatigueFactor(c, stamina), blend
         )
 
         val distanceList = ArrayList<Float>(4096)
@@ -164,8 +176,16 @@ object StaminaCurve {
                 cooldown += (stamina - c.resumeAtPercent) / 100.0 * step
                 if (cooldown >= 0.0) resting = false
             }
+            // 过渡：与 StaminaModel 同一套（目标档变化即"本次过渡"，时长 = 名义时长 × 本次倍数）
+            val target = if (resting) 1.0 else 0.0
+            if (target != blendTarget) blendTarget = target
+            if (blend != blendTarget) {
+                val rate = if (transitionSec <= 0.0) Double.MAX_VALUE else step / transitionSec
+                blend = if (blendTarget > blend) (blend + rate).coerceAtMost(1.0)
+                else (blend - rate).coerceAtLeast(0.0)
+            }
             multiplier = StaminaMath.multiplierFor(
-                c, base, StaminaMath.fatigueFactor(c, stamina), resting
+                c, base, StaminaMath.fatigueFactor(c, stamina), blend
             )
             // ↑↑↑ 结算结束 ↑↑↑
 

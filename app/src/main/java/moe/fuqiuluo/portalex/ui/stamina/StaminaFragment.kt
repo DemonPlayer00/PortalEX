@@ -87,6 +87,15 @@ class StaminaFragment : Fragment() {
                         "必须高于休息体力值（否则迟滞消失、会抖）。默认 30%",
             ),
             Row(
+                title = getString(R.string.stamina_transition),
+                desc = getString(R.string.stamina_transition_desc),
+                get = { it.transitionSec },
+                set = { c, v -> c.copy(transitionSec = v) },
+                format = { "%.1f 秒".format(it) },
+                hint = "进出疲劳时速度平滑的时长：默认 3 秒（默认参数下把 2.29 → 1.10 m/s 的" +
+                        "台阶摊成 3 秒的斜坡）。每次方向变化都会重抽一次，乘 ±随机化幅度。0 = 直接跳变",
+            ),
+            Row(
                 title = getString(R.string.stamina_rest_coefficient),
                 desc = getString(R.string.stamina_rest_coefficient_desc),
                 get = { it.restSecondsCoefficient },
@@ -241,7 +250,7 @@ class StaminaFragment : Fragment() {
         binding.staminaChart.submit(StaminaController.config(), base)
         // 阶段与倍率都从体力接口读（本页不自己判断"算不算在跑"）
         binding.staminaValue.text = "%.1f %%".format(snapshot.staminaPercent)
-        binding.staminaPhase.text = when {
+        val phase = when {
             !StaminaController.config().enabled -> "未启用（体力不参与调制）"
             StaminaController.isResting() ->
                 // 冷却进度：负数 = 还欠多少，回到 ≥0 就开跑（见 StaminaModel.cooldownSec）
@@ -253,6 +262,11 @@ class StaminaFragment : Fragment() {
             // 这里明确写出恢复速率，免得用户看到数字在涨却不知道是不是正常。
             else -> "空闲（恢复中：约 %.1f 点/分）".format(StaminaController.recoveringPerMinute())
         }
+        // 过渡中就把进度摊出来：不然"刚开跑却还是走路速度"看起来像 bug
+        binding.staminaPhase.text =
+            if (snapshot.blend > 0.01 && snapshot.blend < 0.99) {
+                "%s ｜过渡 %.0f%%".format(phase, snapshot.blend * 100)
+            } else phase
         binding.staminaEffective.text = "基础 %.2f m/s ⇒ 当前 %.2f m/s".format(
             base, StaminaController.effectiveSpeed(base)
         )
