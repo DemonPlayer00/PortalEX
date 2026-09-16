@@ -129,6 +129,33 @@ com.oplus.location
 ⚠️ **清单里不写注释**：格式是"一行一个包名 / 一行一个入口类"，多写的行有被框架当成包名的风险
 （`Hide My Applist` 的 APK 里核出来的格式就是纯列表）。说明写在本文件里，不写进清单。
 
+### 隐藏开发者模式：作用域与"设置应用不读那两条路"（2026-09-16 实测）
+
+**已成立**：
+- 模块的推荐清单（`scope.list` + legacy `arrays.xml`）里加了 `com.android.settings`；
+- 目的达成 —— 设置应用确实被注入：`libxposed 入口就绪：进程=com.android.settings`
+  （还有它的 `:background` 子进程）；
+- 钩子装上：`DeveloperModeHook: 已挂 5 个 Settings.Global 读取口`；
+- 开关链路通：`put_config` 里 `hide_developer_mode=false → true` 可见。
+
+**未成立（有定量证据，不是猜）**：设置应用 UI 里"开发者选项"仍显示**真实**状态
+（真值 `development_settings_enabled=1`，界面显示"开启"）。两条路都零命中：
+- `Settings.Global.getInt/getString/getLong/getBoolean` 的钩子：0 次命中；
+- 临时探针（`SettingsProvider.call` 命中我们关心的键时打印 `method` + Binder 调用者 uid/包名）：
+  **0 次命中** ⇒ 设置应用打开开发者选项页时**既没走客户端静态方法、也没走 provider 的 call**，
+  它读的是**进程内缓存**（Android 14+ 的 `DevelopmentSettingsDashboardFragment`
+  有 `rememberIsDevelopmentSettingsEnabled` 这类记忆字段），或经 AIDL 默认接口而非 `call`。
+
+⇒ 想连设置 UI 一起盖住，得再加一层：挂设置应用内部读到该状态的地方（缓存/字段），
+或改挂 provider 侧所有读取入口。**当前实现只覆盖"走 `Settings.Global` 公开 API 的被注入进程"。**
+
+⚠️ **设备侧教训（WAL）**：LSPosed 的 `modules_config.db` 是 WAL 模式，**改动可能还只在 `-wal` 里**。
+直接用主机 sqlite3 只读主库会看到旧快照（我据此误判过"作用域没加上"）；
+**删 `-wal` 前必须先 checkpoint**（`pragma wal_checkpoint(TRUNCATE)`），
+否则会把已应用的作用域记录丢掉（实测丢过一次 `com.android.settings`）。
+另外：改模块 APK 的推荐清单**不会**让框架重放它 —— 已装模块的 scope 需要
+管理器里操作，或由我们直接写入 DB。
+
 ### 最近一次实测（2026-09-14 09:28 重启后）
 
 | 进程 | 现代入口 | 证据 |
