@@ -179,7 +179,7 @@ class StaminaFragment : Fragment() {
             val c = StaminaController.config().copy(enabled = isChecked)
             StaminaController.applyConfig(context, c)
             // 打开时复位：否则会继承上一次运行遗留的体力/休息计时，看起来像"一开就累"
-            if (isChecked) StaminaController.resetStamina()
+            if (isChecked) StaminaController.resetStamina(context)
             renderRows()
             refreshStatus()
         }
@@ -199,7 +199,7 @@ class StaminaFragment : Fragment() {
         }
 
         binding.staminaReset.setOnClickListener {
-            StaminaController.resetStamina()
+            StaminaController.resetStamina(requireContext())
             refreshStatus()
         }
 
@@ -272,7 +272,7 @@ class StaminaFragment : Fragment() {
         val defaults = StaminaConfig().copy(enabled = keepEnabled)
         StaminaController.applyConfig(context, defaults)   // 落库 + 立即生效
         StaminaPrefs.clearObsolete(context)
-        StaminaController.resetStamina()
+        StaminaController.resetStamina(context)
 
         binding.staminaSwitch.isChecked = keepEnabled
         renderRows()
@@ -370,8 +370,11 @@ class StaminaFragment : Fragment() {
     }
 
     private fun refreshStatus() {
+        val context = requireContext()
+        // 状态在系统侧：先回读再渲染（读不到就照实说，不拿本进程的默认值假装在跑）
+        val readable = StaminaController.refresh(context)
         val snapshot = StaminaController.snapshot()
-        val base = requireContext().speed
+        val base = context.speed
         // 图与状态一起刷：submit 内部对"参数没变"直接返回，所以每秒调也无成本，
         // 却能顺带覆盖"在设置页改了基础速度"这种从外部发生的变化。
         // ⚠️ 只在"理论"页这么做：生成页是**一次跑法的快照**，每秒重跑既没意义也会让曲线乱跳。
@@ -385,9 +388,11 @@ class StaminaFragment : Fragment() {
             generate()
         }
         // 阶段与倍率都从体力接口读（本页不自己判断"算不算在跑"）
-        binding.staminaValue.text = "%.1f %%".format(snapshot.staminaPercent)
+        binding.staminaValue.text = if (readable) "%.1f %%".format(snapshot.staminaPercent) else "—"
         val phase = when {
+            !readable -> getString(R.string.stamina_phase_unavailable)
             !StaminaController.config().enabled -> "未启用（体力不参与调制）"
+            !StaminaController.isWireApplied() -> getString(R.string.stamina_phase_not_applied)
             StaminaController.isResting() ->
                 // 冷却进度：负数 = 还欠多少，回到 ≥0 就开跑（见 StaminaModel.cooldownSec）
                 "疲劳中（还剩 %.0f 秒｜参考点 %.0f%%）".format(

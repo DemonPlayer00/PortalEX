@@ -3,7 +3,10 @@ package moe.fuqiuluo.xposed.hooks.sensor
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.hooks.MotionClock
+import moe.fuqiuluo.xposed.utils.MotionEngine
 import moe.fuqiuluo.xposed.utils.PortalDiag
+import moe.fuqiuluo.xposed.utils.StaminaRuntime
 
 /**
  * Binder 外周传感器模拟（**默认开**）—— system_server 侧调度。
@@ -216,6 +219,18 @@ object BinderSensorMock {
         rely.putDouble("lon", FakeLoc.longitude)
         rely.putDouble("altitude", FakeLoc.altitude)
         rely.putBoolean("gnss_mock", FakeLoc.enableMockGnss)
+        // 体力与推进（统一架构迁移后都在系统侧，见 StaminaRuntime / MotionEngine / MotionClock）
+        StaminaRuntime.writeStatus(rely)
+        rely.putString("stamina", StaminaRuntime.statusLine())
+        val motion = MotionEngine.status()
+        rely.putString(
+            "motion",
+            "推进=%s 路线=%.0f/%.0fm(%d点) 时钟=%s 上报=%dms".format(
+                motion.mode.name.lowercase(), motion.travelledMeters, motion.distanceMeters,
+                motion.points, if (MotionClock.isRunning) "在跑" else "停",
+                FakeLoc.reportDurationMs,
+            )
+        )
     }
 
     /** 诊断字符串（logcat / 排查用） */

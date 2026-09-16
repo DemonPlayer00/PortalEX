@@ -18,6 +18,7 @@ import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
+import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.StaminaController
@@ -120,8 +121,10 @@ object ConfigSync {
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
         rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
-        // 体力参数：App 是此刻唯一的模型持有者，把参数镜像给模块（迁移步骤①建通路）
+        // 体力参数：App 只编辑参数，状态机在系统侧（见 StaminaController / StaminaRuntime）
         rely.putFloatArray(Key.STAMINA_CONFIG, StaminaController.config().toWire())
+        // 定位上报间隔（毫秒）：推进搬到系统侧后，出帧节奏由模块时钟按它决定
+        rely.putLong(Key.REPORT_DURATION, context.reportDuration.toLong())
 
         return resultOf(MockServiceHelper.send(locationManager, rely))
     }

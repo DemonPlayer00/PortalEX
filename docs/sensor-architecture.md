@@ -1,7 +1,7 @@
 # 传感器/位置模拟的统一架构（迁移方案）
 
-> 状态：**方案已定，迁移进行中**。本文是执行依据 —— 每轮改动照这里的顺序与判据走，
-> 不靠对话记忆。第一段"已验证"是迁移前的既成事实，后面都是待办。
+> 状态：**步骤①+② 已落地（2026-09-16，提交见下）**；③④ 待做。本文是执行依据 —— 每轮改动
+> 照这里的顺序与判据走，不靠对话记忆。第二段"迁移前现状"是既成事实，后面是待办与已落地记录。
 
 ## 一、目标（用户口径）
 
@@ -43,18 +43,29 @@ App（遥控器 + 普通客户端）
 
 ## 四、迁移顺序（每步都可独立验证）
 
-1. **体力进模块**
-   - `LocConfig` 增体力参数与状态；模块侧新增 `StaminaRuntime`（持 `StaminaModel`），由**模块时钟**推进
-     （世界 tick / 原生侧调用点）。
-   - 协议：`PUT_CONFIG` 增体力参数键；模块 `status()` 回传 `staminaPercent / multiplier / resting`。
-   - App：`StaminaController` 变瘦客户端（写参数、读状态），删除 `model.tick` 调用与位移缩放。
-   - 判据：体力页数值与模块回读一致；杀掉 App 再开，体力**不回满**（不再依赖 App 生命周期）。
-2. **推进引擎搬进模块**
-   - 路线数据由 App 上传（waypoints 已有：`selectedRoute` 的坐标串）；模块侧按体力倍率推进"当前世界位置"，
-     摇杆方向/锁定作为遥控指令下发。
-   - 删除 `MockServiceViewModel.ensureMotionLoop`；`MockKeepAliveService` 的存在理由随之改变
-     （不再需要"钉住 App 以维持推进"）—— 一并复核。
-   - 判据：自动播放的位移与交付流逐点一致（同一进程内同一个位置源，不存在两套）。
+1. **体力进模块** ✅（2026-09-16 落地，与步骤 2 同一提交）
+   - `LocConfig.staminaWire` 存参数；模块侧 `StaminaRuntime`（持 `StaminaModel`）由模块时钟 `MotionClock` 推进。
+   - 协议：`PUT_CONFIG` 的 `stamina_config` → `StaminaRuntime.applyWire`；`get_stamina` 回传
+     `stamina_percent/multiplier/resting/remaining_sec/blend/rest_count/moved_ago_sec/...`，
+     `get_sensor_status` 一并携带（诊断页）。
+   - App：`StaminaController` 变瘦客户端（写参数 → `ConfigSync` 下发；读状态 → `get_stamina`），
+     `model`/`tick`/`noteMoved`/`takeMovedMeters`/`speedMultiplier` 全部删除。
+   - 判据：体力页数值与模块回读一致（页面在回读失败时显示"状态不可读"而非假数据）；
+     **杀掉 App 再开，体力不回满**（状态不再挂在 App 生命周期上）。
+2. **推进引擎搬进模块** ✅（2026-09-16 落地）
+   - App 上传**展开后的播放路径点**（`set_route`，平滑段的贝塞尔采样仍由路线编辑器产生，它是编辑产物）；
+     播放开关 `route_control`；摇杆意图 `set_rocker`（只给方向与激活态，**不给位移**）。
+   - 模块侧 `MotionEngine` 按 `速度 × 体力倍率 × Δt` 推进世界位置并给出本拍朝向；
+     `MotionClock`（50ms 拍）写坐标 → 投递帧（按 `report_duration` 节流）。
+   - 删除 `MockServiceViewModel` 的 `ensureMotionLoop`/`advanceRockerMove`/`advanceRoutePlayback`
+     与全部弧长状态；`MockKeepAliveService` 的理由改为"无人值守的**收尾**"（提示音/状态收回），
+     不再是"钉住 App 以维持推进"。
+   - 判据：位移与交付流**同一处生成**（缩放就在推进公式里），不存在两套口径。
+
+> ⚠️ **与原 §7 的一处偏差（已实测确认必要）**：原计划"App 继续按名义速度推进、模块在
+> `injectLocation` 缩放交付位移"落不了地 —— 交付的是**绝对坐标**，那里没有"本次交付的位移"
+> 可缩放；硬做只能加一个滞后积分器，路线永远走不到终点（App 的弧长进度到终点、交付流还差一截）。
+> 所以推进与缩放**必须同处一个提交**一起搬（用户裁决：一刀搬全）。
 3. **App 改读位置**
    - 地图/标记改为订阅 `LocationManager`（普通客户端视角）；路线进度按交付进度显示。
    - 判据：App 地图上的路径与第三方应用收到的点位**逐点相同**（顺带成为注入的自证）。
@@ -74,35 +85,40 @@ App（遥控器 + 普通客户端）
 
 ## 六、验收清单（全部达成才算完成）
 
-1. `sh scripts/test-all.sh` 全绿（host 不变量 + 两个 JVM 模块）；
-2. 会话运行时 Test 页：投递速率跟随框架采用值、`步频意图 ≈ 实测步频`；
-3. 体力：杀掉 App 重启后体力**延续**（证明状态在系统侧）；体力页数值与模块回读一致；
-4. 位置：App 地图点位与第三方客户端收到的点位一致（普通客户端视角自证）；
-5. App 侧代码里**不再有**任何模拟状态机与推进逻辑（grep 可证）。
+1. ✅ `sh scripts/test-all.sh` 全绿（host 不变量 + 两个 JVM 模块；新增 `MotionEngineTest` 钉住
+   "位移 = 速度 × 倍率 × Δt"与路线几何）；
+2. ⏳ 会话运行时 Test 页：投递速率跟随框架采用值、`步频意图 ≈ 实测步频`（需装机跑会话）；
+3. ⏳ 体力：杀掉 App 重启后体力**延续**（证明状态在系统侧）；体力页数值与模块回读一致（需装机）；
+4. ⏳ 位置：App 地图点位与第三方客户端收到的点位一致（步骤③ 之后才谈得上）；
+5. ⏳ App 侧代码里**不再有**任何模拟状态机与推进逻辑 —— 体力模型/推进引擎已清空，
+   仅剩路线**编辑**（展开成采样点，见 `MockServiceViewModel.buildPath`）与显示/收尾。
 
-## 七、步骤① 正刀：逐处落点（下一轮照单执行）
-
-> 铁律：**同一提交内**完成"谁推进、谁缩放"的切换；下面 1–4 必须在同一个 commit 里。
+## 七、步骤①+② 的落点清单（2026-09-16 已落地，供复核）
 
 **模块侧（新增）**
-- `xposed/.../utils/StaminaRuntime.kt`：`object StaminaRuntime { fun load(wire: FloatArray); fun tick(dtSec, baseSpeed, movedMeters): Double; fun snapshot(): Stamp }`。
-  内部持 `StaminaModel`；参数来自 `LocConfig.staminaWire`（`StaminaConfig.fromWire`）。
-- **时钟点**：`BinderSensorMock` 的 50ms 状态推送线程（`PUSH_INTERVAL_MS`，行 31/394/404 那段）——
-  它是模块侧唯一的固定节拍，且已经每次采 `FakeLoc` 的运动学量 ⇒ 在那里 `StaminaRuntime.tick(dt, FakeLoc.speed, movedMeters)`。
-  `movedMeters` 用**交付位移**（`FakeLoc.averageSpeedOverWindow` 同源，避免第二套口径）。
-- **状态回传**：`BinderSensorMock.status()`（行 222）追加 `stamina=xx.x% mult=0.97 resting=0`；
-  页面通过既有 remote-prefs 通路读取（`ModulePrefs.remotePreferences`）。
+- `utils/MotionEngine.kt`：路线数据 + 推进状态（纯数学，无 Android 依赖 ⇒ JVM 可测）。
+  `setRoute/setPlaying/setRocker/beat/status/takeCompleted/stopSession/reset`；
+  `beat` 返回 `Step(moved, meters, lat, lon, bearing)`，`meters` 是**本拍真实推进量**（末拍截断）。
+- `utils/StaminaRuntime.kt`：持 `StaminaModel`，`applyWire/multiplier/tick/reset/writeStatus`。
+- `hooks/MotionClock.kt`：**模块唯一节拍**（50ms）。驱动 `MotionEngine.beat` → 写坐标
+  （`RemoteCommandHandler.applyMotionCoordinate`）→ `StaminaRuntime.tick` → 按
+  `LocConfig.reportDurationMs` 出帧（`LocationServiceHook.callOnLocationChanged(force = true)`）。
+  只在 system_server 起拍；`Cmd.START`/`STOP`/`PUT_CONFIG(enable)` 与它同生共死。
+- `BinderSensorMock.fillStatus`：追加 `stamina`（人读一行）与 `motion`（推进/时钟/上报间隔）。
 
-**App 侧（删除/变瘦）**
-- `MockServiceViewModel`：删 `StaminaController.tick(...)`（行 367）、`noteMoved`（行 435/462）、
-  以及两处 `speedMultiplier()` 缩放（行 428/460）—— 推进改回按 `FakeLoc.speed` 名义步进，
-  位移缩放由模块侧在**交付处**完成（`BaseLocationHook.injectLocation`：按倍率缩放本次交付的位移并同步 speed）。
-- `StaminaController`：保留 `config()`/`applyConfig()`（写参数 → `ConfigSync` 下发）与
-  `snapshot()`（改读模块回传），删掉 `model`/`tick`/`noteMoved`/`takeMovedMeters`/`speedMultiplier`。
-- `StaminaFragment`：数值与阶段改读模块回传（字段名不变，实现换成 remote）。
+**协议新增**（`PortalProtocol`，键数 41 → 63、命令 30 → 36，`PortalProtocolTest` 同步）
+- 命令：`set_rocker`、`set_route`、`route_control`、`get_motion`、`get_stamina`、`reset_stamina`。
+- 键：`report_duration`、`route_lat/lon/travelled/distance/points`、`motion_mode/playing/completed`、
+  `stamina_*`（12 项状态回读）。
 
-**验收（判据）**
-1. 会话运行中杀 App → 重开：体力**不回满**（证明状态在系统侧，App 生命周期无关）；
-2. 页面显示的体力/阶段与模块 `status()` 回传逐项一致；
-3. `sh scripts/test-all.sh` 全绿（`MockServiceViewModel` 无体力调用后，相关单测同步调整）；
-4. 位移与 delivered speed 仍一致（模块侧缩放点唯一：`injectLocation`）。
+**App 侧（变瘦）**
+- `MockServiceViewModel`：不再推进任何东西。遥控循环只在**内容变化时**下发
+  （路线上传一次、播放开关翻转、摇杆方向变化 >0.5°），另以 4Hz 回读 `get_motion`
+  （进度 / 播完收尾 / 坐标镜像）。
+- `StaminaController`：瘦客户端（参数落库+下发、状态回读、重置下发）。
+- `MockServiceHelper`：新增 6 个发送/查询口；`move`/`setBearing` 两个发送口因无人调用而删除
+  （模块侧 `Cmd.MOVE`/`SET_BEARING` 保留，兼容旧版 App）。
+
+**剩余（③④）**
+3. App 地图/标记改订阅 `LocationManager`（普通客户端视角），路线进度按交付进度显示。
+4. 清理与协议键数断言（已部分完成）、真机验收（六节清单 2–4 项）。
