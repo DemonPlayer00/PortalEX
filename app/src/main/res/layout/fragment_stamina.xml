@@ -72,16 +72,52 @@
                 android:textColor="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_chart_desc"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/stamina_chart_desc"
                 android:textSize="11sp" />
+
+            <!-- 理论 / 生成 两页切换。点"生成"= 用真实引擎重跑一条，所以它同时也是刷新键 -->
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/stamina_chart_mode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:checkedButton="@id/stamina_chart_mode_theory"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_chart_mode_theory"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="88dp"
+                    android:text="@string/stamina_chart_mode_theory" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_chart_mode_generated"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="88dp"
+                    android:text="@string/stamina_chart_mode_generated" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <moe.fuqiuluo.portalex.android.widget.StaminaChartView
                 android:id="@+id/stamina_chart"
                 android:layout_width="match_parent"
                 android:layout_height="190dp"
                 android:layout_marginTop="6dp" />
+
+            <!-- 生成页的本次跑法摘要（理论页隐藏） -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_chart_sample"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:visibility="gone" />
 
             <!-- 当前状态 -->
             <com.google.android.material.textview.MaterialTextView
