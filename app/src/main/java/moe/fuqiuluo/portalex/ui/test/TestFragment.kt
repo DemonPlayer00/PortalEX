@@ -140,6 +140,9 @@ class TestFragment : Fragment() {
             appendLine(prettyNative(status.getString("rt_channel")))
             appendLine()
             appendLine("── 普通应用视角（本进程真订阅，每 5s 轮询一次总步数）──")
+            // 地图页那条 LocationManager 订阅的现场读数：这是"App 与第三方客户端收到同一份帧"
+            // 的**最直接**证据（同一 tick 的注册拿到的是同一个注入对象）
+            appendLine("位置订阅       ${moe.fuqiuluo.portalex.service.PortalLocationClient.statusLine()}")
             appendLine(moe.fuqiuluo.xposed.hooks.sensor.frozen.SystemSensorManagerHook.stepTraceText())
             appendLine(StepProbe.status())
             appendLine()

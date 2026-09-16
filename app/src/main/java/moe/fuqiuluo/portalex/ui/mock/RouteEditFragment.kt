@@ -17,6 +17,8 @@ import androidx.lifecycle.lifecycleScope
 import com.alibaba.fastjson2.JSON
 import com.alibaba.fastjson2.JSONObject
 import com.baidu.location.BDAbstractLocationListener
+import moe.fuqiuluo.portalex.service.PortalLocationClient
+import moe.fuqiuluo.portalex.ext.reportDuration
 import com.baidu.location.BDLocation
 import com.baidu.location.LocationClient
 import com.baidu.location.LocationClientOption
@@ -26,7 +28,6 @@ import com.baidu.mapapi.map.MapPoi
 import com.baidu.mapapi.map.MapStatus
 import com.baidu.mapapi.map.MapStatusUpdateFactory
 import com.baidu.mapapi.map.MarkerOptions
-import com.baidu.mapapi.map.MyLocationData
 import com.baidu.mapapi.map.Polyline
 import com.baidu.mapapi.map.PolylineOptions
 import com.baidu.mapapi.model.LatLng
@@ -189,28 +190,21 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         option.setCoorType(Portal.DEFAULT_COORD_STR)
         option.setScanSpan(1000)
         mLocationClient.locOption = option
+        // 同 Home：百度 SDK 只用来取城市名；位置显示一律走 LocationManager（普通客户端视角）
         mLocationClient.registerLocationListener(object : BDAbstractLocationListener() {
             override fun onReceiveLocation(loc: BDLocation?) {
-                if (loc == null) return
-                val locData = MyLocationData.Builder()
-                    .accuracy(loc.radius)
-                    .direction(loc.direction)
-                    .latitude(loc.latitude)
-                    .longitude(loc.longitude)
-                    .build()
-
-                if (loc.city != null)
-                    MainActivity.mCityString = loc.city
-
-                with(baiduMapViewModel) {
-                    currentLocation = loc.wgs84
-                    baiduMap.setMyLocationData(locData)
-                }
+                if (loc?.city != null) MainActivity.mCityString = loc.city
             }
         })
         baiduMapViewModel.mLocationClient = mLocationClient
         mLocationClient.enableLocInForeground(1, baiduMapViewModel.mNotification)
         mLocationClient.start()
+
+        PortalLocationClient.subscribe(this, requireContext(), requireContext().reportDuration.toLong()) { fix ->
+            if (baiduMapViewModel.isExists) {
+                baiduMapViewModel.applyFix(fix.lat, fix.lon, fix.bearing, fix.accuracy)
+            }
+        }
 
         binding.mapTypeGroup.setOnCheckedChangeListener { _, checkedId ->
             when (checkedId) {
@@ -318,6 +312,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
             mLocationClient.disableLocInForeground(true)
             mLocationClient.stop()
         }
+        PortalLocationClient.unsubscribe(this)
         // 先把覆盖物清干净，再销毁地图视图，释放 GL 线程与显存
         _binding?.bmapView?.onDestroy()
         _binding = null

@@ -19,17 +19,17 @@ import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 /**
  * 会话期间的**后台保活服务**（设置项「后台保活」，默认开）。
  *
- * ## 为什么需要它（这次是有实测依据的）
- * App 是普通应用进程：退到后台就是 cached，会被 Android 的 **Cached Apps Freezer** 冻结。
- * 冻结期间运动循环（`MockServiceViewModel` 的协程）整段停摆 —— 真机实测到 25.6s / 25.8s /
- * 47.7s 的 tick 空洞，而 system_server 侧仍在按保活节奏推帧：**位置一动不动、帧内 vel≈0**，
- * 目标跑步应用看到的就是"原地不动"。
+ * ## 为什么需要它（迁移后的理由）
+ * ⚠️ **推进本身已经不需要 App 活着**：统一架构迁移后世界在 system_server
+ * （`MotionEngine` + `MotionClock`），App 被冻也照样走。这条服务留下是为了**收尾与观察**：
+ * App 退后台就是 cached 进程，会被 Android 的 **Cached Apps Freezer** 冻结 ——
+ * 冻住之后就没人"播完放提示音/振动、把悬停按钮状态收回来"，地图蓝点也停止更新。
  *
  * 前台服务把本进程钉在 `FOREGROUND_SERVICE` 档（`dumpsys activity oom` 里是 `fgsl`），
- * **冻结器只冻 cached 进程**，所以只要这个服务在，循环就不会被冻；再配一个
- * `PARTIAL_WAKE_LOCK`，灭屏时 CPU 也不会挂起 —— 两条合起来才叫"稳定控制"。
+ * **冻结器只冻 cached 进程**，所以只要这个服务在，观察者就不会被冻；再配一个
+ * `PARTIAL_WAKE_LOCK`，灭屏时 CPU 也不会挂起。
  *
- * ## 生命周期：**只覆盖"无人值守仍在推进"**（省电优先）
+ * ## 生命周期：**只覆盖"无人值守仍在推进"**（省电优先；判据不变，理由见上）
  * 由 `MockServiceViewModel.syncBackgroundKeepAlive` 每个 tick 判定：
  * · 需要 → `start`：**自动播放**（路线自己走，可能灭屏/后台）、**摇杆锁定后松手继续走**；
  * · 不需要 → `stop`：空闲（会话开着但没动）、手指正按着摇杆、关掉设置项。
@@ -50,7 +50,7 @@ class MockKeepAliveService : Service() {
         private const val WAKE_LOCK_TAG = "PortalEX:mockSession"
 
         /**
-         * 进程内"现在需不需要保活"。由调用方（`MockServiceViewModel` 的运动循环）
+         * 进程内"现在需不需要保活"。由调用方（`MockServiceViewModel` 的遥控循环）
          * 按**是否无人值守仍在推进**设置：自动播放 / 摇杆锁定后继续走 ⇒ true；
          * 空闲、手指按着摇杆、关掉设置项 ⇒ false。
          *
