@@ -71,6 +71,29 @@ object BinderSensorMock {
 
     /** 停摆后的兜底自检间隔（毫秒）：万一唤醒漏了，也不会永久睡死 */
     private const val IDLE_RECHECK_MS = 30_000L
+
+    /**
+     * 世界静止时的**朝向回灌**节奏（纳秒）。
+     *
+     * 静止≠没事干：朝向上的"摆动"（±3°、半周期 0.35~0.75s）一直在演化，传感器侧要跟着它
+     * 才像真机磁罗盘。但没必要按 20Hz 喂 —— 半周期最慢 0.75s，5Hz 就能把摆动带出来。
+     */
+    private const val IDLE_BEARING_PUSH_NANOS = 200_000_000L
+
+    /** 兜底回灌上限（纳秒）：即使什么都没变也要喂一次，免得原生层里的 `now` 无限陈旧 */
+    private const val STATE_HEARTBEAT_NANOS = 2_000_000_000L
+
+    /** 静止时速率提示的刷新间隔（纳秒）：没人走路时"按应用期望出数据"不急 */
+    private const val RATE_HINT_IDLE_NANOS = 10_000_000_000L
+
+    /** 朝向变化阈值（度）：小于它不必打扰原生层 */
+    private const val BEARING_EPS_DEG = 0.3
+
+    /** 上一次真正下发过的快照（变化检测用；[Double.NaN] = 还没发过） */
+    private var lastPushLat = Double.NaN
+    private var lastPushLon = Double.NaN
+    private var lastPushBearing = Double.NaN
+    private var lastPushNanos = 0L
     @Volatile private var active = false
     @Volatile private var pumpThread: Thread? = null
 
@@ -452,6 +475,11 @@ object BinderSensorMock {
      * 5. **速率提示**（每 2s 节流）：把框架"实际采用"的出帧速率灌给原生层，实现
      *    "按应用期望出数据"（没人订阅的类型随之静默）。
      *
+     * ## 拍子照旧，但**每拍是否干活由事件决定**
+     *
+     * 50ms 这个节拍只保证"有位移时步事件的时间戳精度"；世界没动时每拍直接返回
+     * （见 [tick] 顶部的分流）。所以它是"定时器 + 变化检测"，而不是"定时器 + 无条件轮询"。
+     *
      * ## 空闲时**停摆**，不空转
      *
      * 上面五件事只在"开关开着 **且** 会话在跑"时才有意义；否则每拍都是 early-return。
@@ -543,7 +571,40 @@ object BinderSensorMock {
             )
         }
 
-        val (speed, moving) = FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
+        /*
+         * ---- 「有事才做」：这一步是这套时钟从轮询改成"事件驱动"的关键 ----
+         *
+         * 下面两件是每拍里**唯一贵**的事：`averageSpeedOverWindow`（扫坐标历史）与
+         * `updateState`（JNI，写原生世界 + 按步分摊事件）。原先每拍无条件做，于是
+         * "会话开着但人在原地"时白烧 ~1.0~1.5% 单核（实测，40 拍/2s）。
+         *
+         * 现在按**世界是否真的动了**分流：
+         *  · 动了（有位移）⇒ 全套：量速度、积步数、下发快照（步事件的时间戳精度靠它）；
+         *  · 没动 ⇒ 只按 5Hz 回灌**朝向**（摆动的半周期 0.35~0.75s，5Hz 足够带出来），
+         *    外加 2s 兜底心跳；其余每拍直接返回，一行 JNI 都不打。
+         *
+         * 静止时不再量速度、不再积步数 —— 没位移就没有步数，`stepFraction` 也不会丢（它只在
+         * moving 时累加）。落地到应用侧的表现不变：站着不动时计步器不涨、指南针仍有摆动。
+         */
+        val lat = FakeLoc.latitude
+        val lon = FakeLoc.longitude
+        val bearingNow = FakeLoc.processedBearing()
+        val worldChanged = lat != lastPushLat || lon != lastPushLon
+        val bearingChanged = lastPushBearing.isNaN() ||
+                Math.abs(((bearingNow - lastPushBearing + 540.0) % 360.0) - 180.0) > BEARING_EPS_DEG
+        val sincePush = now - lastPushNanos
+        if (!worldChanged) {
+            val bearingDue = bearingChanged && sincePush >= IDLE_BEARING_PUSH_NANOS
+            val heartbeat = sincePush >= STATE_HEARTBEAT_NANOS
+            if (!bearingDue && !heartbeat) return
+        }
+
+        // 世界动了才算运动学（静止时速度恒 0：没有位移就没有速度，不需要去查窗口平均）
+        val (speed, moving) = if (worldChanged) {
+            FakeLoc.averageSpeedOverWindow(SPEED_WINDOW_MS)
+        } else {
+            0.0 to false
+        }
         if (moving && dt > 0.0 && dt < 5.0) {
             stepFraction += FakeLoc.cadenceForSpeed(speed) / 60.0 * dt
             val whole = stepFraction.toInt()
@@ -555,11 +616,13 @@ object BinderSensorMock {
 
         // S2：载体引导在上面的"开关打开"分支里已经做过（幂等），这里只推进状态
         /*
-         * 「按应用期望出数据」：周期性把框架观测到的**采用速率**与**活跃状态**灌给原生层。
+         * 「按应用期望出数据」：把框架观测到的**采用速率**与**活跃状态**灌给原生层。
          * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播 ⇒ 我们照同一模型走；
-         * 没人订阅的类型随之静默。dump 有缓存（2s），这里的 2s 节流与它同量级。
+         * 没人订阅的类型随之静默。dump 有缓存（2s）且**解析结果没变就不下发**（见 pushHints），
+         * 所以这里静止时放到 10s：没人走路时速率提示不急，别为它每 2s 拉一次 40KB 的 dump。
          */
-        if (now - lastRateHintNanos > RATE_HINT_INTERVAL_NANOS) {
+        val hintInterval = if (moving) RATE_HINT_INTERVAL_NANOS else RATE_HINT_IDLE_NANOS
+        if (now - lastRateHintNanos > hintInterval) {
             lastRateHintNanos = now
             val ok = runCatching { SensorRateProbe.pushHints() }.getOrDefault(false)
             if (ok && !rateHintLogged) {
@@ -567,6 +630,10 @@ object BinderSensorMock {
                 Logger.info("BinderSensorMock: 注入速率改由框架采用值驱动（见 rates=/hints）")
             }
         }
-        BinderSensorNative.updateState(speed, FakeLoc.processedBearing(), moving, steps, now)
+        BinderSensorNative.updateState(speed, bearingNow, moving, steps, now)
+        lastPushLat = lat
+        lastPushLon = lon
+        lastPushBearing = bearingNow
+        lastPushNanos = now
     }
 }

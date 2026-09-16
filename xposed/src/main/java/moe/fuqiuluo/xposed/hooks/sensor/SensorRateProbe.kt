@@ -79,6 +79,9 @@ internal object SensorRateProbe {
      * 这是 fail-silent，比"这一轮不更新"坏得多 —— 实测过的事故形态就是"数据凭空消失、
      * 而 Test 页一切正常"。
      */
+    /** 上一次真正下发过的、**我们接管的类型**的活跃表；一模一样就不必再来一遍 */
+    private var lastPushed: Map<Int, Pair<Long, Long>>? = null
+
     fun pushHints(): Boolean {
         val text = dumpCached() ?: return false
         val active = activeHandles(text)
@@ -89,6 +92,10 @@ internal object SensorRateProbe {
             Logger.debug("SensorRateProbe.pushHints: 传感器类型表不可用，跳过本轮（不清空通道）")
             return false
         }
+        // 只看**我们接管的类型**：别的传感器（厂商私有等）换速率与我们无关，
+        // 但它会让整张表变化 ⇒ 不做这层过滤就会一直被无谓地重灌。
+        val relevant = active.filterKeys { byHandle.containsKey(it) }
+        if (relevant == lastPushed) return true
         return runCatching {
             BinderSensorNative.clearChannelHints()
             var pushed = 0
@@ -97,6 +104,7 @@ internal object SensorRateProbe {
                 BinderSensorNative.setChannelHint(type, selectedNs, batchNs, true)
                 pushed++
             }
+            if (pushed > 0) lastPushed = relevant
             pushed > 0
         }.onFailure {
             PortalDiag.fail(PortalDiag.Area.RATE_HINTS, it)
