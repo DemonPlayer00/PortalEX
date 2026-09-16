@@ -274,8 +274,15 @@ class StaminaFragment : Fragment() {
         StaminaController.resetStamina()
 
         binding.staminaSwitch.isChecked = keepEnabled
-        chartConfig = defaults
         renderRows()
+        // ⚠️ 这里**不能**只把 chartConfig 标成 defaults 就完事：生成页的曲线是"一次跑法的快照"，
+        //    那样它会以为自己的采样还新鲜，继续显示用旧参数跑出来的图（真机上就是这么露馅的）。
+        //    所以按当前页签各自走一遍刷新路径。
+        if (binding.staminaChart.mode() == StaminaChartView.Mode.GENERATED) {
+            generate()
+        } else {
+            showTheory()
+        }
         refreshStatus()
         Toast.makeText(context, R.string.stamina_reset_data_done, Toast.LENGTH_SHORT).show()
     }
