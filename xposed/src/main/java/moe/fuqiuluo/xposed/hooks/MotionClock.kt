@@ -41,6 +41,21 @@ object MotionClock {
     @Volatile
     private var thread: Thread? = null
 
+    /**
+     * 停摆/唤醒的锁（与 `BinderSensorMock` 同一做法）：**没有推进意图时世界不会动**，
+     * 那时 20Hz 的拍子纯属空转（实测稳态占 0.33% 单核）。
+     */
+    private val idleLock = Object()
+
+    /**
+     * 停摆后的兜底自检间隔（毫秒）。
+     *
+     * 取 5s 而不是几分钟：唤醒点虽然铺全了（每条意图命令都叫），但"漏一次唤醒"的后果是
+     * **按住摇杆位置却一动不动**（本仓踩过的静默失效形态）。5s 的代价只有 0.2Hz 的唤醒，
+     * 换来的是"最多 5 秒自愈"。
+     */
+    private const val IDLE_RECHECK_MS = 5_000L
+
     private var lastBeatNanos = 0L
     private var lastDeliverNanos = 0L
 
@@ -58,6 +73,7 @@ object MotionClock {
                 isDaemon = true
                 start()
             }
+            wake()
             Logger.info(
                 "MotionClock: 推进时钟已启动（${BEAT_MS}ms/拍，投递间隔 ${deliverIntervalMs()}ms，" +
                         "体力=${StaminaRuntime.config().enabled}）"
@@ -79,15 +95,56 @@ object MotionClock {
     private fun deliverIntervalMs(): Long =
         FakeLoc.reportDurationMs.coerceIn(MIN_DELIVER_MS, MAX_DELIVER_MS)
 
+    /**
+     * **叫醒停摆的时钟**（幂等）：任何可能让世界动起来的意图都要叫一次 ——
+     * 摇杆激活、路线开始播放、改速度、开会话（调用点在 `RemoteCommandHandler`）。
+     */
+    fun wake() {
+        synchronized(idleLock) { idleLock.notifyAll() }
+    }
+
+    /**
+     * 停摆等待。@return false = 被中断（`stop()` 要求退出）——**不能用 runCatching 吞掉中断**，
+     * 否则 stop 之后线程仍会一直停在 wait 里（中断标志被异常清掉，再等下一个超时）。
+     */
+    private fun park(): Boolean = try {
+        synchronized(idleLock) { idleLock.wait(IDLE_RECHECK_MS) }
+        true
+    } catch (_: InterruptedException) {
+        false
+    }
+
+    /**
+     * 主循环：**有意图才走拍子，没意图就停摆**。
+     *
+     * 稳态的三种形状：
+     *  · 会话没开 → 停摆（等 `start` 唤醒）；
+     *  · 会话开着但没推进意图（摇杆没按、路线没播）→ 世界不会动：先把这段空闲结算给体力，
+     *    再停摆（等意图命令唤醒）。**这一条就是"不再轮询浪费性能"的落点** ——
+     *    空闲时的稳态开销从 0.33% 单核降到 ~0；
+     *  · 有意图（摇杆按住 / 路线在播）→ 50ms 一拍推进世界并投递。
+     *
+     * 停摆期间**体力照旧要回**：恢复是连续过程，所以醒来时用
+     * [StaminaRuntime.reconcileNow] 把停摆这段一次性补上（读取路径也会补，见 writeStatus）。
+     */
     private fun loop() {
         try {
             while (!Thread.currentThread().isInterrupted) {
-                Thread.sleep(BEAT_MS)
                 if (!FakeLoc.enable) {
-                    // 会话已停：不动位置，但保持线程（stop 命令负责收尾）
                     lastBeatNanos = 0L
+                    if (!park()) return
+                    // 醒来（多半是 start 命令）：先把停摆这段的空闲恢复补上，再决定下一步
+                    StaminaRuntime.reconcileNow()
                     continue
                 }
+                if (MotionEngine.mode() == MotionEngine.Mode.IDLE) {
+                    StaminaRuntime.reconcileNow()
+                    lastBeatNanos = 0L
+                    if (!park()) return
+                    StaminaRuntime.reconcileNow()
+                    continue
+                }
+                Thread.sleep(BEAT_MS)
                 beat()
             }
         } catch (_: InterruptedException) {
@@ -114,7 +171,7 @@ object MotionClock {
         )
 
         // 2) 体力：用**本拍真实推进的位移**结算（不是名义值）——旧实现同一口径
-        StaminaRuntime.tick(dt, FakeLoc.speed, step.meters)
+        StaminaRuntime.tick(FakeLoc.speed, step.meters)
 
         if (!step.moved) return
 
