@@ -31,7 +31,9 @@ class StaminaCycleAnalysisTest {
 
     /** 某一点体力在"该模式"下的净变化速率（点/分） */
     private fun netRatePerMinute(c: StaminaConfig, stamina: Double, resting: Boolean): Double {
-        val m = StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, stamina), resting)
+        val m = StaminaMath.multiplierFor(
+            c, base, StaminaMath.fatigueFactor(c, stamina), if (resting) 1.0 else 0.0
+        )
         val recovery = c.recoverCoefficient * StaminaMath.recoveryFactor(stamina) / c.restSecondsCoefficient
         return recovery - c.decayPerMinute * m
     }
@@ -60,7 +62,7 @@ class StaminaCycleAnalysisTest {
         var rests = 0
         var oneTickSegments = 0
         var current = 0
-        var m = StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s), resting)
+        var m = StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s), 0.0)
         repeat((seconds / dt).toInt()) {
             s += c.recoverCoefficient / 60.0 * StaminaMath.recoveryFactor(s) / c.restSecondsCoefficient * dt
             s -= c.decayPerMinute / 60.0 * m * dt
@@ -70,7 +72,8 @@ class StaminaCycleAnalysisTest {
             } else if (resting && s > c.restAtPercent) {   // ← 旧口径：同一个阈值
                 resting = false
             }
-            m = StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s), resting)
+            // 反例只看"有没有迟滞"，过渡不参与 ⇒ 直接取 0/1 档
+            m = StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s), if (resting) 1.0 else 0.0)
             if (resting) current++ else if (current > 0) {
                 if (current == 1) oneTickSegments++
                 current = 0
@@ -97,6 +100,7 @@ class StaminaCycleAnalysisTest {
     fun `新口径下 疲劳段是真的一段而不是一拍`() {
         val c = cfg()
         val model = StaminaModel()
+        val rnd = kotlin.random.Random(1)
         val seconds = ArrayList<Double>()
         val unfinished = ArrayList<Double>()
         var currentTicks = 0
@@ -105,7 +109,7 @@ class StaminaCycleAnalysisTest {
 
         repeat(ticks) {
             val before = model.snapshot()
-            model.tick(c, dt, base, base * before.speedScale * dt, kotlin.random.Random(1))
+            model.tick(c, dt, base, base * before.speedScale * dt, rnd)
             val now = model.snapshot()
             if (now.resting) {
                 if (currentTicks == 0) entryStamina = now.staminaPercent
@@ -166,11 +170,12 @@ class StaminaCycleAnalysisTest {
     /** 跑 [seconds] 秒，返回**最长的一段连续疲劳**（秒） */
     private fun longestFatigueSeconds(c: StaminaConfig, seconds: Double): Double {
         val model = StaminaModel()
+        val rnd = kotlin.random.Random(1)
         var current = 0
         var longest = 0
         repeat((seconds / dt).toInt()) {
             val before = model.snapshot()
-            model.tick(c, dt, base, base * before.speedScale * dt, kotlin.random.Random(1))
+            model.tick(c, dt, base, base * before.speedScale * dt, rnd)
             if (model.snapshot().resting) {
                 current++
                 if (current > longest) longest = current
@@ -200,7 +205,7 @@ class StaminaCycleAnalysisTest {
 
         // 默认参数：疲劳期可能出现的整个体力区间内，实速恒定
         val speeds = (c.restAtPercent.toInt()..100 step 2).map { s ->
-            StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s.toDouble()), true) * base
+            StaminaMath.multiplierFor(c, base, StaminaMath.fatigueFactor(c, s.toDouble()), 1.0) * base
         }
         println("默认系数 %.2f：疲劳速度 min=%.4f max=%.4f m/s（走路值 %.2f）"
             .format(c.restSpeedFactor, speeds.min(), speeds.max(), walkSpeed))
@@ -209,8 +214,8 @@ class StaminaCycleAnalysisTest {
 
         // 系数够大时下限松开，速度开始随体力上升
         val loose = c.copy(restSpeedFactor = 0.60)
-        val atLow = StaminaMath.multiplierFor(loose, base, StaminaMath.fatigueFactor(loose, 30.0), true) * base
-        val atHigh = StaminaMath.multiplierFor(loose, base, StaminaMath.fatigueFactor(loose, 100.0), true) * base
+        val atLow = StaminaMath.multiplierFor(loose, base, StaminaMath.fatigueFactor(loose, 30.0), 1.0) * base
+        val atHigh = StaminaMath.multiplierFor(loose, base, StaminaMath.fatigueFactor(loose, 100.0), 1.0) * base
         println("系数 %.2f：体力 30%% 时 %.3f m/s ⇒ 体力 100%% 时 %.3f m/s（随体力上升）"
             .format(loose.restSpeedFactor, atLow, atHigh))
         assertTrue("系数够大时必须随体力上升（%.3f ⇒ %.3f）".format(atLow, atHigh), atHigh > atLow)
@@ -221,6 +226,83 @@ class StaminaCycleAnalysisTest {
         println("边界系数：体力在阈值 %.1f%% 时 %.3f，体力 100%% 时 %.3f".format(c.restAtPercent, kLow, kHigh))
         assertEquals("阈值处边界", 0.481, kLow, 0.005)
         assertEquals("满体力边界", 0.361, kHigh, 0.005)
+    }
+
+    /** 跑 [seconds] 秒，返回每拍倍率的最大变化量（台阶 ⇒ 一次大跳；斜坡 ⇒ 每拍小步） */
+    private fun maxMultiplierStep(c: StaminaConfig, seconds: Double): Double {
+        val model = StaminaModel()
+        val rnd = kotlin.random.Random(7)
+        var prev = model.snapshot().speedScale
+        var maxStep = 0.0
+        repeat((seconds / dt).toInt()) {
+            model.tick(c, dt, base, base * prev * dt, rnd)
+            val now = model.snapshot().speedScale
+            maxStep = maxOf(maxStep, kotlin.math.abs(now - prev))
+            prev = now
+        }
+        return maxStep
+    }
+
+    @Test
+    fun `过渡把疲劳开始的台阶摊成斜坡`() {
+        val stepped = cfg().copy(transitionSec = 0.0)     // 0 = 立即切换（旧行为）
+        val smoothed = cfg()                             // 默认 3 秒过渡
+        val stepMax = maxMultiplierStep(stepped, 45.0 * 60.0)
+        val smoothMax = maxMultiplierStep(smoothed, 45.0 * 60.0)
+
+        println("每拍最大倍率变化：无过渡 %.4f（一步跨掉 0.75−0.3607=0.389）；过渡 3 秒 %.4f"
+            .format(stepMax, smoothMax))
+        assertTrue("无过渡时必须是一条大台阶（实际 %.4f）".format(stepMax), stepMax > 0.3)
+        assertTrue("有过渡时每拍只能走一小步（实际 %.4f）".format(smoothMax), smoothMax < 0.05)
+        // 理论值：跨幅 × dt / 过渡时长 = 0.389 × 0.25 / 3 ≈ 0.0325
+        assertEquals("每拍步长应等于 跨幅×dt/过渡时长", 0.0325, smoothMax, 0.01)
+    }
+
+    /**
+     * 过渡时长**每次重新随机**。
+     *
+     * 用一组"过渡很频繁"的参数（衰减远大于恢复 ⇒ 一分钟能进出好几次），
+     * 记录每次方向变化后 blend 走完所需拍数，看它是不是同一个数。
+     */
+    @Test
+    fun `过渡时长每次重新随机`() {
+        // ⚠️ 参数不能随便挑：跑侧平衡点必须**高于**休息体力值，否则体力从上方趋近却永远碰不到阈值
+        //    （第一次就踩了：restAt=50 时净速率恰好在 50% 处归零 ⇒ 一次过渡都没发生）
+        val c = cfg().copy(
+            decayPerMinute = 200.0, recoverCoefficient = 100.0,
+            restAtPercent = 80.0, resumeAtPercent = 85.0,
+            transitionSec = 2.0, randomPercent = 30.0,
+        )
+        val model = StaminaModel()
+        // ⚠️ 随机源必须**跨拍复用**：每拍 `Random(11)` 会把随机钉成常数，
+        //    测出来的"随机化"永远是同一个数（这个坑我自己先踩了一次）
+        val rnd = kotlin.random.Random(11)
+        val durations = ArrayList<Double>()
+        var prevTarget = 0.0
+
+        repeat((20.0 * 60.0 / dt).toInt()) {
+            val before = model.snapshot()
+            model.tick(c, dt, base, base * before.speedScale * dt, rnd)
+            val now = model.snapshot()
+            val target = if (now.resting) 1.0 else 0.0
+            if (target != prevTarget) {
+                prevTarget = target
+                // 过渡的第一拍位移 = dt / 本次抽到的时长 ⇒ 反解出**本次过渡到底抽了多少秒**
+                // （按"走完用了几拍"去量会被 dt 量化成 0.25 的整数倍，量不出真实值）
+                val stepOfBlend = kotlin.math.abs(now.blend - before.blend)
+                if (stepOfBlend > 0.0) durations.add(dt / stepOfBlend)
+            }
+        }
+
+        val distinct = durations.map { "%.2f".format(it) }.distinct()
+        println("抽到的过渡时长（秒）=${durations.take(12).map { "%.2f".format(it) }}；不同取值 ${distinct.size} 个")
+        assertTrue("样本太少，说明这组参数没跑出足够的过渡（${durations.size} 次）", durations.size >= 5)
+        assertTrue("过渡时长必须每次都不一样（不同取值 ${distinct.size} 个）", distinct.size >= 3)
+        assertTrue(
+            "随机幅度必须落在 ±30%% 内（名义 2.0 ⇒ 1.4~2.6，实测 %.2f~%.2f）"
+                .format(durations.min(), durations.max()),
+            durations.min() >= 2.0 * 0.7 - 1e-6 && durations.max() <= 2.0 * 1.3 + 1e-6
+        )
     }
 
     /** 语义守卫：开跑阈值必须高于休息体力值，否则迟滞消失（夹取兜底） */

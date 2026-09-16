@@ -56,8 +56,12 @@ class StaminaChartView @JvmOverloads constructor(
     private var scrollMeters: Double = 0.0
 
     private var baseCurve: StaminaCurve.Curve? = null
-    private var highCurve: StaminaCurve.Curve? = null
-    private var lowCurve: StaminaCurve.Curve? = null
+
+    /** 速度**下界**：衰减取最大 + 过渡取最快（两件随机互相独立，这个组合同样可达） */
+    private var lowerBoundCurve: StaminaCurve.Curve? = null
+
+    /** 速度**上界**：衰减取最小 + 过渡取最慢 */
+    private var upperBoundCurve: StaminaCurve.Curve? = null
 
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -117,9 +121,14 @@ class StaminaChartView @JvmOverloads constructor(
 
         val p = (config.randomPercent / 100.0).coerceIn(0.0, 1.0)
         baseCurve = StaminaCurve.simulate(config, base, decayScale = 1.0)
-        // 运行时随机是"每段跑动抽一次衰减速率" ⇒ 上下界就是把衰减整体乘 (1±p)
-        highCurve = StaminaCurve.simulate(config, base, decayScale = 1.0 + p)
-        lowCurve = StaminaCurve.simulate(config, base, decayScale = 1.0 - p)
+        // 运行时随机有两处：每段跑动抽一次衰减速率、每次过渡抽一次过渡时长。
+        // 两者独立 ⇒ 极值组合同样可达：下界 = 衰减最大 + 过渡最快，上界反之。
+        lowerBoundCurve = StaminaCurve.simulate(
+            config, base, decayScale = 1.0 + p, transitionScale = (1.0 - p).coerceAtLeast(0.05)
+        )
+        upperBoundCurve = StaminaCurve.simulate(
+            config, base, decayScale = 1.0 - p, transitionScale = 1.0 + p
+        )
         clampScroll()
         invalidate()
     }
@@ -167,8 +176,12 @@ class StaminaChartView @JvmOverloads constructor(
         }
 
         // 先画包络（半透明），后画主曲线：重叠处主曲线要压在上面
-        highCurve?.let { drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight) }
-        lowCurve?.let { drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight) }
+        lowerBoundCurve?.let {
+            drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight)
+        }
+        upperBoundCurve?.let {
+            drawCurve(canvas, it, xOf, yOf, withAlpha(colorLine, BOUND_ALPHA), dp(1.5f), plotLeft, plotRight)
+        }
         baseCurve?.let { drawCurve(canvas, it, xOf, yOf, colorLine, dp(2f), plotLeft, plotRight) }
         canvas.restore()
 

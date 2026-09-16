@@ -51,6 +51,7 @@ object StaminaPrefs {
             resumeAtPercent = sp.getFloat(P + "resume", d.resumeAtPercent.toFloat()).toDouble(),
             restSpeedFactor = sp.getFloat(P + "rest_factor", d.restSpeedFactor.toFloat()).toDouble(),
             restSecondsCoefficient = sp.getFloat(P + "rest_sec", d.restSecondsCoefficient.toFloat()).toDouble(),
+            transitionSec = sp.getFloat(P + "transition", d.transitionSec.toFloat()).toDouble(),
             recoverCoefficient = sp.getFloat(P + "recover", d.recoverCoefficient.toFloat()).toDouble(),
             moveIgnoreWindowSec = sp.getFloat(P + "ignore_window", d.moveIgnoreWindowSec.toFloat()).toDouble(),
             moveIgnoreSpeed = sp.getFloat(P + "ignore_speed", d.moveIgnoreSpeed.toFloat()).toDouble(),
@@ -69,6 +70,7 @@ object StaminaPrefs {
             putFloat(P + "resume", c.resumeAtPercent.toFloat())
             putFloat(P + "rest_factor", c.restSpeedFactor.toFloat())
             putFloat(P + "rest_sec", c.restSecondsCoefficient.toFloat())
+            putFloat(P + "transition", c.transitionSec.toFloat())
             putFloat(P + "recover", c.recoverCoefficient.toFloat())
             putFloat(P + "ignore_window", c.moveIgnoreWindowSec.toFloat())
             putFloat(P + "ignore_speed", c.moveIgnoreSpeed.toFloat())
