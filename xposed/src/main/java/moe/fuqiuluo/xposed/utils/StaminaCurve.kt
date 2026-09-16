@@ -2,6 +2,7 @@ package moe.fuqiuluo.xposed.utils
 
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.random.Random
 
 /**
  * 倍率数学的**唯一实现**（模型与曲线预览共用）。
@@ -104,14 +105,77 @@ object StaminaCurve {
     class Curve(
         val distanceM: FloatArray,
         val multiplier: FloatArray,
-        /** 这一程进入休息的次数 */
+        /** 这一程进入疲劳的次数 */
         val restCount: Int,
+        /** 这一程累计处于疲劳的时长（秒） */
+        val restTotalSec: Double,
         /** 这一程花掉的模拟时间（秒） */
         val elapsedSec: Double,
         /** 终点的体力（%） */
         val staminaEndPercent: Double,
     ) {
         val size: Int get() = minOf(distanceM.size, multiplier.size)
+    }
+
+    /** 生成页用的积分步长：**取 App 的报点间隔**（`reportDuration` 默认 100ms），保证同一口径 */
+    const val SAMPLE_DT_SEC = 0.1
+
+    /**
+     * **用真实引擎跑一遍**（生成页的数据源）。
+     *
+     * 与 [simulate] 的关键区别：这里**不重写任何公式**，而是直接驱动 [StaminaModel] ——
+     * 也就是 App 运动循环每拍调用的那个对象，调用顺序、参数、随机抽取全都一样：
+     *
+     * ```
+     * 每拍：本拍位移 = 基础速度 × 当前倍率 × Δt   ← 与 MockServiceViewModel 的推进一致
+     *       model.tick(配置, Δt, 基础速度, 位移, 随机源)
+     * ```
+     *
+     * 所以"与实际运行逻辑一致"是**构造上成立**的，不是靠两处公式对齐去维护。
+     * 代价是每次要真的跑几万拍（10km ≈ 4 万拍 ≈ 几毫秒），而且结果**带随机**
+     * —— 同一组参数每次生成都不一样，这正是"生成"和"理论"的区别。
+     *
+     * @param random 随机源。测试里传固定种子即可复现；App 里用默认源，于是每次点"生成"都是新的一条
+     */
+    fun sample(
+        config: StaminaConfig,
+        baseSpeed: Double,
+        maxDistanceMeters: Double = DEFAULT_MAX_DISTANCE_M,
+        dtSec: Double = SAMPLE_DT_SEC,
+        random: Random = Random.Default,
+    ): Curve {
+        val c = config.sanitized()
+        val base = if (baseSpeed > 0.05) baseSpeed else 1.0
+        val step = dtSec.coerceIn(0.02, 1.0)
+        val limit = if (maxDistanceMeters > 0.0) maxDistanceMeters else DEFAULT_MAX_DISTANCE_M
+
+        val model = StaminaModel()
+        var multiplier = model.snapshot().speedScale
+        var distance = 0.0
+        var elapsed = 0.0
+        val distanceList = ArrayList<Float>(4096)
+        val multiplierList = ArrayList<Float>(4096)
+        distanceList.add(0f)
+        multiplierList.add(multiplier.toFloat())
+
+        while (distance < limit && elapsed < MAX_SECONDS) {
+            val moved = base * multiplier * step
+            multiplier = model.tick(c, step, base, moved, random)
+            distance += moved
+            elapsed += step
+            distanceList.add(distance.toFloat())
+            multiplierList.add(multiplier.toFloat())
+        }
+
+        val s = model.snapshot()
+        return Curve(
+            distanceM = distanceList.toFloatArray(),
+            multiplier = multiplierList.toFloatArray(),
+            restCount = s.restCount,
+            restTotalSec = s.restTotalSec,
+            elapsedSec = elapsed,
+            staminaEndPercent = s.staminaPercent,
+        )
     }
 
     /**
@@ -140,6 +204,7 @@ object StaminaCurve {
         var stamina = 100.0
         var resting = false
         var restCount = 0
+        var totalRestSec = 0.0
         var cooldown = 0.0
         var blend = 0.0
         var blendTarget = 0.0
@@ -188,6 +253,7 @@ object StaminaCurve {
                 c, base, StaminaMath.fatigueFactor(c, stamina), blend
             )
             // ↑↑↑ 结算结束 ↑↑↑
+            if (resting) totalRestSec += step
 
             distance += moved
             elapsed += step
@@ -199,6 +265,7 @@ object StaminaCurve {
             distanceM = distanceList.toFloatArray(),
             multiplier = multiplierList.toFloatArray(),
             restCount = restCount,
+            restTotalSec = totalRestSec,
             elapsedSec = elapsed,
             staminaEndPercent = stamina,
         )

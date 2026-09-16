@@ -15,7 +15,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.android.widget.StaminaChartView
+import moe.fuqiuluo.xposed.utils.StaminaCurve
 import moe.fuqiuluo.portalex.databinding.FragmentStaminaBinding
+import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.service.StaminaController
@@ -188,6 +191,20 @@ class StaminaFragment : Fragment() {
             refreshStatus()
         }
 
+        // 理论 / 生成 两页：点"生成"= 用真实引擎重跑一条（所以它同时是刷新键，
+        // 已经在生成页时再点一次也重新跑 —— 这条由按钮自己的 click 兜住，
+        // 因为 ToggleGroup 对"重复选中同一个按钮"不会回调）
+        binding.staminaChartMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            when (checkedId) {
+                R.id.stamina_chart_mode_generated -> generate()
+                else -> showTheory()
+            }
+        }
+        binding.staminaChartModeGenerated.setOnClickListener {
+            if (binding.staminaChart.mode() == StaminaChartView.Mode.GENERATED) generate()
+        }
+
         binding.staminaReset.setOnClickListener {
             StaminaController.resetStamina()
             refreshStatus()
@@ -242,12 +259,60 @@ class StaminaFragment : Fragment() {
         return rowView
     }
 
+    private var chartConfig: StaminaConfig? = null
+
+    /** 理论页：解析积分 + ±随机包络（跟随参数自动刷新） */
+    private fun showTheory() {
+        val config = StaminaController.config()
+        chartConfig = config
+        binding.staminaChartSample.visibility = View.GONE
+        binding.staminaChartDesc.text = getString(R.string.stamina_chart_desc)
+        binding.staminaChart.submit(config, requireContext().speed)
+    }
+
+    /**
+     * 生成页：**用真实引擎跑一遍**（[StaminaCurve.sample] 直接驱动 [StaminaModel]，
+     * 与运动循环同一套调用），每次点都换一条随机路径，并把这次的成绩摊在图下面。
+     */
+    private fun generate() {
+        val context = requireContext()
+        val config = StaminaController.config()
+        val base = context.speed
+        chartConfig = config
+        // 报点间隔取设置里的值：它在真机上直接决定每拍位移，进而决定曲线细节
+        val dtSec = context.reportDuration.coerceIn(1, 1000) / 1000.0
+        val curve = StaminaCurve.sample(config, base, dtSec = dtSec)
+
+        binding.staminaChartDesc.text = getString(R.string.stamina_chart_desc_generated)
+        binding.staminaChart.submitGenerated(curve, base)
+
+        val km = curve.distanceM.last() / 1000.0
+        val minutes = curve.elapsedSec / 60.0
+        val avgPace = if (km > 0.01) curve.elapsedSec / km else 0.0
+        binding.staminaChartSample.visibility = View.VISIBLE
+        binding.staminaChartSample.text = getString(
+            R.string.stamina_chart_sample,
+            "%.1f".format(km),
+            "%.1f".format(minutes),
+            "%d:%02d".format((avgPace / 60).toInt(), (avgPace % 60).toInt()),
+            curve.restCount,
+            "%.1f".format(curve.restTotalSec / 60.0),
+        )
+    }
+
     private fun refreshStatus() {
         val snapshot = StaminaController.snapshot()
         val base = requireContext().speed
         // 图与状态一起刷：submit 内部对"参数没变"直接返回，所以每秒调也无成本，
         // 却能顺带覆盖"在设置页改了基础速度"这种从外部发生的变化。
-        binding.staminaChart.submit(StaminaController.config(), base)
+        // ⚠️ 只在"理论"页这么做：生成页是**一次跑法的快照**，每秒重跑既没意义也会让曲线乱跳。
+        if (binding.staminaChart.mode() == StaminaChartView.Mode.THEORY) {
+            binding.staminaChart.submit(StaminaController.config(), base)
+        } else if (StaminaController.config() != chartConfig) {
+            // 参数被改了 ⇒ 生成页快照已经过期，重跑一条（否则图上还挂着旧参数的跑法）
+            chartConfig = StaminaController.config()
+            generate()
+        }
         // 阶段与倍率都从体力接口读（本页不自己判断"算不算在跑"）
         binding.staminaValue.text = "%.1f %%".format(snapshot.staminaPercent)
         val phase = when {
