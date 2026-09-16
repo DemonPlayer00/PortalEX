@@ -481,6 +481,9 @@ internal object LocationServiceHook: BaseLocationHook() {
     private var dOneShot = 0L
     private var dTail = 0L
     private var dFrames = 0L
+    /** 同一批分段的 **CPU 时间**（`Debug.threadCpuTimeNanos`）：与墙钟一起看才不会被阻塞骗到 */
+    private var dBuildCpu = 0L
+    private var dListenersCpu = 0L
 
     /**
      * 交付分段计时汇总（Test 页的 motion 行会带上它）。
@@ -488,11 +491,15 @@ internal object LocationServiceHook: BaseLocationHook() {
      */
     fun deliveryTimingLine(): String {
         val n = dFrames.coerceAtLeast(1)
-        val line = "交付分段(µs 平均, 窗口=%d帧): 造帧=%.0f 监听器=%.0f 一次性=%.0f 收尾=%.0f".format(
-            dFrames, dBuild / 1000.0 / n, dListeners / 1000.0 / n,
+        val line = ("交付分段(µs 平均, 窗口=%d帧, 墙钟/CPU): 造帧=%.0f/%.0f 监听器=%.0f/%.0f " +
+                "一次性=%.0f 收尾=%.0f").format(
+            dFrames,
+            dBuild / 1000.0 / n, dBuildCpu / 1000.0 / n,
+            dListeners / 1000.0 / n, dListenersCpu / 1000.0 / n,
             dOneShot / 1000.0 / n, dTail / 1000.0 / n,
         )
         dBuild = 0; dListeners = 0; dOneShot = 0; dTail = 0; dFrames = 0
+        dBuildCpu = 0; dListenersCpu = 0
         return line
     }
 
@@ -522,7 +529,16 @@ internal object LocationServiceHook: BaseLocationHook() {
             Logger.debug("==> callOnLocationChanged: ${locationListeners.size}, force=$force")
         }
 
+        // **没有消费者就什么都不做**：造一帧要 ~0.9ms（对象/Bundle/GNSS extras），
+        // 而没人订阅时它注定被丢掉。10Hz 投递下这是白烧 ~1% 单核。
+        // 语义不变：注册表为空 ⇒ 本来也没有任何投递动作。
+        if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) {
+            if (FakeLoc.enableDebugLog) Logger.debug("==> callOnLocationChanged: 无消费者，跳过造帧")
+            return
+        }
+
         val timing = FakeLoc.enableDebugLog
+        val cpu0 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
         val f0 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
         if (timing) dFrames++
 
@@ -536,6 +552,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
         val nowNanos = SystemClock.elapsedRealtimeNanos()
         val f1 = if (timing) nowNanos else 0L
+        val cpu1 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
 
         var delivered = 0
         locationListeners.forEach { reg ->
@@ -549,6 +566,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
 
         val f2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
+        val cpu2 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
 
         var oneShotDelivered = 0
         oneShotCallbacks.forEach { oneShot ->
@@ -580,10 +598,13 @@ internal object LocationServiceHook: BaseLocationHook() {
 
         if (timing) {
             val f3 = SystemClock.elapsedRealtimeNanos()
+            val cpu3 = android.os.Debug.threadCpuTimeNanos()
             dBuild += f1 - f0
             dListeners += f2 - f1
             dOneShot += f3 - f2
             dTail += 0L
+            dBuildCpu += cpu1 - cpu0
+            dListenersCpu += cpu2 - cpu1
         }
 
         if (delivered > 0 || oneShotDelivered > 0) lastDeliveryNanosGlobal = nowNanos
