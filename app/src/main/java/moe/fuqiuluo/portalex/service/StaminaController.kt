@@ -19,13 +19,17 @@ import moe.fuqiuluo.xposed.utils.StaminaModel
  * 两边各自只有一件事可变：调速策略变了只改模型，位移策略变了只改运动循环。
  * 之前把"够不够累"的判断漏在调用方，就出过两种偏差（空闲掉血、静止回血）。
  *
- * ## 状态只有三态，且由"真实运动"驱动
+ * ## 状态由"真实运动"驱动，但**恢复永远在进行**
  *
  * ```
  * 本拍有表象位移 → 消耗与恢复同时进行（净效果 = 恢复 − 消耗）
- * 本拍无位移      → 只走恢复（体力照样回，"恢复是持续的"）
+ * 本拍无位移      → 只有恢复（体力**继续回**，直到回满）—— "空闲也在恢复"
  * 位移"过快"      → 判为异常帧，本拍只走恢复、不计消耗（防瞬移抽干体力）
  * ```
+ *
+ * ⚠️ 曾经的口径是"空闲冻结体力"（既不衰减也不恢复），**已被取代**：
+ * 现在只有**消耗**是条件性的（需要有位移），**恢复是无条件的背景过程**。
+ * 判断"现在算不算跑动"只影响界面显示与倍率，不影响体力是否恢复。
  *
  * ## 为什么体力放在 App 侧
  *
@@ -154,6 +158,20 @@ object StaminaController {
     }
 
     fun snapshot(): StaminaModel.Snapshot = model.snapshot()
+
+    /**
+     * 当前**恢复速率**（点/分钟）—— 供界面显示"空闲时也在回体力"这件事。
+     *
+     * 与模型内部完全同一口径：`系数 × 恢复倍率(体力) ÷ 冷却系数`（模型里再 /60 成每秒）。
+     * 放在这里而不是让界面自己算：倍率公式只该有一处实现，否则显示值与实际值迟早漂移。
+     */
+    fun recoveringPerMinute(): Double {
+        val c = config
+        if (!c.enabled) return 0.0
+        val s = model.snapshot()
+        val factor = 2.0 - s.staminaPercent.coerceIn(0.0, 100.0) / 100.0
+        return c.recoverCoefficient * factor / c.restSecondsCoefficient
+    }
 
     /** 当前实际速度（配置速度 × 倍率），供界面显示 */
     fun effectiveSpeed(baseSpeed: Double): Double = baseSpeed * speedMultiplier()
