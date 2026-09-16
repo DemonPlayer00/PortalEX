@@ -248,6 +248,27 @@ internal object LocationServiceHook: BaseLocationHook() {
     private val onChangeMethodCache =
         java.util.concurrent.ConcurrentHashMap<Class<*>, java.lang.reflect.Method>()
 
+    /**
+     * 解析一次性取位回调的 `onLocation`（按类缓存；负结果也缓存，避免每帧抛异常）。
+     * @return null = 该类没有这个方法（已缓存，不再重试）
+     */
+    private fun resolveOnLocationMethod(callback: IInterface): java.lang.reflect.Method? {
+        val cls = callback.javaClass
+        val cached = onLocationMethodCache[cls]
+        if (cached === null) {
+            val found = runCatching {
+                XposedHelpers.findMethodBestMatch(cls, "onLocation")
+            }.getOrNull()
+            onLocationMethodCache[cls] = found ?: NULL_METHOD
+            return found
+        }
+        @Suppress("UNCHECKED_CAST")
+        return if (cached === NULL_METHOD) null else cached as java.lang.reflect.Method
+    }
+
+    /** 负结果哨兵：该类没有 onLocation（别每帧再找一次） */
+    private val NULL_METHOD = Any()
+
     /** 向单个监听器投一帧；返回是否成功 */
     private fun deliverFrame(listener: IInterface, frame: Location): Boolean {
         onChangeMethodCache[listener.javaClass]?.let { cached ->
@@ -447,6 +468,33 @@ internal object LocationServiceHook: BaseLocationHook() {
         locationListeners.removeIf { it.listener.asBinder() == binder }
     }
 
+    // ------------------------------------------------------------------
+    // 交付分段计时（先量再改）
+    //
+    // 实测：会话开 + 持续移动时，推进时钟的单拍成本 **95% 在 `callOnLocationChanged`**
+    // （平均 ~6ms/帧，10Hz）。这个函数里有三件可能贵的事：造帧（buildFrame →
+    // injectLocation：抖动/GNSS extras/方法解析）、监听器循环（每个一次 binder 调用）、
+    // 一次性取位回调。计时就是用来分辨它们的 —— 我不再靠"看起来贵"下判断。
+    // ------------------------------------------------------------------
+    private var dBuild = 0L
+    private var dListeners = 0L
+    private var dOneShot = 0L
+    private var dTail = 0L
+    private var dFrames = 0L
+
+    /** 交付分段计时汇总（Test 页的 motion 行会带上它） */
+    fun deliveryTimingLine(): String {
+        val n = dFrames.coerceAtLeast(1)
+        return "交付分段(µs 平均/总ns, 帧数=$dFrames): 造帧=%.0f/%d 监听器=%.0f/%d 一次性=%.0f/%d 收尾=%.0f/%d".format(
+            dBuild / 1000.0 / n, dBuild, dListeners / 1000.0 / n, dListeners,
+            dOneShot / 1000.0 / n, dOneShot, dTail / 1000.0 / n, dTail,
+        )
+    }
+
+    /** 一次性取位回调的方法解析缓存（同 [onChangeMethodCache] 的理由：别每帧解析一遍） */
+    private val onLocationMethodCache =
+        java.util.concurrent.ConcurrentHashMap<Class<*>, Any>()
+
     /**
      * 心跳投递：位置变更（move / update_location）、显式广播（broadcast_location）、
      * 启动拉回各自在「坐标已改好」后调用。
@@ -469,6 +517,10 @@ internal object LocationServiceHook: BaseLocationHook() {
             Logger.debug("==> callOnLocationChanged: ${locationListeners.size}, force=$force")
         }
 
+        val timing = FakeLoc.enableDebugLog
+        val f0 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
+        if (timing) dFrames++
+
         // 同一 tick（一次广播）= 同一帧：持续注册的监听器与一次性取位回调共用同一份注入对象。
         // 时间戳按当前时刻打：本函数产出的是模块自己生成的新帧。
         val frame = buildFrame() ?: run {
@@ -478,6 +530,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             return
         }
         val nowNanos = SystemClock.elapsedRealtimeNanos()
+        val f1 = if (timing) nowNanos else 0L
 
         var delivered = 0
         locationListeners.forEach { reg ->
@@ -490,6 +543,8 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         }
 
+        val f2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
+
         var oneShotDelivered = 0
         oneShotCallbacks.forEach { oneShot ->
             // 饥饿判定：登记后 FRAME_STARVATION_NANOS 内框架可能仍在投递，先等——避免与框架重复
@@ -498,8 +553,10 @@ internal object LocationServiceHook: BaseLocationHook() {
             var called = false
             var error: Throwable? = null
             kotlin.runCatching {
-                val mOnLocation = XposedHelpers.findMethodBestMatch(oneShot.callback.javaClass, "onLocation", frame)
-                Hooks.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
+                val mOnLocation = resolveOnLocationMethod(oneShot.callback)
+                if (mOnLocation != null) {
+                    Hooks.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
+                }
                 called = true
             }.onFailure {
                 if (it is InvocationTargetException && it.targetException is DeadObjectException) {
@@ -514,6 +571,14 @@ internal object LocationServiceHook: BaseLocationHook() {
             } else {
                 Logger.error("callOnLocationChanged(one-shot) failed: " + error?.stackTraceToString())
             }
+        }
+
+        if (timing) {
+            val f3 = SystemClock.elapsedRealtimeNanos()
+            dBuild += f1 - f0
+            dListeners += f2 - f1
+            dOneShot += f3 - f2
+            dTail += 0L
         }
 
         if (delivered > 0 || oneShotDelivered > 0) lastDeliveryNanosGlobal = nowNanos

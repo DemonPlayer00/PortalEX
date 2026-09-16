@@ -298,7 +298,11 @@ object BinderSensorMock {
                 motion.points, if (MotionClock.isRunning) "在跑" else "停",
                 FakeLoc.reportDurationMs,
                 // 分段计时只在调试开关打开时统计；关着就是个空串（不占诊断面板）
-                if (FakeLoc.enableDebugLog) "\n" + MotionClock.timingLine() else "",
+                if (FakeLoc.enableDebugLog) {
+                    "\n" + MotionClock.timingLine() +
+                            "\n" + moe.fuqiuluo.xposed.hooks.LocationServiceHook.deliveryTimingLine()
+                } else "",
+
             )
         )
     }
