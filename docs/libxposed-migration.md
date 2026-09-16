@@ -150,16 +150,18 @@ com.oplus.location
 - 钩子装上：`DeveloperModeHook: 已挂 5 个 Settings.Global 读取口`；
 - 开关链路通：`put_config` 里 `hide_developer_mode=false → true` 可见。
 
-**未成立（有定量证据，不是猜）**：设置应用 UI 里"开发者选项"仍显示**真实**状态
-（真值 `development_settings_enabled=1`，界面显示"开启"）。两条路都零命中：
-- `Settings.Global.getInt/getString/getLong/getBoolean` 的钩子：0 次命中；
-- 临时探针（`SettingsProvider.call` 命中我们关心的键时打印 `method` + Binder 调用者 uid/包名）：
-  **0 次命中** ⇒ 设置应用打开开发者选项页时**既没走客户端静态方法、也没走 provider 的 call**，
-  它读的是**进程内缓存**（Android 14+ 的 `DevelopmentSettingsDashboardFragment`
-  有 `rememberIsDevelopmentSettingsEnabled` 这类记忆字段），或经 AIDL 默认接口而非 `call`。
+**设置界面本身仍显示真实状态**（真值 `development_settings_enabled=1`，界面显示"开启"）——
+即使设置应用被注入、钩子在它进程里命中 5 次，UI 照样显示"开启"。两种解释都被实测排除/确认过：
 
-⇒ 想连设置 UI 一起盖住，得再加一层：挂设置应用内部读到该状态的地方（缓存/字段），
-或改挂 provider 侧所有读取入口。**当前实现只覆盖"走 `Settings.Global` 公开 API 的被注入进程"。**
+- 早期那次"零命中"是**测试瑕疵**：设置页已打开过，`am start` 只把已有 Activity 拉到前台，
+  读取没重跑。强杀设置后再开页面就命中了 ⇒ 不是"设置应用走缓存"那种简单结论；
+- `SettingsProvider.call` 探针（打印 `method` + Binder 调用者）**始终零命中** ⇒
+  读取不经过 provider 的 `call` 入口，而是**在设置进程内**完成的客户端读取。
+
+⇒ 结论（也是撤销作用域的依据）：要让设置界面显示"未开启"，必须注入设置应用；
+而"对目标应用零注入"是项目红线 ⇒ **选择红线，放弃盖设置界面**。
+**当前实现的实际能力**：覆盖"读取发生在**已被注入的进程**里"的场景
+（system_server 自身，以及已在作用域内的目标应用）。
 
 ⚠️ **设备侧教训（WAL）**：LSPosed 的 `modules_config.db` 是 WAL 模式，**改动可能还只在 `-wal` 里**。
 直接用主机 sqlite3 只读主库会看到旧快照（我据此误判过"作用域没加上"）；
