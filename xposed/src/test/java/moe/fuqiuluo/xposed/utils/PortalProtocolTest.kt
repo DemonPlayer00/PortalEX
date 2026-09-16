@@ -38,7 +38,8 @@ class PortalProtocolTest {
 
     @Test
     fun keyCount_isPinned() {
-        assertEquals(40, key.size)
+        // 新增/删除键 ⇒ 改这条断言（`hide_developer_mode` 是"隐藏开发者模式"那条下发键）
+        assertEquals(41, key.size)
     }
 
     @Test
