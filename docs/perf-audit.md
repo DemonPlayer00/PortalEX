@@ -9,7 +9,8 @@
 - **原生 `post_process`（每个 HAL poll 都过）走单一标志早退**：`vw_is_active()` 是
   `return g_active;`（普通读，无锁），未激活时一个比较就返回 —— 这是全仓频率最高的一段代码，
   形态是对的。
-- **`DeveloperModeHook.hideEnabled()`**：偏好读有 1s 缓存，并写明了"命中路径是热路径"的理由。
+- （原条目：`DeveloperModeHook.hideEnabled()` 的 1s 偏好缓存 —— 该功能已于 2026-09-17 整体移除，
+  这条"做对了的范例"随之消失。要缓存偏好的场合照它当时的写法：`@Volatile` + 时间戳 + 写明理由。）
 - **`SystemRuntimeChannel.attach()`**：解析失败有 `nextAttemptNanos` 退避，不会每拍重来。
 - **交付的方法解析**：`LocationServiceHook.deliverFrame` 已按监听器类缓存 `Method`
   （本文件 P3 的同类问题，那里已修）。

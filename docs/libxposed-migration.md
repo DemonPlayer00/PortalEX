@@ -115,44 +115,34 @@ libxposed 的 `Hooker.intercept(chain)` 是**一个**回调；旧 API 是 before
 ```
 system
 com.android.phone
-com.android.settings      ← 2026-09-16 加，见下
 com.android.location.fused
 com.xiaomi.location.fused
 com.oplus.location
 ```
 
-**为什么加 `com.android.settings`**："隐藏开发者模式"那条钩子拦的是 `Settings.Global` 的读取
-（`development_settings_enabled` / `adb_enabled` / `adb_wifi_enabled` / `adb_authorization_timeout`），
-而**设置应用本身就是这组键的主要读取者与展示者** —— 它不在作用域里时，开发者选项那一栏
-照旧显示真实状态。要"系统框架里返回未开启"，这一项得在。
+⚠️ 清单里**没有** `com.android.settings`：曾为"隐藏开发者模式"加过，实测判定它违反红线且达不到目的，
+已于 `dd1a60a` 撤销；2026-09-17 那条功能整体移除（见下），现在连理由都不存在了。
 
 ⚠️ **清单里不写注释**：格式是"一行一个包名 / 一行一个入口类"，多写的行有被框架当成包名的风险
 （`Hide My Applist` 的 APK 里核出来的格式就是纯列表）。说明写在本文件里，不写进清单。
 
-### 隐藏开发者模式：作用域与"设置应用不读那两条路"（2026-09-16 实测）
+### 隐藏开发者模式：整条功能已移除（2026-09-17）
 
-**已撤销（2026-09-16，`dd1a60a`）**：曾把 `com.android.settings` 加进推荐清单，
-理由写的是"设置应用是这组键的主要读取者"。**A/B 实测证明这个做法两个判据都不成立**：
+这条功能（开关 + `DeveloperModeHook` + `hide_developer_mode` 下发键 + `hideDeveloperMode` 偏好）
+**已从代码里删除**，连同 `com.android.settings` 曾经出现在推荐作用域的那段历史。删除理由：
 
-| 场景 | 注入进程 | 框架侧命中 |
-| --- | --- | --- |
-| 设置应用在作用域内 | system + phone + **settings** | ✅ `development_settings_enabled ⇒ 0` ×5 |
-| 设置应用移出作用域 | system + phone（**0 注入**） | ❌ 零命中 |
+1. **它达不到目的**：2026-09-16 的 A/B 实测（见 git `dd1a60a` 的提交信息与本文档历史版本）证明，
+   要让设置界面显示"未开启"就必须注入设置应用，而命中数据表明那只是**设置应用自己进程里的客户端读取**，
+   不是 system_server 的内部读取；system-only 的作用域下命中数为 **0**。
+2. **它违反红线**：把设置应用纳入作用域就是对目标应用注入 —— 与"0 注入原则"直接冲突。
+3. **它还得自己解释风险**：它改变的是系统设置读到的事实（`adb_enabled` /
+   `development_settings_enabled`），连使用者自己读到的都是假值；这类"会影响用户本人"的开关
+   本来就不该默认存在。
 
-⇒ 命中来自**设置应用进程自己的客户端读取**，不是 system_server 的内部读取。
-要让设置界面显示"未开启"就必须注入设置应用，而"对目标应用零注入"是红线 ⇒ **选红线**，
-`com.android.settings` 已移出两处清单。
-
-**仍然成立的部分**：
-- `DeveloperModeHook` 本身合规：安装点只在 `install()` 的 `"android"` 分支，非系统分支直接 return；
-- 对**已在作用域内**的目标应用（其进程本身就是被注入的）读 `Settings.Global` 时依然生效 ——
-  这是既有作用域的自然结果，不是新增注入；
-- 钩子装上：`DeveloperModeHook: 已挂 5 个 Settings.Global 读取口`；
-- 开关链路通：`put_config` 里 `hide_developer_mode=false → true` 可见。
-
-**设置界面本身仍显示真实状态**（真值 `development_settings_enabled=1`，界面显示"开启"）——
-即使设置应用被注入、钩子在它进程里命中 5 次，UI 照样显示"开启"。两种解释都被实测排除/确认过：
-
+删除面：hook 文件、安装点、`LocConfig.hideDeveloperMode`、`FakeLoc` 转发、`Key`/`Pref` 两个键、
+`put_config` 的读写、App 侧偏好扩展与设置页整行、两条字符串、协议键数断言（63 → 62）。
+**作用域不因此变化**：`scope.list` 与 `app/src/main/res/values/arrays.xml` 两处清单里本来就没有
+`com.android.settings`（`dd1a60a` 起）。
 - 早期那次"零命中"是**测试瑕疵**：设置页已打开过，`am start` 只把已有 Activity 拉到前台，
   读取没重跑。强杀设置后再开页面就命中了 ⇒ 不是"设置应用走缓存"那种简单结论；
 - `SettingsProvider.call` 探针（打印 `method` + Binder 调用者）**始终零命中** ⇒

@@ -10,7 +10,6 @@ import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.SystemRuntimeChannel
-import moe.fuqiuluo.xposed.hooks.settings.DeveloperModeHook
 import moe.fuqiuluo.xposed.hooks.telephony.TelephonyHook
 import moe.fuqiuluo.xposed.hooks.wlan.WlanHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -154,13 +153,6 @@ class FakeLocation {
                     // 注意传的是 info.classLoader（系统服务的类加载器）——实测
                     // ActivityThread 的 classLoader 在 system_server 里看不到 com.android.server.*
                     SystemRuntimeChannel.attach(info.classLoader)
-
-                    // 隐藏开发者模式：拦 Settings.Global 的读取（默认关闭，钩子常驻、命中才生效）。
-                    // 两个加载器都给它：Settings 属 framework，而"看得到 framework 的加载器"
-                    // 与"看得到 com.android.server.* 的加载器"并不总是同一个（见 DeveloperModeHook）。
-                    step("DeveloperModeHook") {
-                        DeveloperModeHook.install(info.classLoader, systemClassLoader)
-                    }
                 }
                 "com.android.location.fused" -> {
                     AndroidFusedLocationProviderHook(info.classLoader)

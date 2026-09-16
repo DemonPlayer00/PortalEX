@@ -26,7 +26,6 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
-import moe.fuqiuluo.portalex.ext.hideDeveloperMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
@@ -386,18 +385,6 @@ class SettingsFragment : Fragment() {
             requireContext().allowLandscape = isChecked
             // 立即生效：MainActivity 是 configChanges 的单 Activity，不会重建
             (activity as? MainActivity)?.applyOrientationPreference()
-        }
-
-        binding.hideDeveloperModeSwitch.isChecked = requireContext().hideDeveloperMode
-        binding.hideDeveloperModeSwitch.setOnCheckedChangeListener { _, isChecked ->
-            requireContext().hideDeveloperMode = isChecked
-            // 下发到系统侧：钩子是"命中时才看开关"，所以切换后无需重启模拟
-            updateRemoteConfig()
-            // 说清边界：这条只作用于**被注入的进程**，作用域由 LSPosed 决定
-            showToast(
-                if (isChecked) "已开启：被注入进程将按「未开启开发者模式」返回（设置应用需在 LSPosed 作用域内）"
-                else "已关闭：恢复真实开发者模式状态"
-            )
         }
         return root
     }
