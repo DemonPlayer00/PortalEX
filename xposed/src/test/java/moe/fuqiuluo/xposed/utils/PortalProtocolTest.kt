@@ -40,12 +40,13 @@ class PortalProtocolTest {
 
     @Test
     fun keyCount_isPinned() {
-        // 新增/删除键 ⇒ 改这条断言（`hide_developer_mode` 是"隐藏开发者模式"那条下发键）
+        // 新增/删除键 ⇒ 改这条断言
         // 40 → 41：`stamina_config`（体力参数下发）
         // 41 → 63：统一架构迁移 —— 推进/体力搬到系统侧后新增
         //          report_duration、route_lat/lon/travelled/distance/points、
         //          motion_mode/playing/completed，以及 stamina_* 状态回读 12 项
-        assertEquals(63, key.size)
+        // 63 → 62：删掉 `hide_developer_mode`（"隐藏开发者模式"整条功能移除）
+        assertEquals(62, key.size)
     }
 
     @Test
