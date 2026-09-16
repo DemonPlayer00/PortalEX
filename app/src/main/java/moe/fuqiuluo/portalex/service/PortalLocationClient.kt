@@ -80,6 +80,9 @@ object PortalLocationClient {
     fun subscribe(owner: Any, context: Context, intervalMs: Long, onFix: (Fix) -> Unit): Boolean {
         subscribers[owner] = onFix
         if (listener != null) return true
+        // 新一次订阅 = 新一次统计（上一次的帧数已经作为历史证据留在诊断里，这里从头计）
+        lastFix = null
+        frameCount = 0L
 
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         if (lm == null) {
@@ -118,7 +121,12 @@ object PortalLocationClient {
         stop()
     }
 
-    /** 撤掉框架注册并清空诊断数据（会话/页面收尾用） */
+    /**
+     * 撤掉框架注册（页面收尾用）。
+     *
+     * **保留**最近一帧与累计帧数：诊断页与地图页不是同一个页面（地图页一销毁订阅就撤了），
+     * 若在这里清零，"刚才到底收没收到帧"就永远查不到 —— 那正是这类问题最难取证的地方。
+     */
     fun stop() {
         val l = listener
         listener = null
@@ -129,8 +137,6 @@ object PortalLocationClient {
             Log.i(TAG, "已退订 LocationManager（本次共收 $frameCount 帧）")
         }
         manager = null
-        lastFix = null
-        frameCount = 0L
     }
 
     private fun deliver(location: Location) {
@@ -153,7 +159,13 @@ object PortalLocationClient {
     /** 诊断一行（Test 页）：把"App 收到的点"与"模块的权威世界点"摆在一起看 */
     fun statusLine(): String {
         val f = lastFix
-        if (!isSubscribed) return "未订阅（地图页未打开？）"
+        if (!isSubscribed) {
+            return if (f == null) "未订阅（地图页未打开过）"
+            else "已退订，上次订阅共收 %d 帧（最后 %.6f,%.6f @ %dms 前）".format(
+                frameCount, f.lat, f.lon,
+                (android.os.SystemClock.elapsedRealtimeNanos() - f.elapsedRealtimeNanos) / 1_000_000
+            )
+        }
         if (f == null) return "已订阅（间隔 ${intervalMs}ms），尚未收到帧"
         val ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - f.elapsedRealtimeNanos) / 1_000_000
         // 与模块回读的世界点比较：差值 = 保护性抖动（幅度 ≈ 精度），不是误差
