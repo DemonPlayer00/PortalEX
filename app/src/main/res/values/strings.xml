@@ -60,7 +60,7 @@
     <string name="hide_developer_mode">隐藏开发者模式</string>
     <string name="menu_stamina">体力模拟</string>
     <string name="stamina_enable">启用体力模拟</string>
-    <string name="stamina_enable_desc">体力随跑动衰减、低了会降速并进入休息；会影响实际配速</string>
+    <string name="stamina_enable_desc">体力随跑动衰减、空闲时持续恢复；低了会降速并进入休息</string>
     <string name="stamina_status">当前体力</string>
     <string name="stamina_reset">重置体力</string>
     <string name="stamina_params">参数（点击修改）</string>
