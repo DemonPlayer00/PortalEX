@@ -116,7 +116,56 @@ object DeveloperModeHook {
             "DeveloperModeHook: 已挂 $count 个 Settings.Global 读取口" +
                     "（隐藏开发者模式" + (if (FakeLoc.hideDeveloperMode) "已开启" else "当前关闭") + "）"
         )
+
+        // 诊断探针：把"谁在 service 侧读这几条键、用哪个方法"记下来。
+        // 为什么要它：设置应用在**被注入**的前提下仍未命中上面的钩子，说明它不走
+        // `Settings.Global` 静态方法（很可能是 ContentResolver/缓存路径）——
+        // 这条探针给出定量答案（caller 包名 + 方法名），而不是猜。
+        // 只记前若干条，且只认我们关心的键，避免刷日志。
+        classLoaders.forEach { probe(classLoaders, it) }
     }
+
+    /** 已打印的探针条目数（只看前几条就够定性） */
+    private val probeLogged = AtomicLong(0)
+
+    private fun probe(classLoaders: Array<out ClassLoader>, loader: ClassLoader) {
+        val provider = runCatching {
+            XposedHelpers.findClassIfExists("com.android.providers.settings.SettingsProvider", loader)
+                ?: XposedHelpers.findClassIfExists("android.provider.SettingsProvider", loader)
+        }.getOrNull() ?: return
+        Hooks.hookAllMethods(provider, "call", object : MethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                val args = param.args
+                // call(String method, String arg, Bundle extras) 与 call(String, String, String, Bundle)
+                val method = args.getOrNull(0) as? String ?: return
+                val key = args.getOrNull(1) as? String ?: return
+                if (key !in HIDDEN_VALUES) return
+                if (probeLogged.incrementAndGet() > 12L) return
+                Logger.info("DevModeProbe: $key 经 service 读取：method=$method caller=${callerName()}")
+            }
+        })
+    }
+
+    /**
+     * 调用方标识：provider 侧的 Binder 调用者 uid，能反查包名就带上。
+     *
+     * 为什么用 uid 而不是"当前进程"：`SettingsProvider.call` 是在 **system_server** 里执行的，
+     * 想知道"是哪个应用来读的"只能看 Binder 调用者 —— 这正是这条探针要回答的问题。
+     */
+    private fun callerName(): String = runCatching {
+        val uid = android.os.Binder.getCallingUid()
+        val ctx = currentApplicationContext()
+        val packages = ctx?.packageManager?.getPackagesForUid(uid)
+        if (packages.isNullOrEmpty()) "uid=$uid" else "uid=$uid(${packages.joinToString("/")})"
+    }.getOrDefault("uid=?")
+
+    /** 系统进程里的 application context（反查包名用；拿不到就只报 uid） */
+    private fun currentApplicationContext(): android.content.Context? = runCatching {
+        val at = Class.forName("android.app.ActivityThread")
+        val app = at.getMethod("currentApplication").invoke(null)
+        app as? android.content.Context
+    }.getOrNull()
+
 
     /** 挂一个同名方法（可能是多条重载，逐个挂） */
     private fun hookOne(global: Class<*>, methodName: String): Int {
