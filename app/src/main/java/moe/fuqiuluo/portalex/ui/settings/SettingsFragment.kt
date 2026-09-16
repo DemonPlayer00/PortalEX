@@ -154,7 +154,6 @@ class SettingsFragment : Fragment() {
         binding.accuracyValue.text = "%.2f米".format(context.accuracy)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
         binding.sensorGridValue.text = context.sensorGridHz.let { if (it <= 0) "自动" else "${it}Hz" }
-        binding.cadenceScaleValue.text = "%.2f×".format(context.cadenceScale)
         binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
 
         binding.altitudeLayout.setOnClickListener {
@@ -323,38 +322,6 @@ class SettingsFragment : Fragment() {
         refreshBatteryOptimizationState()
 
         // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
-        binding.cadenceScaleLayout.setOnClickListener {
-            showDialog("步频倍率（1=不调整）", "%.2f".format(context.cadenceScale)) {
-                val v = it.trim().toDoubleOrNull()
-                if (v == null || v <= 0.0 || v > 10.0) {
-                    Toast.makeText(context, "请输入 0.2 ~ 3.0 的数值", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                }
-                requireContext().cadenceScale = v.toFloat()
-                binding.cadenceScaleValue.text = "%.2f×".format(requireContext().cadenceScale)
-                showToast("步频倍率：%.2f×（同速度下步频×%.2f）".format(requireContext().cadenceScale, requireContext().cadenceScale))
-                updateRemoteConfig()
-            }
-        }
-
-        // 「注入栅格分辨率」：0=自动（跟随框架采用值）；也可填任意 Hz（钳 20~400）
-        binding.sensorGridLayout.setOnClickListener {
-            val cur = context.sensorGridHz
-            showDialog("注入栅格分辨率（Hz，0=自动）", if (cur <= 0) "0" else cur.toString()) {
-                val v = it.trim().toIntOrNull()
-                if (v == null || v < 0) {
-                    Toast.makeText(context, "请输入 0 或 20~400 的整数", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                }
-                requireContext().sensorGridHz = v
-                binding.sensorGridValue.text = requireContext().sensorGridHz.let {
-                    if (it <= 0) "自动" else "${it}Hz"
-                }
-                showToast(if (v <= 0) "栅格：自动（跟随框架采用值）" else "栅格：${requireContext().sensorGridHz}Hz")
-                updateRemoteConfig()
-            }
-        }
-
         binding.reportDurationLayout.setOnClickListener {
             showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
                 it.substring(0, it.length - 2)
@@ -370,6 +337,23 @@ class SettingsFragment : Fragment() {
                 }
                 context.reportDuration = value
                 binding.reportDurationValue.text = "%dms".format(value)
+            }
+        }
+
+        binding.sensorGridLayout.setOnClickListener {
+            val cur = context.sensorGridHz
+            showDialog("注入栅格分辨率（Hz，0=自动）", if (cur <= 0) "0" else cur.toString()) {
+                val v = it.trim().toIntOrNull()
+                if (v == null || v < 0) {
+                    Toast.makeText(context, "请输入 0 或 20~400 的整数", Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                requireContext().sensorGridHz = v
+                binding.sensorGridValue.text = requireContext().sensorGridHz.let {
+                    if (it <= 0) "自动" else "${it}Hz"
+                }
+                showToast(if (v <= 0) "栅格：自动（跟随框架采用值）" else "栅格：${requireContext().sensorGridHz}Hz")
+                updateRemoteConfig()
             }
         }
 
