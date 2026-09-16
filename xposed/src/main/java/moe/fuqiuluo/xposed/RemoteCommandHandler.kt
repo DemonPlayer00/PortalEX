@@ -360,6 +360,8 @@ object RemoteCommandHandler {
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
                 // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
                 val noiseProfile = rely.getFloatArray(Key.NOISE_PROFILE)?.let { SensorNoise.sanitize(it) }
+                // 体力参数（迁移步骤①的通路；此刻模块只保存不解释，推进仍在 App）
+                val staminaWire = rely.getFloatArray(Key.STAMINA_CONFIG)
 
                 FakeLoc.enable = enable
                 FakeLoc.speed = speed
@@ -382,6 +384,7 @@ object RemoteCommandHandler {
                 FakeLoc.enableBinderSensorMock = binderSensorMock
                 FakeLoc.hideDeveloperMode = hideDeveloperMode
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
+                if (staminaWire != null) FakeLoc.staminaWire = staminaWire
                 if (noiseProfile != null) {
                     FakeLoc.noiseProfile = noiseProfile
                     if (BinderSensorMock.isNativeReady) {
