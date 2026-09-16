@@ -58,6 +58,19 @@ object BinderSensorMock {
 
     @Volatile private var supervisorStarted = false
     @Volatile private var nativeReady = false
+
+    /**
+     * 监督线程停摆用的锁（见 [supervisorLoop]）：**会话不在跑时不空转**，靠它被叫醒。
+     *
+     * 这条是实测逼出来的：监督线程原先 `while(true){ sleep(50); tick() }` **没有退出条件**，
+     * 会话关掉之后仍然每 50ms 醒一次、每次都走 early-return —— 实测占单核 **0.47%**
+     * （30s 窗口 14 jiffies，折合每次唤醒 ~233µs），外加每秒 20 次无意义唤醒，
+     * 一直持续到下次开机。现在停摆时只在被唤醒（开会话/改开关）或兜底超时后才醒来。
+     */
+    private val idleLock = Object()
+
+    /** 停摆后的兜底自检间隔（毫秒）：万一唤醒漏了，也不会永久睡死 */
+    private const val IDLE_RECHECK_MS = 30_000L
     @Volatile private var active = false
     @Volatile private var pumpThread: Thread? = null
 
@@ -117,6 +130,8 @@ object BinderSensorMock {
      */
     fun onConfigChanged(): Boolean {
         if (!FakeLoc.isSystemServerProcess) return true
+        // 开关可能刚被打开：把停摆的监督线程叫起来（停摆期间不做任何判断，只能靠通知）
+        wakeSupervisor()
         Logger.info(
             "BinderSensorMock: onConfigChanged flag=${FakeLoc.enableBinderSensorMock} " +
                     "session=${FakeLoc.enable} supervisor=$supervisorStarted native=$nativeReady fail=$failTicks"
@@ -164,6 +179,8 @@ object BinderSensorMock {
     /** 模拟会话启停（start/stop 命令）：**会话启动是装载原生层的正常时机**。 */
     fun onSimulationChanged() {
         if (!FakeLoc.isSystemServerProcess) return
+        // 会话启停都要叫醒：开启 ⇒ 立刻开始推流；停止 ⇒ 醒来收尾并重新停摆
+        wakeSupervisor()
         if (FakeLoc.enableBinderSensorMock && FakeLoc.enable) {
             load()
         } else if (!FakeLoc.enableBinderSensorMock) {
@@ -405,6 +422,8 @@ object BinderSensorMock {
             if (supervisorStarted) return
             supervisorStarted = true
         }
+        // 线程是在 [load] 里起的（那时会话已经开着），先叫一次免得首拍等到兜底超时
+        wakeSupervisor()
         Thread({ supervisorLoop() }, "PortalSensorSupervisor").apply {
             isDaemon = true
             start()
@@ -413,16 +432,43 @@ object BinderSensorMock {
     }
 
     /**
-     * 唯一状态源：每 [PUSH_INTERVAL_MS] 采一次 FakeLoc 的权威运动学量，
-     * 步数按步频积分后随快照下发（原生层再按步间隔分摊成逐事件）。
+     * **模块侧传感器时钟**（唯一的固定节拍，[PUSH_INTERVAL_MS] = 50ms）。
      *
-     * 为什么步数在这里积分：TYPE_STEP_COUNTER 是 on-change 传感器，底层不走路就没有
-     * 事件；位置回调（速度/位移）才是步数真正的数据源。app 端 hook 有同样的积分，
-     * 两边都用 [FakeLoc.cadenceForSpeed] 这唯一公式源，步频口径一致。
+     * ## 这个线程到底在干什么
+     *
+     * 它是"运动学 → 传感器事件"这条链上**唯一的状态源**：原生层不会自己知道"人在往哪走、
+     * 多快、走了几步"，全靠这里每 50ms 送一次快照。五件事，按 [tick] 里的顺序：
+     *
+     * 1. **会话生命周期**：会话刚开时把步数计数器锚到"真实值 / 上次推送值的较大者"（单调、
+     *    不跳变）、重播 `type → handle` 表、把注入层置为 active；会话结束/开关关闭时把注入层
+     *    置回 inactive（真实事件原样放行）。
+     * 2. **运动学快照**：`averageSpeedOverWindow(1000)` 取实测速度与"是否在动"——这是
+     *    从**交付位移**反推的，所以体力降速会自动体现到速度上（不需要第二处缩放）。
+     * 3. **步数积分**：TYPE_STEP_COUNTER 是 on-change 传感器，底层不走路就没有事件，
+     *    位置/位移才是步数真正的数据源。这里按 `cadenceForSpeed(实测速度)` 积分成整步下发
+     *    （与 [FakeLoc.cadenceForSpeed] 同一公式源，步频口径全仓一致）。
+     * 4. **状态下发**：`updateState(speed, bearing, moving, steps, now)` —— 一次 JNI，
+     *    原生层据此合成步态/加速度/陀螺等全部外周事件。
+     * 5. **速率提示**（每 2s 节流）：把框架"实际采用"的出帧速率灌给原生层，实现
+     *    "按应用期望出数据"（没人订阅的类型随之静默）。
+     *
+     * ## 空闲时**停摆**，不空转
+     *
+     * 上面五件事只在"开关开着 **且** 会话在跑"时才有意义；否则每拍都是 early-return。
+     * 所以这个循环现在是：不在跑就先把注入层收尾一次（[deactivate]），然后 [park] 停摆，
+     * 等 [wakeSupervisor] 唤醒（开会话/改开关）或 30s 兜底自检。
+     * ⚠️ 载体的引导（`ensureCarrier`）也随之推迟到会话启动：会话不跑时没有任何事件需要投递，
+     * 早引导只会让框架里常驻一批缓冲与线程。
      */
     private fun supervisorLoop() {
         while (true) {
             try {
+                if (!FakeLoc.enableBinderSensorMock || !FakeLoc.enable) {
+                    // 收尾一次（幂等）再睡：注入层置 inactive、停泵、撤销载体引导
+                    deactivate()
+                    park()
+                    continue
+                }
                 Thread.sleep(PUSH_INTERVAL_MS)
                 tick()
             } catch (_: InterruptedException) {
@@ -431,6 +477,21 @@ object BinderSensorMock {
                 Logger.error("BinderSensorMock: tick failed", t)
             }
         }
+    }
+
+    /** 停摆：等到被叫醒或兜底超时（wait 会释放锁，不占 CPU、不产生周期唤醒） */
+    private fun park() {
+        synchronized(idleLock) {
+            runCatching { idleLock.wait(IDLE_RECHECK_MS) }
+        }
+    }
+
+    /**
+     * 叫醒停摆的监督线程（幂等）：**会话启动、开关变化、配置到达**时调用。
+     * 不叫醒的后果是"开了会话却要等 30s 兜底才开始推流"。
+     */
+    private fun wakeSupervisor() {
+        synchronized(idleLock) { idleLock.notifyAll() }
     }
 
     private fun tick() {
