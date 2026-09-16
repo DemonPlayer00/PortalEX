@@ -40,7 +40,7 @@ class StaminaModelTest {
     @Test
     fun `初始满体力 系数为 1`() {
         val m = StaminaModel().apply { reset() }
-        val f = m.tick(cfg(), dtSec = 0.2, baseSpeed = base, random = rnd)
+        val f = m.tick(cfg(), dtSec = 0.2, baseSpeed = base, running = true, random = rnd)
         // 满体力起步 ⇒ 本拍不做任何降速
         assertEquals(1.0, f, 1e-6)
         // 但走了 0.2 秒就必然掉一点体力（掉多少由随机化的衰减速率决定，故只断言"几乎满"）
@@ -53,7 +53,7 @@ class StaminaModelTest {
         val m = StaminaModel().apply { reset() }
         val c = cfg(randomPct = 0.0)   // 关随机化，便于断言精确值
         // 跑 6 分钟
-        repeat((6 * 60 / 0.5).toInt()) { m.tick(c, 0.5, base, rnd) }
+        repeat((6 * 60 / 0.5).toInt()) { m.tick(c, 0.5, base, running = true, random = rnd) }
         val s = m.snapshot()
         assertTrue("应已掉体力，实得 ${s.staminaPercent}", s.staminaPercent < 100.0)
         assertFalse("6 分钟还不该进入休息", s.resting)
@@ -69,7 +69,7 @@ class StaminaModelTest {
         val c = cfg(randomPct = 0.0)
         var entered = false
         repeat((30 * 60 / 0.5).toInt()) {
-            val f = m.tick(c, 0.5, base, rnd)
+            val f = m.tick(c, 0.5, base, running = true, random = rnd)
             if (!entered && m.snapshot().resting) {
                 entered = true
                 // 刚进休息：系数应等于 走路速度/基础速度
@@ -85,7 +85,7 @@ class StaminaModelTest {
         val m = StaminaModel().apply { reset() }
         val c = cfg(decay = 60.0, restSec = 10.0, randomPct = 0.0)  // 快速掉、短休息
         // 跑到进入休息
-        repeat((10 * 60 * 2).toInt()) { m.tick(c, 0.5, base, rnd) }
+        repeat((10 * 60 * 2).toInt()) { m.tick(c, 0.5, base, running = true, random = rnd) }
         val atRest = m.snapshot()
         assertTrue("应已进入休息", atRest.resting)
         val staminaAtRest = atRest.staminaPercent
@@ -93,7 +93,7 @@ class StaminaModelTest {
         var prev = staminaAtRest
         var increased = false
         repeat(20) {
-            m.tick(c, 0.5, base, rnd)
+            m.tick(c, 0.5, base, running = true, random = rnd)
             val now = m.snapshot().staminaPercent
             if (now > prev + 1e-9) increased = true
             prev = now
@@ -112,7 +112,7 @@ class StaminaModelTest {
         var inRest = false
         var startTick = 0
         repeat((40 * 60 * 2).toInt()) {
-            m.tick(c, 0.5, base, rnd)
+            m.tick(c, 0.5, base, running = true, random = rnd)
             ticks++
             val resting = m.snapshot().resting
             if (resting && !inRest) { inRest = true; startTick = ticks }
@@ -131,7 +131,7 @@ class StaminaModelTest {
         val durations = ArrayList<Double>()
         var inRest = false; var startTick = 0; var ticks = 0
         repeat((40 * 60 * 2).toInt()) {
-            m.tick(c, 0.5, base, rnd)
+            m.tick(c, 0.5, base, running = true, random = rnd)
             ticks++
             val resting = m.snapshot().resting
             if (resting && !inRest) { inRest = true; startTick = ticks }
@@ -170,10 +170,61 @@ class StaminaModelTest {
     fun `dtSec 非正时不推进模型`() {
         val m = StaminaModel().apply { reset() }
         val before = m.snapshot()
-        m.tick(cfg(), 0.0, base, rnd)
-        m.tick(cfg(), -1.0, base, rnd)
+        m.tick(cfg(), 0.0, base, running = true, random = rnd)
+        m.tick(cfg(), -1.0, base, running = true, random = rnd)
         val after = m.snapshot()
         assertEquals(before.staminaPercent, after.staminaPercent, 1e-9)
         assertEquals(before.restCount, after.restCount)
+    }
+
+    @Test
+    fun `空闲时体力冻结 —— 既不衰减也不恢复`() {
+        val m = StaminaModel().apply { reset() }
+        val c = cfg()
+        // 先跑一会儿，让体力掉下去
+        repeat(120) { m.tick(c, 0.5, base, running = true, random = rnd) }
+        val afterRun = m.snapshot().staminaPercent
+        assertTrue("跑动后应已掉体力", afterRun < 100.0)
+        // 空闲 10 分钟（running=false）：体力必须一动不动
+        repeat(1200) { m.tick(c, 0.5, base, running = false, random = rnd) }
+        assertEquals("空闲不该衰减", afterRun, m.snapshot().staminaPercent, 1e-9)
+        // 空闲期间也不该推进休息计时/次数
+        assertEquals(0, m.snapshot().restCount)
+    }
+
+    @Test
+    fun `休息中若停止运动 则不再恢复`() {
+        val m = StaminaModel().apply { reset() }
+        val c = cfg(decay = 120.0, restSec = 600.0, randomPct = 0.0)
+        // 一直跑到**进入休息的那一刻**就停（不能用固定拍数：跑完一段它会自己回到跑动，
+        // 那样断言到的可能是"下一段跑动"——第一版测试就是这么写错的）
+        var ticks = 0
+        while (!m.snapshot().resting && ticks < 10_000) {
+            m.tick(c, 0.5, base, running = true, random = rnd)
+            ticks++
+        }
+        assertTrue("应在合理时间内进入休息（已跑 $ticks 拍）", m.snapshot().resting)
+        val atPause = m.snapshot().staminaPercent
+        // 空闲 30 秒：休息期间"没人动"，体力不该回升（这是本轮修掉的那个偏差）
+        repeat(60) { m.tick(c, 0.5, base, running = false, random = rnd) }
+        assertEquals("空闲时休息不该回血", atPause, m.snapshot().staminaPercent, 1e-9)
+    }
+
+    @Test
+    fun `衰减与真实速度挂钩 —— 慢速时消耗更慢`() {
+        // 同一段时间，基础速度越低（= 同倍率下实际速度越低）体力掉得越少
+        val fast = StaminaModel().apply { reset() }
+        val slow = StaminaModel().apply { reset() }
+        val c = cfg(randomPct = 0.0)
+        // fast: 基础 3.05；slow: 基础 1.5（同样倍率下真实速度更低 ⇒ 单位时间消耗更少）
+        repeat(240) {
+            fast.tick(c, 0.5, 3.05, running = true, random = rnd)
+            slow.tick(c, 0.5, 1.5, running = true, random = rnd)
+        }
+        // 注意：倍率由"体力/阈值"决定，与基础速度无关；差别应体现在**休息来得更晚**
+        assertTrue(
+            "基础速度低的那次应掉得更少，实得 fast=${fast.snapshot().staminaPercent} slow=${slow.snapshot().staminaPercent}",
+            slow.snapshot().staminaPercent >= fast.snapshot().staminaPercent,
+        )
     }
 }
