@@ -33,9 +33,8 @@ import moe.fuqiuluo.xposed.utils.StaminaConfig
  * ## 这一页负责什么
  *
  * 只负责"看与改"：显示当前体力/速度/休息状态、**倍率×距离预览图**，以及编辑模型参数。
- * **模型本身与状态在 [StaminaController]**，运动循环每拍驱动它
- * （见 `MockServiceViewModel.ensureMotionLoop`）—— 这一页不参与推进，
- * 所以关掉页面也不会让模拟停下。
+ * 页面**不持有状态**：状态机在 system_server（[moe.fuqiuluo.xposed.utils.StaminaRuntime]），
+ * 参数由 [StaminaController] 下发、读数由它回读 —— 所以关掉页面、甚至杀掉 App 都不会让模拟停下。
  *
  * ## 参数行是动态生成的
  *
@@ -338,8 +337,9 @@ class StaminaFragment : Fragment() {
     }
 
     /**
-     * 生成页：**用真实引擎跑一遍**（[StaminaCurve.sample] 直接驱动 [StaminaModel]，
-     * 与运动循环同一套调用），每次点都换一条随机路径，并把这次的成绩摊在图下面。
+     * 生成页：**用真实引擎跑一遍**（[StaminaCurve.sample] 直接驱动 [StaminaModel] ——
+     * 与系统侧 `StaminaRuntime` 是同一个模型类，只是跑在本进程里做预览），
+     * 每次点都换一条随机路径，并把这次的成绩摊在图下面。
      */
     private fun generate() {
         val context = requireContext()
@@ -394,7 +394,7 @@ class StaminaFragment : Fragment() {
             !StaminaController.config().enabled -> "未启用（体力不参与调制）"
             !StaminaController.isWireApplied() -> getString(R.string.stamina_phase_not_applied)
             StaminaController.isResting() ->
-                // 冷却进度：负数 = 还欠多少，回到 ≥0 就开跑（见 StaminaModel.cooldownSec）
+                // 疲劳倒计时预算：剩余秒数由系统侧结算（见 StaminaRuntime / StaminaModel.fatigueRemainingSec）
                 "疲劳中（还剩 %.0f 秒｜参考点 %.0f%%）".format(
                     snapshot.fatigueRemainingSec, StaminaController.config().resumeAtPercent
                 )

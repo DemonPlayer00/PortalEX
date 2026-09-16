@@ -165,9 +165,9 @@ object MockServiceHelper {
         startLoopBroadcastLocation(locationManager)
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
-        // 注意：**不在这里起后台保活**。保活只服务"无人值守仍在推进"（自动播放 /
-        // 摇杆锁定后继续走），由运动循环按需起停（见 MockServiceViewModel.syncBackgroundKeepAlive）：
-        // 会话开着但没在动的时候占前台/持锁属于无谓耗电，遵循系统省电策略。
+        // 注意：**不在这里起后台保活**。迁移后推进在 system_server（App 被冻结也照样走），
+        // 保活只服务"无人值守的**收尾**"（播完的提示音/状态收回），由遥控循环按需起停
+        // （见 MockServiceViewModel.syncBackgroundKeepAlive）：空闲占前台/持锁属于无谓耗电。
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             isMockStart(locationManager)
         } else {
