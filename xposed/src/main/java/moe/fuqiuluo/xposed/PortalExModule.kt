@@ -1,6 +1,8 @@
 package moe.fuqiuluo.xposed
 
 import io.github.libxposed.api.XposedModule
+import io.github.libxposed.api.XposedModuleInterface.HotReloadedParam
+import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
@@ -42,6 +44,18 @@ class PortalExModule : XposedModule() {
      */
     private var processName: String? = null
 
+    /**
+     * 最近一次 [install] 的入参。**热重载要用它重装**：框架在热重载时只回调
+     * `onHotReloading/onHotReloaded`，不会再把 `onSystemServerStarting`/`onPackageReady`
+     * 重放一遍，所以新实例必须自己知道"当初装的是谁"。
+     *
+     * 存的是**目标进程的 classLoader**（system_server / 应用自己的），不是模块自己的 ——
+     * 热重载换掉的是**模块的类加载器**，目标的那个对象身份不变，可以安全跨实例传递。
+     */
+    private var lastPackage: String? = null
+    private var lastClassLoader: ClassLoader? = null
+    private var lastIsSystemApp: Boolean = true
+
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         processName = param.processName
         // 偏好通道（ModulePrefs）要从实例上取：只有入口拿得到 XposedInterface。
@@ -76,7 +90,78 @@ class PortalExModule : XposedModule() {
         install(param.packageName, param.classLoader, isSystemApp)
     }
 
+    /**
+     * **热重载 · 旧实例收尾**（API 102）。
+     *
+     * 框架在模块 APK 更新后，为**已注入的进程**（含 system_server）重新加载新 dex，
+     * 并回调本方法让旧实例交班。返回值语义：**true = 允许继续热重载**
+     * （框架的默认实现即返回 true；返回 false 会中止这次重载、保留旧实例）。
+     *
+     * ## 状态怎么交（这里有个必须绕开的坑）
+     *
+     * `setSavedInstanceState(Object)` 收的是任意对象，但**旧实例的类在新实例的类加载器里
+     * 不是同一个 Class** —— 直接传自定义类型（如 data class）过去，新实例 `as` 会失败。
+     * 所以只用**引导类加载器就能表达的类型**：`Array<Any?>` 里塞 String / ClassLoader / Boolean。
+     */
+    override fun onHotReloading(param: HotReloadingParam): Boolean {
+        Logger.info("热重载：旧实例交班（进程=$processName 目标=${lastPackage ?: "?"}）")
+        val cl = lastClassLoader
+        if (cl == null) {
+            // 还没装过任何东西（例如只有 onModuleLoaded 跑过）⇒ 没有要交的班，允许重载即可
+            return true
+        }
+        // 只用引导类加载器的类型：String / ClassLoader / Boolean
+        param.setSavedInstanceState(arrayOf<Any?>(lastPackage, cl, lastIsSystemApp))
+        return true
+    }
+
+    /**
+     * **热重载 · 新实例接手**（API 102）。
+     *
+     * 两件事，顺序不能反：
+     *  1. **先摘掉旧实例的钩子** —— 框架把旧句柄原样给了我们（[HotReloadedParam.oldHookHandles]）。
+     *     不摘就会**双份注入**：同一方法上挂两份回调，交付帧发两遍、步数涨两倍。
+     *     句柄对象属于旧类加载器，但 API 接口类由框架提供（父子共享），所以 `unhook()` 可以直接调；
+     *     仍然套一层反射兜底，避免不同框架实现的类型归属差异。
+     *  2. 再按旧实例交下来的入参**重装**（新加载器的静态是干净的）。
+     *
+     * ⚠️ **会话状态会丢**：`VirtualWorld`/`MotionEngine`/`LocConfig` 等都是模块类加载器里的
+     * 单例，换加载器就等于全部归零（位置、体力、路线、开关）。所以热重载之后**模拟会话是停的**，
+     * 需要 App 重新下发配置/起会话。把状态也搬过去是下一步（`LocConfig` 那批字段的
+     * snapshot/restore），本方法目前只保证"机制可用且不双挂"。
+     */
+    override fun onHotReloaded(param: HotReloadedParam) {
+        val old = param.oldHookHandles
+        var unhooked = 0
+        for (h in old) {
+            if (h == null) continue
+            val ok = runCatching {
+                h.javaClass.getMethod("unhook").invoke(h)
+                true
+            }.getOrElse {
+                Logger.warn("热重载：摘旧钩子失败：${it.message}")
+                false
+            }
+            if (ok) unhooked++
+        }
+        Logger.info("热重载：新实例接手（进程=$processName）旧钩子 ${old.size} 个，已摘 $unhooked 个")
+
+        @Suppress("UNCHECKED_CAST")
+        val saved = param.savedInstanceState as? Array<Any?>
+        val pkg = saved?.getOrNull(0) as? String
+        val cl = saved?.getOrNull(1) as? ClassLoader
+        val isSystem = saved?.getOrNull(2) as? Boolean ?: true
+        if (pkg == null || cl == null) {
+            Logger.warn("热重载：没有可用的重装入参（旧实例未交班）——需要 App 侧重新触发安装")
+            return
+        }
+        install(pkg, cl, isSystem)
+    }
+
     private fun install(packageName: String, classLoader: ClassLoader, isSystemApp: Boolean) {
+        lastPackage = packageName
+        lastClassLoader = classLoader
+        lastIsSystemApp = isSystemApp
         // 入口回调整体兜底：任何异常都不许穿回框架（穿了就是宿主进程崩，且表现成"模块加载失败"）。
         runCatching {
             FakeLocation.install(
