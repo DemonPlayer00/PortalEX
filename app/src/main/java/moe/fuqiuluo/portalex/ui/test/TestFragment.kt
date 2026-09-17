@@ -134,12 +134,11 @@ class TestFragment : Fragment() {
             appendLine("── 应用期望频率（框架采用值 / 客户端原始请求）──")
             appendLine(status.getString("sensor_rates"))
             appendLine()
-            appendLine("── 融合定位（FusedLocation）──")
-            // 系统侧（权威）：模块在 fused 进程里装了什么、当前处置模式是什么
-            appendLine(status.getString("fused") ?: "（旧版模块无此字段）")
-            // App 侧自报值：与上面那行的"处置模式"**对不上**就说明 App→模块的配置没同步到
-            // （本页的价值就在这种并排对照，别把这一行当重复信息删掉）
-            appendLine("App 侧设定值   ${moe.fuqiuluo.xposed.utils.FusedMode.label(requireContext().fusedMode)}（${requireContext().fusedMode}）")
+            appendLine("── 融合定位（普通应用视角，通用接口问框架）──")
+            // **不用模块私有通道**：这一项只用 LocationManager / Settings 问框架，
+            // 与任何普通应用拿到的答案一致（本进程不在作用域内 ⇒ 这里是未注入的真值）。
+            // 模块内部"钩子装没装上"另有一处（设置页的三态据此启用/禁用），本页不混进来看。
+            appendLine(moe.fuqiuluo.portalex.service.FusedProbe.status(requireContext()))
             appendLine()
             appendLine("── 握手门禁（谁能换钥匙/发指令）──")
             appendLine(status.getString("portal_gate"))

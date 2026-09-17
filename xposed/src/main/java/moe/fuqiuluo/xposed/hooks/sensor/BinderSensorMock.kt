@@ -247,9 +247,6 @@ object BinderSensorMock {
         rely.putBoolean("native_ready", nativeReady)
         rely.putBoolean("active", active)
         rely.putString("native", runCatching { BinderSensorNative.status() }.getOrDefault("n/a"))
-        // 融合定位：这条路"装没装上"从行为上很难看出来（应用照样拿到位置，只是拿到了真的那个），
-        // 所以状态必须能在 Test 页一眼看到 —— 与设置页的 get_fused_state 同一批字段（FusedStatus）
-        rely.putString("fused", moe.fuqiuluo.xposed.utils.FusedStatus.statusBlock())
         // 运行时投递通道（"投递 100% 可控"那条路）的状态
         rely.putString("rt_channel", SystemRuntimeChannel.status())
         // 注入噪声档的**系统侧回读**（Calibration 页用它证明下发真的落到了原生层，
