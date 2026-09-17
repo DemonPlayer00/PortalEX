@@ -54,6 +54,24 @@ object FusedStatus {
                 "chooseBest=$chooseBestHookInstalled child=$childListenerHookInstalled " +
                 "blindMethods=${blindHooked.get()} mode=${FusedMode.label(FakeLoc.fusedMode)}(${FakeLoc.fusedMode})"
 
+    /**
+     * **多行版**（Test 页用）：把同一批事实拆成带标签的行。
+     *
+     * 与 [statusLine] 共用同一批字段，**不重复实现取数逻辑** —— 单行版留给日志
+     * （一行便于 grep），多行版留给页面（人对齐着看）。两处若不一致就是 bug。
+     */
+    fun statusBlock(): String = buildString {
+        append("本机有融合定位   ").append(if (available) "是" else "否（只有 AOSP/厂商 fused 进程存在时才算）").append('\n')
+        append("装在哪         ").append(installedIn.ifEmpty { "-" }).append('\n')
+        append("chooseBest 钩子 ").append(if (chooseBestHookInstalled) "已装" else "未装")
+            .append("（融合「选出最优位置」的那一刻）").append('\n')
+        append("客户端监听钩子  ").append(if (childListenerHookInstalled) "已装" else "未装")
+            .append("（融合发给每个客户端的那条路）").append('\n')
+        append("盲挂方法数     ").append(blindHooked.get()).append('\n')
+        append("处置模式       ").append(FusedMode.label(FakeLoc.fusedMode))
+            .append("（").append(FakeLoc.fusedMode).append("）")
+    }
+
     /** 调试模式打开时打一条（用户点名要的那条日志）；关闭时完全安静 */
     fun logIfDebug(tag: String = "融合定位 hook 状态") {
         if (FakeLoc.enableDebugLog) Logger.debug("$tag：${statusLine()}")
