@@ -108,6 +108,65 @@ internal object VirtualWorld {
         return Math.round(base * LocConfig.cadenceScale).toInt().coerceIn(30, 300)
     }
 
+    // ---- 运动期的速度噪声：**两尺度**（会话偏置 + 快分量）----
+    //
+    // 旧实现是**逐帧独立的** `U(-a, +a)`。代价在真机上看见了：客户端只要画"瞬时速度"，
+    // 曲线必然是一片锯齿（实测步道乐跑配速曲线上那些 excursion 正好落在
+    // `speedAmplitude=0.3` 给出的 ±7% 白噪声 + 窗口锯齿的包络里），而且宽频噪声本身
+    // 在频谱上就不像真机 —— 接收机的速度误差在一次跑步内基本是个**固定偏置**。
+    //
+    // 现在拆两段：
+    //  · **会话偏置**：每次会话（`LocConfig.enable` 的 false→true 沿）抽一次、整段不变
+    //    ⇒ 帧间差 ≈ 0，客户端稀疏取点之间也几乎不变 ⇒ 曲线是平滑的；
+    //    而"每次会话偏置不同"同时避免了"速度恒等于设定值"这种更硬的指纹。
+    //  · **快分量**：OU（τ=1.5s、σ=0.2a）⇒ 秒级仍有细微抖动，但不再是逐帧无关。
+    private const val SPEED_FAST_TAU = 1.5
+    private const val SPEED_BIAS_SPAN = 0.5      // 会话偏置 = ±0.5a
+    private const val SPEED_FAST_SIGMA = 0.2     // 快分量 σ = 0.2a
+    private const val SPEED_FAST_CLAMP = 0.5     // 快分量钳位 = ±0.5a ⇒ 合计不超 ±a
+
+    private val speedNoiseLock = Any()
+    private val speedNoiseGauss = java.util.Random()
+    @Volatile private var speedBiasFactor = 0.0
+    private var speedFastOffset = 0.0
+    private var lastSpeedNoiseNanos = 0L
+    private var lastEnableSeen = false
+
+    /**
+     * 取一次运动期的速度偏移（m/s）。语义与旧版一致：**绝对值不超过 [amplitude]**，
+     * 但把"逐帧独立"换成了"整段会话一个偏置 + 秒级小抖动"。
+     */
+    fun speedOffsetSample(amplitude: Double): Double {
+        // 会话开关的 false→true 沿 = 新的一次会话 ⇒ 重抽偏置。
+        // 抽的是 [-0.5,0.5] 的**因子**而非绝对值 ⇒ 用户改设置时立刻按新幅度生效。
+        val on = LocConfig.enable
+        if (on && !lastEnableSeen) {
+            speedBiasFactor = speedNoiseGauss.nextDouble() * 2 * SPEED_BIAS_SPAN - SPEED_BIAS_SPAN
+            speedFastOffset = 0.0
+            lastSpeedNoiseNanos = 0L
+        }
+        lastEnableSeen = on
+        val a = amplitude.coerceAtLeast(0.0)
+        if (a <= 0.0) return 0.0
+        val now = System.nanoTime()
+        val dt = if (lastSpeedNoiseNanos == 0L) 0.0
+        else ((now - lastSpeedNoiseNanos) / 1e9).coerceIn(0.0, 5.0)
+        lastSpeedNoiseNanos = now
+        if (dt > 0.0) {
+            // OU 精确离散：X ← X·e^(−dt/τ) + N(0, σ²·τ/2·(1−e^(−2dt/τ)))
+            val dec = exp(-dt / SPEED_FAST_TAU)
+            val sigma = SPEED_FAST_SIGMA * a
+            val sd = sigma * sqrt(SPEED_FAST_TAU / 2.0 * (1.0 - dec * dec))
+            synchronized(speedNoiseLock) {
+                speedFastOffset = speedFastOffset * dec + speedNoiseGauss.nextGaussian() * sd
+                val lim = SPEED_FAST_CLAMP * a
+                if (speedFastOffset > lim) speedFastOffset = lim
+                if (speedFastOffset < -lim) speedFastOffset = -lim
+            }
+        }
+        return (speedBiasFactor * a + speedFastOffset).coerceIn(-a, a)
+    }
+
     // ---- 朝向生成器（**唯一所有者 = 位置端**；app 端只跟随，不做任何加工）----
     //
     // 输出 = 平滑中轴 + 随机往复摆动 + 低频漂移 + 高频微抖，全部在这里生成：
