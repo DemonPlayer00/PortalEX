@@ -253,23 +253,6 @@ object RemoteCommandHandler {
                 val lat = rely.getDoubleArray(Key.ROUTE_LAT)
                 val lon = rely.getDoubleArray(Key.ROUTE_LON)
                 val points = MotionEngine.setRoute(lat, lon)
-                // **一次 native 调用**把整条路线展开成坐标/朝向表（见 vw_route.c）：
-                // "弧长 d 处的坐标与朝向"只取决于路线本身，与速度/倍率/dt 无关，
-                // 所以一次算完，之后每拍 O(1) 查表 —— 热路径没有二分、没有三角函数。
-                // 原生层没装载就保持 null，MotionEngine 自动回落到现场计算（语义一致）。
-                if (points >= 2 && lat != null && lon != null && BinderSensorMock.isNativeReady) {
-                    val step = ROUTE_TABLE_STEP_M
-                    val t = runCatching { BinderSensorNative.routeExpand(lat, lon, step) }.getOrNull()
-                    if (t != null && t.size >= 6) {
-                        MotionEngine.setSamplingTable(t, step)
-                        Logger.info("MotionEngine: 采样表已展开 ${t.size / 3} 点（步长 %.2fm）".format(step))
-                    } else {
-                        MotionEngine.setSamplingTable(null, 0.0)
-                        Logger.warn("MotionEngine: 采样表展开失败，回落每拍现场计算")
-                    }
-                } else {
-                    MotionEngine.setSamplingTable(null, 0.0)
-                }
                 Logger.info("MotionEngine: 路线已上传 ${points} 点，全长 %.1f m".format(MotionEngine.distance()))
                 return true
             }
@@ -612,13 +595,6 @@ object RemoteCommandHandler {
     @Volatile private var bearingRefLat = Double.NaN
     @Volatile private var bearingRefLon = Double.NaN
     private const val BEARING_REF_MIN_DIST_M = 3.0
-
-    /**
-     * 路线采样表的步长（米）。0.25m 是"内存 × 精度"的折中：
-     * 2.4km 路线展开后 ~9700 点 × 24B ≈ 233KB（一次性），
-     * 而插值误差 ≤ 步长内的曲率变化（远小于交付坐标 1e-6 度的有效位数）。
-     */
-    private const val ROUTE_TABLE_STEP_M = 0.25
 
     private fun updateCoordinate(
         newLat: Double,

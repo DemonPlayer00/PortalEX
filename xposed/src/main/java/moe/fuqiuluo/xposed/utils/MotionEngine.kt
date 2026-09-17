@@ -63,59 +63,6 @@ object MotionEngine {
 
     private val lock = Any()
 
-    /**
-     * **采样表**（可选）：native 一次展开出的 `[lat, lon, bearing] * count`，按弧长等间距。
-     *
-     * 注入式而不是自己去调 native：`utils` 这一层必须保持"纯数学、无 Android 依赖"
-     * （整个 MotionEngine 能在 JVM 上单测就靠这条），所以"表从哪来"由调用方决定 ——
-     * system_server 侧用 `BinderSensorNative.routeExpand`，测试里用 Kotlin 参考实现。
-     * 表为 null 时回落到原来的"每拍二分 + 现场算朝向"路径，语义完全一致。
-     */
-    private var table: DoubleArray? = null
-    private var tableStep = 0.0
-
-    /** 查表结果（[sampleInto] 的输出）。只在 [lock] 内使用，避免每拍装箱。 */
-    private var sLat = 0.0
-    private var sLon = 0.0
-    private var sBearing = 0.0
-
-    /**
-     * 注入采样表（`null` = 关闭并回落）。**表必须与当前路线同源**，
-     * 所以 `setRoute` 会把它清掉，调用方要在装载路线之后立刻注入。
-     */
-    fun setSamplingTable(t: DoubleArray?, stepMeters: Double) = synchronized(lock) {
-        table = if (t != null && t.size >= 6 && stepMeters > 0.0) t else null
-        tableStep = if (table != null) stepMeters else 0.0
-    }
-
-    /** 当前是否走查表路径（诊断用） */
-    fun hasSamplingTable(): Boolean = synchronized(lock) { table != null }
-
-    /**
-     * 查表取弧长 [dist] 处的位置与朝向 —— **O(1)**：一次除法定位、一次线性插值，
-     * 没有二分、没有三角函数。调用方必须已持有 [lock]。
-     */
-    private fun sampleInto(dist: Double) {
-        val t = table ?: return
-        val n = t.size / 3
-        var idx = dist / tableStep
-        if (!idx.isFinite() || idx < 0.0) idx = 0.0
-        var i = idx.toInt()
-        if (i > n - 2) i = n - 2
-        if (i < 0) i = 0
-        val f = (idx - i).coerceIn(0.0, 1.0)
-        val a = i * 3
-        val b = a + 3
-        sLat = t[a] + (t[b] - t[a]) * f
-        sLon = t[a + 1] + (t[b + 1] - t[a + 1]) * f
-        // 朝向是环形量：按**最短弧**插值，跨 0/360 才不会甩一整圈
-        val b0 = t[a + 2]
-        var d = (t[b + 2] - b0) % 360.0
-        if (d > 180.0) d -= 360.0
-        if (d <= -180.0) d += 360.0
-        sBearing = (b0 + d * f + 360.0) % 360.0
-    }
-
     private var lats = DoubleArray(0)
     private var lons = DoubleArray(0)
 
@@ -170,9 +117,6 @@ object MotionEngine {
             completed = false
             playing = false
             snapped = false
-            // 表必须与路线同源：换了路线就作废，等调用方注入新的
-            table = null
-            tableStep = 0.0
             return lats.size
         }
     }
@@ -280,10 +224,6 @@ object MotionEngine {
             // 对齐那一拍：把位置摆到路线起点（只给坐标，不计位移 —— 否则会凭空消耗体力）
             if (!snapped) {
                 snapped = true
-                if (table != null) {
-                    sampleInto(0.0)
-                    return@synchronized Step(true, 0.0, sLat, sLon, sBearing)
-                }
                 val p = interpolateAt(indexAt(0.0), 0.0)
                 return@synchronized Step(true, 0.0, p.first, p.second, bearingAt(0.0))
             }
@@ -296,11 +236,6 @@ object MotionEngine {
             if (done) {
                 playing = false
                 completed = true
-            }
-            // 查表路径：每拍 O(1)（无二分、无三角函数）；表缺失时回落现场计算，语义一致
-            if (table != null) {
-                sampleInto(travelled)
-                return@synchronized Step(true, actual, sLat, sLon, sBearing)
             }
             val p = interpolateAt(indexAt(travelled), travelled)
             return@synchronized Step(true, actual, p.first, p.second, bearingAt(travelled))
