@@ -84,6 +84,7 @@ abstract class BaseLocationHook: BaseDivineService() {
             // 速度精度：真实设备量级 0.1~0.5 m/s。原实现借用该字段承载模拟速度
             // （值恒等于速度，异常且可被检测），改为独立随机小值。
             location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
+        }
 
         /*
          * 速度保底：静止定位在真机语义里**没有有效航向**（speed==0 ⇒ hasBearing 无意义），
@@ -91,6 +92,11 @@ abstract class BaseLocationHook: BaseDivineService() {
          * （"停下 1 秒后指南针变 0、角度计不再变化"），而我们的位置数据本身是对的
          * （停下后 vel=0.0 / bear=295° 稳定）。这里给模拟会话留一个极小的速度，
          * 让 bearing 保持有效，指针停在最后朝向。
+         *
+         * ⚠️ **必须在上面那个 SDK/`hasSpeedAccuracy()` 判断之外**。它原先被嵌在里面，
+         * 于是在"载波 fix 不带速度精度"的 ROM 上**整段是死代码**：真机实测静止帧的
+         * `speed` 恰好 0.0（步道乐跑详情页的配速曲线因此在 313~996 s/km 之间炸成锯齿）。
+         * 保底速度服务于 `hasBearing()`，与载波有没有速度精度字段毫无关系。
          */
         if (FakeLoc.enable && location.speed < FakeLoc.speedFloor) {
             /*
@@ -100,7 +106,6 @@ abstract class BaseLocationHook: BaseDivineService() {
              */
             // 低通 + 慢随机游走（见 FakeLoc.speedFloorSample）：与真机静止噪声的时间相关性一致
             location.speed = FakeLoc.speedFloorSample().toFloat()
-        }
         }
 
         if (location.altitude == 0.0) {
