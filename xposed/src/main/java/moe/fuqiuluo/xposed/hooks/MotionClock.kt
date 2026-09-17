@@ -177,6 +177,7 @@ object MotionClock {
      * 于是应用侧按 1 秒窗口算出的配速会出现一根尖峰。所以尖峰问题的正确问法不是"谁分配了内存"，
      * 而是"什么让某一拍迟到" —— 这几个计数器就是那个问题的读数。
      */
+    private var lastLateLogNanos = 0L
     private var dtMaxNanos = 0L
     private var late75 = 0
     private var late150 = 0
@@ -214,6 +215,15 @@ object MotionClock {
             if (dtNanos > 75_000_000L) late75++
             if (dtNanos > 150_000_000L) late150++
             if (dtNanos > 300_000_000L) late300++
+            // **带时间戳的迟到记录**：这是与"GC 停顿"对时用的证据。
+            // 限流 1 条/秒（迟到本身可能连续发生，刷日志会把日志系统变成新的噪声源）。
+            if (dtNanos > 150_000_000L && now - lastLateLogNanos > 1_000_000_000L) {
+                lastLateLogNanos = now
+                Logger.warn(
+                    "MotionClock: 拍迟到 %.0fms（名义 %dms）—— 本拍会补回对应位移，应用侧即配速尖峰"
+                        .format(dtNanos / 1e6, BEAT_MS)
+                )
+            }
         }
 
         // 1) 推进：位移 = 速度 × 体力倍率 × Δt（缩放就在这一处发生）

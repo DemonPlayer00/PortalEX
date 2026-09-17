@@ -488,6 +488,7 @@ internal object LocationServiceHook: BaseLocationHook() {
     private var dSlow5 = 0
     private var dSlow20 = 0
     private var dWallMax = 0L
+    private var lastSlowFrameLogNanos = 0L
 
     /**
      * 交付分段计时汇总（Test 页的 motion 行会带上它）。
@@ -615,6 +616,15 @@ internal object LocationServiceHook: BaseLocationHook() {
             if (wall > dWallMax) dWallMax = wall
             if (wall > 5_000_000L) dSlow5++
             if (wall > 20_000_000L) dSlow20++
+            // 慢帧也留一条带时间戳的记录（与"拍迟到"对时，分辨是不是客户端把这一拍拖住了）
+            if (wall > 20_000_000L && f3 - lastSlowFrameLogNanos > 1_000_000_000L) {
+                lastSlowFrameLogNanos = f3
+                Logger.warn(
+                    "deliverFrame: 慢帧 %.0fms（监听器 %d 个，CPU %.0fms）".format(
+                        wall / 1e6, locationListeners.size, (cpu3 - cpu0) / 1e6
+                    )
+                )
+            }
         }
 
         if (delivered > 0 || oneShotDelivered > 0) lastDeliveryNanosGlobal = nowNanos
