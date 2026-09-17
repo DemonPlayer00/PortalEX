@@ -291,8 +291,20 @@ internal object VirtualWorld {
                 } else break
             }
             val distM = WorldMath.haversine(startLat, startLon, curLat, curLon)
-            // 实际覆盖时长：采样历史比窗口短时用真实时长，否则按窗口计
-            val spanSec = minOf(now - startNanos, winNanos).coerceAtLeast(1_000_000L) / 1e9
+            /*
+             * 归一化用**实际覆盖时长**（now − 起点采样时刻），**不能**再钳到窗口长度。
+             *
+             * 为什么：起点取的是"≤ now−win 的最近一次采样"，正常情况下它比 win **更早**
+             * 一个采样周期 ⇒ dist 覆盖的是一条 ≥ win 的弧，再除以 win 就是**单边高报**。
+             * 真机实测（步道乐跑配对抓帧，21:00 那次跑步）：注入 speed 的中位数
+             * = **4.104 m/s**，而世界真实速度 = 名义 4.0 × 体力倍率 ≤ 4.0 —
+             * 系统性高报 **+2.6%**，与"采样周期 50ms / 窗口 1s"推出来的 ~+2.5% 吻合。
+             *
+             * 这是**可被交叉检测的指纹**：客户端拿自己的位移差分与 `location.getSpeed()`
+             * 一比，看到的是**单向**偏差；真机 GPS 两者只该差在噪声里，不该有恒定偏移。
+             * 采样历史本来就短于窗口时（刚清过窗口），这里同样退化成真实时长，与旧行为一致。
+             */
+            val spanSec = (now - startNanos).coerceAtLeast(1_000_000L) / 1e9
             val rawSpeed = distM / spanSec
             // 瞬移（手动设点/路线跳点）：位移对应的**速度**荒谬才算，见 TELEPORT_SPEED_MPS
             if (rawSpeed > TELEPORT_SPEED_MPS) return 0.0 to false
