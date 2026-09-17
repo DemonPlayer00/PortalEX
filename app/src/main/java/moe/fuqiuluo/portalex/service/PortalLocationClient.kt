@@ -152,9 +152,27 @@ object PortalLocationClient {
         )
         lastFix = fix
         frameCount += 1
+        // 逐帧落盘（仅在调试日志打开时；见 FrameRecorder）：配速尖峰一类问题只能靠
+        // "逐帧时间序列"定位，而这份序列必须来自客户端真正收到的那一份帧
+        FrameRecorder.record(fix)
         // 回调在主线程（Looper.getMainLooper()），订阅者直接改 UI/地图
         subscribers.values.toList().forEach { it(fix) }
     }
+
+    /**
+     * 调试用：**自持一个订阅**并开始逐帧记录（`debug` 打开时由 [moe.fuqiuluo.portalex.Portal] 调用）。
+     *
+     * 为什么不用"等某个页面订阅时顺手记"：自动播放经常在**页面没打开**的状态下进行
+     * （悬浮窗 + 后台），而那时客户端根本不收帧 —— 恰好把要查的那一段漏掉。
+     * 这里用一个固定 owner 自己订阅，与页面生命周期解耦。
+     */
+    fun startDebugRecording(context: Context) {
+        FrameRecorder.start(context)
+        subscribe(RECORDER_OWNER, context, MIN_INTERVAL_MS) { /* 记录发生在 deliver 里 */ }
+    }
+
+    /** 记录器自己的订阅 owner（与页面 owner 不冲突，页面进退不会撤掉它） */
+    private val RECORDER_OWNER = Any()
 
     /** 诊断一行（Test 页）：把"App 收到的点"与"模块的权威世界点"摆在一起看 */
     fun statusLine(): String {

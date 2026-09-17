@@ -156,6 +156,20 @@ var Context.debug: Boolean
     }
 
 /**
+ * 「逐帧记录」（[moe.fuqiuluo.portalex.service.FrameRecorder]）开关：把客户端收到的每一帧
+ * 落盘，供离线分析配速曲线。
+ *
+ * **刻意与 [debug] 分开**：`debug` 会同时打开模块侧的逐帧日志，那是 ~800 行/秒的
+ * system_server 日志洪水 —— 做交付/时延类测量时它就是**扰动源**，不能和"只想安静录帧"
+ * 共用一个开关。默认关闭，不改变任何既有行为。
+ */
+var Context.frameRecord: Boolean
+    get() = sharedPrefs.getBoolean("frame_record", false)
+    set(value) = sharedPrefs.edit {
+        putBoolean("frame_record", value)
+    }
+
+/**
  * 融合定位处置（三态互斥，见 [moe.fuqiuluo.xposed.utils.FusedMode]）：
  * **默认伪装** —— 在检测到融合定位的设备上，让融合照常跑、但把它交给应用的结果改写成
  * 模拟位置；"拒绝"是把系统能力报成不可用，"放行"则不做任何干预（不推荐）。
