@@ -1,5 +1,6 @@
 package moe.fuqiuluo.portalex.ui.test
 
+import moe.fuqiuluo.portalex.ext.fusedMode
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -132,6 +133,13 @@ class TestFragment : Fragment() {
             appendLine()
             appendLine("── 应用期望频率（框架采用值 / 客户端原始请求）──")
             appendLine(status.getString("sensor_rates"))
+            appendLine()
+            appendLine("── 融合定位（FusedLocation）──")
+            // 系统侧（权威）：模块在 fused 进程里装了什么、当前处置模式是什么
+            appendLine(status.getString("fused") ?: "（旧版模块无此字段）")
+            // App 侧自报值：与上面那行的"处置模式"**对不上**就说明 App→模块的配置没同步到
+            // （本页的价值就在这种并排对照，别把这一行当重复信息删掉）
+            appendLine("App 侧设定值   ${moe.fuqiuluo.xposed.utils.FusedMode.label(requireContext().fusedMode)}（${requireContext().fusedMode}）")
             appendLine()
             appendLine("── 握手门禁（谁能换钥匙/发指令）──")
             appendLine(status.getString("portal_gate"))
