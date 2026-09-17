@@ -171,6 +171,18 @@ object MotionClock {
     private var timedBeats = 0L
 
     /**
+     * **每拍实际间隔（dt）的分布**：判"配速尖峰"的上游就是它。
+     *
+     * 机制：这一拍迟到了多久，下一拍就会**多走对应的位移**（补回来，见 [MotionClock.beat] 的 dt 用法），
+     * 于是应用侧按 1 秒窗口算出的配速会出现一根尖峰。所以尖峰问题的正确问法不是"谁分配了内存"，
+     * 而是"什么让某一拍迟到" —— 这几个计数器就是那个问题的读数。
+     */
+    private var dtMaxNanos = 0L
+    private var late75 = 0
+    private var late150 = 0
+    private var late300 = 0
+
+    /**
      * 分段计时汇总（Test 页的 `motion` 行会带上它）。
      *
      * ⚠️ **读取即清零**：这是"自上次读取以来"的窗口，不是会话累计。
@@ -179,19 +191,30 @@ object MotionClock {
      */
     fun timingLine(): String {
         val n = timedBeats.coerceAtLeast(1)
-        val line = "每拍分段(µs 平均, 窗口=%d拍): 推进=%.0f 体力=%.0f 落点=%.0f 投递=%.0f".format(
+        val line = ("每拍分段(µs 平均, 窗口=%d拍): 推进=%.0f 体力=%.0f 落点=%.0f 投递=%.0f" +
+                " | dt: max=%.0fms 迟到>75ms=%d >150ms=%d >300ms=%d").format(
             timedBeats, tMotion / 1000.0 / n, tStamina / 1000.0 / n,
             tPlace / 1000.0 / n, tDeliver / 1000.0 / n,
+            dtMaxNanos / 1e6, late75, late150, late300,
         )
         tMotion = 0; tStamina = 0; tPlace = 0; tDeliver = 0; timedBeats = 0
+        dtMaxNanos = 0; late75 = 0; late150 = 0; late300 = 0
         return line
     }
 
     private fun beat() {
         val timing = FakeLoc.enableDebugLog
         val now = SystemClock.elapsedRealtimeNanos()
-        val dt = if (lastBeatNanos == 0L) BEAT_MS / 1000.0 else (now - lastBeatNanos) / 1e9
+        val dtNanos = if (lastBeatNanos == 0L) BEAT_MS * 1_000_000L else now - lastBeatNanos
+        val dt = dtNanos / 1e9
         lastBeatNanos = now
+        if (timing) {
+            if (dtNanos > dtMaxNanos) dtMaxNanos = dtNanos
+            // 只有"对齐拍"（lastBeatNanos 为 0 时按名义值）之后的真实间隔才计入分布
+            if (dtNanos > 75_000_000L) late75++
+            if (dtNanos > 150_000_000L) late150++
+            if (dtNanos > 300_000_000L) late300++
+        }
 
         // 1) 推进：位移 = 速度 × 体力倍率 × Δt（缩放就在这一处发生）
         val t0 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L

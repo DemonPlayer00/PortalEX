@@ -484,6 +484,10 @@ internal object LocationServiceHook: BaseLocationHook() {
     /** 同一批分段的 **CPU 时间**（`Debug.threadCpuTimeNanos`）：与墙钟一起看才不会被阻塞骗到 */
     private var dBuildCpu = 0L
     private var dListenersCpu = 0L
+    /** 慢帧分布：墙钟超过阈值的帧数（排查"是不是某个客户端把这一拍拖住了"） */
+    private var dSlow5 = 0
+    private var dSlow20 = 0
+    private var dWallMax = 0L
 
     /**
      * 交付分段计时汇总（Test 页的 motion 行会带上它）。
@@ -492,14 +496,16 @@ internal object LocationServiceHook: BaseLocationHook() {
     fun deliveryTimingLine(): String {
         val n = dFrames.coerceAtLeast(1)
         val line = ("交付分段(µs 平均, 窗口=%d帧, 墙钟/CPU): 造帧=%.0f/%.0f 监听器=%.0f/%.0f " +
-                "一次性=%.0f 收尾=%.0f").format(
+                "一次性=%.0f 收尾=%.0f | 慢帧: max=%.0fms >5ms=%d >20ms=%d").format(
             dFrames,
             dBuild / 1000.0 / n, dBuildCpu / 1000.0 / n,
             dListeners / 1000.0 / n, dListenersCpu / 1000.0 / n,
             dOneShot / 1000.0 / n, dTail / 1000.0 / n,
+            dWallMax / 1e6, dSlow5, dSlow20,
         )
         dBuild = 0; dListeners = 0; dOneShot = 0; dTail = 0; dFrames = 0
         dBuildCpu = 0; dListenersCpu = 0
+        dSlow5 = 0; dSlow20 = 0; dWallMax = 0L
         return line
     }
 
@@ -605,6 +611,10 @@ internal object LocationServiceHook: BaseLocationHook() {
             dTail += 0L
             dBuildCpu += cpu1 - cpu0
             dListenersCpu += cpu2 - cpu1
+            val wall = f3 - f0
+            if (wall > dWallMax) dWallMax = wall
+            if (wall > 5_000_000L) dSlow5++
+            if (wall > 20_000_000L) dSlow20++
         }
 
         if (delivered > 0 || oneShotDelivered > 0) lastDeliveryNanosGlobal = nowNanos
