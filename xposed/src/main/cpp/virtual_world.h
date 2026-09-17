@@ -222,3 +222,14 @@ int vw_dump_handles(char *out, size_t out_size);
 #endif
 
 #endif /* PORTAL_VIRTUAL_WORLD_H */
+
+/* ---------------- 路线展开器（vw_route.c） ----------------
+ *
+ * 折线的"弧长 d 处的坐标与朝向"**只取决于路线本身**（与速度/体力倍率/dt 无关），
+ * 所以加载路线时展开成一张按弧长等间距采样的表，之后每拍 O(1) 查表 ——
+ * 热路径从此没有二分、没有超越函数、没有 Java 侧装箱。
+ * 输出交错存放 `out[3i]=lat, out[3i+1]=lon, out[3i+2]=bearing`。
+ */
+double vw_route_length(const double *lat, const double *lon, int n);
+int vw_route_expand(const double *lat, const double *lon, int n, double step_m,
+                    double *out, int max_points, double *out_total);

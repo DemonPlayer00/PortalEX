@@ -45,6 +45,7 @@
  * 对不上就什么都不做——解析错、ROM 不同、库被换过，都只是功能不生效，不会写坏
  * 系统进程（这条铁律是踩过一次段错误换来的）。
  */
+#include <math.h>
 #include <dlfcn.h>
 #include <elf.h>
 #include <jni.h>
@@ -661,6 +662,53 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_install(JNIEnv *env, jo
  * `ISensorEventConnectionExt::adjustSamplingPeriodBaseOverride` 调整成**采用值**。
  * 若要"像"，应以框架采用值为准（框架 dump 里的 `selected`）。
  */
+/*
+ * 路线展开：一次 JNI 调用返回整条 `[lat, lon, bearing]` 交错数组。
+ *
+ * 入口只做三件事：拷入、算容量、调纯 C 的 vw_route_expand（它的正确性由 host 测试
+ * `test/vw_route_test.c` 对着另写一份的朴素参考实现验过）。展开是**加载路线时一次**的事，
+ * 所以这里的一次性分配无所谓；热路径（每拍）在 Kotlin 侧只读这张表。
+ */
+JNIEXPORT jdoubleArray JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_routeExpand(
+        JNIEnv *env, jobject thiz, jdoubleArray lat_arr, jdoubleArray lon_arr, jdouble step_m) {
+    (void) thiz;
+    if (lat_arr == NULL || lon_arr == NULL) return NULL;
+    if (!(step_m > 0.0) || !isfinite(step_m)) return NULL;
+    const jsize n = (*env)->GetArrayLength(env, lat_arr);
+    if (n < 2 || (*env)->GetArrayLength(env, lon_arr) < n) return NULL;
+
+    jdouble *lat = (*env)->GetDoubleArrayElements(env, lat_arr, NULL);
+    if (lat == NULL) return NULL;
+    jdouble *lon = (*env)->GetDoubleArrayElements(env, lon_arr, NULL);
+    if (lon == NULL) {
+        (*env)->ReleaseDoubleArrayElements(env, lat_arr, lat, JNI_ABORT);
+        return NULL;
+    }
+
+    jdoubleArray result = NULL;
+    const double total = vw_route_length(lat, lon, n);
+    int cap = (int) (total / step_m) + 3;
+    if (cap < 2) cap = 2;
+    if (cap <= (int) (total / step_m) + 3) {          /* 溢出保护：总长异常时不硬撑 */
+        double *out = (double *) malloc(sizeof(double) * 3 * (size_t) cap);
+        if (out != NULL) {
+            const int cnt = vw_route_expand(lat, lon, n, step_m, out, cap, NULL);
+            if (cnt > 0) {
+                result = (*env)->NewDoubleArray(env, (jsize) cnt * 3);
+                if (result != NULL) {
+                    (*env)->SetDoubleArrayRegion(env, result, 0, (jsize) cnt * 3, out);
+                }
+            }
+            free(out);
+        }
+    }
+
+    (*env)->ReleaseDoubleArrayElements(env, lat_arr, lat, JNI_ABORT);
+    (*env)->ReleaseDoubleArrayElements(env, lon_arr, lon, JNI_ABORT);
+    return result;
+}
+
 JNIEXPORT jstring JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_enableRequests(JNIEnv *env, jobject thiz) {
     (void) thiz;

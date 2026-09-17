@@ -196,6 +196,17 @@ internal object BinderSensorNative {
     external fun realStepCounter(): Long
 
     /** 诊断字符串（已挂载/已改写槽位/已发事件数…） */
+    /**
+     * **路线展开**（native `vw_route_expand`）：一次调用把整条折线按弧长等间距展开成
+     * 坐标/朝向表，返回**交错数组** `[lat, lon, bearing] * count`（失败返回 null）。
+     *
+     * 为什么值得走 native：折线上"弧长 d 处的坐标与朝向"**只取决于路线本身**
+     * （与速度/体力倍率/dt 无关），所以是一次性计算；展开后热路径每拍只做
+     * `索引 + 一次线性插值`，**没有二分、没有超越函数、没有 Java 侧装箱** ——
+     * 这正是 Java/ART 的盲区：小对象标量化只在 JIT 乐意时发生，而这条链是 20Hz 常驻的。
+     */
+    external fun routeExpand(lat: DoubleArray, lon: DoubleArray, stepMeters: Double): DoubleArray?
+
     external fun status(): String
 
     /**
