@@ -100,6 +100,9 @@ class HooksChainTest {
                     installed += executable to (args!![0] as XposedInterface.Hooker)
                     object : XposedInterface.HookHandle {
                         override fun getExecutable(): Executable = executable
+                        // API 102 给 HookHandle 新增的两个抽象成员；假框架照实现即可
+                        override fun getId(): String? = "fake-hook"
+                        override fun replaceHook(hooker: XposedInterface.Hooker) = this
                         override fun unhook() {}
                     }
                 }

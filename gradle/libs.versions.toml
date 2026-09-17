@@ -1,10 +1,10 @@
 [versions]
 agp = "9.3.0"
-# libxposed 现代 API。选 101 而不是最新的 102：本模块用不到 102 才有的
-# HotReloadingParam/HotReloadedParam，而 minApiVersion=101 能让模块在只实现 101
-# 的框架上也能加载（向后兼容由框架保证：102 实现包含 101 的全部面）。
-# 设备实测：LSPosed v2.2.0 (7854) 的 framework.dex 自带完整 102 面。
-libxposed = "101.0.0"
+# libxposed 现代 API。2026-09-18 从 101 升到 **102**：要用 102 才有的热重载回调
+# （onHotReloading/onHotReloaded + HotReloadedParam.getOldHookHandles），目标是
+# "换模块 APK 后 system_server 无需重启"。代价：minApiVersion 一起提到 102，
+# 只实现 101 的框架上不再加载。设备实测：LSPosed v2.2.0 (7854) 的 framework.dex 自带完整 102 面。
+libxposed = "102.0.0"
 kotlin = "2.4.20"
 coreKtx = "1.15.0"
 junit = "4.13.2"
