@@ -149,6 +149,9 @@ object FakeLoc {
         get() = VirtualWorld.offset_altitude
     /** 取一次"静止保底速度"：慢随机游走 + 一阶低通（实现见 [VirtualWorld.speedFloorSample]）。 */
     fun speedFloorSample(): Double = VirtualWorld.speedFloorSample()
+
+    /** 取一次"运动期速度偏移"：会话偏置 + 秒级快分量（实现见 [VirtualWorld.speedOffsetSample]）。 */
+    fun speedOffsetSample(amplitude: Double): Double = VirtualWorld.speedOffsetSample(amplitude)
     /** 步频-移动速度线性模型（实现见 [VirtualWorld.cadenceForSpeed]）。 */
     fun cadenceForSpeed(speed: Double): Int = VirtualWorld.cadenceForSpeed(speed)
     /** 注入朝向：平滑中轴 + 低频漂移（实现见 [VirtualWorld.processedBearing]）。 */

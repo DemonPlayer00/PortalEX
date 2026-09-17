@@ -70,7 +70,9 @@ abstract class BaseLocationHook: BaseDivineService() {
         location.altitude = frameAltitude
         // 速度由实际模拟位移推算（FakeLoc.measuredSpeed）：移动中 = 实测速度 ± 抖动，静止 = 0。
         // 早期实现直接写入配置速度，与注入的位置变化无关（跨帧对比位移与 speed 即可发现矛盾）。
-        val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
+        // 速度噪声：两尺度（会话偏置 + 秒级快分量），见 VirtualWorld.speedOffsetSample。
+        // 旧实现是逐帧独立的 U(-a,+a) —— 客户端只要画瞬时速度就必然满屏锯齿。
+        val speedAmp = FakeLoc.speedOffsetSample(FakeLoc.speedAmplitude)
         // 速度：按**交付间隔窗口**取平均（间隔参数在此进入数据链）——
         // 旧实现直接写瞬时 measuredSpeed（400ms 衰减窗口）：交付间隔由应用决定（可 900ms+）时，
         // 采样常踩到衰减谷值或跳变之间的空档 → 帧携带 vel=0 → 应用侧整段间隔不计步 → 步频偏低。
