@@ -2,11 +2,12 @@
 # 规范来源：io.github.libxposed.api 的 package-info —— 必填 minApiVersion/targetApiVersion，
 # 可选 staticScope / exceptionMode。
 #
-# 为什么是 101 而不是设备上框架实现的 102：本模块用不到 102 才有的
-# HotReloadingParam/HotReloadedParam，声明 101 就能在只实现 101 的框架上也加载
-# （框架保证向后兼容：本机 LSPosed v2.2.0 的 framework.dex 自带完整 102 面）。
-minApiVersion=101
-targetApiVersion=101
+# 2026-09-18：从 101 提到 **102** —— 本模块现在要用 102 的热重载回调
+# （onHotReloading/onHotReloaded，见 PortalExModule），目的是"换模块 APK 后
+# system_server 无需重启"。代价是丢掉对"只实现 101 的框架"的兼容；
+# 本机 LSPosed v2.2.0 (7854) 的 framework.dex 自带完整 102 面（已在设备上拆验证）。
+minApiVersion=102
+targetApiVersion=102
 
 # protective：钩子抛异常时框架吞掉并记账、继续走原方法 —— 与旧 XposedBridge 的
 # "回调异常不穿给宿主"语义一致（我们自己那层适配器也各自兜底，这里是第二道闸）。
