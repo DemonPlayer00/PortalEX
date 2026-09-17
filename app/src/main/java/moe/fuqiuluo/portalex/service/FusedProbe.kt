@@ -55,15 +55,32 @@ object FusedProbe {
         sb.append("全部 provider    ").append(
             runCatching { lm.allProviders.joinToString(", ") }.getOrDefault("（读取失败）")
         ).append('\n')
-        // 最近一次融合 fix：这是**真实**数据（本进程不在作用域内），可与被注入的帧对照
-        val fix = runCatching { lm.getLastKnownLocation(FUSED_NAME) }.getOrNull()
-        sb.append("最近融合 fix     ").append(
-            if (fix == null) "无（从未取到 —— 融合没工作、或被系统裁剪）"
-            else "%.6f,%.6f  精度 %.1fm  %d 秒前".format(
-                fix.latitude, fix.longitude, fix.accuracy,
-                (android.os.SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) / 1_000_000_000L
-            )
+        // 最近一次 fix：**不要把失败压成同一个「无」**。我第一版就是那么写的，结果
+        // 「没权限抛异常」「该 provider 不存在」「框架缓存为空」在页面上长得一模一样，根本没法判。
+        // 所以这里把权限、异常、以及 gps 的对照值都摊开写。
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        sb.append("定位权限         ").append(if (granted) "已授予" else "未授予（下面必然是取不到）").append('\n')
+        sb.append("最近融合 fix     ").append(lastFix(lm, FUSED_NAME)).append('\n')
+        // 对照组：gps 的 last-known。**两者一起取不到 ⇒ 缓存/语义问题，与融合无关**；
+        // 只有 fused 取不到而 gps 有 ⇒ 才真说明融合那条路没在工作。
+        sb.append("最近 gps fix     ").append(lastFix(lm, LocationManager.GPS_PROVIDER))
+                return sb.toString()
+    }
+
+    /** 取 last-known 并**如实说明为什么取不到**（无 provider / 异常 / 缓存为空 各不相同） */
+    private fun lastFix(lm: LocationManager, provider: String): String {
+        if (runCatching { lm.getProvider(provider) }.getOrNull() == null) return "无此 provider"
+        return runCatching { lm.getLastKnownLocation(provider) }.fold(
+            onSuccess = { fix ->
+                if (fix == null) "缓存为空（provider 在，但框架没给这个客户端留最近位置）"
+                else "%.6f,%.6f  精度 %.1fm  %d 秒前".format(
+                    fix.latitude, fix.longitude, fix.accuracy,
+                    (android.os.SystemClock.elapsedRealtimeNanos() - fix.elapsedRealtimeNanos) / 1_000_000_000L
+                )
+            },
+            onFailure = { "读取失败：${it.javaClass.simpleName}: ${it.message}" }
         )
-        return sb.toString()
     }
 }
