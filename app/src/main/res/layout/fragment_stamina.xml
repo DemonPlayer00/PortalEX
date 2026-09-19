@@ -54,9 +54,7 @@
                     android:id="@+id/stamina_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:trackTint="@color/switch_track_tint"
-                    app:useMaterialThemeColors="true" />
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!--
