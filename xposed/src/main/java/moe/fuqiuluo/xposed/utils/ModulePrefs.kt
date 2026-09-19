@@ -15,6 +15,9 @@ import java.io.File
  * 上游已宣布它废弃，替代品就是现在这条；且旧入口不存在之后，
  * 反射那套 classloader 兜底也失去意义。
  *
+ * ⚠️ **这条通道是"一次性快照"，不是"实时读取"**（2026-09-19 真机实测，见 [enabled] 的说明）。
+ * 需要跟随用户改动的开关走 `put_config` 命令，别在这里读。
+ *
  * 读不到时一律返回 null，调用方按"开关未开启"处理，即**回落到既有行为**，
  * 绝不因为读不到设置而改变模块功能。
  */
@@ -41,20 +44,18 @@ internal object ModulePrefs {
     }
 
     /**
-     * 步频侧外周传感器模拟开关（`null` = 读不到；调用方按"未开启"处理，与旧读取器同口径）。
-     * 注意**不缓存**：这两个开关会被 App 在两个功能页里随时改，缓存会把页面上的改动吃掉。
-     */
-    fun cadenceMockEnabled(): Boolean? = readBoolean(PortalProtocol.Pref.CADENCE_MOCK, def = true)
-
-    /** 角度与指南针侧外周传感器模拟开关（不缓存，理由同上） */
-    fun orientationMockEnabled(): Boolean? = readBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, def = true)
-
-    /**
-     * 读任意布尔开关（**不缓存**，由调用方决定要不要缓存）。
+     * 读任意布尔开关（由调用方决定要不要缓存）。
      *
-     * 存在的理由：不是每个开关都能靠 `put_config` 送达（那条路要求系统侧已握手），
-     * 而 App 侧偏好一落盘就是权威。调用方拿它做"下发值之外的第二判据"，
-     * 于是"刚打开开关、下发还没到"这段窗口不会读到旧结论。
+     * ⚠️ **实测（2026-09-19）：这条通道在 system_server 里只能当"一次性快照"用。**
+     * `getRemotePreferences` 由框架按 group 在进程内缓存（`computeIfAbsent`），
+     * 内容在构造时拉一次，之后靠框架推增量；而本机（LSPosed 2.2.0 / api 102）
+     * **增量从未到达** —— App 在功能页改开关（写偏好 + 发命令）也好、
+     * 用 root 原地改偏好文件也好，system_server 侧都收不到推送，
+     * 于是**后续每次读拿到的都是进程第一次读时的旧值**。
+     *
+     * 结论（别再把这条通道当"实时开关源"）：需要跟随变化的开关一律走
+     * `put_config` 命令（`RemoteCommandHandler`），与噪声档/速度等设置同一条路。
+     * 本函数只适合"进程启动早期读一次、之后不再变"的场景。
      *
      * @return true/false = 读到了；null = 通道不可用（调用方按"未开启"处理）
      */

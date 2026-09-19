@@ -485,3 +485,39 @@ adb shell /data/local/tmp/sensorprobe 4 20000
 `xposed/src/main/cpp/test/vw_class_gate_test.c`（已进 `test/run.sh`）：默认全开 ⇒ 全 1；
 只开步频 ⇒ 步数计数器/检测器 = 1 且 加速度/陀螺/磁场/朝向/旋转矢量**必须全 0**；只开角度 ⇒ 反之；
 全关 ⇒ 全 0；不归我们管的 type（光照）恒 0。
+
+**真机判据（运行时）**：`portal_sensor.c` 里"归我们管 ⇒ 压制真实事件"这行 `suppressed++` 落在
+`vw_owns_type()` 的分支里，于是按类压制计数是一个**可读的仪表**：
+
+* 每次下发开关时模块打一行 `按类开关 cadence=… orientation=… | cadence=N orientation=M`；
+* **关掉的那一侧，两次读数之间的增量必须为 0**（该侧不再被接管 ⇒ 不再压制真实事件）；
+* 开着的那一侧同期增量必须 > 0（否则说明是"没有订阅者"而非"门控生效"，判据无效）。
+
+⚠️ 读数**只能在下发那一刻取**（那行日志只在 `pushSensorClasses()` 里打）。
+"关掉之后等一会儿再读一次"读到的是**同一行旧数据**，差值恒为 0 —— 那是方法错误，不是门控生效。
+
+### 权威来源：命令，**不是**偏好（2026-09-19 实测）
+
+开关值在 App 侧落在偏好里（`Pref.CADENCE_MOCK` / `Pref.ORIENTATION_MOCK`），但
+**system_server 读不到它的变化**，所以模块侧的唯一权威是 `put_config` 命令：
+
+* libxposed 的 `getRemotePreferences(group)` 返回的是"**构造时拉一次快照**"的对象：
+  框架按 group 在进程内缓存实例（`computeIfAbsent`），之后靠**推送增量**刷新；
+* 本机（LSPosed 2.2.0 / api 102）实测**推送从未到达**：App 在功能页改开关（写偏好 + 发命令）
+  没有推送、用 root 原地改偏好文件（保 inode）也没有推送，监听器一次都没被回调；
+* 后果是这条通道给 system_server 的永远是**进程第一次读时的旧值**。
+
+曾试过"模块自轮询偏好、以偏好为唯一真相源"（本文件写作时的下一步计划），**实测证明有害**：
+模块按命令把一侧关掉后 1 秒，自轮询拿**旧快照**又把它打开 —— 日志现场
+
+```
+BinderSensorMock: onConfigChanged            cadence=true orientation=false   ← 命令：关
+BinderSensorMock: 按类开关变化（自轮询）      cadence=true->true orientation=false->true  ← 旧快照把它开回来
+```
+
+于是这条读路径被整体删除（`ModulePrefs.cadenceMockEnabled()/orientationMockEnabled()` 一并删除，
+连同刚加的偏好变化监听）。**要改开关就发命令** —— 与噪声档、速度、路线等设置同一条通道。
+
+> 未验证的假设：推送可能依赖 LSPosed 管理端进程在跑（本机测试时它没在跑）。
+> 这条没有实测，**不要**据此把偏好通道重新当成实时源。
+
