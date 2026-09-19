@@ -18,7 +18,8 @@ import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentTestBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.allowLandscape
-import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.cadenceMock
+import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
@@ -83,7 +84,8 @@ class TestFragment : Fragment() {
         val text = buildString {
             appendLine("═══ 应用侧（本进程）═══")
             appendLine("包名           ${ctx.packageName}")
-            appendLine("实验开关       ${if (ctx.binderSensorMock) "开" else "关"}")
+            appendLine("外周模拟(步频)  ${if (ctx.cadenceMock) "开" else "关"}")
+            appendLine("外周模拟(朝向)  ${if (ctx.orientationMock) "开" else "关"}")
             appendLine("设定速度       ${"%.2f".format(ctx.speed)} m/s")
             appendLine("上报间隔       ${ctx.reportDuration} ms")
             appendLine("模拟精度/星数  ${"%.1f".format(ctx.accuracy)} m / ${ctx.minSatelliteCount}")

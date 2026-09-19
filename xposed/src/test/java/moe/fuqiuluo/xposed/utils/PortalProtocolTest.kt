@@ -46,7 +46,7 @@ class PortalProtocolTest {
         //          report_duration、route_lat/lon/travelled/distance/points、
         //          motion_mode/playing/completed，以及 stamina_* 状态回读 12 项
         // 63 → 62：删掉 `hide_developer_mode`（"隐藏开发者模式"整条功能移除）
-        assertEquals(64, key.size)
+        assertEquals(63, key.size)
     }
 
     @Test
@@ -85,7 +85,5 @@ class PortalProtocolTest {
         assertEquals("put_config", PortalProtocol.Cmd.PUT_CONFIG)
         assertEquals("set_sensor_mock", PortalProtocol.Cmd.SET_SENSOR_MOCK)
         assertEquals("get_sensor_status", PortalProtocol.Cmd.GET_SENSOR_STATUS)
-        assertEquals("binder_sensor_mock", PortalProtocol.Key.BINDER_SENSOR_MOCK)
-        assertEquals("binderSensorMock", PortalProtocol.Pref.BINDER_SENSOR_MOCK)
     }
 }
