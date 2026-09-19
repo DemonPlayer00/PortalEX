@@ -66,7 +66,20 @@ object PortalProtocol {
         const val ACCURACY                  = "accuracy"
         const val ALTITUDE                  = "altitude"
         const val BEARING                   = "bearing"
+        /**
+         * **已废弃**：外周传感器模拟原来是一个总开关，现已按传感器类别拆成
+         * [CADENCE_MOCK]（步数计数器/检测器）与 [ORIENTATION_MOCK]（加速度/陀螺/磁场）。
+         * 保留一轮仅为了"App 与模块不同版本混跑"时不至于崩；**下一轮删除**。
+         * 迁移口径（用户裁决 2026-09-18）：**不继承旧值**，两侧各取默认（都开）。
+         */
+        @Deprecated("改用 CADENCE_MOCK / ORIENTATION_MOCK")
         const val BINDER_SENSOR_MOCK        = "binder_sensor_mock"
+
+        /** 步频侧外周传感器模拟：接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
+        const val CADENCE_MOCK              = "cadence_mock"
+
+        /** 角度与指南针侧外周传感器模拟：接管加速度/陀螺/磁场（朝向那一路） */
+        const val ORIENTATION_MOCK          = "orientation_mock"
         const val CADENCE_SCALE             = "cadence_scale"
         /** 体力参数（`StaminaConfig.toWire()` 的定序数组） */
         const val STAMINA_CONFIG            = "stamina_config"
@@ -137,6 +150,17 @@ object PortalProtocol {
 
     /** 偏好键名（app 写、模块侧反射读同一份 prefs 文件） */
     object Pref {
+        /** 步频侧外周传感器模拟（默认开，与原总开关一致 —— 拆分不得静默改变行为） */
+        const val CADENCE_MOCK = "cadenceMock"
+
+        /** 角度与指南针侧外周传感器模拟（默认开） */
+        const val ORIENTATION_MOCK = "orientationMock"
+
+        /**
+         * **已废弃**：旧的总开关 pref 键。App 侧这一轮仍在写它（过渡期两端混跑不崩），
+         * 下一轮把开关搬进两个功能页时连同 [Key.BINDER_SENSOR_MOCK] 一起删。
+         */
+        @Deprecated("改用 CADENCE_MOCK / ORIENTATION_MOCK")
         const val BINDER_SENSOR_MOCK = "binderSensorMock"
     }
 }
