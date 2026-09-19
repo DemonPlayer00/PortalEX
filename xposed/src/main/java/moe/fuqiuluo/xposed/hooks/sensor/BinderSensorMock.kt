@@ -178,6 +178,11 @@ object BinderSensorMock {
             "BinderSensorMock: onConfigChanged cadence=${FakeLoc.enableCadenceMock} orientation=${FakeLoc.enableOrientationMock} " +
                     "session=${FakeLoc.enable} supervisor=$supervisorStarted native=$nativeReady fail=$failTicks"
         )
+        // ⚠️ **配置变化这条路必须推一次按类开关**。原先 pushSensorClasses() 只挂在
+        // applyStoredConfig()（开机/恢复路径），于是"改开关"只改了模块的 flag、从没到原生层 ——
+        // 注入行为不变，就是个骗人的开关。这个 bug 是靠真机运行时证据抓出来的（开关关了、
+        // pref 变了、模块日志的 flag 也变了，而**按类计数与注入行为没变**）。
+        pushSensorClasses()
         if (!FakeLoc.anySensorMockEnabled) {
             deactivate()
             SystemRuntimeChannel.releaseCarrier()
