@@ -47,9 +47,7 @@
                     android:id="@+id/selinux_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -203,9 +201,7 @@
                     android:id="@+id/debug_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!-- 融合定位处置：与其它设置项同一排布（左标题+说明，右侧当前值；点一行改值）。
@@ -279,9 +275,7 @@
                     android:id="@+id/cdma_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -395,9 +389,7 @@
                     android:id="@+id/disable_wlan_scan_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <LinearLayout
@@ -428,9 +420,7 @@
                     android:id="@+id/loop_broadcast_location_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!-- 后台保活（默认开）：前台服务 + partial wake lock，见 MockKeepAliveService -->
@@ -464,9 +454,7 @@
                     android:id="@+id/keep_alive_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!-- 电池优化白名单：点一下申请系统豁免（后台活跃权限） -->
@@ -525,9 +513,7 @@
                     android:id="@+id/allow_landscape_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
         </LinearLayout>
