@@ -437,6 +437,7 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
         if (!vw_owns_type(type)) obs_note(type, e->data.f[0], e->timestamp);
         if (vw_owns_type(type)) {
             suppressed++;
+            vw_note_suppressed_class(type);   /* 按类记账：拆分的运行时判据读数 */
             continue;
         }
         if (kept != i) buf[kept] = *e;
@@ -806,6 +807,18 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_realStepCounter(JNIEnv 
  * 外周传感器模拟的**按类开关**（2026-09-18：一个总开关拆成步频侧 / 角度指南针侧）。
  * 一次调用把两侧状态灌进原生层；门控落在 vw_owns_type()，关掉的一侧真实事件原样放行。
  */
+/** 按类压制计数（诊断）：关掉的一侧必须停止增长 */
+JNIEXPORT jstring JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_suppressedCounts(
+        JNIEnv *env, jobject thiz) {
+    (void) thiz;
+    long long c = 0, o = 0;
+    vw_suppressed_counts(&c, &o);
+    char buf[96];
+    snprintf(buf, sizeof(buf), "cadence=%lld orientation=%lld", c, o);
+    return (*env)->NewStringUTF(env, buf);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setSensorClasses(
         JNIEnv *env, jobject thiz, jboolean cadence, jboolean orientation) {
