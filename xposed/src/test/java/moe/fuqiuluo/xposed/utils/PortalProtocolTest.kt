@@ -46,7 +46,7 @@ class PortalProtocolTest {
         //          report_duration、route_lat/lon/travelled/distance/points、
         //          motion_mode/playing/completed，以及 stamina_* 状态回读 12 项
         // 63 → 62：删掉 `hide_developer_mode`（"隐藏开发者模式"整条功能移除）
-        assertEquals(62, key.size)
+        assertEquals(64, key.size)
     }
 
     @Test
