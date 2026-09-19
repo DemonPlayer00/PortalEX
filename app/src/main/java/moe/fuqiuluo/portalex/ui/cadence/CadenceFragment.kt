@@ -1,5 +1,9 @@
 package moe.fuqiuluo.portalex.ui.cadence
 
+import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.ext.orientationMock
+import moe.fuqiuluo.portalex.ext.cadenceMock
+import android.location.LocationManager
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -47,6 +51,17 @@ class CadenceFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+
+        // 外周传感器模拟（本页那一侧）。**开关即下发**（不等下次握手）—— 否则用户会以为"点了没反应"。
+        // 另一侧的值原样带着走：这条命令一次带两侧，别把对方的状态覆盖成默认。
+        binding.cadenceMockSwitch.isChecked = requireContext().cadenceMock
+        binding.cadenceMockSwitch.setOnCheckedChangeListener { _, checked ->
+            val ctx = requireContext()
+            ctx.cadenceMock = checked
+            ConfigSync.setSensorMock(
+                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
+            )
+        }
         renderRows()
         refreshReadout()
     }
