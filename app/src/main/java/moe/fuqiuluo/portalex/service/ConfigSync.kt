@@ -82,7 +82,10 @@ object ConfigSync {
         FakeLoc.enableNMEA = context.enableNMEA
         FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
         FakeLoc.disableGetFromLocation = !context.enableGetFromLocation
-        FakeLoc.enableBinderSensorMock = context.binderSensorMock
+        // 过渡期（第 2/4 步）：App 侧仍是**一个**开关，同时驱动两侧 —— 行为与拆分前逐位一致；
+        // 第 4 步把开关搬进「步频」「角度和指南针」两个功能页时，这两行会各自读自己的 pref。
+        FakeLoc.enableCadenceMock = context.binderSensorMock
+        FakeLoc.enableOrientationMock = context.binderSensorMock
         FakeLoc.cadenceScale = context.cadenceScale.toDouble()
         FakeLoc.noiseProfile = context.sensorNoise
     }
@@ -115,7 +118,10 @@ object ConfigSync {
         rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
         rely.putBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
         rely.putBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+        rely.putBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+        rely.putBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
+        // 旧键同时下发（模块侧过渡期仍认它；最后一轮与新键一起删）
+        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.anySensorMockEnabled)
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
         rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
@@ -137,6 +143,8 @@ object ConfigSync {
         if (locationManager == null) return Result.NO_SERVICE
         val rely = Bundle()
         rely.putString(Key.COMMAND_ID, Cmd.SET_SENSOR_MOCK)
+        rely.putBoolean(Key.CADENCE_MOCK, enabled)
+        rely.putBoolean(Key.ORIENTATION_MOCK, enabled)
         rely.putBoolean(Key.BINDER_SENSOR_MOCK, enabled)
         runCatching {
             FakeLoc.noiseProfile = context.sensorNoise

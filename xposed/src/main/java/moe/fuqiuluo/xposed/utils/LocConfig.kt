@@ -59,7 +59,27 @@ internal object LocConfig {
      * 关闭时该路径完全不安装（不加载 .so、不起线程），行为与旧版本逐位一致。
      */
     @Volatile
-    var enableBinderSensorMock = true
+    /**
+     * 外周传感器模拟**按传感器类别拆成两个开关**（2026-09-18 用户裁决）：
+     *  · [enableCadenceMock]     —— 步频侧：`TYPE_STEP_COUNTER` / `TYPE_STEP_DETECTOR`
+     *  · [enableOrientationMock] —— 角度与指南针侧：加速度 / 陀螺 / 磁场（朝向那一路）
+     *
+     * 两侧**都默认开**，与原总开关的行为逐位一致 —— 拆分不得静默改变行为。
+     * **旧键不继承**：读不到新键就各取默认（用户裁决，代价是"曾手动关过总开关的设备升级后会变回开"）。
+     */
+    var enableCadenceMock = true
+    var enableOrientationMock = true
+
+    /**
+     * 任一侧还开着 ⇒ 外周传感器这条链仍需**装载**。
+     *
+     * 为什么需要这个谓词：模块里原来那五处门控（装载/卸载、监督线程停摆与唤醒、泵循环、滴答）
+     * 都是"整体生死"判断，与具体传感器类别无关。拆成两个开关之后它们必须问"**还该不该活着**"，
+     * 而不是"某一个开关开没开" —— 否则只开一侧时整条链会被另一侧关掉。
+     * 按类别的强制不在这里，在 native 的按通道门控（下一步）。
+     */
+    val anySensorMockEnabled: Boolean
+        get() = enableCadenceMock || enableOrientationMock
 
     /** 注入栅格分辨率（Hz）：0 = 自动跟随框架采用值；非 0 时固定为 1e9/该值（原生层钳 2.5~50ms） */
 

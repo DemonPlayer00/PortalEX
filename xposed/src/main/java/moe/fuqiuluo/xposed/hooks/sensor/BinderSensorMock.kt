@@ -26,7 +26,7 @@ import moe.fuqiuluo.xposed.utils.StaminaRuntime
  * ⚠️ 红线：**不要在 `handleLoadPackage("android")` 阶段装载**。那段代码跑在开机途中，
  * 在 system_server 里 dlopen 并改写 `libsensorservice.so` 会让部分 ROM 永久卡在
  * `Waiting for service 'sensorservice'`（2026-09-12 在 MI6/LineageOS 15 上开机动画永不结束，
- * A/B 已证）。要动这条链路，先读 [registerAtBoot] 与 `LocConfig.enableBinderSensorMock`。
+ * A/B 已证）。要动这条链路，先读 [registerAtBoot] 与 `LocConfig.enableCadenceMock/enableOrientationMock`。
  */
 object BinderSensorMock {
 
@@ -157,13 +157,13 @@ object BinderSensorMock {
     fun registerAtBoot() {
         if (!FakeLoc.isSystemServerProcess) return
         Logger.info(
-            "BinderSensorMock: 开机登记 flag=${FakeLoc.enableBinderSensorMock}" +
+            "BinderSensorMock: 开机登记 cadence=${FakeLoc.enableCadenceMock} orientation=${FakeLoc.enableOrientationMock}" +
                     "（装载推迟到模拟会话启动；开机阶段不碰传感器 HAL）"
         )
     }
 
     /**
-     * 开关/配置变化（`put_config` 已写入 [FakeLoc.enableBinderSensorMock] 后调用）。
+     * 开关/配置变化（`put_config` 已写入两个按类开关后调用；**任一侧开着就该活着**）。
      * 只在 system_server 内生效；其它进程只镜像开关值。
      *
      * **只有在模拟会话已经跑着的时候才装载**：`put_config` 既可能来自开机阶段，
@@ -175,10 +175,10 @@ object BinderSensorMock {
         // 开关可能刚被打开：把停摆的监督线程叫起来（停摆期间不做任何判断，只能靠通知）
         wakeSupervisor()
         Logger.info(
-            "BinderSensorMock: onConfigChanged flag=${FakeLoc.enableBinderSensorMock} " +
+            "BinderSensorMock: onConfigChanged cadence=${FakeLoc.enableCadenceMock} orientation=${FakeLoc.enableOrientationMock} " +
                     "session=${FakeLoc.enable} supervisor=$supervisorStarted native=$nativeReady fail=$failTicks"
         )
-        if (!FakeLoc.enableBinderSensorMock) {
+        if (!FakeLoc.anySensorMockEnabled) {
             deactivate()
             SystemRuntimeChannel.releaseCarrier()
             return true
@@ -225,9 +225,9 @@ object BinderSensorMock {
         if (!FakeLoc.isSystemServerProcess) return
         // 会话启停都要叫醒：开启 ⇒ 立刻开始推流；停止 ⇒ 醒来收尾并重新停摆
         wakeSupervisor()
-        if (FakeLoc.enableBinderSensorMock && FakeLoc.enable) {
+        if (FakeLoc.anySensorMockEnabled && FakeLoc.enable) {
             load()
-        } else if (!FakeLoc.enableBinderSensorMock) {
+        } else if (!FakeLoc.anySensorMockEnabled) {
             deactivate()
         }
         // 会话停止但开关仍开：保留已装载的注入层（投递泵自己会因 !FakeLoc.enable 退出），
@@ -242,7 +242,9 @@ object BinderSensorMock {
      * 就说明问题在生成/投递环节，而不是应用侧的显示。
      */
     fun fillStatus(rely: android.os.Bundle) {
-        rely.putBoolean("flag", FakeLoc.enableBinderSensorMock)
+        rely.putBoolean("flag", FakeLoc.anySensorMockEnabled)
+        rely.putBoolean("mock_cadence", FakeLoc.enableCadenceMock)
+        rely.putBoolean("mock_orientation", FakeLoc.enableOrientationMock)
         rely.putBoolean("mock_running", FakeLoc.enable)
         rely.putBoolean("native_ready", nativeReady)
         rely.putBoolean("active", active)
@@ -432,7 +434,7 @@ object BinderSensorMock {
     private fun pumpLoop() {
         try {
             while (!Thread.currentThread().isInterrupted) {
-                if (!FakeLoc.enableBinderSensorMock || !FakeLoc.enable || !nativeReady) return
+                if (!FakeLoc.anySensorMockEnabled || !FakeLoc.enable || !nativeReady) return
                 val now = SystemClock.elapsedRealtimeNanos()
                 SystemRuntimeChannel.pump(now)
                 /*
@@ -518,7 +520,7 @@ object BinderSensorMock {
     private fun supervisorLoop() {
         while (true) {
             try {
-                if (!FakeLoc.enableBinderSensorMock || !FakeLoc.enable) {
+                if (!FakeLoc.anySensorMockEnabled || !FakeLoc.enable) {
                     // 收尾一次（幂等）再睡：注入层置 inactive、停泵、撤销载体引导
                     deactivate()
                     if (!park()) return
@@ -560,7 +562,7 @@ object BinderSensorMock {
         lastTickNanos = now
 
         // 开关关闭 == 什么都不做（不装载、不注入、不注册载体）
-        if (!FakeLoc.enableBinderSensorMock) {
+        if (!FakeLoc.anySensorMockEnabled) {
             deactivate()
             return
         }

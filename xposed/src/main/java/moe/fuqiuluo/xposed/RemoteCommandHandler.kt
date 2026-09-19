@@ -198,8 +198,7 @@ object RemoteCommandHandler {
             }
             Cmd.SET_SENSOR_MOCK -> {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
-                val enabled = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
-                FakeLoc.enableBinderSensorMock = enabled
+                applySensorMockSwitches(rely)
                 // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档随它一起恢复
                 // （否则系统进程重启后噪声档会退回内置默认）
                 applyNoiseProfile(rely)
@@ -223,7 +222,7 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.IS_SENSOR_MOCK -> {
-                rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+                putSensorMockSwitches(rely)
                 return true
             }
             Cmd.SET_ROCKER -> {
@@ -415,7 +414,8 @@ object RemoteCommandHandler {
                 val disableGetFromLocation = rely.getBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
                 val loopBroadcastLocation = rely.getBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
                 // 开关：读不到键时保持当前值（= 模块默认，现为开；旧版 App 不下发该键也不改变结论）
-                val binderSensorMock = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+                val binderCadenceMock = rely.getBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+                val binderOrientationMock = rely.getBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
                 // 步频倍率（微调步频↔速度）：读不到键时保持当前值
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
                 // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
@@ -449,7 +449,8 @@ object RemoteCommandHandler {
 
                 // Binder 外周传感器模拟：仅在 system_server 内生效（装载/卸载原生注入层）。
                 // 非 system_server 进程只镜像开关值，不做任何安装。
-                FakeLoc.enableBinderSensorMock = binderSensorMock
+                FakeLoc.enableCadenceMock = binderCadenceMock
+                FakeLoc.enableOrientationMock = binderOrientationMock
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
                 if (staminaWire != null) {
                     FakeLoc.staminaWire = staminaWire
@@ -494,7 +495,7 @@ object RemoteCommandHandler {
                 rely.putBoolean(Key.HOOK_WIFI, FakeLoc.hookWifi)
                 rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
                 rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
-                rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+                putSensorMockSwitches(rely)
                 return true
             }
             Cmd.BROADCAST_LOCATION -> {
@@ -595,6 +596,33 @@ object RemoteCommandHandler {
     @Volatile private var bearingRefLat = Double.NaN
     @Volatile private var bearingRefLon = Double.NaN
     private const val BEARING_REF_MIN_DIST_M = 3.0
+
+    /**
+     * 应用外周传感器模拟的两个开关（按传感器类别拆分，2026-09-18 用户裁决）。
+     *
+     * 兼容口径（过渡期，最后一轮删）：**旧键在时按旧键同时设两侧** —— App 侧这一轮还没搬完开关，
+     * 两端混跑必须不崩且行为一致；新键存在则以新键为准。
+     */
+    private fun applySensorMockSwitches(rely: android.os.Bundle) {
+        if (rely.containsKey(Key.BINDER_SENSOR_MOCK)) {
+            val v = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.anySensorMockEnabled)
+            FakeLoc.enableCadenceMock = v
+            FakeLoc.enableOrientationMock = v
+        }
+        if (rely.containsKey(Key.CADENCE_MOCK)) {
+            FakeLoc.enableCadenceMock = rely.getBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+        }
+        if (rely.containsKey(Key.ORIENTATION_MOCK)) {
+            FakeLoc.enableOrientationMock = rely.getBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
+        }
+    }
+
+    /** 回包：两个新键 + 旧的镜像（旧键给没升级的 App 读，最后一轮删） */
+    private fun putSensorMockSwitches(rely: android.os.Bundle) {
+        rely.putBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+        rely.putBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
+        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.anySensorMockEnabled)
+    }
 
     private fun updateCoordinate(
         newLat: Double,
