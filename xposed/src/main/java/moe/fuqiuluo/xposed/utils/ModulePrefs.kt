@@ -55,6 +55,15 @@ internal object ModulePrefs {
     }
 
     /**
+     * 步频侧外周传感器模拟开关（`null` = 读不到；调用方按"未开启"处理，与旧读取器同口径）。
+     * 注意**不缓存**：这两个开关会被 App 在两个功能页里随时改，缓存会把页面上的改动吃掉。
+     */
+    fun cadenceMockEnabled(): Boolean? = readBoolean(PortalProtocol.Pref.CADENCE_MOCK, def = true)
+
+    /** 角度与指南针侧外周传感器模拟开关（不缓存，理由同上） */
+    fun orientationMockEnabled(): Boolean? = readBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, def = true)
+
+    /**
      * 读任意布尔开关（**不缓存**，由调用方决定要不要缓存）。
      *
      * 存在的理由：不是每个开关都能靠 `put_config` 送达（那条路要求系统侧已握手），
