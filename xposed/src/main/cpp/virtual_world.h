@@ -73,6 +73,17 @@ typedef struct {
 /** 该类型是否属于本模块接管（自产 + 压制真实值）的集合 */
 int vw_owns_type(int32_t type);
 
+/**
+ * **按类开关**：关掉的那一侧，[vw_owns_type] 直接判"不归我们管" ⇒ 真实事件原样放行
+ * ⇒ 那一侧一个事件都不会被注入。默认两侧都开（与拆分前逐位一致）。
+ * @param cadence     步频侧（TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR）
+ * @param orientation 角度与指南针侧（加速度/陀螺/磁场/朝向）
+ */
+void vw_set_class_enable(int cadence, int orientation);
+
+/** 该 type 所属侧当前是否开着（不可识别的 type 恒为 0） */
+int vw_class_enabled(int32_t type);
+
 /** 进程内一次性初始化（虚拟世界的固有常量：场强/磁倾角/bias/漂移） */
 void vw_init(void);
 

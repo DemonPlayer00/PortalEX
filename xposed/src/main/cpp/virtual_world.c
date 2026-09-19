@@ -266,8 +266,34 @@ static long long jitter_ts(long long base, long long span_ns, long long now_ns) 
     return ts;
 }
 
-int vw_owns_type(int32_t type) {
+/*
+ * ---- 外周传感器模拟的**按类开关**（2026-09-18 用户裁决：一个总开关拆成两侧）----
+ *
+ * 侧别划分（按传感器类别，与 App 侧两个功能页一一对应）：
+ *  · 步频侧   ：TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR
+ *  · 角度指南针侧：加速度（含未校准/线性加速度）、陀螺（含未校准）、
+ *                磁场（含未校准）、朝向（orientation/rotation vector/重力）
+ *
+ * **为什么门控必须落在本函数**：它是"这个 type 归不归我们管"的唯一判定，
+ * 而 portal_sensor.c 的分叉是「归我们管 ⇒ 发我们生成的事件；不归我们管 ⇒ **真实事件原样放行**」。
+ * 于是关掉一侧 = 那一侧**一个事件都不会被注入**（这正是拆分的验收判据），
+ * 而且无需在投递路径上再插一道判断。
+ *
+ * 默认两侧都开 ⇒ 与拆分前的行为逐位一致（拆分不得静默改变行为）。
+ */
+static int g_class_cadence = 1;
+static int g_class_orientation = 1;
+
+void vw_set_class_enable(int cadence, int orientation) {
+    g_class_cadence = cadence ? 1 : 0;
+    g_class_orientation = orientation ? 1 : 0;
+}
+
+int vw_class_enabled(int32_t type) {
     switch (type) {
+        case PS_TYPE_STEP_COUNTER:
+        case PS_TYPE_STEP_DETECTOR:
+            return g_class_cadence;
         case PS_TYPE_ACCELEROMETER:
         case PS_TYPE_ACCELEROMETER_UNCALIBRATED:
         case PS_TYPE_LINEAR_ACCELERATION:
@@ -280,12 +306,14 @@ int vw_owns_type(int32_t type) {
         case PS_TYPE_GRAVITY:
         case PS_TYPE_MAGNETIC_FIELD:
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
-        case PS_TYPE_STEP_COUNTER:
-        case PS_TYPE_STEP_DETECTOR:
-            return 1;
+            return g_class_orientation;
         default:
             return 0;
     }
+}
+
+int vw_owns_type(int32_t type) {
+    return vw_class_enabled(type);
 }
 
 void vw_init(void) {

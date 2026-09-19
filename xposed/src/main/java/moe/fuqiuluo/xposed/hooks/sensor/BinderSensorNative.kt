@@ -152,6 +152,14 @@ internal object BinderSensorNative {
     external fun setStepsViaPoll(on: Boolean)
 
     /**
+     * **按类开关**：外周传感器模拟拆成两侧后，把两侧状态一次灌进原生层。
+     *
+     * 门控落在原生层的 `vw_owns_type()` —— 关掉的那一侧判"不归我们管"，
+     * 真实事件原样放行 ⇒ 那一侧一个事件都不会被注入（拆分的验收判据）。
+     */
+    external fun setSensorClasses(cadence: Boolean, orientation: Boolean)
+
+    /**
      * 取一帧"截至 [nowNanos] 应发出的事件"（运行时通道专用）。
      *
      * [meta] 每事件 4 个 long：`handle / type / timestamp / values 个数`；
