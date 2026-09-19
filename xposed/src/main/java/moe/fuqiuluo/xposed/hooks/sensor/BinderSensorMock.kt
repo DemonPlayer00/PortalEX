@@ -241,6 +241,19 @@ object BinderSensorMock {
      * `status()` 里的 `step_rate`（**实际发出的步事件换算的步频**）——两者对不上
      * 就说明问题在生成/投递环节，而不是应用侧的显示。
      */
+    /**
+     * 把两侧的**按类开关**灌进原生层（门控在 `vw_owns_type`）。
+     *
+     * 为什么不止推一次：用户可能在会话仍开着时关掉一侧 —— 那时装载已经完成，
+     * "只在 load() 里推"会让这次开关改动到下次重启才生效（静默失效，最难查的那种）。
+     */
+    private fun pushSensorClasses() {
+        if (!nativeReady) return
+        runCatching {
+            BinderSensorNative.setSensorClasses(FakeLoc.enableCadenceMock, FakeLoc.enableOrientationMock)
+        }.onFailure { Logger.warn("BinderSensorMock: 按类开关下发失败：${it.message}") }
+    }
+
     fun fillStatus(rely: android.os.Bundle) {
         rely.putBoolean("flag", FakeLoc.anySensorMockEnabled)
         rely.putBoolean("mock_cadence", FakeLoc.enableCadenceMock)
@@ -364,6 +377,7 @@ object BinderSensorMock {
     private fun applyStoredConfig() {
         runCatching {
             FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
+            pushSensorClasses()
         }.onFailure { Logger.warn("BinderSensorMock: 噪声档重放失败：${it.message}") }
     }
 
