@@ -11,7 +11,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.android.coro.CoroutineController
 import moe.fuqiuluo.portalex.Portal
-import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.service.ConfigSync

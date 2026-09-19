@@ -12,7 +12,7 @@
  *  1. 它把送进来的步数**无条件改写**成本进程的 globalSteps（Random.nextInt(3000, 12000)
  *     起跳，不走路不涨）⇒ 目标应用读到随机/冻结值（用户报的“点自动播放变 7000+”就是它）。
  *  2. 判定“框架开关是否开启”的通道在本机不可用（XSharedPreferences 读不到 ⇒
- *     ModulePrefs.binderSensorMockEnabled() 恒 null ⇒ 一律按“未开启”处理），
+ *     ModulePrefs.cadenceMockEnabled()/orientationMockEnabled() 都恒 null ⇒ 一律按“未开启”处理），
  *     于是它在**每个**被注入的应用里都装上，包括 PortalEX 自己 ⇒ 连排查用的探针
  *     都被污染，导致“Java 客户端恒定陈旧值”查了六轮才发现是自己改的。
  *  3. 框架侧方案（BinderSensorMock → 原生注入层 + 运行时投递通道）实测已端到端成立：

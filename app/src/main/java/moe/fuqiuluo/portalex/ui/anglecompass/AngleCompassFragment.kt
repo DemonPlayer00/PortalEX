@@ -7,7 +7,7 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentAngleCompassBinding
-import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.SensorNoise
@@ -72,7 +72,7 @@ class AngleCompassFragment : Fragment() {
             "未显式下发（跟随路线切线 / 摇杆方向）"
         }
         binding.angleReadout.text = buildString {
-            append(getString(R.string.angle_readout_injection, context.binderSensorMock))
+            append(getString(R.string.angle_readout_injection, context.orientationMock))
             append('\n')
             angleItems.forEach { item ->
                 append(item.title).append('：').append(SensorNoise.formatItem(item, values))

@@ -300,10 +300,16 @@ var Context.keepAliveInBackground: Boolean
  *
  * 注意默认值只在**偏好里还没有这个键**时生效：用户手动关掉过，就以存下来的值为准。
  */
-var Context.binderSensorMock: Boolean
-    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, true)
+var Context.cadenceMock: Boolean
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.CADENCE_MOCK, true)
     set(value) = sharedPrefs.edit {
-        putBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, value)
+        putBoolean(PortalProtocol.Pref.CADENCE_MOCK, value)
+    }
+
+var Context.orientationMock: Boolean
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, true)
+    set(value) = sharedPrefs.edit {
+        putBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, value)
     }
 
 /**

@@ -6,7 +6,8 @@ import android.os.Bundle
 import android.os.Bundle as AndroidBundle
 import android.util.Log
 import moe.fuqiuluo.portalex.ext.altitude
-import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.cadenceMock
+import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
@@ -82,10 +83,9 @@ object ConfigSync {
         FakeLoc.enableNMEA = context.enableNMEA
         FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
         FakeLoc.disableGetFromLocation = !context.enableGetFromLocation
-        // 过渡期（第 2/4 步）：App 侧仍是**一个**开关，同时驱动两侧 —— 行为与拆分前逐位一致；
-        // 第 4 步把开关搬进「步频」「角度和指南针」两个功能页时，这两行会各自读自己的 pref。
-        FakeLoc.enableCadenceMock = context.binderSensorMock
-        FakeLoc.enableOrientationMock = context.binderSensorMock
+        // 两侧各读自己的 pref（开关分别在「步频」「角度和指南针」两个功能页上）
+        FakeLoc.enableCadenceMock = context.cadenceMock
+        FakeLoc.enableOrientationMock = context.orientationMock
         FakeLoc.cadenceScale = context.cadenceScale.toDouble()
         FakeLoc.noiseProfile = context.sensorNoise
     }
@@ -120,8 +120,6 @@ object ConfigSync {
         rely.putBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
         rely.putBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
         rely.putBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
-        // 旧键同时下发（模块侧过渡期仍认它；最后一轮与新键一起删）
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.anySensorMockEnabled)
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
         rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
@@ -139,13 +137,12 @@ object ConfigSync {
      * 这条命令同时是**启动时唯一会走到的传感器侧配置载体** ⇒ 噪声档与注入栅格随它一起恢复，
      * 否则系统进程重启后校准结果就丢了（退回内置默认）。
      */
-    fun setSensorMock(context: Context, locationManager: LocationManager?, enabled: Boolean): Result {
+    fun setSensorMock(context: Context, locationManager: LocationManager?, cadence: Boolean, orientation: Boolean): Result {
         if (locationManager == null) return Result.NO_SERVICE
         val rely = Bundle()
         rely.putString(Key.COMMAND_ID, Cmd.SET_SENSOR_MOCK)
-        rely.putBoolean(Key.CADENCE_MOCK, enabled)
-        rely.putBoolean(Key.ORIENTATION_MOCK, enabled)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, enabled)
+        rely.putBoolean(Key.CADENCE_MOCK, cadence)
+        rely.putBoolean(Key.ORIENTATION_MOCK, orientation)
         runCatching {
             FakeLoc.noiseProfile = context.sensorNoise
             rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
@@ -158,7 +155,7 @@ object ConfigSync {
      * 关着开关时也要发 —— 系统侧进程重启后不该残留"开着"的状态。
      */
     fun restoreAfterHandshake(context: Context, locationManager: LocationManager?): Result {
-        val sensor = setSensorMock(context, locationManager, context.binderSensorMock)
+        val sensor = setSensorMock(context, locationManager, context.cadenceMock, context.orientationMock)
         val config = push(context, locationManager)
         // 两者任一失败都要如实上报；传感器开关的失败更严重（决定注入层装不装）
         return if (sensor != Result.OK) sensor else config
