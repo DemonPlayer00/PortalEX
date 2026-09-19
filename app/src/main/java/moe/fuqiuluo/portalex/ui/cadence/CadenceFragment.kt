@@ -58,9 +58,13 @@ class CadenceFragment : Fragment() {
         binding.cadenceMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
             ctx.cadenceMock = checked
-            ConfigSync.setSensorMock(
+            // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
+            val r = ConfigSync.setSensorMock(
                 ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
             )
+            if (!r.isOk) {
+                android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
         renderRows()
         refreshReadout()
