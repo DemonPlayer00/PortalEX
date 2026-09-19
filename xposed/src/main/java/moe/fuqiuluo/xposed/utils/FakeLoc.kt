@@ -36,9 +36,19 @@ object FakeLoc {
     var enableMockWifi: Boolean
         get() = LocConfig.enableMockWifi
         set(value) { LocConfig.enableMockWifi = value }
-    var enableBinderSensorMock: Boolean
-        get() = LocConfig.enableBinderSensorMock
-        set(value) { LocConfig.enableBinderSensorMock = value }
+    /** 步频侧外周传感器模拟（步数计数器/检测器） */
+    var enableCadenceMock: Boolean
+        get() = LocConfig.enableCadenceMock
+        set(value) { LocConfig.enableCadenceMock = value }
+
+    /** 角度与指南针侧外周传感器模拟（加速度/陀螺/磁场） */
+    var enableOrientationMock: Boolean
+        get() = LocConfig.enableOrientationMock
+        set(value) { LocConfig.enableOrientationMock = value }
+
+    /** 任一侧还开着 ⇒ 这条链仍需装载（见 [LocConfig.anySensorMockEnabled]） */
+    val anySensorMockEnabled: Boolean
+        get() = LocConfig.anySensorMockEnabled
     /** 体力参数（定序数组；见 [LocConfig.staminaWire]） */
     var staminaWire: FloatArray
         get() = LocConfig.staminaWire
