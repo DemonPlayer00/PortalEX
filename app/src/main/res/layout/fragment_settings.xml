@@ -433,41 +433,6 @@
                     app:trackTint="@color/switch_track_tint"/>
             </LinearLayout>
 
-            <LinearLayout
-                android:id="@+id/binder_sensor_mock_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:padding="5dp">
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="center_vertical"
-                    android:orientation="vertical">
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/binder_sensor_mock"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="11sp"
-                        android:text="@string/binder_sensor_mock_desc" />
-                </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/binder_sensor_mock_switch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
-            </LinearLayout>
-
             <!-- 后台保活（默认开）：前台服务 + partial wake lock，见 MockKeepAliveService -->
             <LinearLayout
                 android:id="@+id/keep_alive_layout"

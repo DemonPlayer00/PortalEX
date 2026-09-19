@@ -23,7 +23,6 @@ import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
-import moe.fuqiuluo.portalex.ext.binderSensorMock
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
@@ -264,15 +263,8 @@ class SettingsFragment : Fragment() {
         // 「传感器模拟」开关已移除：传感器 hook 恒安装（仅由 LSPosed 作用域决定是否注入），
         // 偏好项从未被模块读取——留着就是一个骗人的开关。
         //
-        // 「Binder 外周传感器模拟」（**默认开**）：打开后模拟改由 system_server 侧的
-        // 原生注入层在系统框架层完成——目标应用一个 hook 都不装，也不依赖底层传感器是
-        // 否在工作。开关下发到系统侧失败（原生层挂不上）时会明确提示，不做假成功。
-        binding.binderSensorMockSwitch.isChecked = requireContext().binderSensorMock
-        binding.binderSensorMockSwitch.setOnCheckedChangeListener { _, isChecked ->
-            requireContext().binderSensorMock = isChecked
-            showToast(if (isChecked) "已开启外周传感器模拟" else "已关闭外周传感器模拟")
-            updateRemoteConfig()
-        }
+        // 外周传感器模拟的开关**已搬到两个功能页**（步频页 / 角度和指南针页）：
+        // 一个总开关按传感器类别拆成两个，放在设置页只会掩盖"哪一侧被关了"。
 
         // 「后台保活」（默认开）：前台服务 + partial wake lock，防止 :app 被 Cached Apps Freezer 冻结。
         // 关掉时立刻撤服务；开着且模拟在跑时立刻起服务（不必等下次开模拟）。

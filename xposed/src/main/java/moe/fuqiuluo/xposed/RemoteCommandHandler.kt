@@ -604,11 +604,6 @@ object RemoteCommandHandler {
      * 两端混跑必须不崩且行为一致；新键存在则以新键为准。
      */
     private fun applySensorMockSwitches(rely: android.os.Bundle) {
-        if (rely.containsKey(Key.BINDER_SENSOR_MOCK)) {
-            val v = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.anySensorMockEnabled)
-            FakeLoc.enableCadenceMock = v
-            FakeLoc.enableOrientationMock = v
-        }
         if (rely.containsKey(Key.CADENCE_MOCK)) {
             FakeLoc.enableCadenceMock = rely.getBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
         }
@@ -621,7 +616,6 @@ object RemoteCommandHandler {
     private fun putSensorMockSwitches(rely: android.os.Bundle) {
         rely.putBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
         rely.putBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.anySensorMockEnabled)
     }
 
     private fun updateCoordinate(
