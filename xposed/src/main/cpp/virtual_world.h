@@ -84,6 +84,12 @@ void vw_set_class_enable(int cadence, int orientation);
 /** 该 type 所属侧当前是否开着（不可识别的 type 恒为 0） */
 int vw_class_enabled(int32_t type);
 
+/** 记一次"该 type 的真实事件被我们压制"（按类累计，见 vw_suppressed_counts） */
+void vw_note_suppressed_class(int32_t type);
+
+/** 读按类压制计数：关掉的一侧**停止增长**即"那一侧没被接管"的运行时证据 */
+void vw_suppressed_counts(long long *cadence, long long *orientation);
+
 /** 进程内一次性初始化（虚拟世界的固有常量：场强/磁倾角/bias/漂移） */
 void vw_init(void);
 

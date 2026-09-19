@@ -159,6 +159,9 @@ internal object BinderSensorNative {
      */
     external fun setSensorClasses(cadence: Boolean, orientation: Boolean)
 
+    /** 按类压制计数（诊断）：`"cadence=N orientation=M"` —— 关掉的一侧不再增长 */
+    external fun suppressedCounts(): String
+
     /**
      * 取一帧"截至 [nowNanos] 应发出的事件"（运行时通道专用）。
      *

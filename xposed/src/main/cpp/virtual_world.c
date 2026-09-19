@@ -578,6 +578,33 @@ void vw_stats(long long *emitted, long long *dropped, long long *suppressed) {
 
 void vw_note_suppressed(long long n) { g_suppressed += n; }
 
+/*
+ * **按类**统计"被我们压制掉的真实事件数"（拆分的运行时判据）。
+ *
+ * 为什么这个量就是判据：portal_sensor.c 的语义是「归我们管 ⇒ 压制真实事件、改发我们生成的」。
+ * 所以关掉一侧 ⇒ 那一侧的真实事件不再被压制 ⇒ **该类计数停止增长**（另一侧照常增长）。
+ * 这比"看传感器读数"可靠得多：它不依赖"手机是否在动"，只依赖"有没有订阅者"。
+ */
+static long long g_sup_cadence = 0;
+static long long g_sup_orientation = 0;
+
+void vw_note_suppressed_class(int32_t type) {
+    switch (type) {
+        case PS_TYPE_STEP_COUNTER:
+        case PS_TYPE_STEP_DETECTOR:
+            g_sup_cadence++;
+            break;
+        default:
+            g_sup_orientation++;   /* 能走到这里的只剩被接管的朝向那一族 */
+            break;
+    }
+}
+
+void vw_suppressed_counts(long long *cadence, long long *orientation) {
+    if (cadence) *cadence = g_sup_cadence;
+    if (orientation) *orientation = g_sup_orientation;
+}
+
 /* ------------------------------------------------------------------ */
 /* 朝向快频段（与 FakeLoc.advanceSway / microOffset 同构）              */
 /* ------------------------------------------------------------------ */

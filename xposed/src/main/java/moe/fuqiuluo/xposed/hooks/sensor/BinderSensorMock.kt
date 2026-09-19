@@ -251,6 +251,12 @@ object BinderSensorMock {
         if (!nativeReady) return
         runCatching {
             BinderSensorNative.setSensorClasses(FakeLoc.enableCadenceMock, FakeLoc.enableOrientationMock)
+            // 顺带记一笔"下发时点的按类压制计数"：连读两次开关日志的**差值**即可判定
+            // "关掉的那一侧是否真的不再被压制"（关掉的一侧差值必须为 0，另一侧继续涨）
+            Logger.info(
+                "BinderSensorMock: 按类开关 cadence=${FakeLoc.enableCadenceMock} " +
+                        "orientation=${FakeLoc.enableOrientationMock} | ${BinderSensorNative.suppressedCounts()}"
+            )
         }.onFailure { Logger.warn("BinderSensorMock: 按类开关下发失败：${it.message}") }
     }
 
