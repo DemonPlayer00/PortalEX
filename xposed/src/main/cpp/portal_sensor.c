@@ -802,6 +802,17 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_realStepCounter(JNIEnv 
 }
 
 /** 步数两条流是否改由 poll 路径注入（见 g_steps_via_poll 的说明） */
+/*
+ * 外周传感器模拟的**按类开关**（2026-09-18：一个总开关拆成步频侧 / 角度指南针侧）。
+ * 一次调用把两侧状态灌进原生层；门控落在 vw_owns_type()，关掉的一侧真实事件原样放行。
+ */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setSensorClasses(
+        JNIEnv *env, jobject thiz, jboolean cadence, jboolean orientation) {
+    (void) env; (void) thiz;
+    vw_set_class_enable(cadence == JNI_TRUE ? 1 : 0, orientation == JNI_TRUE ? 1 : 0);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setStepsViaPoll(JNIEnv *env, jobject thiz,
                                                                         jboolean on) {
