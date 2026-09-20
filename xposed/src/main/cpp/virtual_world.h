@@ -225,6 +225,31 @@ void vw_get_noise(float *out, int count);
 /** 噪声档短字符串（诊断/回显用），返回写入长度 */
 int vw_dump_noise(char *out, size_t out_size);
 
+/*
+ * ---- 按组波动（两个功能页各两条参数） ----
+ *
+ * 与噪声档是**两层**：噪声档（上面）是"每条事件的传感器本底噪声"，这里是叠加在它之上的
+ * **慢漂**（秒级来回走）与**逐条随机**。两条参数都是相对量（0..1 的分数，UI 上是百分比）：
+ *   · amp 「波动强度」：慢漂半幅（时间常数 1.5s 的一阶低通随机游走 × amp）
+ *   · rnd 「随机区间」：逐条事件均匀随机半宽（±rnd）
+ * 施加口径 = `dev × 该类型的参考量`（不是逐值百分比），理由见 vw_wobble.c 文件头；
+ * 步频侧没有分量，作用在**步间隔**上（interval × (1 + dev)）。
+ *
+ * 0 值是**逐位兼容**的：两条都为 0 时不碰随机数、不做任何算术，输出与未引入本功能时完全一致。
+ */
+#define VW_WOB_GROUP_CADENCE 0     /* 步频侧：TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
+#define VW_WOB_GROUP_ORIENTATION 1 /* 角度与指南针侧：加速度/重力/线性/陀螺/磁场/方向角/旋转矢量 */
+#define VW_WOB_GROUP_COUNT 2
+
+/** 设置某一组的波动参数（[amp]/[rnd] 为 0..1 的分数；超出钳位，NaN 归 0）。 */
+void vw_set_group_wobble(int group, float amp, float rnd);
+
+/** 读回某一组的波动参数（0..1 的分数） */
+void vw_get_group_wobble(int group, float *amp, float *rnd);
+
+/** 波动参数短字符串（诊断/回显用），返回写入长度 */
+int vw_dump_wobble(char *out, size_t out_size);
+
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);
 

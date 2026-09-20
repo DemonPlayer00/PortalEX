@@ -71,6 +71,17 @@ object PortalProtocol {
 
         /** 角度与指南针侧外周传感器模拟：接管加速度/陀螺/磁场（朝向那一路） */
         const val ORIENTATION_MOCK          = "orientation_mock"
+
+        /*
+         * 按组波动（两条参数 × 两组，都是**百分比**，默认 15%）：
+         *   · *_WOB_AMP 波动强度：慢漂半幅（相对该类型参考量）
+         *   · *_WOB_RND 随机区间：逐条事件均匀随机半宽
+         * 语义与施加口径见 xposed/src/main/cpp/vw_wobble.c 文件头。
+         */
+        const val CADENCE_WOB_AMP           = "cadence_wob_amp"
+        const val CADENCE_WOB_RND           = "cadence_wob_rnd"
+        const val ORIENTATION_WOB_AMP       = "orientation_wob_amp"
+        const val ORIENTATION_WOB_RND       = "orientation_wob_rnd"
         const val CADENCE_SCALE             = "cadence_scale"
         /** 体力参数（`StaminaConfig.toWire()` 的定序数组） */
         const val STAMINA_CONFIG            = "stamina_config"
@@ -146,6 +157,12 @@ object PortalProtocol {
 
         /** 角度与指南针侧外周传感器模拟（默认开） */
         const val ORIENTATION_MOCK = "orientationMock"
+
+        /* 按组波动（百分比，默认 15%）—— 与 Key 里的四个键一一对应 */
+        const val CADENCE_WOB_AMP = "cadenceWobAmp"
+        const val CADENCE_WOB_RND = "cadenceWobRnd"
+        const val ORIENTATION_WOB_AMP = "orientationWobAmp"
+        const val ORIENTATION_WOB_RND = "orientationWobRnd"
 
     }
 }

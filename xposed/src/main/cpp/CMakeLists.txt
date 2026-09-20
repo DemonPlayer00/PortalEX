@@ -9,6 +9,7 @@ add_library(portalsensor SHARED
         virtual_world.c
         vw_rand.c
         vw_noise.c
+        vw_wobble.c
         vw_gait.c)
 
 # 兜底防泄漏：源码绝对路径不进 DWARF / .comment。AGP 的 strip 任务一旦解析不到

@@ -302,6 +302,8 @@ object BinderSensorMock {
         // 而不只是写进了 App 的偏好）
         rely.putString("noise_profile", runCatching { BinderSensorNative.noiseProfile() }
             .getOrDefault("n/a"))
+        // 按组波动（两组各两条，%）：与上面噪声档并列，诊断页一眼看到"下发到了什么"
+        rely.putString("wobble", FakeLoc.wobbleLine())
         // 静默失败记账：本次运行里"本该静默降级"的失败各发生了几次（全零 = none）
         rely.putString("diag", moe.fuqiuluo.xposed.utils.PortalDiag.dump())
         // 厂商私有传感器清单（仅展示：它们也在同一个事件出口上，但不在接管集合内）
@@ -411,6 +413,10 @@ object BinderSensorMock {
     private fun applyStoredConfig() {
         runCatching {
             FakeLoc.applyNoiseProfile { index, amp -> BinderSensorNative.setNoise(index, amp) }
+            // 两组波动走同一条重放路径（噪声档的兄弟项）：系统进程重启后不必等 App 再下发一次
+            FakeLoc.applyGroupWobble { group, amp, rnd ->
+                BinderSensorNative.setGroupWobble(group, amp, rnd)
+            }
             pushSensorClasses()
         }.onFailure { Logger.warn("BinderSensorMock: 噪声档重放失败：${it.message}") }
     }
