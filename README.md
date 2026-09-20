@@ -52,6 +52,9 @@ Portal 曾经是一位作者（[ella8192](https://github.com/ella8192)）的优�
 
 # Features
 
+> 面向使用者的**使用教程与功能说明**（怎么用、每个功能是什么）见 [`docs/guide.md`](docs/guide.md)；
+> 实现细节见 [`docs/`](docs/) 下的专题文档。
+
 - [x] 运行高亮通知：模拟运行时创建常驻通知，便于检测状态
 - [x] 无指纹注入：不写入 `portal.enable` / `is_mock` 等特征标记，`isMock` 恒为 `false`，检测只能依赖数据合理性
 - [x] 任意位置模拟：百度地图选点、历史位置管理、搜索定位
