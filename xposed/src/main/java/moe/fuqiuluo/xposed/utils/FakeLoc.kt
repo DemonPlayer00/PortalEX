@@ -49,6 +49,28 @@ object FakeLoc {
     /** 任一侧还开着 ⇒ 这条链仍需装载（见 [LocConfig.anySensorMockEnabled]） */
     val anySensorMockEnabled: Boolean
         get() = LocConfig.anySensorMockEnabled
+
+    /*
+     * 按组波动（两个功能页各两条，单位 %，默认 15）：
+     *   · cadenceWobbleAmp/Rnd     —— 步频侧（波动强度 / 随机区间）
+     *   · orientationWobbleAmp/Rnd —— 角度与指南针侧
+     * 施加口径见 vw_wobble.c；0 值是逐位兼容值。
+     */
+    var cadenceWobbleAmp: Float
+        get() = LocConfig.cadenceWobbleAmp
+        set(value) { LocConfig.cadenceWobbleAmp = value }
+
+    var cadenceWobbleRnd: Float
+        get() = LocConfig.cadenceWobbleRnd
+        set(value) { LocConfig.cadenceWobbleRnd = value }
+
+    var orientationWobbleAmp: Float
+        get() = LocConfig.orientationWobbleAmp
+        set(value) { LocConfig.orientationWobbleAmp = value }
+
+    var orientationWobbleRnd: Float
+        get() = LocConfig.orientationWobbleRnd
+        set(value) { LocConfig.orientationWobbleRnd = value }
     /** 体力参数（定序数组；见 [LocConfig.staminaWire]） */
     var staminaWire: FloatArray
         get() = LocConfig.staminaWire
@@ -117,6 +139,12 @@ object FakeLoc {
 
     /** 把噪声档下发给原生层（实现见 [LocConfig.applyNoiseProfile]）。 */
     fun applyNoiseProfile(native: (Int, Float) -> Unit) = LocConfig.applyNoiseProfile(native)
+
+    /** 把两组波动参数下发给原生层（实现见 [LocConfig.applyGroupWobble]）。 */
+    fun applyGroupWobble(native: (Int, Float, Float) -> Unit) = LocConfig.applyGroupWobble(native)
+
+    /** 波动参数的一行回显（日志/诊断用）。 */
+    fun wobbleLine(): String = LocConfig.wobbleLine()
 
     var speedAmplitude: Double
         get() = LocConfig.speedAmplitude

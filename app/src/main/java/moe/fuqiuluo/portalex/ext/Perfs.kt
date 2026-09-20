@@ -263,6 +263,39 @@ var Context.sensorNoise: FloatArray
     }
 
 /**
+ * 按组波动（两个功能页各两条，单位 **%**，默认 15）。
+ *
+ * 与噪声档是两层：噪声档（Calibration 页）是"每条事件的传感器本底噪声"，
+ * 这里是叠加在它之上的慢漂（波动强度）与逐条随机（随机区间）。施加口径见
+ * `xposed/src/main/cpp/vw_wobble.c` 文件头：按**该类型的参考量**加绝对偏差，
+ * 步频侧作用在**步间隔**上。
+ *
+ * 0 = 逐位兼容（原生层不碰随机数、不做算术 ⇒ 输出与没有这个功能时完全一致）。
+ */
+private fun Context.wobblePref(key: String, value: Float) =
+    sharedPrefs.edit(commit = true) { putFloat(key, value.coerceIn(0f, 100f)) }
+
+/** 步频侧·波动强度（%，默认 15）：慢漂半幅 */
+var Context.cadenceWobbleAmp: Float
+    get() = sharedPrefs.getFloat("cadenceWobAmp", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("cadenceWobAmp", value)
+
+/** 步频侧·随机区间（%，默认 15）：逐条事件均匀随机半宽 */
+var Context.cadenceWobbleRnd: Float
+    get() = sharedPrefs.getFloat("cadenceWobRnd", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("cadenceWobRnd", value)
+
+/** 角度与指南针侧·波动强度（%，默认 15） */
+var Context.orientationWobbleAmp: Float
+    get() = sharedPrefs.getFloat("orientationWobAmp", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("orientationWobAmp", value)
+
+/** 角度与指南针侧·随机区间（%，默认 15） */
+var Context.orientationWobbleRnd: Float
+    get() = sharedPrefs.getFloat("orientationWobRnd", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("orientationWobRnd", value)
+
+/**
  * 最近一次一键校准的统计明细（逐轴中位数 + σ）。
  *
  * 中位数在加速度/重力/线性加速度/磁场上**不注入**（含姿态与环境直流），但它是校准的原始

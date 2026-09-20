@@ -101,6 +101,53 @@ internal object LocConfig {
     }
 
     /**
+     * 按组波动（两个功能页各两条参数，单位 **%**，默认 15）。
+     *
+     * 与 [noiseProfile] 是**两层**：噪声档是"每条事件的传感器本底噪声"，这里是叠加在它之上的
+     * 慢漂与逐条随机。施加口径（参考量而非逐值百分比、旋转矢量加在半角上、步频侧作用于步间隔）
+     * 见 `xposed/src/main/cpp/vw_wobble.c` 文件头。
+     */
+    @Volatile var cadenceWobbleAmp: Float = WOBBLE_DEFAULT_PERCENT
+    @Volatile var cadenceWobbleRnd: Float = WOBBLE_DEFAULT_PERCENT
+    @Volatile var orientationWobbleAmp: Float = WOBBLE_DEFAULT_PERCENT
+    @Volatile var orientationWobbleRnd: Float = WOBBLE_DEFAULT_PERCENT
+
+    /** 两条参数的默认值（%） */
+    const val WOBBLE_DEFAULT_PERCENT = 15f
+    const val WOBBLE_MAX_PERCENT = 100f
+
+    /** 规范化：NaN/负值归 0，超过上限钳位（与原生侧同一口径，见 vw_wobble.c） */
+    fun sanitizeWobble(percent: Float): Float = when {
+        percent.isNaN() -> 0f
+        percent < 0f -> 0f
+        percent > WOBBLE_MAX_PERCENT -> WOBBLE_MAX_PERCENT
+        else -> percent
+    }
+
+    /**
+     * 把两组波动参数下发给原生层（system_server 内才有效果；其它进程只是镜像值）。
+     * [native] 收 `(group, ampPercent, rndPercent)`，与 `BinderSensorNative.setGroupWobble` 同参。
+     */
+    fun applyGroupWobble(native: (Int, Float, Float) -> Unit) {
+        val ca = sanitizeWobble(cadenceWobbleAmp)
+        val cr = sanitizeWobble(cadenceWobbleRnd)
+        val oa = sanitizeWobble(orientationWobbleAmp)
+        val or = sanitizeWobble(orientationWobbleRnd)
+        cadenceWobbleAmp = ca
+        cadenceWobbleRnd = cr
+        orientationWobbleAmp = oa
+        orientationWobbleRnd = or
+        native(0, ca, cr)
+        native(1, oa, or)
+    }
+
+    /** 波动参数的一行回显（日志/诊断页用） */
+    fun wobbleLine(): String =
+        "步频 %.1f%%/%.1f%% 角度 %.1f%%/%.1f%%".format(
+            cadenceWobbleAmp, cadenceWobbleRnd, orientationWobbleAmp, orientationWobbleRnd
+        )
+
+    /**
      * 原生注入层是否已成功装载（由 BinderSensorMock 在 system_server 内回填，只读诊断用）：
      * 装载失败时为 false，此时不改变任何既有行为。
      */

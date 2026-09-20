@@ -12,6 +12,8 @@ import androidx.fragment.app.Fragment
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentCadenceBinding
 import moe.fuqiuluo.portalex.ext.cadenceScale
+import moe.fuqiuluo.portalex.ext.cadenceWobbleAmp
+import moe.fuqiuluo.portalex.ext.cadenceWobbleRnd
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.ui.common.NumberRow
 import moe.fuqiuluo.portalex.ui.common.renderNumberRows
@@ -97,9 +99,54 @@ class CadenceFragment : Fragment() {
                         refreshReadout()
                     },
                 ),
+                // 外周模拟·步频侧的两条波动参数（%）：与噪声档两层，这里只调"抖多少"
+                wobbleRow(
+                    title = getString(R.string.wobble_amp),
+                    desc = getString(R.string.wobble_amp_desc),
+                    get = { context.cadenceWobbleAmp },
+                    set = { context.cadenceWobbleAmp = it },
+                    hint = getString(R.string.wobble_amp_hint_cadence),
+                ),
+                wobbleRow(
+                    title = getString(R.string.wobble_rnd),
+                    desc = getString(R.string.wobble_rnd_desc),
+                    get = { context.cadenceWobbleRnd },
+                    set = { context.cadenceWobbleRnd = it },
+                    hint = getString(R.string.wobble_rnd_hint_cadence),
+                ),
             ),
         )
     }
+
+    /**
+     * 一条波动参数行（%）：保存后**立刻下发**，与开关同一条命令。
+     *
+     * 下发失败必须说出来 —— 静默失败会变成"改了却没生效"的骗人开关（本项目的既有教训）。
+     */
+    private fun wobbleRow(
+        title: String,
+        desc: String,
+        get: () -> Float,
+        set: (Float) -> Unit,
+        hint: String,
+    ) = NumberRow(
+        title = title,
+        desc = desc,
+        display = { "%.0f%%".format(get()) },
+        current = { get().toDouble() },
+        hint = { hint },
+        commit = { value ->
+            set(value.toFloat())
+            renderRows()
+            val ctx = requireContext()
+            val r = ConfigSync.setSensorMock(
+                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
+            )
+            if (!r.isOk) {
+                android.widget.Toast.makeText(ctx, "波动参数下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
+    )
 
     /**
      * 顶部读数：**直接问公式要结果**，不在这里复算一遍。
