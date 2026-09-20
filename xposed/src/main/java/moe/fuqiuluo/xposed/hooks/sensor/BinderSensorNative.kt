@@ -163,6 +163,27 @@ internal object BinderSensorNative {
     external fun suppressedCounts(): String
 
     /**
+     * **按组波动**：两组各两条参数（页面可编辑的文本输入）。
+     *
+     * @param group [GROUP_CADENCE] = 步频侧 / [GROUP_ORIENTATION] = 角度与指南针侧
+     * @param ampPercent 波动强度（百分比，慢漂半幅）：`15f` = 参考量的 15%
+     * @param rndPercent 随机区间（百分比，逐条事件均匀随机半宽）：`15f` = ±15%
+     *
+     * 两条都为 0 是**逐位兼容**值：原生层不碰随机数、不做算术，输出与没有这个功能时完全一致。
+     */
+    external fun setGroupWobble(group: Int, ampPercent: Float, rndPercent: Float)
+
+    /** 波动的两组（与原生 `VW_WOB_GROUP_*` 同值） */
+    const val GROUP_CADENCE = 0
+    const val GROUP_ORIENTATION = 1
+
+    /** 两条参数的默认值（%）：用户口径 = 15% */
+    const val WOBBLE_DEFAULT_PERCENT = 15f
+
+    /** 上限（%）：慢漂半幅不可能超过参考量本身 */
+    const val WOBBLE_MAX_PERCENT = 100f
+
+    /**
      * 取一帧"截至 [nowNanos] 应发出的事件"（运行时通道专用）。
      *
      * [meta] 每事件 4 个 long：`handle / type / timestamp / values 个数`；

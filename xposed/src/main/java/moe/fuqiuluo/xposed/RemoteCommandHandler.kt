@@ -21,6 +21,7 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.MotionEngine
 import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import moe.fuqiuluo.xposed.utils.PortalDiag
+import moe.fuqiuluo.xposed.utils.LocConfig
 import moe.fuqiuluo.xposed.utils.SensorNoise
 import java.util.Collections
 import kotlin.random.Random
@@ -199,9 +200,10 @@ object RemoteCommandHandler {
             Cmd.SET_SENSOR_MOCK -> {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
                 applySensorMockSwitches(rely)
-                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档随它一起恢复
-                // （否则系统进程重启后噪声档会退回内置默认）
+                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档与两组波动随它一起恢复
+                // （否则系统进程重启后这些配置会退回内置默认）
                 applyNoiseProfile(rely)
+                applyGroupWobble(rely)
                 if (!BinderSensorMock.onConfigChanged()) {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
                     return false
@@ -691,6 +693,35 @@ object RemoteCommandHandler {
             }
         }
         Logger.info("Binder 外周传感器模拟：噪声档=${SensorNoise.encode(FakeLoc.noiseProfile)}")
+    }
+
+    /**
+     * 下发两组波动参数（步频侧 / 角度与指南针侧，各两条，单位 %）。
+     *
+     * 与噪声档同一套口径：键不在（旧版 App）就**什么都不做**，原生层保持内置默认 15%；
+     * 值先经 [LocConfig.sanitizeWobble] 规范化（NaN/负值归 0、超上限钳位），
+     * 所以界面上的手滑不会把原生参数写坏。
+     */
+    private fun applyGroupWobble(rely: Bundle) {
+        var any = false
+        fun take(key: String, set: (Float) -> Unit) {
+            if (!rely.containsKey(key)) return
+            set(LocConfig.sanitizeWobble(rely.getFloat(key)))
+            any = true
+        }
+        take(Key.CADENCE_WOB_AMP) { FakeLoc.cadenceWobbleAmp = it }
+        take(Key.CADENCE_WOB_RND) { FakeLoc.cadenceWobbleRnd = it }
+        take(Key.ORIENTATION_WOB_AMP) { FakeLoc.orientationWobbleAmp = it }
+        take(Key.ORIENTATION_WOB_RND) { FakeLoc.orientationWobbleRnd = it }
+        if (!any) return
+        if (BinderSensorMock.isNativeReady) {
+            pushToNative("波动参数下发") {
+                FakeLoc.applyGroupWobble { group, amp, rnd ->
+                    BinderSensorNative.setGroupWobble(group, amp, rnd)
+                }
+            }
+        }
+        Logger.info("Binder 外周传感器模拟：波动=${FakeLoc.wobbleLine()}")
     }
 
     /**

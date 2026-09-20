@@ -35,8 +35,7 @@
 
             <!-- 当前读数（直接问公式要，不在这里复算） -->
             <!-- 外周传感器模拟（本页那一侧）：开关即下发，不等下次握手。
-                 开关样式由主题默认给出（values/themes.xml 的 Portal.SwitchStyle），
-                 样式统一由主题默认给出（values/themes.xml 的 switchStyle），这里不重复写。 -->
+                 开关样式由主题默认给出（values/themes.xml 的 Portal.SwitchStyle），这里不重复写。 -->
             <com.google.android.material.switchmaterial.SwitchMaterial
                 android:id="@+id/cadence_mock_switch"
                 android:layout_width="match_parent"

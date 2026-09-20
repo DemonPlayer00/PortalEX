@@ -28,6 +28,12 @@ extern pthread_mutex_t g_lock;
 /* ---- PRNG（vw_rand.c） ---- */
 /** 进程级播种（常量种子 ⊕ 启动时间 ⊕ pid）：`vw_init` 调一次；不调也能跑，只是各进程同序列 */
 void vw_rng_seed_process(void);
+
+/**
+ * **仅测试用**：把随机流钉到确定状态（生产种子按设计不可复现，见 vw_rand.c）。
+ * 用于断言"某个代码路径有没有消耗随机数"这类**流位置**性质。
+ */
+void vw_rng_seed_fixed(uint64_t seed);
 uint64_t vw_rng_next(void);
 double vw_rng_unit(void);
 double vw_rng_range(double lo, double hi);
@@ -75,6 +81,20 @@ float vw_noise_raw(int index);
 void add_noise_i(portal_sensor_event_t *e, int index, float sigma);
 /** 三轴逐轴叠加（[base] 为该传感器 σ 的起始槽） */
 void add_noise_xyz(portal_sensor_event_t *e, int base);
+
+/* ---- 按组波动（vw_wobble.c） ---- */
+/**
+ * 本事件的波动偏差（相对量，约 ±(amp+rnd)）—— **无锁**，调用方必须已持有 [g_lock]。
+ * ⚠️ 会**推进慢漂状态并消耗随机数**：同一事件只该取一次（角度类与向量类共用同一个 dev）；
+ * 参数全 0 时在碰随机数之前就返回 0，因此 0 值不改变随机流。
+ */
+double vw_wobble_dev(int group, long long now);
+/** 该类型的参考量（0 = 不吃波动）：向量类 = 各分量共用的绝对偏差尺度 */
+double vw_wobble_ref(int32_t type);
+/** 该类型要吃波动的**分量个数**（0 = 单独处理或不吃：旋转矢量加在半角上） */
+int vw_wobble_dims(int32_t type);
+/** 步间隔波动：把基准间隔按「1 + dev」缩放（dev = 0 时原样返回，逐位一致） */
+long long vw_wobble_step_interval(long long base, long long now);
 
 #ifdef __cplusplus
 }

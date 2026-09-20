@@ -9,6 +9,10 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.cadenceMock
 import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
+import moe.fuqiuluo.portalex.ext.cadenceWobbleAmp
+import moe.fuqiuluo.portalex.ext.cadenceWobbleRnd
+import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
+import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.enableAGPS
@@ -147,6 +151,18 @@ object ConfigSync {
             FakeLoc.noiseProfile = context.sensorNoise
             rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
         }.onFailure { Log.w(TAG, "传感器侧配置恢复失败：${it.message}") }
+        runCatching {
+            // 两组波动（各两条，%）：与噪声档同一条命令一起下发 —— 这条命令是"传感器侧配置"
+            // 的载体，系统进程重启后靠它恢复，少一项就会退回内置默认。
+            FakeLoc.cadenceWobbleAmp = context.cadenceWobbleAmp
+            FakeLoc.cadenceWobbleRnd = context.cadenceWobbleRnd
+            FakeLoc.orientationWobbleAmp = context.orientationWobbleAmp
+            FakeLoc.orientationWobbleRnd = context.orientationWobbleRnd
+            rely.putFloat(Key.CADENCE_WOB_AMP, FakeLoc.cadenceWobbleAmp)
+            rely.putFloat(Key.CADENCE_WOB_RND, FakeLoc.cadenceWobbleRnd)
+            rely.putFloat(Key.ORIENTATION_WOB_AMP, FakeLoc.orientationWobbleAmp)
+            rely.putFloat(Key.ORIENTATION_WOB_RND, FakeLoc.orientationWobbleRnd)
+        }.onFailure { Log.w(TAG, "波动参数下发失败：${it.message}") }
         return resultOf(MockServiceHelper.send(locationManager, rely))
     }
 

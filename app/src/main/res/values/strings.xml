@@ -74,6 +74,19 @@
     <string name="cadence_mock_desc">接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR；系统框架层伪造，不向目标应用注入 hook</string>
     <string name="orientation_mock">外周传感器模拟（角度与指南针侧）</string>
     <string name="orientation_mock_desc">接管加速度/陀螺/磁场（朝向）；系统框架层伪造，不向目标应用注入 hook</string>
+
+    <!--
+      按组波动（两组各两条，单位 %，默认 15）：与噪声档两层 —— 噪声档是"本底噪声"，
+      这两条是叠加其上的慢漂与逐条随机。施加口径见 xposed/src/main/cpp/vw_wobble.c。
+    -->
+    <string name="wobble_amp">波动强度（%）</string>
+    <string name="wobble_amp_desc">慢漂半幅：读数在秒级上来回走的幅度（默认 15%，0 = 关闭）</string>
+    <string name="wobble_rnd">随机区间（%）</string>
+    <string name="wobble_rnd_desc">逐条事件的均匀随机半宽（默认 15%，0 = 关闭）</string>
+    <string name="wobble_amp_hint_cadence">波动强度（步频侧）：作用在**步间隔**上的慢漂半幅。15 = 步频在一个慢周期里最多偏高/偏低 15%（真人走路本就不是恒定步频）。0 = 逐位回到"均匀步间隔"。</string>
+    <string name="wobble_rnd_hint_cadence">随机区间（步频侧）：每一步的间隔在 ±该比例内**逐条均匀抽取**。15 = 每步 ±15% 以内随机（不会累积漂移）。0 = 关闭逐条随机。</string>
+    <string name="wobble_amp_hint_orientation">波动强度（角度与指南针侧）：慢漂半幅，按**该类型的参考量**折算 —— 加速度/重力/线性=1g、陀螺=1 rad/s、磁场=50µT、方向角=180°、旋转矢量=π。15 = 参考量的 15%，0 = 逐位回到原输出。</string>
+    <string name="wobble_rnd_hint_orientation">随机区间（角度与指南针侧）：每条事件在 ±该比例的参考量内**均匀抽取**（与慢漂相互独立）。旋转矢量加在**半角**上，四元数因此仍是单位四元数。</string>
     <string name="cadence_footer">步频公式只有一处（FakeLoc.cadenceForSpeed，钳在 30~300 步/分）。步进事件由系统框架侧按"步间隔"分摊下发，目标应用不需要进入作用域。事件投递速率跟随框架对每个传感器的采用值（真机 HAL 语义），无需手工调；位置上报间隔（运动循环拍长）仍在 Setting 页。</string>
 
     <!-- 角度计和指南针模拟页 -->

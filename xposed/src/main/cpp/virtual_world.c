@@ -532,11 +532,18 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
         long long per = span / delta;
         if (per <= 0) per = 1;
         long long base = steps - delta;
+        /*
+         * 步频侧波动：作用在**步间隔**上（间隔抖 = 步频抖，等价且实现最直接）。
+         * 每个间隔单独取一次偏差 ⇒ 慢漂让它一段快一段慢、逐条随机让它一步一个样；
+         * 参数为 0 时 vw_wobble_step_interval 原样返回（逐位一致，且不消耗随机数）。
+         */
+        long long t = g_last_step_push_nanos;
         for (long long k = 1; k <= delta; k++) {
+            t += vw_wobble_step_interval(per, now_nanos);
             for (int i = 0; i < STEP_QUEUE_CAP; i++) {
                 if (!g_steps_q[i].used) {
                     g_steps_q[i].used = 1;
-                    g_steps_q[i].ts = g_last_step_push_nanos + per * k;
+                    g_steps_q[i].ts = t;
                     g_steps_q[i].count = base + k;
                     break;
                 }
@@ -640,6 +647,13 @@ static int type_uses_accuracy(int32_t t) {
 static void fill_values(portal_sensor_event_t *e, long long now) {
     double az = virtual_azimuth(now);
     double theta = az * M_PI / 180.0;
+    /*
+     * 按组波动（角度与指南针侧）：**同一事件只取一次偏差**，角度类与向量类共用它 ——
+     * vw_wobble_dev 会推进慢漂状态并消耗随机数，取两次会让两组量的抖动互不相同、
+     * 也让"一次事件一个偏差"的语义散掉。参数全 0 时它不碰随机数（0 值逐位兼容）。
+     */
+    double wdev = vw_wobble_dev(VW_WOB_GROUP_ORIENTATION, now);
+    double wref = vw_wobble_ref(e->type);
     switch (e->type) {
         case PS_TYPE_ORIENTATION:
             e->data.f[0] = (float) az;
@@ -699,7 +713,12 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
         case PS_TYPE_ROTATION_VECTOR:
         case PS_TYPE_GAME_ROTATION_VECTOR:
         case PS_TYPE_GEOMAGNETIC_ROTATION_VECTOR: {
-            double half = theta / 2.0;
+            /*
+             * 旋转矢量吃波动的方式**和向量类不同**：加在**半角**上（参考量 π）。
+             * 直接按分量缩放会把四元数变成非单位长度 —— 客户端 `getRotationMatrixFromVector` 会
+             * 拿到一个不是旋转的"旋转矢量"，姿态整体跑偏，比不抖更糟。
+             */
+            double half = (theta + wdev * wref) / 2.0;
             e->data.f[0] = 0.0f;
             e->data.f[1] = 0.0f;
             e->data.f[2] = (float) (-sin(half));
@@ -718,7 +737,20 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
             break;
         default:
             break;
-    }    /*
+    }
+    /*
+     * 按组波动（角度与指南针侧）：向量类各分量叠加同一个绝对偏差 `dev × 参考量`。
+     * 用参考量而不是逐值百分比的理由见 vw_wobble.c 文件头（零基准量会永远不抖、
+     * 角度量会变成"朝向越大抖得越狠"）。旋转矢量在它自己的分支里处理，这里 dims = 0。
+     */
+    {
+        int wdims = vw_wobble_dims(e->type);
+        if (wdims > 0 && wdev != 0.0) {
+            float off = (float) (wdev * wref);
+            for (int i = 0; i < wdims; i++) e->data.f[i] += off;
+        }
+    }
+    /*
      * 陀螺（实测驱动）：真机三轴都有噪声，静止实测 σ≈0.001 rad/s；x/y 只体现零偏与噪声，
      * z 是转弯角速度 + 零偏 + 噪声。
      *

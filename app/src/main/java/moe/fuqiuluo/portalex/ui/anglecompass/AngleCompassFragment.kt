@@ -11,7 +11,11 @@ import androidx.fragment.app.Fragment
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentAngleCompassBinding
 import moe.fuqiuluo.portalex.ext.orientationMock
+import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
+import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.sensorNoise
+import moe.fuqiuluo.portalex.ui.common.NumberRow
+import moe.fuqiuluo.portalex.ui.common.renderNumberRows
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.SensorNoise
 
@@ -71,14 +75,69 @@ class AngleCompassFragment : Fragment() {
                 android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
+        renderRows()
         refreshStatus()
     }
 
     override fun onResume() {
         super.onResume()
         // 噪声档可能在 Calibration 页刚被改过（含一键校准会连磁场一起填），回来重读
+        renderRows()
         refreshStatus()
     }
+
+    /**
+     * 本页的两条波动参数（%，默认 15）—— 与步频页同款行模板。
+     *
+     * 与**噪声档**是两层：噪声档（Calibration 页）是"每条事件的传感器本底噪声"，
+     * 这里调的是叠加在它之上的**慢漂**（波动强度）与**逐条随机**（随机区间）。
+     * 保存即下发，失败说出来（静默失败 = 改了没生效的骗人开关）。
+     */
+    private fun renderRows() {
+        val context = requireContext()
+        renderNumberRows(
+            layoutInflater, binding.angleRows,
+            listOf(
+                wobbleRow(
+                    getString(R.string.wobble_amp), getString(R.string.wobble_amp_desc),
+                    get = { context.orientationWobbleAmp },
+                    set = { context.orientationWobbleAmp = it },
+                    hint = getString(R.string.wobble_amp_hint_orientation),
+                ),
+                wobbleRow(
+                    getString(R.string.wobble_rnd), getString(R.string.wobble_rnd_desc),
+                    get = { context.orientationWobbleRnd },
+                    set = { context.orientationWobbleRnd = it },
+                    hint = getString(R.string.wobble_rnd_hint_orientation),
+                ),
+            ),
+        )
+    }
+
+    private fun wobbleRow(
+        title: String,
+        desc: String,
+        get: () -> Float,
+        set: (Float) -> Unit,
+        hint: String,
+    ) = NumberRow(
+        title = title,
+        desc = desc,
+        display = { "%.0f%%".format(get()) },
+        current = { get().toDouble() },
+        hint = { hint },
+        commit = { value ->
+            set(value.toFloat())
+            renderRows()
+            val ctx = requireContext()
+            val r = ConfigSync.setSensorMock(
+                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
+            )
+            if (!r.isOk) {
+                android.widget.Toast.makeText(ctx, "波动参数下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
+    )
 
     /** 只读：当前注入档位 + 注入开关 + 当前朝向。改值请去 Calibration / Setting */
     private fun refreshStatus() {

@@ -826,6 +826,19 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setSensorClasses(
     vw_set_class_enable(cadence == JNI_TRUE ? 1 : 0, orientation == JNI_TRUE ? 1 : 0);
 }
 
+/**
+ * 按组波动（两条参数 × 两组）：[ampPercent]/[rndPercent] 是**百分比**（页面上的 15 = 15%），
+ * 原生侧按 0..1 的分数存储。语义与施加口径见 vw_wobble.c 文件头。
+ *
+ * 0 是**逐位兼容**值：两条都为 0 时原生层不碰随机数、不做算术，输出与没有这个功能时完全一致。
+ */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setGroupWobble(
+        JNIEnv *env, jobject thiz, jint group, jfloat ampPercent, jfloat rndPercent) {
+    (void) env; (void) thiz;
+    vw_set_group_wobble(group, ampPercent / 100.0f, rndPercent / 100.0f);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setStepsViaPoll(JNIEnv *env, jobject thiz,
                                                                         jboolean on) {
@@ -937,6 +950,12 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     obs_dump(priv, sizeof(priv));
     APPEND(" priv=[%s]", priv);
     APPEND(" gait=%s", vw_gait_describe());
+    {
+        /* 按组波动参数（页面可改）：诊断页/日志据此确认下发真的落到了原生层 */
+        char wob[64];
+        vw_dump_wobble(wob, sizeof(wob));
+        APPEND(" wob=[%s]", wob);
+    }
     {
         int pend = 0;
         long long dropped = 0;
