@@ -20,7 +20,7 @@ import moe.fuqiuluo.portalex.ui.common.renderNumberRows
 import moe.fuqiuluo.xposed.utils.FakeLoc
 
 /**
- * **步频模拟**独立页：把"目标应用看到的步频"相关的设置项集中到一处。
+ * **步频与加速度模拟**独立页：把"目标应用看到的步频"相关的设置项集中到一处。
  *
  * ## 这条链是怎么走的（页面底部的说明与它一致）
  *
@@ -34,7 +34,7 @@ import moe.fuqiuluo.xposed.utils.FakeLoc
  *
  * ## 为什么这几项从「Setting」页搬过来
  *
- * 用户口径：为步频模拟开单独页面并把相关设置项移过来。散在设置页里时，
+ * 用户口径：为步频与加速度模拟开单独页面并把相关设置项移过来。散在设置页里时，
  * 调步频要去"Setting"里翻两行、还看不出它们与速度的耦合关系。
  */
 class CadenceFragment : Fragment() {

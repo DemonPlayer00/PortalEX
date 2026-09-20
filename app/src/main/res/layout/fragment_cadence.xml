@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  步频模拟页。
+  步频与加速度模拟页（入口名见 strings 的 menu_cadence）。
   行由代码按共用模板（item_value_row.xml）插入 —— 加一项只需在 Fragment 的 rows 列表里加一条。
 -->
 <androidx.constraintlayout.widget.ConstraintLayout
@@ -24,7 +24,7 @@
             <com.google.android.material.textview.MaterialTextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="步频模拟"
+                android:text="步频与加速度模拟"
                 android:textColor="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.textview.MaterialTextView
