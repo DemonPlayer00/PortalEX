@@ -58,7 +58,8 @@
     <string name="allow_landscape">允许横屏</string>
     <string name="allow_landscape_desc">横屏下部分界面可能显示异常</string>
     <string name="menu_stamina">Stamina Mock</string>
-    <string name="menu_cadence">Cadence Mock</string>
+    <!-- 入口名（抽屉 + 顶栏标题）：这一页管步频侧（步数计数器/检测器）的模拟 -->
+    <string name="menu_cadence">Cadence &amp; Acceleration Mock</string>
     <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
     <string name="stamina_enable">启用体力模拟</string>
     <string name="stamina_enable_desc">体力随跑动衰减、空闲时持续恢复；低了会降速并进入疲劳，冷却还完才重新开跑</string>
