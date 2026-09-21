@@ -212,6 +212,58 @@ typedef struct {
     int used;
 } vw_step_t;
 static vw_step_t g_steps_q[STEP_QUEUE_CAP];
+/*
+ * ---- 步事件"同时下发"的诊断计数器（2026-09-21 加，为查"每约 20 秒一次步数尖峰"）----
+ *
+ * 现象：客户端（1 秒轮询）偶发看到**两条步事件几乎同时**到达 ⇒ 按事件时间戳算步频时会得到
+ * 一个荒谬的瞬时值。要定责得分开看两个环节：
+ *   · g_step_multi_push —— `vw_update_state` 一次推送里带了 ≥2 步。此时 `per = span/delta`
+ *     把这两步**摊在前一次推送的间隔里**，间隔被压缩成 span/2（例如 25ms）；
+ *   · g_step_short_gap  —— 实际发出时与上一条步事件间隔 < 100ms（压缩真的发生了）。
+ * 两者都在 status 里可读，诊断页/日志一眼能看出"是不是我们排的时刻挤在一起"。
+ */
+static long long g_step_multi_push = 0;   /* delta ≥ 2 的推送次数 */
+static long long g_step_short_gap = 0;    /* 与上一条步事件间隔 < 100ms 的次数 */
+static long long g_step_rebase_skipped = 0; /* 被判为"基线搬移"而**没有**发出去的步数 */
+static long long g_last_step_emit_ts = 0; /* 上一条**实际发出**的步事件时间戳（诊断用） */
+static long long g_last_step_due = 0;     /* 上一条步事件的**排定**时刻（对比压缩/钳位） */
+
+/*
+ * ---- 步事件**专用**时间戳（2026-09-21 修"两条步事件几乎同时"）----
+ *
+ * 为什么不能借用通用的 [jitter_ts]：它有一条**全局**单调钳位 `ts = g_last_emit_ts + 1`，
+ * 而步事件天生是"迟到"的 —— 它们的排定时刻落在**上一次推送的间隔里**（空闲拍长时可达 1 秒），
+ * 这段时间里 IMU 通道早就以 20~66ms 的节奏把 g_last_emit_ts 推到了"现在"附近。
+ * 于是每条步事件都被钳成"上一条事件 + 1ns"：实测三条步事件的时间戳只差 **1ns**
+ * （排定差明明是 284ms）⇒ 客户端按事件时间戳算步频会得到无穷大，这正是"步数尖峰"。
+ *
+ * 新口径：步事件按**自己**的游标走 —— 排定时刻 + 抖动，且与上一条步事件至少间隔
+ * [STEP_MIN_GAP_NS]；只保证"不越过 now"与"步流内部不回退"，**不再与 IMU 的游标对齐**。
+ * 与真机一致：HAL 各传感器的 FIFO 是各自独立的，跨传感器的时间戳本来就不保证有序；
+ * 客户端按同一传感器的 dt 计算，步流内部有序即可。
+ */
+#define STEP_MIN_GAP_NS 50000000LL /* 步与步之间至少 50ms（远小于真实步间隔 ~300ms） */
+static long long g_last_step_ts = 0;
+
+static long long step_ts(long long base, long long now_ns) {
+    long long j = (long long) ((vw_rng_unit() * 2.0 - 1.0) * 15000000.0); /* ±15ms */
+    long long ts = base + j;
+    long long min_ts = g_last_step_ts + STEP_MIN_GAP_NS;
+    if (ts < min_ts) ts = min_ts;      /* 与上一条步事件至少 50ms */
+    if (ts > now_ns) ts = now_ns;      /* 不许跑到未来（客户端会丢） */
+    if (ts < g_last_step_ts) ts = g_last_step_ts; /* 挤不下时也不回退 */
+    g_last_step_ts = ts;
+    return ts;
+}
+/* jitter 的两类"被迫改动"计数（定义在下面 jitter_ts 附近使用；这里先声明以便状态串读取） */
+static long long g_jitter_clamp_now = 0;
+static long long g_jitter_force_next = 0;
+
+long long vw_step_multi_push_count(void) { return g_step_multi_push; }
+long long vw_step_short_gap_count(void) { return g_step_short_gap; }
+long long vw_step_rebase_skipped(void) { return g_step_rebase_skipped; }
+long long vw_jitter_clamp_count(void) { return g_jitter_clamp_now; }
+long long vw_jitter_force_count(void) { return g_jitter_force_next; }
 static long long g_last_steps_seen = 0;
 static long long g_last_step_push_nanos = 0;
 
@@ -250,7 +302,7 @@ static long long jitter_ts(long long base, long long span_ns, long long now_ns) 
     if (amp > 2000000) amp = 2000000;  /* 至多 2ms */
     long long j = (long long) ((rng_unit() * 2.0 - 1.0) * (double) amp);
     long long ts = base + j;
-    if (ts > now_ns) ts = now_ns;
+    if (ts > now_ns) { ts = now_ns; g_jitter_clamp_now++; }
     /*
      * 单调性修正**不能越过 now**：真机上"时间戳在未来"会被严格客户端直接丢弃
      * （同一个调用里事件数比时钟分辨率还密时，旧实现的 `g_last_emit_ts + 1` 会把
@@ -259,6 +311,7 @@ static long long jitter_ts(long long base, long long span_ns, long long now_ns) 
      * 而"未来时间戳"不是。
      */
     if (ts <= g_last_emit_ts) {
+        g_jitter_force_next++;
         ts = g_last_emit_ts + 1;
         if (ts > now_ns) ts = now_ns;
     }
@@ -532,6 +585,29 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
         long long per = span / delta;
         if (per <= 0) per = 1;
         long long base = steps - delta;
+        /*
+         * **计数器重基**（2026-09-21）：短时间内涨的步数超过人类可达步频时，那不是"走了这么多步"，
+         * 而是**基线被搬移**（会话重启接在真实计数器后面、宿主重放状态等）。
+         * 旧行为会把这种跳变也按 `per = span/delta` 排成一串步事件 —— span 很短时 per 退化成 1ns，
+         * 客户端于是看到"几十条步事件同时到达"，那正是步数尖峰；而它其实没有任何物理含义。
+         * 人类上限约 4 步/秒，这里给 3 倍余量（12 步/秒）当阈值：超过就只搬基线、不发事件。
+         */
+        double implied = (double) delta / ((double) span / 1e9);
+        if (delta >= 4 && implied > 12.0) {
+            g_step_rebase_skipped += delta;
+            LOGI("step rebase: delta=%lld span=%lldms（%.0f 步/秒，超过人类上限）⇒ 只搬基线，不发事件",
+                 delta, span / 1000000, implied);
+            g_last_steps_seen = steps;
+            g_last_step_push_nanos = now_nanos;
+            g_state_nanos = now_nanos;
+            pthread_mutex_unlock(&g_lock);
+            return;
+        }
+        if (delta >= 2) {
+            g_step_multi_push++;
+            LOGI("step push delta=%lld span=%lldms per=%lldms —— 一次推送多步，间隔被压到 span/delta",
+                 delta, span / 1000000, per / 1000000);
+        }
         /*
          * 步频侧波动：作用在**步间隔**上（间隔抖 = 步频抖，等价且实现最直接）。
          * 每个间隔单独取一次偏差 ⇒ 慢漂让它一段快一段慢、逐条随机让它一步一个样；
@@ -914,7 +990,17 @@ int vw_generate(portal_sensor_event_t *out, int cap, long long now_nanos, int wa
                 g_dropped += 2;
                 continue;
             }
-            long long ts = jitter_ts(step_due, 300000000LL, now_nanos);
+            long long ts = step_ts(step_due, now_nanos);
+            if (g_last_step_emit_ts != 0 && ts - g_last_step_emit_ts < 100000000LL) {
+                g_step_short_gap++;
+                LOGI("step emitted gap=%lldms 排定差=%lldms（发出 %lld vs %lld）"
+                     "—— 客户端会看到两条步事件几乎同时",
+                     (ts - g_last_step_emit_ts) / 1000000,
+                     (step_due - g_last_step_due) / 1000000,
+                     g_last_step_emit_ts, ts);
+            }
+            g_last_step_emit_ts = ts;
+            g_last_step_due = step_due;
             long long cnt = g_steps_q[step_idx].count;
             g_steps_q[step_idx].used = 0;
             /* 计数器与检测器 = **同一次步事件、同一时间戳**：一个在涨而另一个不响，
