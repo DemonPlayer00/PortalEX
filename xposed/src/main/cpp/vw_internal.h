@@ -89,8 +89,11 @@ void add_noise_xyz(portal_sensor_event_t *e, int base);
  * 参数全 0 时在碰随机数之前就返回 0，因此 0 值不改变随机流。
  */
 double vw_wobble_dev(int group, long long now);
-/** 向量类专用偏差（100ms 采样保持：同窗内所有传感器同一个值 ⇒ accel=gravity+linear 成立） */
-double vw_wobble_dev_held(int group, long long now);
+/**
+ * 向量类专用偏差（**绝对单位**，= 慢漂全额 ×[ref] + 逐条随机 ≤[ref]/180，100ms 采样保持）：
+ * 同窗内所有传感器拿到同一个值 ⇒ `accel = gravity + linear` 成立、读数也不逐条乱跳。
+ */
+double vw_wobble_vec_dev(int group, double ref, long long now);
 
 /** 角度类专用偏差（度）：慢漂按 180° 折算 + 逐条抖动**最多 1°**（见 vw_wobble.c） */
 double vw_wobble_angle_dev(int group, long long now);
