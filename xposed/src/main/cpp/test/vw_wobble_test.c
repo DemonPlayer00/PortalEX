@@ -109,8 +109,10 @@ int main(void) {
         max_abs_dev(VW_WOB_GROUP_ORIENTATION, 4000, T0, &mx);
         expect(mx <= 0.30 + 1e-6, "偏差不得超过 amp+rnd（0.30）");
         expect(mx > 0.02, "偏差必须真的在动（否则等于没生效）");
-        double mu = mean_dev(VW_WOB_GROUP_ORIENTATION, 4000, T0);
-        expect(fabs(mu) < 0.05, "偏差均值应≈0（无系统性偏置）");
+        /* 慢漂现在是"3 秒一个目标"的采样保持 ⇒ 短窗口的均值本来就会偏。
+           要判"无系统性偏置"就得覆盖足够多目标：12000 样本 × 10ms = 120s ≈ 40 个目标。 */
+        double mu = mean_dev(VW_WOB_GROUP_ORIENTATION, 12000, T0);
+        expect(fabs(mu) < 0.10, "偏差均值应≈0（无系统性偏置；窗口需覆盖多个慢漂目标）");
     }
     {   /* 慢漂：同一时刻连续两次取值应几乎相同（时间相关），跨 1.5s 才明显变化 */
         double a = vw_wobble_dev(VW_WOB_GROUP_ORIENTATION, T0);
@@ -172,6 +174,49 @@ int main(void) {
         }
         expect(m2 > 1.0, "开慢漂时角度偏差必须明显大于 1°（慢漂没被误关）");
         expect(m2 <= 0.15 * 180.0 + 1e-6, "慢漂角度偏差不得超过 amp×180°");
+    }
+
+    printf("== ⑦ 向量类：慢漂全额，逐条随机 ≤ 参考量的 1/180（且 100ms 保持）\n");
+    {
+        /* 只开逐条随机：加速度参考量 9.80665 ⇒ 上限 ≈0.0545；磁场 50 ⇒ ≈0.278 */
+        vw_set_group_wobble(VW_WOB_GROUP_ORIENTATION, 0.0f, 1.0f);
+        double mxA = 0.0, mxM = 0.0;
+        int held = 1;
+        for (int i = 0; i < 300; i++) {
+            long long t = T0 + (long long) i * 20000000LL;
+            double a = vw_wobble_vec_dev(VW_WOB_GROUP_ORIENTATION, 9.80665, t);
+            double a2 = vw_wobble_vec_dev(VW_WOB_GROUP_ORIENTATION, 9.80665, t + 1000000LL);
+            double m = vw_wobble_vec_dev(VW_WOB_GROUP_ORIENTATION, 50.0, t);
+            if (fabs(a) > mxA) mxA = fabs(a);
+            if (fabs(m) > mxM) mxM = fabs(m);
+            if (fabs(a - a2) > 1e-9) held = 0;
+        }
+        expect(mxA <= 9.80665 / 180.0 + 1e-9, "加速度逐条抖动 ≤ 参考量/180（≈0.054 m/s²）");
+        expect(mxM <= 50.0 / 180.0 + 1e-9, "磁场逐条抖动 ≤ 参考量/180（≈0.28 µT）");
+        expect(held, "同一 100ms 窗口内向量偏差必须一致（否则 accel=gravity+linear 会破）");
+
+        /* 只开慢漂：应达到 amp×参考量 的量级（波动强度仍全额生效） */
+        vw_set_group_wobble(VW_WOB_GROUP_ORIENTATION, 0.15f, 0.0f);
+        double m2 = 0.0;
+        for (int i = 0; i < 4000; i++) {
+            /* 时间必须**继续往前走**：慢漂是 dt 驱动的，回到过去 dt<=0 就不推进（这一条先踩过） */
+            double a = fabs(vw_wobble_vec_dev(VW_WOB_GROUP_ORIENTATION, 9.80665,
+                                              T0 + 60000000000LL + i * 10000000LL));
+            if (a > m2) m2 = a;
+        }
+        expect(m2 > 0.2, "开慢漂时加速度偏差应明显大于逐条上限（慢漂没被误关）");
+        expect(m2 <= 0.15 * 9.80665 + 1e-6, "慢漂不得超过 amp×参考量");
+
+        /* 0 值不消耗随机数（沿用 ① 的做法，这里只验证向量口） */
+        vw_set_group_wobble(VW_WOB_GROUP_ORIENTATION, 0.0f, 0.0f);
+        double r1[8], r2[8];
+        vw_rng_seed_fixed(0xABCDEF1234567890ULL);
+        for (int i = 0; i < 8; i++) r1[i] = vw_rng_unit();
+        vw_rng_seed_fixed(0xABCDEF1234567890ULL);
+        for (int i = 0; i < 200; i++) (void) vw_wobble_vec_dev(VW_WOB_GROUP_ORIENTATION, 9.80665, T0 + i * 1000000LL);
+        for (int i = 0; i < 8; i++) r2[i] = vw_rng_unit();
+        expect(memcmp(r1, r2, sizeof(r1)) == 0, "向量口 0 值不得消耗随机数");
+        vw_set_group_wobble(VW_WOB_GROUP_ORIENTATION, 0.15f, 0.15f);
     }
 
     printf("== ⑤ 参考量：角度类按参考量加，而不是逐值百分比\n");
