@@ -100,22 +100,42 @@ void vw_get_group_wobble(int group, float *amp, float *rnd) {
  * 一阶低通：`s += (u - s)·(1 − e^{−dt/τ})`，`u` 每次推进新抽一个 U[-1,1]。
  * `dt == 0`（同一时刻的多次调用，例如同一批里多个通道）只读不推进，也不消耗随机数。
  */
+/*
+ * 慢漂状态：**目标每 [VW_WOB_TARGET_NS] 换一次，状态以 [VW_WOB_TAU_NS] 的时间常数逼近它**。
+ *
+ * ⚠️ 这里以前是"每步抽一个新的均匀数、再低通"—— 那样得到的**稳态幅度与调用频率挂钩**：
+ * 事件越密、每步 alpha 越小，稳态 |s| 就越小。真机事件率约 150/s（dt≈6.6ms）时
+ * 稳态 |s| ≈ 0.03 ⇒ **"波动强度"这个旋钮实际只兑现了约 3%**（标称 ±15%×参考量，实得 ±0.5%）。
+ * 这个 bug 是写"慢漂全额"的判据时被测试抓出来的（断言"开慢漂时偏差应明显大于逐条上限"失败）。
+ * 现在改成"采样保持的目标 + 时间常数逼近"：|s| ≤ 1、幅度与调用频率无关，
+ * 3 秒内基本走到目标 ⇒ 半幅就是旋钮给的 amp。
+ */
+#define VW_WOB_TARGET_NS 3000000000LL   /* 目标更换周期（3s，约 2×τ，保证基本走到） */
+
+static double g_wob_target[VW_WOB_GROUP_COUNT] = {0.0, 0.0};
+static long long g_wob_target_until[VW_WOB_GROUP_COUNT] = {0, 0};
+
 static double wob_slow(int group, long long now) {
     long long last = g_wob_last_ns[group];
     if (last == 0) {
         /* 首次：直接从均匀分布起跳，避免"从 0 慢慢爬"的头几秒死板 */
         g_wob_last_ns[group] = now;
         g_wob_slow[group] = vw_rng_unit() * 2.0 - 1.0;
+        g_wob_target[group] = g_wob_slow[group];
+        g_wob_target_until[group] = now + VW_WOB_TARGET_NS;
         return g_wob_slow[group];
     }
     long long dt = now - last;
     if (dt <= 0) return g_wob_slow[group];
     if (dt > VW_WOB_MAX_DT_NS) dt = VW_WOB_MAX_DT_NS;
     g_wob_last_ns[group] = now;
+    if (now >= g_wob_target_until[group]) {
+        g_wob_target[group] = vw_rng_unit() * 2.0 - 1.0;
+        g_wob_target_until[group] = now + VW_WOB_TARGET_NS;
+    }
     double alpha = 1.0 - exp(-(double) dt / (double) VW_WOB_TAU_NS);
     if (alpha > 1.0) alpha = 1.0;
-    double u = vw_rng_unit() * 2.0 - 1.0;
-    double s = g_wob_slow[group] + (u - g_wob_slow[group]) * alpha;
+    double s = g_wob_slow[group] + (g_wob_target[group] - g_wob_slow[group]) * alpha;
     if (s > 1.0) s = 1.0;
     if (s < -1.0) s = -1.0;
     g_wob_slow[group] = s;
@@ -134,7 +154,19 @@ static double wob_slow(int group, long long now) {
  *
  * @return 角度偏差（度）
  */
-#define VW_WOB_ANG_HOLD_NS 100000000LL /* 角度抖动的保持窗（100ms） */
+#define VW_WOB_ANG_HOLD_NS 100000000LL
+
+/*
+ * 逐条随机的**统一上限**：参考量的 1/180 —— 角度类就是 1°，加速度 ≈0.054 m/s²，磁场 ≈0.28 µT。
+ *
+ * 为什么要有这个上限：逐条随机按"参考量的百分比"全额施加时，1g 会抖 ±1.47 m/s²、
+ * 50µT 会抖 ±7.5µT、180° 会抖 ±27° —— 真机实测（Test 页 IMU 平滑度）加速度计 |Δ| 中位
+ * 0.89 m/s²、罗盘角 61°（后者已被证明是探针 bug + 分量加偏差），观感就是"毛糙/乱跳"。
+ * 慢漂仍按全额施加（那是"波动强度"的语义：秒级缓慢游走），逐条抖动则压到这个上限 ——
+ * 两个旋钮都还在，只是逐条那一路不再制造尖峰。
+ */
+#define VW_WOB_RND_CAP_FRACTION (1.0 / 180.0)
+ /* 角度抖动的保持窗（100ms） */
 
 /* 角度抖动的采样保持状态：窗口内所有传感器拿到**同一个**值 ⇒ 一致且平滑 */
 static double g_wob_ang_hold[VW_WOB_GROUP_COUNT] = {0.0, 0.0};
@@ -152,13 +184,13 @@ double vw_wobble_angle_dev(int group, long long now) {
             g_wob_ang_hold[group] = (vw_rng_unit() * 2.0 - 1.0) * 1.0;  /* ≤1° */
             g_wob_ang_hold_until[group] = now + VW_WOB_ANG_HOLD_NS;
         }
-        deg += (double) rnd * g_wob_ang_hold[group];
+        deg += (double) rnd * g_wob_ang_hold[group] * (180.0 * VW_WOB_RND_CAP_FRACTION);
     }
     return deg;
 }
 
 /*
- * **向量类专用**偏差：与 [vw_wobble_dev] 同口径，但逐条随机改成**100ms 采样保持**。
+ * **向量类专用**偏差：与 [vw_wobble_dev] 同口径，但逐条随机有绝对上限 + **100ms 采样保持**。
  *
  * 为什么：真机上 `加速度计 = 重力 + 线性加速度`。若每个传感器的每条事件各自抽一次随机，
  * 这条恒等式立刻被打散（真机实测残差 ±1.59 m/s²，而它本该≈0），而且逐事件 ±15%×1g 的抖动
@@ -168,18 +200,18 @@ double vw_wobble_angle_dev(int group, long long now) {
 static double g_wob_vec_hold[VW_WOB_GROUP_COUNT] = {0.0, 0.0};
 static long long g_wob_vec_hold_until[VW_WOB_GROUP_COUNT] = {0, 0};
 
-double vw_wobble_dev_held(int group, long long now) {
-    if (!wob_group_ok(group)) return 0.0;
+double vw_wobble_vec_dev(int group, double ref, long long now) {
+    if (!wob_group_ok(group) || !(ref > 0.0)) return 0.0;
     float amp = g_wob_amp[group], rnd = g_wob_rnd[group];
     if (amp <= 0.0f && rnd <= 0.0f) return 0.0;   /* 0 值：不碰随机数（逐位兼容） */
     double dev = 0.0;
-    if (amp > 0.0f) dev += (double) amp * wob_slow(group, now);
+    if (amp > 0.0f) dev += (double) amp * wob_slow(group, now) * ref;  /* 慢漂：全额 × 参考量 */
     if (rnd > 0.0f) {
         if (now >= g_wob_vec_hold_until[group]) {
             g_wob_vec_hold[group] = vw_rng_unit() * 2.0 - 1.0;
             g_wob_vec_hold_until[group] = now + VW_WOB_ANG_HOLD_NS;  /* 与角度同一个 100ms 窗口 */
         }
-        dev += (double) rnd * g_wob_vec_hold[group];
+        dev += (double) rnd * g_wob_vec_hold[group] * ref * VW_WOB_RND_CAP_FRACTION;
     }
     return dev;
 }

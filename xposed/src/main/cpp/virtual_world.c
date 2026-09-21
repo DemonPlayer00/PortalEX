@@ -242,7 +242,7 @@ static long long g_last_step_due = 0;     /* 上一条步事件的**排定**时�
  * 与真机一致：HAL 各传感器的 FIFO 是各自独立的，跨传感器的时间戳本来就不保证有序；
  * 客户端按同一传感器的 dt 计算，步流内部有序即可。
  */
-#define STEP_MIN_GAP_NS 50000000LL /* 步与步之间至少 50ms（远小于真实步间隔 ~300ms） */
+#define STEP_MIN_GAP_NS 150000000LL /* 步与步之间至少 150ms（≈400 步/分，人类达不到；真实步间隔 ~300ms） */
 static long long g_last_step_ts = 0;
 
 static long long step_ts(long long base, long long now_ns) {
@@ -728,14 +728,21 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
      * vw_wobble_dev 会推进慢漂状态并消耗随机数，取两次会让两组量的抖动互不相同、
      * 也让"一次事件一个偏差"的语义散掉。参数全 0 时它不碰随机数（0 值逐位兼容）。
      */
-    double wdev = vw_wobble_dev(VW_WOB_GROUP_ORIENTATION, now);
     double wref = vw_wobble_ref(e->type);
+    /*
+     * 向量类偏差：**绝对单位**（慢漂全额 ×ref + 逐条随机 ≤ref/180），且 100ms 采样保持。
+     * 只在"吃波动"的类型上取 —— 不吃的不该推进慢漂状态、也不该消耗随机数。
+     * ⚠️ 这一行曾被两次"没命中的替换"漏掉（旧口径 vw_wobble_dev 一直生效），
+     * 真机数据两轮不变才暴露出来 —— 改这里务必 grep 核验。
+     */
+    double wdev = (wref > 0.0 && vw_wobble_dims(e->type) > 0)
+            ? vw_wobble_vec_dev(VW_WOB_GROUP_ORIENTATION, wref, now) : 0.0;
     /*
      * 角度类（朝向 / 磁场方向 / 旋转矢量）用**同一个**角度偏差：它只依赖 (组, now)，
      * 所以三者天然一致 —— 罗盘指的方向与报出的朝向不会再互相打脸；
      * 且它的逐条随机最多 1°，不再让指针跳（见 vw_wobble_angle_dev 的说明）。
      */
-    double wdeg = vw_wobble_angle_dev(VW_WOB_GROUP_ORIENTATION, now);
+    double wdeg = vw_wobble_angle_dev(VW_WOB_GROUP_ORIENTATION, now);   /* 度 */
     double theta_w = (az + wdeg) * M_PI / 180.0;
     switch (e->type) {
         case PS_TYPE_ORIENTATION:
