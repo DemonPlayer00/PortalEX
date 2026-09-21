@@ -250,6 +250,21 @@ void vw_get_group_wobble(int group, float *amp, float *rnd);
 /** 波动参数短字符串（诊断/回显用），返回写入长度 */
 int vw_dump_wobble(char *out, size_t out_size);
 
+/** 诊断：一次推送里带 ≥2 步的次数（`per = span/delta` 会压缩间隔） */
+long long vw_step_multi_push_count(void);
+
+/** 诊断：被判为"计数器基线搬移"而未发出的步数（见 vw_update_state 的重基判定） */
+long long vw_step_rebase_skipped(void);
+
+/** 诊断：jitter 把时间戳钳到 now 的次数（事件被"提前"送达） */
+long long vw_jitter_clamp_count(void);
+
+/** 诊断：jitter 因"不单调"把时间戳强抬成上一条+1 的次数 */
+long long vw_jitter_force_count(void);
+
+/** 诊断：与上一条步事件间隔 < 100ms 的发出次数（"两条步事件几乎同时"的签名） */
+long long vw_step_short_gap_count(void);
+
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);
 

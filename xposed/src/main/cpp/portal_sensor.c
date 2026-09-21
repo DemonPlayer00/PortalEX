@@ -945,6 +945,10 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     APPEND(" steps=%lld step_rate=%d/min", vw_step_events_total(),
            vw_step_rate_per_min(now_ns));
     APPEND(" steps_boot=%lld", vw_step_counter_value());
+    /* 步事件"同时下发"的两个诊断计数（见 virtual_world.c 的说明） */
+    APPEND(" step_diag=多步推送%lld/短间隔%lld/钳到now%lld/强抬%lld/重基跳过%lld",
+           vw_step_multi_push_count(), vw_step_short_gap_count(),
+           vw_jitter_clamp_count(), vw_jitter_force_count(), vw_step_rebase_skipped());
     APPEND(" steps_base=%lld", vw_real_step_counter());
     char priv[320];
     obs_dump(priv, sizeof(priv));
