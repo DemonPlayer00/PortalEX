@@ -728,7 +728,14 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
      * vw_wobble_dev 会推进慢漂状态并消耗随机数，取两次会让两组量的抖动互不相同、
      * 也让"一次事件一个偏差"的语义散掉。参数全 0 时它不碰随机数（0 值逐位兼容）。
      */
-    double wref = vw_wobble_ref(e->type);
+    /*
+     * 参考量：磁场**用本机实际场强**（g_mag_h ∈ 28~42µT），不用表里的固定 50µT ——
+     * 否则 15% 的慢漂会给出 ±7.5µT（相对实际场强是 ±21%），磁场幅度抖得比真机明显。
+     * 其余类型仍取 vw_wobble_ref 的固定参考量。
+     */
+    int is_mag = (e->type == PS_TYPE_MAGNETIC_FIELD ||
+                  e->type == PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED);
+    double wref = is_mag ? g_mag_h : vw_wobble_ref(e->type);
     /*
      * 向量类偏差：**绝对单位**（慢漂全额 ×ref + 逐条随机 ≤ref/180），且 100ms 采样保持。
      * 只在"吃波动"的类型上取 —— 不吃的不该推进慢漂状态、也不该消耗随机数。
@@ -836,8 +843,19 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
     {
         int wdims = vw_wobble_dims(e->type);
         if (wdims > 0 && wdev != 0.0) {
-            float off = (float) (wdev * wref);
-            for (int i = 0; i < wdims; i++) e->data.f[i] += off;
+            if (is_mag) {
+                /*
+                 * 磁场**只抖幅度**：按 (1 + dev/|H|) 缩放整条矢量。
+                 * 逐分量加绝对偏差会让**方向**被噪声/漂移主导 —— 实测那样做时罗盘角 |Δ| 中位 61°
+                 * （最坏 83°），而把原始序列打出来看真实只有 ±0.2°。方向交给方位角（见 theta_w）。
+                 */
+                float k = (g_mag_h > 0.0) ? (float) (1.0 + wdev / g_mag_h) : 1.0f;
+                for (int i = 0; i < 3; i++) e->data.f[i] *= k;
+            } else {
+                /* wdev 已是**绝对单位**（慢漂全额 ×ref + 逐条 ≤ref/180）⇒ 直接加，别再乘 wref */
+                float off = (float) wdev;
+                for (int i = 0; i < wdims; i++) e->data.f[i] += off;
+            }
         }
     }
     /*
