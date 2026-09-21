@@ -148,6 +148,32 @@ int main(void) {
         vw_set_group_wobble(VW_WOB_GROUP_CADENCE, 0.15f, 0.15f);
     }
 
+    printf("== ⑥ 角度类：只留慢漂 + 逐条抖动 ≤1°，且 100ms 内保持同一个值\n");
+    {
+        vw_set_group_wobble(VW_WOB_GROUP_ORIENTATION, 0.0f, 1.0f);   /* 只开逐条随机，便于看上限 */
+        double mx = 0.0;
+        int held_ok = 1;
+        for (int i = 0; i < 200; i++) {
+            long long t = T0 + (long long) i * 30000000LL;           /* 30ms 一抽 */
+            double a = vw_wobble_angle_dev(VW_WOB_GROUP_ORIENTATION, t);
+            double b = vw_wobble_angle_dev(VW_WOB_GROUP_ORIENTATION, t + 1000000LL); /* 同窗 */
+            if (fabs(a) > mx) mx = fabs(a);
+            if (fabs(a - b) > 1e-9) held_ok = 0;                     /* 同窗必须同一个值 */
+        }
+        expect(mx <= 1.0 + 1e-9, "角度逐条抖动不得超过 1°");
+        expect(held_ok, "100ms 保持窗内必须返回同一个角度抖动（否则三者会互相打脸）");
+
+        /* 慢漂仍在：amp>0、rnd=0 时角度偏差应随时间游走且幅度可达数十度 */
+        vw_set_group_wobble(VW_WOB_GROUP_ORIENTATION, 0.15f, 0.0f);
+        double m2 = 0.0;
+        for (int i = 0; i < 4000; i++) {
+            double a = fabs(vw_wobble_angle_dev(VW_WOB_GROUP_ORIENTATION, T0 + i * 10000000LL));
+            if (a > m2) m2 = a;
+        }
+        expect(m2 > 1.0, "开慢漂时角度偏差必须明显大于 1°（慢漂没被误关）");
+        expect(m2 <= 0.15 * 180.0 + 1e-6, "慢漂角度偏差不得超过 amp×180°");
+    }
+
     printf("== ⑤ 参考量：角度类按参考量加，而不是逐值百分比\n");
     {
         expect_near(vw_wobble_ref(1), 9.80665, 1e-6, "加速度参考量 = 1g");
