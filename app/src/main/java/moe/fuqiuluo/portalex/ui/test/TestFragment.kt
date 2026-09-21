@@ -24,6 +24,7 @@ import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.portalex.service.ImuProbe
 import moe.fuqiuluo.portalex.service.StepProbe
 import moe.fuqiuluo.portalex.service.StepTickProbe
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -66,6 +67,9 @@ class TestFragment : Fragment() {
         // 期望 1 秒更新间隔的监听器测试：专给"同刻双份 / 周期性步数尖峰"定责用
         runCatching { StepTickProbe.start(requireContext().applicationContext) }
             .onFailure { android.util.Log.w("TestFragment", "StepTickProbe start failed", it) }
+        // IMU 平滑度探针：把"是否平滑"变成可读的数（|Δ| 中位/最大 + accel=gravity+linear 残差）
+        runCatching { ImuProbe.start(requireContext().applicationContext) }
+            .onFailure { android.util.Log.w("TestFragment", "ImuProbe start failed", it) }
         if (refreshJob?.isActive == true) return
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
@@ -81,6 +85,7 @@ class TestFragment : Fragment() {
         // 离开本页即停掉"普通应用视角"探针（真订阅，别在后台白耗）
         runCatching { StepProbe.stop() }
         runCatching { StepTickProbe.stop() }
+        runCatching { ImuProbe.stop() }
         super.onPause()
     }
 
@@ -162,6 +167,9 @@ class TestFragment : Fragment() {
             appendLine()
             appendLine("── 期望 1 秒更新间隔的监听器（逐事件定责）──")
             appendLine(StepTickProbe.status())
+            appendLine()
+            appendLine("── IMU 平滑度（逐事件 |Δ| 与恒等式）──")
+            appendLine(ImuProbe.status())
             appendLine()
             // 体力与推进：迁移后都在 system_server（App 只回读）——所以这里是
             // "页面看到的"与"实跑的"是否同一个世界的唯一现场证据

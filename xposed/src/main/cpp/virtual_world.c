@@ -730,22 +730,29 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
      */
     double wdev = vw_wobble_dev(VW_WOB_GROUP_ORIENTATION, now);
     double wref = vw_wobble_ref(e->type);
+    /*
+     * 角度类（朝向 / 磁场方向 / 旋转矢量）用**同一个**角度偏差：它只依赖 (组, now)，
+     * 所以三者天然一致 —— 罗盘指的方向与报出的朝向不会再互相打脸；
+     * 且它的逐条随机最多 1°，不再让指针跳（见 vw_wobble_angle_dev 的说明）。
+     */
+    double wdeg = vw_wobble_angle_dev(VW_WOB_GROUP_ORIENTATION, now);
+    double theta_w = (az + wdeg) * M_PI / 180.0;
     switch (e->type) {
         case PS_TYPE_ORIENTATION:
-            e->data.f[0] = (float) az;
+            e->data.f[0] = (float) (az + wdeg);   /* 平滑中轴 + 摆动 + 微抖 + 角度偏差 */
             add_noise_i(e, 0, vw_noise_raw(VW_NOISE_ORIENT));
             break;
         case PS_TYPE_MAGNETIC_FIELD:
-            e->data.f[0] = (float) (-g_mag_h * sin(theta));
-            e->data.f[1] = (float) (g_mag_h * cos(theta));
+            e->data.f[0] = (float) (-g_mag_h * sin(theta_w));
+            e->data.f[1] = (float) (g_mag_h * cos(theta_w));
             e->data.f[2] = (float) (-g_mag_h * g_mag_dip);
             /* 磁场逐轴定标：真机静止实测 σ ≈ 0.21 / 0.12 / 0.32 µT（同一机型 19s 探针窗口），
              * 默认 σ 即取该值（见 vw_noise.c）；Calibration 页会按本机实测覆盖。 */
             add_noise_xyz(e, VW_NOISE_MAG);
             break;
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
-            e->data.f[0] = (float) (-g_mag_h * sin(theta) + g_mag_bias_x);
-            e->data.f[1] = (float) (g_mag_h * cos(theta) + g_mag_bias_y);
+            e->data.f[0] = (float) (-g_mag_h * sin(theta_w) + g_mag_bias_x);
+            e->data.f[1] = (float) (g_mag_h * cos(theta_w) + g_mag_bias_y);
             e->data.f[2] = (float) (-g_mag_h * g_mag_dip);
             e->data.f[3] = (float) g_mag_bias_x;
             e->data.f[4] = (float) g_mag_bias_y;
@@ -794,7 +801,7 @@ static void fill_values(portal_sensor_event_t *e, long long now) {
              * 直接按分量缩放会把四元数变成非单位长度 —— 客户端 `getRotationMatrixFromVector` 会
              * 拿到一个不是旋转的"旋转矢量"，姿态整体跑偏，比不抖更糟。
              */
-            double half = (theta + wdev * wref) / 2.0;
+            double half = theta_w / 2.0;   /* 同一个角度偏差，四元数仍是单位四元数 */
             e->data.f[0] = 0.0f;
             e->data.f[1] = 0.0f;
             e->data.f[2] = (float) (-sin(half));
