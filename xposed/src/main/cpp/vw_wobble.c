@@ -122,6 +122,68 @@ static double wob_slow(int group, long long now) {
     return s;
 }
 
+/*
+ * **角度类专用**偏差（度）：与 [vw_wobble_dev] 的差别是"逐条随机"被**衰减到 ≤1°**。
+ *
+ * 为什么：角度量按参考量折算后，逐条随机在 15% 下有 ±27°（最坏 ±54°）—— 指南针与角度计
+ * 会直接跳，看起来完全不"平滑"；而且朝向、磁场方向、旋转矢量各自抽一次偏差，
+ * 三者会互相打脸（罗盘指的方向与报出的朝向不一致）。所以角度类改为：
+ *   · 慢漂照旧（时间相关、平滑，两个旋钮里的"波动强度"）；
+ *   · 逐条随机**最多 1°**（旋钮仍有效，但不再制造跳变）；
+ *   · **100ms 采样保持**：窗口内所有传感器拿到同一个值 ⇒ 朝向/磁场/旋转矢量一致且平滑。
+ *
+ * @return 角度偏差（度）
+ */
+#define VW_WOB_ANG_HOLD_NS 100000000LL /* 角度抖动的保持窗（100ms） */
+
+/* 角度抖动的采样保持状态：窗口内所有传感器拿到**同一个**值 ⇒ 一致且平滑 */
+static double g_wob_ang_hold[VW_WOB_GROUP_COUNT] = {0.0, 0.0};
+static long long g_wob_ang_hold_until[VW_WOB_GROUP_COUNT] = {0, 0};
+
+double vw_wobble_angle_dev(int group, long long now) {
+    if (!wob_group_ok(group)) return 0.0;
+    float amp = g_wob_amp[group], rnd = g_wob_rnd[group];
+    if (amp <= 0.0f && rnd <= 0.0f) return 0.0;   /* 0 值：不碰随机数（逐位兼容） */
+    double deg = 0.0;
+    if (amp > 0.0f) deg += (double) amp * wob_slow(group, now) * 180.0; /* 慢漂：180° 参考量 */
+    if (rnd > 0.0f) {
+        /* 采样保持：每 100ms 才重抽一次，窗口内的每个事件（朝向/磁场/旋转矢量）拿到同一个值 */
+        if (now >= g_wob_ang_hold_until[group]) {
+            g_wob_ang_hold[group] = (vw_rng_unit() * 2.0 - 1.0) * 1.0;  /* ≤1° */
+            g_wob_ang_hold_until[group] = now + VW_WOB_ANG_HOLD_NS;
+        }
+        deg += (double) rnd * g_wob_ang_hold[group];
+    }
+    return deg;
+}
+
+/*
+ * **向量类专用**偏差：与 [vw_wobble_dev] 同口径，但逐条随机改成**100ms 采样保持**。
+ *
+ * 为什么：真机上 `加速度计 = 重力 + 线性加速度`。若每个传感器的每条事件各自抽一次随机，
+ * 这条恒等式立刻被打散（真机实测残差 ±1.59 m/s²，而它本该≈0），而且逐事件 ±15%×1g 的抖动
+ * 在 15~50Hz 上就是"毛糙"。改成保持窗后：**同一窗口内所有传感器拿到同一个偏差** ⇒ 恒等式成立、
+ * 读数也不再逐条乱跳（波动变成 10Hz 量级的慢扰动）。
+ */
+static double g_wob_vec_hold[VW_WOB_GROUP_COUNT] = {0.0, 0.0};
+static long long g_wob_vec_hold_until[VW_WOB_GROUP_COUNT] = {0, 0};
+
+double vw_wobble_dev_held(int group, long long now) {
+    if (!wob_group_ok(group)) return 0.0;
+    float amp = g_wob_amp[group], rnd = g_wob_rnd[group];
+    if (amp <= 0.0f && rnd <= 0.0f) return 0.0;   /* 0 值：不碰随机数（逐位兼容） */
+    double dev = 0.0;
+    if (amp > 0.0f) dev += (double) amp * wob_slow(group, now);
+    if (rnd > 0.0f) {
+        if (now >= g_wob_vec_hold_until[group]) {
+            g_wob_vec_hold[group] = vw_rng_unit() * 2.0 - 1.0;
+            g_wob_vec_hold_until[group] = now + VW_WOB_ANG_HOLD_NS;  /* 与角度同一个 100ms 窗口 */
+        }
+        dev += (double) rnd * g_wob_vec_hold[group];
+    }
+    return dev;
+}
+
 double vw_wobble_dev(int group, long long now) {
     if (!wob_group_ok(group)) return 0.0;
     float amp = g_wob_amp[group], rnd = g_wob_rnd[group];
@@ -139,8 +201,9 @@ double vw_wobble_ref(int32_t type) {
         case PS_TYPE_ACCELEROMETER:
         case PS_TYPE_ACCELEROMETER_UNCALIBRATED:
         case PS_TYPE_GRAVITY:
-        case PS_TYPE_LINEAR_ACCELERATION:
             return 9.80665; /* 1g */
+        /* 线性加速度**不吃**偏差：accel = gravity + linear 必须成立（偏差只加在重力/加速度上） */
+
         case PS_TYPE_GYROSCOPE:
         case PS_TYPE_GYROSCOPE_UNCALIBRATED:
             return 1.0; /* rad/s */
@@ -166,12 +229,11 @@ int vw_wobble_dims(int32_t type) {
         case PS_TYPE_ACCELEROMETER:
         case PS_TYPE_ACCELEROMETER_UNCALIBRATED:
         case PS_TYPE_GRAVITY:
-        case PS_TYPE_LINEAR_ACCELERATION:
         case PS_TYPE_GYROSCOPE:
         case PS_TYPE_GYROSCOPE_UNCALIBRATED:
         case PS_TYPE_MAGNETIC_FIELD:
         case PS_TYPE_MAGNETIC_FIELD_UNCALIBRATED:
-            return 3;
+            return 3;   /* 线性加速度刻意不在列：它必须与 gravity+linear 恒等式相容 */
         default:
             return 0; /* 旋转矢量单独处理（加在半角上） */
     }
