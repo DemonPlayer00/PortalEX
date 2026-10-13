@@ -519,7 +519,19 @@ void vw_set_active(int active) {
         g_last_tick = 0;
         g_have_state = 0;
         memset(g_steps_q, 0, sizeof(g_steps_q));
+        /*
+         * 步数基线 = **上一个会话最后推过来的计数器值**（`g_steps`，在 vw_update_state 里维护），
+         * 不是 0：基线归零会让"新会话第一拍"把整个计数器当成一次增量（几千步），
+         * 于是 `per = span/delta` 把队列排成一串**过去时刻**的事件，一次性爆发出去。
+         */
         g_last_steps_seen = g_steps;
+        /*
+         * 时间基准也必须清：[vw_update_state] 里只有 `g_last_step_push_nanos > 0` 才会算增量，
+         * 所以把它清零 = 新会话第一拍**只重建基线、不发事件**，与上面那句注释同一个意图。
+         */
+        g_last_step_push_nanos = 0;
+        /* 步流游标属于旧会话：留着会让新会话第一条步事件的时间戳被顶到旧会话的时刻附近 */
+        g_last_step_ts = 0;
         g_last_emit_ts = 0;
         for (int i = 0; i < MAX_CHANNELS; i++) {
             g_chan[i].next_due_ns = 0; /* 重新对齐栅格 */
@@ -577,26 +589,39 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
     g_moving = moving;
     g_have_state = 1;
     if (steps > g_last_steps_seen && g_last_step_push_nanos > 0) {
-        long long delta = steps - g_last_steps_seen;
-        if (delta > STEP_QUEUE_CAP) delta = STEP_QUEUE_CAP; /* 异常跳变：只补满队列 */
+        /*
+         * **重基判定必须用未钳位的原始增量**（2026-10-13 修"步数跑飞"）：
+         * 旧实现先把 delta 钳到 STEP_QUEUE_CAP（64）**再**算 implied 步率，于是
+         * 「一次涨 9000 步 / 跨度 11s」被钳成「64 步 / 11s = 5.8 步/秒」——看着像人类走路，
+         * 重基判定放行，队列被填满 64 条**排在过去**的步事件，一次性全发出去
+         * （客户端看到几十条步事件同时到达 ⇒ 折合步频上千）。钳位只能限制**排队条数**，
+         * 不能削弱证据；判定与排队用两个量。
+         */
+        long long raw = steps - g_last_steps_seen;
         long long span = now_nanos - g_last_step_push_nanos;
         if (span <= 0) span = 1000000LL;
+        long long delta = raw;
+        if (delta > STEP_QUEUE_CAP) delta = STEP_QUEUE_CAP; /* 异常跳变：只补满队列 */
         /* 把这一步间隔**按步分摊**：每步一个时间戳，事件率回到真实步频（~1.5~3Hz） */
         long long per = span / delta;
         if (per <= 0) per = 1;
         long long base = steps - delta;
         /*
-         * **计数器重基**（2026-09-21）：短时间内涨的步数超过人类可达步频时，那不是"走了这么多步"，
-         * 而是**基线被搬移**（会话重启接在真实计数器后面、宿主重放状态等）。
+         * **计数器重基**（2026-09-21，2026-10-13 补第 2 条判据）：短时间内涨的步数超过人类可达步频时，
+         * 那不是"走了这么多步"，而是**基线被搬移**（会话重启接在真实计数器后面、宿主重放状态等）。
          * 旧行为会把这种跳变也按 `per = span/delta` 排成一串步事件 —— span 很短时 per 退化成 1ns，
          * 客户端于是看到"几十条步事件同时到达"，那正是步数尖峰；而它其实没有任何物理含义。
-         * 人类上限约 4 步/秒，这里给 3 倍余量（12 步/秒）当阈值：超过就只搬基线、不发事件。
+         *
+         * 两条判据（任一命中都只搬基线、不发事件）：
+         *  1. 原始增量 > 队列容量：我们**每拍最多积 25 步**（上限步频 300 步/分 × 拍长 5s），
+         *     一次涨超过 64 步绝不可能是这一拍走出来的；
+         *  2. 折算步率 > 12 步/秒（人类上限约 4 步/秒 + 3 倍余量）。
          */
-        double implied = (double) delta / ((double) span / 1e9);
-        if (delta >= 4 && implied > 12.0) {
-            g_step_rebase_skipped += delta;
-            LOGI("step rebase: delta=%lld span=%lldms（%.0f 步/秒，超过人类上限）⇒ 只搬基线，不发事件",
-                 delta, span / 1000000, implied);
+        double implied = (double) raw / ((double) span / 1e9);
+        if (raw > STEP_QUEUE_CAP || (raw >= 4 && implied > 12.0)) {
+            g_step_rebase_skipped += raw;
+            LOGI("step rebase: raw=%lld span=%lldms（%.0f 步/秒）⇒ 只搬基线，不发事件",
+                 raw, span / 1000000, implied);
             g_last_steps_seen = steps;
             g_last_step_push_nanos = now_nanos;
             g_state_nanos = now_nanos;
@@ -629,6 +654,14 @@ void vw_update_state(double speed, double azimuth_deg, int moving, long long ste
     g_last_steps_seen = steps;
     g_last_step_push_nanos = now_nanos;
     g_state_nanos = now_nanos;
+    /*
+     * `g_steps` = **本进程最近一次收到的步数计数器值**（唯一写入点在这里）。
+     * 它存在的理由只有一个：[vw_set_active] 重新激活时要用它当**新会话的基线**
+     * —— 否则基线退回 0，第一拍就把整个计数器当成一次增量（重基），
+     * 又把空档补成一串步事件（见 vw_set_active 的说明）。
+     * ⚠️ 历史上这个变量**从未被赋值**（声明处为 0），于是重新激活必然踩这条路径。
+     */
+    g_steps = steps;
     pthread_mutex_unlock(&g_lock);
 }
 
