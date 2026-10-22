@@ -237,6 +237,9 @@ static void *(*p_alloc_meta)(size_t, size_t) = NULL;
 static int (*p_add_entry)(void *, uint32_t, const void *, size_t) = NULL;
 static const char *(*p_tag_name)(uint32_t) = NULL;
 static uint32_t g_tag_timestamp = 0;
+static uint32_t g_tag_af_state = 0, g_tag_ae_state = 0, g_tag_awb_state = 0;
+static uint32_t g_tag_control_mode = 0, g_tag_af_mode = 0, g_tag_ae_mode = 0;
+static uint32_t g_tag_awb_mode = 0, g_tag_lens_state = 0, g_tag_flash_state = 0;
 static bool g_meta_tried = false;
 
 /**
@@ -260,14 +263,21 @@ static void ensure_meta_api(void) {
         g_meta_lib, "add_camera_metadata_entry");
     p_tag_name = (const char *(*)(uint32_t))dlsym(g_meta_lib, "get_camera_metadata_tag_name");
     if (p_tag_name != NULL) {
-        for (uint32_t section = 0; section <= 0x20 && g_tag_timestamp == 0; section++) {
+        for (uint32_t section = 0; section <= 0x20; section++) {
             for (uint32_t index = 0; index <= 0x40; index++) {
                 uint32_t tag = (section << 16) | index;
                 const char *name = p_tag_name(tag);
-                if (name != NULL && strcmp(name, "timestamp") == 0) {
-                    g_tag_timestamp = tag;
-                    break;
-                }
+                if (name == NULL) continue;
+                if (!strcmp(name, "timestamp")) g_tag_timestamp = tag;
+                else if (!strcmp(name, "afState")) g_tag_af_state = tag;
+                else if (!strcmp(name, "aeState")) g_tag_ae_state = tag;
+                else if (!strcmp(name, "awbState")) g_tag_awb_state = tag;
+                else if (!strcmp(name, "controlMode")) g_tag_control_mode = tag;
+                else if (!strcmp(name, "afMode")) g_tag_af_mode = tag;
+                else if (!strcmp(name, "aeMode")) g_tag_ae_mode = tag;
+                else if (!strcmp(name, "awbMode")) g_tag_awb_mode = tag;
+                else if (!strcmp(name, "lensState")) g_tag_lens_state = tag;
+                else if (!strcmp(name, "flashState")) g_tag_flash_state = tag;
             }
         }
     }
@@ -284,14 +294,35 @@ static void ensure_meta_api(void) {
 static void *build_result_meta(int64_t timestamp_ns) {
     ensure_meta_api();
     if (p_alloc_meta == NULL) return NULL;
-    void *meta = p_alloc_meta(8, 128);
-    if (meta != NULL && p_add_entry != NULL && g_tag_timestamp != 0) {
-        int rc = p_add_entry(meta, g_tag_timestamp, &timestamp_ns, 1);
-        static bool logged = false;
-        if (!logged) {
-            logged = true;
-            LOGI("时间戳已写入结果元数据（tag=0x%08x rc=%d）", g_tag_timestamp, rc);
-        }
+    void *meta = p_alloc_meta(32, 512);
+    if (meta == NULL || p_add_entry == NULL) return meta;
+    if (g_tag_timestamp != 0) p_add_entry(meta, g_tag_timestamp, &timestamp_ns, 1);
+
+    /* CameraX/Aperture 等应用会等 3A 状态；虚拟相机是固定画面，直接报 converged。 */
+    const uint8_t af_state = 4;      /* PASSIVE_FOCUSED */
+    const uint8_t ae_state = 2;      /* CONVERGED */
+    const uint8_t awb_state = 2;     /* CONVERGED */
+    const uint8_t control_mode = 1;  /* AUTO */
+    const uint8_t af_mode = 4;       /* CONTINUOUS_PICTURE */
+    const uint8_t ae_mode = 1;       /* ON */
+    const uint8_t awb_mode = 1;      /* AUTO */
+    const uint8_t lens_state = 0;    /* STATIONARY */
+    const uint8_t flash_state = 0;   /* UNAVAILABLE */
+    if (g_tag_af_state) p_add_entry(meta, g_tag_af_state, &af_state, 1);
+    if (g_tag_ae_state) p_add_entry(meta, g_tag_ae_state, &ae_state, 1);
+    if (g_tag_awb_state) p_add_entry(meta, g_tag_awb_state, &awb_state, 1);
+    if (g_tag_control_mode) p_add_entry(meta, g_tag_control_mode, &control_mode, 1);
+    if (g_tag_af_mode) p_add_entry(meta, g_tag_af_mode, &af_mode, 1);
+    if (g_tag_ae_mode) p_add_entry(meta, g_tag_ae_mode, &ae_mode, 1);
+    if (g_tag_awb_mode) p_add_entry(meta, g_tag_awb_mode, &awb_mode, 1);
+    if (g_tag_lens_state) p_add_entry(meta, g_tag_lens_state, &lens_state, 1);
+    if (g_tag_flash_state) p_add_entry(meta, g_tag_flash_state, &flash_state, 1);
+
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        LOGI("结果元数据：ts=0x%08x af=0x%08x ae=0x%08x awb=0x%08x",
+             g_tag_timestamp, g_tag_af_state, g_tag_ae_state, g_tag_awb_state);
     }
     return meta;
 }
@@ -552,6 +583,13 @@ static inline int tri_wave(int t, int span) {
 
 /** 往一个输出 buffer 画测试图。成功返回 true */
 extern bool portal_gpu_paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int format);
+extern bool portal_jpeg_encode_rgb(const uint8_t *rgb, int w, int h, int quality,
+                                   uint8_t **out, size_t *out_len);
+
+struct portal_jpeg_blob {
+    uint16_t jpeg_blob_id;
+    uint32_t jpeg_size;
+};
 
 static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int format) {
     if (handle == NULL || w == 0 || h == 0) return false;
@@ -716,6 +754,111 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int form
     return base != NULL;
 }
 
+
+/** 把当前测试图编码成 JPEG，写进 BLOB 面，并在 buffer 末尾放 camera3_jpeg_blob。 */
+static bool encode_jpeg_buffer(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
+    if (handle == NULL || w == 0 || h == 0) return false;
+
+    const int32_t *hi = (const int32_t *)handle;
+    size_t capacity = 0;
+    /* BLOB handle：ints[7] 是逻辑 buffer 大小（2592x1944 实测 7,711,801），
+     * ints[13] 是分配大小（7,712,768）。camera3_jpeg_blob 必须写在**逻辑末尾**，
+     * 写到分配末尾会越界且应用读不到。 */
+    if (hi[2] >= 8) {
+        uint32_t s7 = (uint32_t)hi[7];
+        if (s7 > (1u << 20) && s7 < 64u * 1024u * 1024u) capacity = s7;
+    }
+    if (capacity == 0 && hi[2] >= 14) {
+        uint32_t s = (uint32_t)hi[13];
+        if (s > 4096 && s < 64u * 1024u * 1024u) capacity = s;
+    }
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        char buf[256]; int off = 0;
+        for (int i = 0; i < 16 && i < hi[2] + 3; i++)
+            off += snprintf(buf + off, sizeof(buf) - off, "%d=%d ", i, hi[i]);
+        LOGI("JPEG handle ints: %s", buf);
+    }
+    if (capacity == 0) {
+        static bool logged = false;
+        if (!logged) { logged = true; LOGE("JPEG BLOB: 无法从 handle 得到 buffer 容量"); }
+        return false;
+    }
+
+    load_mapper();
+    if (g_gbm_self == NULL || g_gbm_lock == NULL || g_gbm_unlock == NULL) return false;
+    struct portal_rect r = {0, 0, (int32_t)w, (int32_t)h};
+    void *vaddr = NULL;
+    if (g_gbm_lock(g_gbm_self, handle, USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN,
+                   &r, &vaddr) != 0 || vaddr == NULL) {
+        LOGE("JPEG BLOB: lock 失败（%ux%u）", w, h);
+        return false;
+    }
+
+    uint8_t *rgb = (uint8_t *)malloc((size_t)w * h * 3);
+    if (rgb == NULL) { g_gbm_unlock(g_gbm_self, handle, &(int){-1}); return false; }
+
+    static const uint8_t bars[8][3] = {
+        {255, 0, 0}, {255, 128, 0}, {255, 255, 0}, {0, 255, 0},
+        {0, 255, 255}, {0, 0, 255}, {128, 0, 255}, {255, 0, 255},
+    };
+    int radius = (int)((w < h ? w : h) / 7);
+    if (radius < 8) radius = 8;
+    int spanX = (int)w - 2 * radius; if (spanX < 1) spanX = 1;
+    int spanY = (int)h - 2 * radius; if (spanY < 1) spanY = 1;
+    int cx = radius + tri_wave((int)frame * 9, spanX);
+    int cy = radius + tri_wave((int)frame * 5 + 17, spanY);
+    int r2 = radius * radius;
+    int rin = (radius - 4) * (radius - 4);
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            int bar = (int)(((x + frame * 7u) % (w ? w : 1u)) * 8u / (w ? w : 1u));
+            if (bar > 7) bar = 7;
+            const uint8_t *c = bars[bar];
+            int dx = (int)x - cx, dy = (int)y - cy;
+            int d2 = dx * dx + dy * dy;
+            uint8_t *p = rgb + ((size_t)y * w + x) * 3;
+            if (d2 <= r2) {
+                uint8_t v = (d2 > rin) ? 0 : 255;
+                p[0] = p[1] = p[2] = v;
+            } else {
+                p[0] = c[0]; p[1] = c[1]; p[2] = c[2];
+            }
+        }
+    }
+
+    uint8_t *jpg = NULL;
+    size_t jpg_len = 0;
+    bool ok = portal_jpeg_encode_rgb(rgb, (int)w, (int)h, 85, &jpg, &jpg_len);
+    free(rgb);
+    if (!ok || jpg == NULL) {
+        g_gbm_unlock(g_gbm_self, handle, &(int){-1});
+        return false;
+    }
+
+    if (jpg_len + sizeof(struct portal_jpeg_blob) > capacity) {
+        LOGE("JPEG BLOB: 编码 %zu 字节超过容量 %zu", jpg_len, capacity);
+        free(jpg);
+        g_gbm_unlock(g_gbm_self, handle, &(int){-1});
+        return false;
+    }
+    memcpy(vaddr, jpg, jpg_len);
+    struct portal_jpeg_blob *blob = (struct portal_jpeg_blob *)
+            ((uint8_t *)vaddr + capacity - sizeof(struct portal_jpeg_blob));
+    blob->jpeg_blob_id = 0x00FF;
+    blob->jpeg_size = (uint32_t)jpg_len;
+    free(jpg);
+    int fence = -1;
+    g_gbm_unlock(g_gbm_self, handle, &fence);
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        LOGI("JPEG BLOB 已写入：%ux%u，%zu 字节（容量 %zu）", w, h, jpg_len, capacity);
+    }
+    return true;
+}
+
 static int vcam_process_capture_request(const struct camera3_device *dev,
                                        camera3_capture_request_t *req) {
     (void)dev;
@@ -784,7 +927,13 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
             LOGI("首个请求的流：%ux%u format=0x%x usage=0x%x", sb->stream->width, sb->stream->height,
                  sb->stream->format, sb->stream->usage);
         }
-        if (paint(*sb->buffer, sb->stream->width, sb->stream->height, req->frame_number, sb->stream->format)) {
+        if (sb->stream->format == 0x21) {
+            if (encode_jpeg_buffer(*sb->buffer, sb->stream->width,
+                                   sb->stream->height, req->frame_number)) {
+                painted = true;
+            }
+        } else if (paint(*sb->buffer, sb->stream->width, sb->stream->height,
+                         req->frame_number, sb->stream->format)) {
             painted = true;
         }
     }

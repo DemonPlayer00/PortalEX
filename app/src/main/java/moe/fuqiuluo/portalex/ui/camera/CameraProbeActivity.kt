@@ -52,6 +52,7 @@ class CameraProbeActivity : Activity() {
     private var holdMs = 0L
     private var savedCount = 0
     private var maxFrames = 1
+    private var jpegMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +66,7 @@ class CameraProbeActivity : Activity() {
          * 用于观察"多应用并发取流"（另一个应用占着另一个摄像头）。 */
         holdMs = intent.getIntExtra("holdMs", 0).toLong()
         maxFrames = intent.getIntExtra("frames", 1).coerceIn(1, 120)
+        jpegMode = intent.getBooleanExtra("jpeg", false)
 
         val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val ids = runCatching { cm.cameraIdList.toList() }.getOrDefault(emptyList())
@@ -121,6 +123,41 @@ class CameraProbeActivity : Activity() {
     }
 
     private fun startSession(camera: CameraDevice, w: Int, h: Int) {
+        if (jpegMode) {
+            val r = ImageReader.newInstance(w, h, ImageFormat.JPEG, 2)
+            reader = r
+            r.setOnImageAvailableListener({ rd ->
+                val image = runCatching { rd.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
+                image.use {
+                    val buf = it.planes[0].buffer
+                    val bytes = ByteArray(buf.remaining()); buf.get(bytes)
+                    // 框架已按 camera3_jpeg_blob 的 jpeg_size 把 buffer 裁成纯 JPEG，
+                    // ImageReader 拿到的就是有效 JPEG 字节（末尾不再有 blob 头）。
+                    val dir = java.io.File(filesDir, "probe").apply { if (!exists()) mkdirs() }
+                    val out = java.io.File(dir, "jpeg-${System.currentTimeMillis()}.jpg")
+                    out.writeBytes(bytes)
+                    Log.i(TAG, "JPEG BLOB: ${bytes.size} 字节，头=${bytes.take(8).joinToString(" ") { b -> "%02x".format(b) }}")
+                    Log.i(TAG, "已保存: ${out.absolutePath}（${out.length()} 字节）")
+                }
+                savedCount++
+                if (savedCount >= maxFrames) finishProbe()
+            }, handler)
+            camera.createCaptureSession(listOf(r.surface), object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(s: CameraCaptureSession) {
+                    session = s
+                    val req = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                        addTarget(r.surface)
+                    }.build()
+                    runCatching { s.capture(req, null, handler) }
+                        .onFailure { Log.e(TAG, "JPEG capture 失败", it); finishProbe() }
+                }
+                override fun onConfigureFailed(s: CameraCaptureSession) {
+                    Log.e(TAG, "JPEG createCaptureSession 失败")
+                    finishProbe()
+                }
+            }, handler)
+            return
+        }
         val r = ImageReader.newInstance(w, h, ImageFormat.YUV_420_888, 2)
         reader = r
         r.setOnImageAvailableListener({ rd ->
