@@ -50,6 +50,8 @@ class CameraProbeActivity : Activity() {
     private lateinit var handler: Handler
     private var saved = false
     private var holdMs = 0L
+    private var savedCount = 0
+    private var maxFrames = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +64,7 @@ class CameraProbeActivity : Activity() {
         /* 保持会话多久（毫秒）：0 = 抓到第一帧就结束；>0 时抓完继续 hold，
          * 用于观察"多应用并发取流"（另一个应用占着另一个摄像头）。 */
         holdMs = intent.getIntExtra("holdMs", 0).toLong()
+        maxFrames = intent.getIntExtra("frames", 1).coerceIn(1, 120)
 
         val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val ids = runCatching { cm.cameraIdList.toList() }.getOrDefault(emptyList())
@@ -122,12 +125,13 @@ class CameraProbeActivity : Activity() {
         reader = r
         r.setOnImageAvailableListener({ rd ->
             val image = runCatching { rd.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
-            val first = !saved
-            if (first) {
+            if (savedCount < maxFrames) {
                 image.use { saveFrame(it) }
-                if (!saved) Log.w(TAG, "抓到帧但保存失败")
+                savedCount++
+                if (savedCount >= maxFrames && holdMs <= 0) finishProbe()
+            } else {
+                image.close()
             }
-            if (first && holdMs <= 0) finishProbe()
         }, handler)
 
         /* **只挂 YUV 流**：这是"分析流"路径本身（没有预览、没有 JPEG），正好单测它 */

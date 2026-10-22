@@ -36,6 +36,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <pthread.h>
@@ -361,9 +362,27 @@ static void load_mapper(void) {
  * 这里用一个 16 深的环形队列 + 一条工作线程，把"填帧"（快）与"投递结果"解耦。
  * ------------------------------------------------------------------ */
 
+/* 本机 provider 的 camera3_capture_result 字段顺序与 AOSP 头文件不同（反汇编
+ * camera.device@3.2-impl.so 的 constructCaptureResult 确认）：
+ *   frame@0, result@4, num_output_buffers@8, input_buffer@12, output_buffers@16,
+ *   partial_result@20
+ * AOSP 是 output_buffers@12、input_buffer@16。照 AOSP 写会得到
+ * "output buffer ... is not inflight" / "partial_result 0 must be in [1,2]"。 */
+struct portal_capture_result {
+    uint32_t frame_number;
+    const void *result;
+    uint32_t num_output_buffers;
+    const camera3_stream_buffer_t *output_buffers;
+    const camera3_stream_buffer_t *input_buffer;
+    uint32_t partial_result;
+    uint32_t num_physcam_metadata;
+    const char **physcam_ids;
+    const void **physcam_metadata;
+};
+
 struct pending_result {
     uint32_t frame_number;
-    const camera3_stream_buffer_t *output_buffers;
+    camera3_stream_buffer_t bufs[8];
     uint32_t num_output_buffers;
     int64_t timestamp_ns;
 };
@@ -391,25 +410,44 @@ static void *result_worker(void *arg) {
 
         camera3_notify_msg_t msg;
         memset(&msg, 0, sizeof(msg));
-        msg.type = 0; /* CAMERA3_MSG_SHUTTER */
+        msg.type = 2; /* 本机 vendor 的 CAMERA3_MSG_SHUTTER = 2 */
         msg.message.shutter.frame_number = item.frame_number;
         msg.message.shutter.timestamp = item.timestamp_ns;
+        static bool logged_notify = false;
+        if (!logged_notify) {
+            logged_notify = true;
+            LOGI("notify: type=%d frame=%u ts=%lld cb=%p notify=%p process=%p", msg.type,
+                 item.frame_number, (long long)item.timestamp_ns, (void *)cb,
+                 (void *)cb->notify, (void *)cb->process_capture_result);
+        }
         if (cb->notify != NULL) cb->notify(cb, &msg);
 
-        camera3_capture_result_t res;
+        struct portal_capture_result res;
         memset(&res, 0, sizeof(res));
         res.frame_number = item.frame_number;
         res.result = build_result_meta(item.timestamp_ns); /* 所有权交给框架 */
         res.num_output_buffers = item.num_output_buffers;
-        res.output_buffers = item.output_buffers;
-        res.partial_result = 0;
-        cb->process_capture_result(cb, &res);
+        res.input_buffer = NULL;
+        /* provider 的 ResultBatcher 可能在回调返回后继续读这组 buffer，
+         * 用堆上的持久副本（测试期不释放；正式版按回调完成回收）。 */
+        camera3_stream_buffer_t *persist =
+                (camera3_stream_buffer_t *)calloc(8, sizeof(camera3_stream_buffer_t));
+        if (persist != NULL) {
+            for (uint32_t i = 0; i < item.num_output_buffers && i < 8; i++)
+                persist[i] = item.bufs[i];
+            res.output_buffers = persist;
+        } else {
+            res.output_buffers = item.bufs;
+        }
+        res.partial_result = 1;
+        cb->process_capture_result(cb, (const camera3_capture_result_t *)&res);
     }
     return NULL;
 }
 
 static void enqueue_result(uint32_t frame_number, const camera3_stream_buffer_t *bufs,
                            uint32_t num, int64_t ts) {
+    if (num > 8) num = 8;
     if (!g_worker_started) {
         g_worker_started = true;
         if (pthread_create(&g_worker, NULL, result_worker, NULL) != 0) {
@@ -419,7 +457,11 @@ static void enqueue_result(uint32_t frame_number, const camera3_stream_buffer_t 
     pthread_mutex_lock(&g_q_lock);
     int next = (g_q_head + 1) % 16;
     if (next != g_q_tail) { /* 丢帧优于阻塞请求线程 */
-        g_queue[g_q_head] = (struct pending_result){frame_number, bufs, num, ts};
+        struct pending_result *slot = &g_queue[g_q_head];
+        slot->frame_number = frame_number;
+        slot->num_output_buffers = num;
+        slot->timestamp_ns = ts;
+        for (uint32_t i = 0; i < num; i++) slot->bufs[i] = bufs[i];
         g_q_head = next;
         pthread_cond_signal(&g_q_cond);
     }
@@ -445,13 +487,13 @@ static int vcam_configure_streams(const struct camera3_device *dev,
         /* **关键**：这时候框架还没分配 buffer —— 我们提的用法位会真正生效，
          * 于是拿到的就是"我们自己能写的"buffer（这正是外包一层做不到的事）。 */
         if (st->stream_type == 0 /* OUTPUT */) {
-            /*
-             * **格式保持原样**（曾经把 0x22 改成 0x23，实测应用第二次配流就
-             * `onConfigureFailed` —— 现在改为不动格式：反正 `lockYCbCr` 在本机对这些
-             * buffer 本来就不可用，我们走的是 `lock()` 裸指针路径，不需要具体 YUV 格式）。
-             * 少改一处，就少一处与应用侧 consumer 的耦合。
-             */
-            (void)0;
+            /* 把 IMPLEMENTATION_DEFINED（0x22）显式改成 YCbCr_420_888（0x23）。
+             * 这样 lockYCbCr 能给出正确的 plane/stride，预览面也能被 CPU 写；
+             * 否则只能 lock() 猜 stride，1600x1200 预览会大面积黑/花。
+             * 这是 HAL 在 configure_streams 里允许的格式覆盖（框架此时还没分配 buffer）。 */
+            if (st->format == 0x22) {
+                st->format = 0x23;
+            }
             st->usage |= USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN;
             /*
              * **max_buffers 必须由 HAL 填**：框架传进来的是 0，不填就会在
@@ -491,7 +533,31 @@ static const void *vcam_default_settings(const struct camera3_device *dev, int t
     return out;
 }
 
-/** 往一个输出 buffer 画合成条纹。成功返回 true */
+
+/* ---- 测试图：流动彩虹条带 + 运动小球 ------------------------------------
+ * 只用整数运算；YUV 按 BT.601 全范围近似。画在 HAL 自己拿到的线性 YUV 面上。
+ */
+static inline uint8_t clamp_u8(int v) {
+    return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+static inline void rgb_to_yuv(int r, int g, int b, uint8_t *y, uint8_t *u, uint8_t *v) {
+    int yy = (77 * r + 150 * g + 29 * b + 128) >> 8;
+    int uu = ((-43 * r - 85 * g + 128 * b + 128) >> 8) + 128;
+    int vv = ((128 * r - 107 * g - 21 * b + 128) >> 8) + 128;
+    *y = clamp_u8(yy);
+    *u = clamp_u8(uu);
+    *v = clamp_u8(vv);
+}
+
+static inline int tri_wave(int t, int span) {
+    if (span <= 1) return 0;
+    int p = t % (span * 2);
+    if (p < 0) p += span * 2;
+    return p < span ? p : span * 2 - p - 1;
+}
+
+/** 往一个输出 buffer 画测试图。成功返回 true */
 static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
     if (handle == NULL || w == 0 || h == 0) return false;
     /* 只画我们自己在 configure_streams 里标了 SW 用途的流（否则 lock 会 abort） */
@@ -550,13 +616,63 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
     }
     uint8_t *base = (uint8_t *)yc.y;
     if (base != NULL && yc.ystride > 0) {
-        int band = (int)(h / 12 > 4 ? h / 12 : 4);
-        int offset = (int)((frame * 8u) % (uint32_t)(h + (uint32_t)band)) - band;
-        for (uint32_t y = 0; y < h; y++) {
+        static const int bar_rgb[8][3] = {
+            {255, 0, 0},   {255, 128, 0}, {255, 255, 0}, {0, 255, 0},
+            {0, 255, 255}, {0, 0, 255},   {128, 0, 255}, {255, 0, 255},
+        };
+        uint8_t bar_y[8], bar_u[8], bar_v[8];
+        for (int i = 0; i < 8; i++) {
+            rgb_to_yuv(bar_rgb[i][0], bar_rgb[i][1], bar_rgb[i][2],
+                       &bar_y[i], &bar_u[i], &bar_v[i]);
+        }
+
+        uint32_t ww = w & ~1u;
+        uint32_t hh = h & ~1u;
+        if (ww == 0 || hh == 0) {
+            ww = w;
+            hh = h;
+        }
+        int phase = (int)((frame * 7u) % (ww ? ww : 1u));
+        int radius = (int)((ww < hh ? ww : hh) / 7);
+        if (radius < 8) radius = 8;
+        int span_x = (int)ww - 2 * radius;
+        int span_y = (int)hh - 2 * radius;
+        if (span_x < 1) span_x = 1;
+        if (span_y < 1) span_y = 1;
+        int cx = radius + tri_wave((int)frame * 9, span_x);
+        int cy = radius + tri_wave((int)frame * 5 + 17, span_y);
+        int r2 = radius * radius;
+        int rin = (radius - 4) * (radius - 4);
+
+        for (uint32_t y = 0; y < hh; y++) {
             uint8_t *row = base + (size_t)y * yc.ystride;
-            int idx = (int)y - offset;
-            uint8_t v = (idx >= 0 && band > 0) ? (((idx / band) % 2) ? 40 : 210) : 20;
-            memset(row, v, w);
+            for (uint32_t x = 0; x < ww; x++) {
+                uint32_t sx = (x + (uint32_t)phase) % ww;
+                int bar = (int)((sx * 8u) / (ww ? ww : 1u));
+                if (bar > 7) bar = 7;
+                uint8_t yy = bar_y[bar], uu = bar_u[bar], vv = bar_v[bar];
+
+                int dx = (int)x - cx;
+                int dy = (int)y - cy;
+                int d2 = dx * dx + dy * dy;
+                if (d2 <= r2) {
+                    if (d2 > rin) {
+                        yy = 16;  /* 深色描边 */
+                    } else {
+                        yy = 235; /* 白色小球 */
+                    }
+                    uu = 128;
+                    vv = 128;
+                }
+
+                row[x] = yy;
+                if (yc.cb != NULL && yc.cr != NULL && yc.cstride > 0) {
+                    size_t ci = (size_t)(y / 2) * yc.cstride +
+                                (size_t)(x / 2) * yc.chroma_step;
+                    ((uint8_t *)yc.cb)[ci] = uu;
+                    ((uint8_t *)yc.cr)[ci] = vv;
+                }
+            }
         }
     }
     int fence = -1;
@@ -659,17 +775,19 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
         /* 工作线程没起来：同步投递，虽然不合规范但总比让应用等不到结果好 */
         camera3_notify_msg_t msg;
         memset(&msg, 0, sizeof(msg));
-        msg.type = 0;
+        msg.type = 2;
         msg.message.shutter.frame_number = req->frame_number;
         msg.message.shutter.timestamp = now_ns;
         if (g_framework_cb->notify != NULL) g_framework_cb->notify(g_framework_cb, &msg);
-        camera3_capture_result_t res;
+        struct portal_capture_result res;
         memset(&res, 0, sizeof(res));
         res.frame_number = req->frame_number;
         res.result = build_result_meta(now_ns);
         res.num_output_buffers = num;
         res.output_buffers = sbs;
-        g_framework_cb->process_capture_result(g_framework_cb, &res);
+        res.partial_result = 1;
+        g_framework_cb->process_capture_result(g_framework_cb,
+                                               (const camera3_capture_result_t *)&res);
     }
     return 0;
 }
