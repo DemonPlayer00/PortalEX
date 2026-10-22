@@ -33,6 +33,7 @@
 
 #include <android/log.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -92,6 +93,8 @@ typedef struct camera3_stream {
     uint32_t usage;
     uint32_t max_buffers;
     void *priv;
+    int data_space;   /* HAL_DATASPACE_*，BLOB 用它区分 JPEG/HEIF/JPEG_R/... */
+    int rotation;
 } camera3_stream_t;
 
 typedef struct camera3_stream_buffer {
@@ -512,9 +515,25 @@ static int vcam_configure_streams(const struct camera3_device *dev,
                                   camera3_stream_configuration_t *cfg) {
     (void)dev;
     if (cfg == NULL) return -1;
+    bool unsupported_blob = false;
     for (uint32_t i = 0; i < cfg->num_streams; i++) {
         camera3_stream_t *st = cfg->streams[i];
         if (st == NULL) continue;
+        /* 诊断一次：确认 vendor 的 data_space 偏移。 */
+        static bool dumped = false;
+        if (!dumped) {
+            dumped = true;
+            const int32_t *raw = (const int32_t *)st;
+            LOGI("stream raw[6..10]: %d %d %d %d %d", raw[6], raw[7], raw[8], raw[9], raw[10]);
+        }
+        if (st->format == 0x21 && st->data_space != 0 && st->data_space != 0x101 &&
+            st->data_space != 0x8c20000 /* HAL_DATASPACE_V0_JFIF */) {
+            /* 0x101 = HAL_DATASPACE_JFIF；其余 BLOB 编码（HEIF/JPEG_R/
+             * DEPTH_JPEG/APP_SEGMENTS）目前不支持，配置阶段直接拒绝，
+             * 让应用收到干净的 configureFailed，而不是一张坏图。 */
+            LOGE("BLOB dataSpace=0x%x 不支持（仅 JFIF 0x101）", st->data_space);
+            unsupported_blob = true;
+        }
         /* **关键**：这时候框架还没分配 buffer —— 我们提的用法位会真正生效，
          * 于是拿到的就是"我们自己能写的"buffer（这正是外包一层做不到的事）。 */
         if (st->stream_type == 0 /* OUTPUT */) {
@@ -531,10 +550,15 @@ static int vcam_configure_streams(const struct camera3_device *dev,
                 st->max_buffers = (st->format == 0x21 /* BLOB */) ? 2u : 4u;
             }
         }
-        LOGI("configure_streams[%u]：%ux%u format=0x%x usage=0x%x max_buffers=%u stream_type=%d", i,
-             st->width, st->height, st->format, st->usage, st->max_buffers, st->stream_type);
+        LOGI("configure_streams[%u]：%ux%u format=0x%x usage=0x%x max_buffers=%u stream_type=%d data_space=0x%x", i,
+             st->width, st->height, st->format, st->usage, st->max_buffers, st->stream_type,
+             st->data_space);
     }
     LOGI("配流时总账：请求=%lu 产帧=%lu", g_reqs, g_frames);
+    if (unsupported_blob) {
+        LOGE("拒绝配置：请求了非 JFIF 的 BLOB 格式");
+        return -EINVAL;
+    }
     return 0;
 }
 
