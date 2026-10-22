@@ -487,14 +487,7 @@ static int vcam_configure_streams(const struct camera3_device *dev,
         /* **关键**：这时候框架还没分配 buffer —— 我们提的用法位会真正生效，
          * 于是拿到的就是"我们自己能写的"buffer（这正是外包一层做不到的事）。 */
         if (st->stream_type == 0 /* OUTPUT */) {
-            /* 把 IMPLEMENTATION_DEFINED（0x22）显式改成 YCbCr_420_888（0x23）。
-             * 这样 lockYCbCr 能给出正确的 plane/stride，预览面也能被 CPU 写；
-             * 否则只能 lock() 猜 stride，1600x1200 预览会大面积黑/花。
-             * 这是 HAL 在 configure_streams 里允许的格式覆盖（框架此时还没分配 buffer）。 */
-            if (st->format == 0x22) {
-                st->format = 0x23;
-            }
-            st->usage |= USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN;
+            st->usage |= USAGE_SW_READ_OFTEN | USAGE_SW_WRITE_OFTEN | 0x200u /* HW_RENDER */;
             /*
              * **max_buffers 必须由 HAL 填**：框架传进来的是 0，不填就会在
              * `configureConsumerQueueLocked` 直接失败 ——
@@ -558,8 +551,16 @@ static inline int tri_wave(int t, int span) {
 }
 
 /** 往一个输出 buffer 画测试图。成功返回 true */
-static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
+extern bool portal_gpu_paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int format);
+
+static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int format) {
     if (handle == NULL || w == 0 || h == 0) return false;
+    /* PRIVATE/IMPLEMENTATION_DEFINED 面：先让 GPU 按 gralloc 真实布局渲染。 */
+    if (format != 0x21 && portal_gpu_paint(handle, w, h, frame, format)) {
+        static bool logged = false;
+        if (!logged) { logged = true; LOGI("GPU 路径生效（PRIVATE 面）%ux%u", w, h); }
+        return true;
+    }
     /* 只画我们自己在 configure_streams 里标了 SW 用途的流（否则 lock 会 abort） */
     load_mapper();
     if (g_gbm_lock_ycbcr == NULL || g_gbm_self == NULL) return false;
@@ -597,11 +598,46 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame) {
             }
             if (lrc == 0 && vaddr != NULL) {
                 uint8_t *b = (uint8_t *)vaddr;
-                uint32_t rows = h < 32 ? h : 32;
-                for (uint32_t y = 0; y < rows; y++) {
-                    uint8_t *row = b + (size_t)y * (size_t)w;
-                    uint8_t v = ((y / 3) % 2) ? 210 : 24;
-                    memset(row, v, w);
+                /* 诊断：dump 一次 native_handle 的 ints，找 stride/format。 */
+                static bool dumped = false;
+                if (!dumped) {
+                    dumped = true;
+                    const int32_t *hi = (const int32_t *)handle;
+                    char buf[256];
+                    int off = 0;
+                    for (int i = 0; i < 16 && i < hi[2] + 3; i++) {
+                        off += snprintf(buf + off, sizeof(buf) - off, "%d=%d ", i, hi[i]);
+                    }
+                    LOGI("handle ints: %s", buf);
+                }
+                /* handle ints 实测：width=1600 height=1200 stride=1600
+                 * format=1（RGBA_8888），buffer size=1600*1200*4 ⇒ 这个 0x22
+                 * 预览面在本机实际是 **RGBA8888 线性面**，不是 NV12。
+                 * 按 RGBA 写满整帧；UBWC 的话仍会不对，但不会崩。 */
+                uint32_t *px = (uint32_t *)vaddr;
+                int radius = (int)((w < h ? w : h) / 7);
+                if (radius < 8) radius = 8;
+                int spanX = (int)w - 2 * radius; if (spanX < 1) spanX = 1;
+                int spanY = (int)h - 2 * radius; if (spanY < 1) spanY = 1;
+                int cx = radius + tri_wave((int)frame * 9, spanX);
+                int cy = radius + tri_wave((int)frame * 5 + 17, spanY);
+                int r2 = radius * radius;
+                int rin = (radius - 4) * (radius - 4);
+                static const uint32_t bar_rgba[8] = {
+                    0xffff0000u, 0xffff8000u, 0xffffff00u, 0xff00ff00u,
+                    0xff00ffffu, 0xff0000ffu, 0xff8000ffu, 0xffff00ffu,
+                };
+                for (uint32_t y = 0; y < h; y++) {
+                    for (uint32_t x = 0; x < w; x++) {
+                        int bar = (int)(((x + frame * 7u) % (w ? w : 1u)) * 8u /
+                                       (w ? w : 1u));
+                        if (bar > 7) bar = 7;
+                        uint32_t c = bar_rgba[bar];
+                        int dx = (int)x - cx, dy = (int)y - cy;
+                        int d2 = dx * dx + dy * dy;
+                        if (d2 <= r2) c = (d2 > rin) ? 0xff000000u : 0xffffffffu;
+                        px[(size_t)y * w + x] = c;
+                    }
                 }
                 int f = -1;
                 g_gbm_unlock(g_gbm_self, handle, &f);
@@ -748,7 +784,7 @@ static int vcam_process_capture_request(const struct camera3_device *dev,
             LOGI("首个请求的流：%ux%u format=0x%x usage=0x%x", sb->stream->width, sb->stream->height,
                  sb->stream->format, sb->stream->usage);
         }
-        if (paint(*sb->buffer, sb->stream->width, sb->stream->height, req->frame_number)) {
+        if (paint(*sb->buffer, sb->stream->width, sb->stream->height, req->frame_number, sb->stream->format)) {
             painted = true;
         }
     }
