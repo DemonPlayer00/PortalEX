@@ -21,11 +21,11 @@ set(PORTAL_VVIDEO_SRC
     src/vvideo/vvfs_builtin.c)
 
 add_library(camshim SHARED src/camshim.c ${PORTAL_VVIDEO_SRC})
-add_library(vcam SHARED src/vcam.c)
+add_library(vcam SHARED src/vcam.c src/gpu_render.c)
 target_include_directories(camshim PRIVATE src/vvideo)
 
 target_link_libraries(camshim log dl)
-target_link_libraries(vcam log dl)
+target_link_libraries(vcam log dl EGL GLESv2)
 
 # 入口符号必须导出：hw_get_module 按 "HMI" 查这张表
 set_target_properties(camshim PROPERTIES
