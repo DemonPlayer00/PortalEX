@@ -23,7 +23,8 @@ object CameraMockSelector {
      * 空筛选 = 全部命中（不筛选）；视频无标签时只在空筛选下命中。
      */
     fun matches(videoTags: List<String>, filter: List<String>): Boolean {
-        if (filter.isEmpty()) return true
+        // 无标签样本永远匹配；有标签时必须包含全部筛选标签（任意一个不满足即失败）。
+        if (videoTags.isEmpty() || filter.isEmpty()) return true
         return filter.all { want -> videoTags.any { it.equals(want, ignoreCase = true) } }
     }
 
