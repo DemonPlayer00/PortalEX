@@ -1,6 +1,0 @@
-id=portalex-vcam-test
-name=PortalEX Virtual Camera (test)
-version=0.1.0
-versionCode=1
-author=PortalEX
-description=MI6 测试用：把 vendor camera HAL 换成虚拟 HAL，输出流动彩虹条带 + 运动小球。停用模块并重启即回退。
