@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  抽屉面板的背景：**右边缘圆角**。
+
+  为什么右边缘而不是四角：抽屉从左侧滑出，只有右侧那条边是"伸出来"的，
+  左上/左下与屏幕边缘齐平 —— 四角全圆会在左边缘露出两条不该有的缝。
+
+  色值用主题属性（`?attr/colorSurfaceContainerLow`，与原来写在抽屉容器上的背景色一致），
+  这样深浅色切换不用改这里。⚠️ 主题属性写在 drawable 里要求 inflated 时带 theme ——
+  用作 View 背景时天然满足（见 activity_main.xml 的注释）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+
+    <solid android:color="?attr/colorSurfaceContainerLow" />
+
+    <corners
+        android:topRightRadius="16dp"
+        android:bottomRightRadius="16dp" />
+
+</shape>

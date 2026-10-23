@@ -33,12 +33,14 @@ class PortalProtocolTest {
     @Test
     fun commandCount_isPinned() {
         // 新增/删除命令 ⇒ 改这条断言（顺带提醒你两侧都要接上）
-        assertEquals(31, cmd.size)
+        // 36：统一架构迁移命令 + 摄像头控制面的 get_camera_events
+        assertEquals(37, cmd.size)
     }
 
     @Test
     fun keyCount_isPinned() {
-        assertEquals(41, key.size)
+        // 67：统一架构迁移 + 按组波动键；68：摄像头控制面的 camera_events
+        assertEquals(68, key.size)
     }
 
     @Test
@@ -77,7 +79,5 @@ class PortalProtocolTest {
         assertEquals("put_config", PortalProtocol.Cmd.PUT_CONFIG)
         assertEquals("set_sensor_mock", PortalProtocol.Cmd.SET_SENSOR_MOCK)
         assertEquals("get_sensor_status", PortalProtocol.Cmd.GET_SENSOR_STATUS)
-        assertEquals("binder_sensor_mock", PortalProtocol.Key.BINDER_SENSOR_MOCK)
-        assertEquals("binderSensorMock", PortalProtocol.Pref.BINDER_SENSOR_MOCK)
     }
 }

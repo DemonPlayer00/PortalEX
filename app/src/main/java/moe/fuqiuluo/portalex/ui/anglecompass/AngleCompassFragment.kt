@@ -1,0 +1,166 @@
+package moe.fuqiuluo.portalex.ui.anglecompass
+
+import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.ext.cadenceMock
+import android.location.LocationManager
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.fragment.app.Fragment
+import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.databinding.FragmentAngleCompassBinding
+import moe.fuqiuluo.portalex.ext.orientationMock
+import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
+import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
+import moe.fuqiuluo.portalex.ext.sensorNoise
+import moe.fuqiuluo.portalex.ui.common.NumberRow
+import moe.fuqiuluo.portalex.ui.common.renderNumberRows
+import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.SensorNoise
+
+/**
+ * **角度计和指南针模拟**页。
+ *
+ * ## 为什么这一页目前只有只读状态
+ *
+ * 用户口径：只搬「Setting」页里属于本域的**设置项**；噪声档不搬，与其它设置耦合的项也不搬。
+ * 而「Setting」页里**没有**方向/角度类设置项 —— 本域的全部数值（磁场 σ、方向角 σ、
+ * 旋转矢量 σ）都属于**传感器噪声档**，按口径留在「Calibration」页；把传感器事件替换掉的
+ * 开关（Binder 外周传感器模拟）是全局项，也留在「Setting」页。
+ *
+ * ⇒ 这一页先作为**只读状态页**：把"当前注入的是什么"摊出来，并指明去哪改。以后真有本域
+ * 设置项（例如朝向跟随策略）时直接往这里加行即可 —— 行模板与输入对话框已是三个页面共用的。
+ *
+ * ## 三路噪声各是什么
+ *
+ *  · **磁场 σ**（µT）：指南针的原始量，逐轴高斯抖动 ⇒ 罗盘抖动幅度
+ *  · **方向角 σ**（rad）：融合出来的朝向抖动 ⇒ 表盘会不会飘
+ *  · **旋转矢量 σ**：姿态四元数抖动 ⇒ AR / 精细方向类应用
+ */
+class AngleCompassFragment : Fragment() {
+
+    private var _binding: FragmentAngleCompassBinding? = null
+    private val binding get() = _binding!!
+
+    /** 本域的三路噪声档（只读展示用；编辑仍在 Calibration 页） */
+    private val angleItems
+        get() = SensorNoise.ITEMS.filter {
+            it.start == SensorNoise.MAG || it.start == SensorNoise.ORIENT || it.start == SensorNoise.ROTVEC
+        }
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        _binding = FragmentAngleCompassBinding.inflate(inflater, container, false)
+        return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        // 外周传感器模拟（本页那一侧）。**开关即下发**（不等下次握手）—— 否则用户会以为"点了没反应"。
+        // 另一侧的值原样带着走：这条命令一次带两侧，别把对方的状态覆盖成默认。
+        binding.orientationMockSwitch.isChecked = requireContext().orientationMock
+        binding.orientationMockSwitch.setOnCheckedChangeListener { _, checked ->
+            val ctx = requireContext()
+            ctx.orientationMock = checked
+            // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
+            val r = ConfigSync.setSensorMock(
+                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
+            )
+            if (!r.isOk) {
+                android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        renderRows()
+        refreshStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 噪声档可能在 Calibration 页刚被改过（含一键校准会连磁场一起填），回来重读
+        renderRows()
+        refreshStatus()
+    }
+
+    /**
+     * 本页的两条波动参数（%，默认 15）—— 与步频页同款行模板。
+     *
+     * 与**噪声档**是两层：噪声档（Calibration 页）是"每条事件的传感器本底噪声"，
+     * 这里调的是叠加在它之上的**慢漂**（波动强度）与**逐条随机**（随机区间）。
+     * 保存即下发，失败说出来（静默失败 = 改了没生效的骗人开关）。
+     */
+    private fun renderRows() {
+        val context = requireContext()
+        renderNumberRows(
+            layoutInflater, binding.angleRows,
+            listOf(
+                wobbleRow(
+                    getString(R.string.wobble_amp), getString(R.string.wobble_amp_desc),
+                    get = { context.orientationWobbleAmp },
+                    set = { context.orientationWobbleAmp = it },
+                    hint = getString(R.string.wobble_amp_hint_orientation),
+                ),
+                wobbleRow(
+                    getString(R.string.wobble_rnd), getString(R.string.wobble_rnd_desc),
+                    get = { context.orientationWobbleRnd },
+                    set = { context.orientationWobbleRnd = it },
+                    hint = getString(R.string.wobble_rnd_hint_orientation),
+                ),
+            ),
+        )
+    }
+
+    private fun wobbleRow(
+        title: String,
+        desc: String,
+        get: () -> Float,
+        set: (Float) -> Unit,
+        hint: String,
+    ) = NumberRow(
+        title = title,
+        desc = desc,
+        display = { "%.0f%%".format(get()) },
+        current = { get().toDouble() },
+        hint = { hint },
+        commit = { value ->
+            set(value.toFloat())
+            renderRows()
+            val ctx = requireContext()
+            val r = ConfigSync.setSensorMock(
+                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
+            )
+            if (!r.isOk) {
+                android.widget.Toast.makeText(ctx, "波动参数下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        },
+    )
+
+    /** 只读：当前注入档位 + 注入开关 + 当前朝向。改值请去 Calibration / Setting */
+    private fun refreshStatus() {
+        val context = requireContext()
+        val values = context.sensorNoise
+        val bearing = if (FakeLoc.hasBearings) {
+            "%.1f°".format(FakeLoc.bearing)
+        } else {
+            "未显式下发（跟随路线切线 / 摇杆方向）"
+        }
+        binding.angleReadout.text = buildString {
+            append(getString(R.string.angle_readout_injection, context.orientationMock))
+            append('\n')
+            angleItems.forEach { item ->
+                append(item.title).append('：').append(SensorNoise.formatItem(item, values))
+                append(' ').append(item.unit).append('\n')
+            }
+            append(getString(R.string.angle_readout_bearing, bearing))
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+}

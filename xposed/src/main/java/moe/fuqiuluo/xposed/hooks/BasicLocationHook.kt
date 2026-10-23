@@ -3,7 +3,7 @@ package moe.fuqiuluo.xposed.hooks
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -12,17 +12,19 @@ import moe.fuqiuluo.xposed.utils.hookAllMethodsAfter
 import moe.fuqiuluo.xposed.utils.hookAllMethodsBefore
 import moe.fuqiuluo.xposed.utils.toClassOrThrow
 import kotlin.random.Random
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.Hooks
 
 object BasicLocationHook: BaseLocationHook() {
     operator fun invoke(classLoader: ClassLoader) {
-//        val hookSetLatitude = object: XC_MethodHook() {
+//        val hookSetLatitude = object: MethodHook() {
 //            override fun beforeHookedMethod(param: MethodHookParam?) {
 //                if (param == null) return
 //                if (!FakeLocationConfig.enable) return
 //
 //            }
 //        }
-//        val hookSetLongitude = object: XC_MethodHook() {
+//        val hookSetLongitude = object: MethodHook() {
 //            override fun beforeHookedMethod(param: MethodHookParam?) {
 //                if (param == null) return
 //
@@ -79,19 +81,19 @@ object BasicLocationHook: BaseLocationHook() {
 //        if (FakeLocationConfig.DEBUG) {
 //            // Track the invocation of AutoNavi map system services
 //            val cBundle = XposedHelpers.findClass("android.os.Bundle", classLoader)
-//            XposedBridge.hookAllMethods(cBundle, "putInt", object : XC_MethodHook() {
+//            Hooks.hookAllMethods(cBundle, "putInt", object : MethodHook() {
 //                override fun beforeHookedMethod(param: MethodHookParam) {
 //                    val key = param.args[0] as? String
 //                    val value = param.args[1] as Int
 //
 //                    if (key == "amap" || key == "resubtype" || key == "maxCn0") {
-//                        XposedBridge.log(RuntimeException())
+//                        Hooks.log(RuntimeException())
 //                    }
 //                }
 //            })
-//            XposedBridge.hookAllMethods(Location::class.java, "setExtras", object : XC_MethodHook() {
+//            Hooks.hookAllMethods(Location::class.java, "setExtras", object : MethodHook() {
 //                override fun beforeHookedMethod(param: MethodHookParam) {
-//                    XposedBridge.log(RuntimeException())
+//                    Hooks.log(RuntimeException())
 //                }
 //            })
 //        }

@@ -23,8 +23,6 @@ import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
-import moe.fuqiuluo.portalex.ext.binderSensorMock
-import moe.fuqiuluo.portalex.ext.cadenceScale
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
@@ -32,7 +30,6 @@ import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
-import moe.fuqiuluo.portalex.ext.sensorGridHz
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.reportDuration
 
@@ -152,8 +149,6 @@ class SettingsFragment : Fragment() {
         binding.speedValue.text = "%.2f米/秒".format(context.speed)
         binding.accuracyValue.text = "%.2f米".format(context.accuracy)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
-        binding.sensorGridValue.text = context.sensorGridHz.let { if (it <= 0) "自动" else "${it}Hz" }
-        binding.cadenceScaleValue.text = "%.2f×".format(context.cadenceScale)
         binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
 
         binding.altitudeLayout.setOnClickListener {
@@ -268,15 +263,8 @@ class SettingsFragment : Fragment() {
         // 「传感器模拟」开关已移除：传感器 hook 恒安装（仅由 LSPosed 作用域决定是否注入），
         // 偏好项从未被模块读取——留着就是一个骗人的开关。
         //
-        // 「Binder 外周传感器模拟」（**默认开**）：打开后模拟改由 system_server 侧的
-        // 原生注入层在系统框架层完成——目标应用一个 hook 都不装，也不依赖底层传感器是
-        // 否在工作。开关下发到系统侧失败（原生层挂不上）时会明确提示，不做假成功。
-        binding.binderSensorMockSwitch.isChecked = requireContext().binderSensorMock
-        binding.binderSensorMockSwitch.setOnCheckedChangeListener { _, isChecked ->
-            requireContext().binderSensorMock = isChecked
-            showToast(if (isChecked) "已开启外周传感器模拟" else "已关闭外周传感器模拟")
-            updateRemoteConfig()
-        }
+        // 外周传感器模拟的开关**已搬到两个功能页**（步频页 / 角度和指南针页）：
+        // 一个总开关按传感器类别拆成两个，放在设置页只会掩盖"哪一侧被关了"。
 
         // 「后台保活」（默认开）：前台服务 + partial wake lock，防止 :app 被 Cached Apps Freezer 冻结。
         // 关掉时立刻撤服务；开着且模拟在跑时立刻起服务（不必等下次开模拟）。
@@ -322,38 +310,6 @@ class SettingsFragment : Fragment() {
         refreshBatteryOptimizationState()
 
         // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
-        binding.cadenceScaleLayout.setOnClickListener {
-            showDialog("步频倍率（1=不调整）", "%.2f".format(context.cadenceScale)) {
-                val v = it.trim().toDoubleOrNull()
-                if (v == null || v <= 0.0 || v > 10.0) {
-                    Toast.makeText(context, "请输入 0.2 ~ 3.0 的数值", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                }
-                requireContext().cadenceScale = v.toFloat()
-                binding.cadenceScaleValue.text = "%.2f×".format(requireContext().cadenceScale)
-                showToast("步频倍率：%.2f×（同速度下步频×%.2f）".format(requireContext().cadenceScale, requireContext().cadenceScale))
-                updateRemoteConfig()
-            }
-        }
-
-        // 「注入栅格分辨率」：0=自动（跟随框架采用值）；也可填任意 Hz（钳 20~400）
-        binding.sensorGridLayout.setOnClickListener {
-            val cur = context.sensorGridHz
-            showDialog("注入栅格分辨率（Hz，0=自动）", if (cur <= 0) "0" else cur.toString()) {
-                val v = it.trim().toIntOrNull()
-                if (v == null || v < 0) {
-                    Toast.makeText(context, "请输入 0 或 20~400 的整数", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                }
-                requireContext().sensorGridHz = v
-                binding.sensorGridValue.text = requireContext().sensorGridHz.let {
-                    if (it <= 0) "自动" else "${it}Hz"
-                }
-                showToast(if (v <= 0) "栅格：自动（跟随框架采用值）" else "栅格：${requireContext().sensorGridHz}Hz")
-                updateRemoteConfig()
-            }
-        }
-
         binding.reportDurationLayout.setOnClickListener {
             showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
                 it.substring(0, it.length - 2)

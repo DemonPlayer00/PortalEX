@@ -1,7 +1,7 @@
 package moe.fuqiuluo.xposed.hooks.camera
 
 import android.content.Context
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 

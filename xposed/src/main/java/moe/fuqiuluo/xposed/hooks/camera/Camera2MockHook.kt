@@ -4,7 +4,7 @@ package moe.fuqiuluo.xposed.hooks.camera
 import android.hardware.camera2.CameraCaptureSession
 import android.os.Handler
 import android.view.Surface
-import de.robv.android.xposed.XC_MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
@@ -134,7 +134,7 @@ internal object Camera2MockHook {
      * 失败语义：只要 [CameraMockController.prepare] 说"不拦"，这里**什么都不做** ——
      * 参数原样交给真实方法，应用拿到的是真实摄像头。
      */
-    private fun interceptSession(param: XC_MethodHook.MethodHookParam, packageName: String?) {
+    private fun interceptSession(param: MethodHookParam, packageName: String?) {
         val outputs = (param.args.getOrNull(0) as? List<*>)
             ?.filterIsInstance<Surface>()
             ?: return
@@ -157,7 +157,7 @@ internal object Camera2MockHook {
      * 而 List 路径本来就没有会话参数 —— MI6 上实测不带参数真实相机照样跑。
      */
     private fun interceptSessionConfig(
-        param: XC_MethodHook.MethodHookParam,
+        param: MethodHookParam,
         packageName: String?,
         configClass: Class<*>
     ) {

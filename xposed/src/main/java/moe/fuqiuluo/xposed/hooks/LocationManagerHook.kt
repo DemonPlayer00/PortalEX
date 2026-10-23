@@ -1,19 +1,20 @@
 package moe.fuqiuluo.xposed.hooks
 
 import android.location.Location
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
+import moe.fuqiuluo.xposed.utils.Hooks
 
 object LocationManagerHook: BaseLocationHook() {
     operator fun invoke(
         cLocationManager: Class<*>,
     ) {
-        val hookGetLastKnownLocation = object: XC_MethodHook() {
+        val hookGetLastKnownLocation = object: MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam?) {
                 if (param == null || param.hasThrowable() || param.result == null) return
 
@@ -31,13 +32,13 @@ object LocationManagerHook: BaseLocationHook() {
             // 旧实现限定 parameterTypes.size > 1，把它排除在外，回退去挂不存在的 getLastLocation。
             it.name == "getLastKnownLocation" || it.name == "getLastLocation"
         }.map {
-            XposedBridge.hookMethod(it, hookGetLastKnownLocation)
+            Hooks.hookMethod(it, hookGetLastKnownLocation)
         }.isEmpty()) {
-            XposedBridge.hookAllMethods(cLocationManager, "getLastKnownLocation", hookGetLastKnownLocation)
-            XposedBridge.hookAllMethods(cLocationManager, "getLastLocation", hookGetLastKnownLocation)
+            Hooks.hookAllMethods(cLocationManager, "getLastKnownLocation", hookGetLastKnownLocation)
+            Hooks.hookAllMethods(cLocationManager, "getLastLocation", hookGetLastKnownLocation)
         }
 
-        val hookOnLocation = object: XC_MethodHook() {
+        val hookOnLocation = object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if (param.args.isEmpty() || param.args[0] == null) return
 
@@ -65,7 +66,7 @@ object LocationManagerHook: BaseLocationHook() {
         if(cLocationManager.declaredMethods.filter {
                 it.name == "requestFlush"
             }.map {
-                XposedBridge.hookMethod(it, object : XC_MethodHook() {
+                Hooks.hookMethod(it, object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         // requestFlush 的重载：
                         //  requestFlush(LocationListener)  —— 单参，listener 在 args[0]
@@ -86,7 +87,7 @@ object LocationManagerHook: BaseLocationHook() {
             Logger.error("Hook requestFlush failed")
         }
 
-        val hookRequestLocationUpdates = object: XC_MethodHook() {
+        val hookRequestLocationUpdates = object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam?) {
                 if (param == null || param.args.isEmpty() || param.args[1] == null) return
 
@@ -104,7 +105,7 @@ object LocationManagerHook: BaseLocationHook() {
         if(cLocationManager.declaredMethods.filter {
                 it.name == "requestLocationUpdates"
             }.map {
-                XposedBridge.hookMethod(it, hookRequestLocationUpdates)
+                Hooks.hookMethod(it, hookRequestLocationUpdates)
             }.isEmpty()) {
             Logger.error("Hook requestLocationUpdates failed")
         }
@@ -112,7 +113,7 @@ object LocationManagerHook: BaseLocationHook() {
         if(cLocationManager.declaredMethods.filter {
                 it.name == "requestSingleUpdate"
             }.map {
-                XposedBridge.hookMethod(it, hookRequestLocationUpdates)
+                Hooks.hookMethod(it, hookRequestLocationUpdates)
             }.isEmpty()) {
             Logger.error("Hook requestSingleUpdate failed")
         }
@@ -125,7 +126,7 @@ object LocationManagerHook: BaseLocationHook() {
             it.onceHookAllMethod("onLocation", hookOnLocation)
             it.onceHookAllMethod("accept", hookOnLocation)
         }.onFailure {
-            XposedBridge.log(it)
+            Hooks.log(it)
         }
 
         kotlin.runCatching {
@@ -139,7 +140,7 @@ object LocationManagerHook: BaseLocationHook() {
         }.onSuccess {
             it.onceHookAllMethod("onLocationChanged", hookOnLocation)
         }.onFailure {
-            XposedBridge.log(it)
+            Hooks.log(it)
         }
     }
 }

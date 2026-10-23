@@ -437,6 +437,7 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
         if (!vw_owns_type(type)) obs_note(type, e->data.f[0], e->timestamp);
         if (vw_owns_type(type)) {
             suppressed++;
+            vw_note_suppressed_class(type);   /* 按类记账：拆分的运行时判据读数 */
             continue;
         }
         if (kept != i) buf[kept] = *e;
@@ -802,6 +803,42 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_realStepCounter(JNIEnv 
 }
 
 /** 步数两条流是否改由 poll 路径注入（见 g_steps_via_poll 的说明） */
+/*
+ * 外周传感器模拟的**按类开关**（2026-09-18：一个总开关拆成步频侧 / 角度指南针侧）。
+ * 一次调用把两侧状态灌进原生层；门控落在 vw_owns_type()，关掉的一侧真实事件原样放行。
+ */
+/** 按类压制计数（诊断）：关掉的一侧必须停止增长 */
+JNIEXPORT jstring JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_suppressedCounts(
+        JNIEnv *env, jobject thiz) {
+    (void) thiz;
+    long long c = 0, o = 0;
+    vw_suppressed_counts(&c, &o);
+    char buf[96];
+    snprintf(buf, sizeof(buf), "cadence=%lld orientation=%lld", c, o);
+    return (*env)->NewStringUTF(env, buf);
+}
+
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setSensorClasses(
+        JNIEnv *env, jobject thiz, jboolean cadence, jboolean orientation) {
+    (void) env; (void) thiz;
+    vw_set_class_enable(cadence == JNI_TRUE ? 1 : 0, orientation == JNI_TRUE ? 1 : 0);
+}
+
+/**
+ * 按组波动（两条参数 × 两组）：[ampPercent]/[rndPercent] 是**百分比**（页面上的 15 = 15%），
+ * 原生侧按 0..1 的分数存储。语义与施加口径见 vw_wobble.c 文件头。
+ *
+ * 0 是**逐位兼容**值：两条都为 0 时原生层不碰随机数、不做算术，输出与没有这个功能时完全一致。
+ */
+JNIEXPORT void JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setGroupWobble(
+        JNIEnv *env, jobject thiz, jint group, jfloat ampPercent, jfloat rndPercent) {
+    (void) env; (void) thiz;
+    vw_set_group_wobble(group, ampPercent / 100.0f, rndPercent / 100.0f);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setStepsViaPoll(JNIEnv *env, jobject thiz,
                                                                         jboolean on) {
@@ -832,19 +869,19 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
                         active ? 1 : 0);
 }
 
-/** 设置页「注入栅格分辨率」：Hz → 纳秒（0 = 自动） */
-JNIEXPORT void JNICALL
-Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setGridHz(
-        JNIEnv *env, jobject thiz, jint hz) {
-    (void) env;
-    (void) thiz;
-    long long ns = 0;
-    if (hz > 0) ns = 1000000000LL / (long long) hz;
-    vw_set_tick_override(ns);
-    LOGI("grid override -> %d Hz (%lld ns)", (int) hz, ns);
-}
 
 /** 先清空活跃标记（缺席的类型即静默），随后由 Kotlin 按 dump 灌入活跃者 */
+/*
+ * 下一个到点时刻（纳秒；0 = 没有）。泵用它"睡到下一个事件"，于是投递是事件驱动的：
+ * 既不会把事件攒到固定节拍一起发（旧的 5ms 栅格轮询），也不会自作主张改速率。
+ */
+JNIEXPORT jlong JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_nextDueNs(JNIEnv *env, jobject thiz,
+                                                                  jlong now_nanos) {
+    (void) env; (void) thiz;
+    return (jlong) vw_next_due_ns((long long) now_nanos);
+}
+
 JNIEXPORT void JNICALL
 Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_clearChannelHints(
         JNIEnv *env, jobject thiz) {
@@ -908,16 +945,26 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_status(JNIEnv *env, job
     APPEND(" steps=%lld step_rate=%d/min", vw_step_events_total(),
            vw_step_rate_per_min(now_ns));
     APPEND(" steps_boot=%lld", vw_step_counter_value());
+    /* 步事件"同时下发"的两个诊断计数（见 virtual_world.c 的说明） */
+    APPEND(" step_diag=多步推送%lld/短间隔%lld/钳到now%lld/强抬%lld/重基跳过%lld",
+           vw_step_multi_push_count(), vw_step_short_gap_count(),
+           vw_jitter_clamp_count(), vw_jitter_force_count(), vw_step_rebase_skipped());
     APPEND(" steps_base=%lld", vw_real_step_counter());
     char priv[320];
     obs_dump(priv, sizeof(priv));
     APPEND(" priv=[%s]", priv);
     APPEND(" gait=%s", vw_gait_describe());
     {
+        /* 按组波动参数（页面可改）：诊断页/日志据此确认下发真的落到了原生层 */
+        char wob[64];
+        vw_dump_wobble(wob, sizeof(wob));
+        APPEND(" wob=[%s]", wob);
+    }
+    {
         int pend = 0;
         long long dropped = 0;
         vw_defer_stats(&pend, &dropped);
-        APPEND(" tick=%.2fms polltypes=%d defer=%d/%lld", vw_tick_ns_dbg() / 1e6,
+        APPEND(" 最细周期=%.1fms polltypes=%d defer=%d/%lld", vw_finest_period_dbg() / 1e6,
                vw_poll_types_enabled(), pend, dropped);
     }
     {

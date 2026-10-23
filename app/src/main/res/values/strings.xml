@@ -57,14 +57,90 @@
     <string name="debug_desc">是否打印调试日志</string>
     <string name="allow_landscape">允许横屏</string>
     <string name="allow_landscape_desc">横屏下部分界面可能显示异常</string>
+    <string name="menu_stamina">Stamina Mock</string>
+    <!-- 入口名（抽屉 + 顶栏标题）：这一页管步频侧（步数计数器/检测器）的模拟 -->
+    <string name="menu_cadence">Cadence &amp; Acceleration Mock</string>
+    <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
+    <string name="stamina_enable">启用体力模拟</string>
+    <string name="stamina_enable_desc">体力随跑动衰减、空闲时持续恢复；低了会降速并进入疲劳，冷却还完才重新开跑</string>
+    <string name="stamina_status">当前体力</string>
+    <string name="stamina_chart_title">速度倍率 / 距离</string>
+    <string name="stamina_chart_desc">横轴=距离（窗口 2 km，左右滑动看更远），纵轴=速度倍率</string>
+    <!-- 步频模拟页 -->
+    <string name="cadence_page_desc">决定"目标应用看到的步频"：由 速度 × 步频倍率 得出。这一页只放属于本域、且不与其它设置耦合的项（步频倍率）。事件投递速率已改为**跟随框架采用值**（不再有"注入栅格分辨率"这个设置），步事件在框架侧按步间隔分摊下发。</string>
+    <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>
+    <string name="cadence_scale">步频倍率</string>
+    <string name="cadence_scale_desc">微调「步频 ↔ 速度」的关系；1 = 不调整（0.2~3.0）</string>
+    <string name="cadence_mock">外周传感器模拟（步频侧）</string>
+    <string name="cadence_mock_desc">接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR；系统框架层伪造，不向目标应用注入 hook</string>
+    <string name="orientation_mock">外周传感器模拟（角度与指南针侧）</string>
+    <string name="orientation_mock_desc">接管加速度/陀螺/磁场（朝向）；系统框架层伪造，不向目标应用注入 hook</string>
+
+    <!--
+      按组波动（两组各两条，单位 %，默认 15）：与噪声档两层 —— 噪声档是"本底噪声"，
+      这两条是叠加其上的慢漂与逐条随机。施加口径见 xposed/src/main/cpp/vw_wobble.c。
+    -->
+    <string name="wobble_amp">波动强度（%）</string>
+    <string name="wobble_amp_desc">慢漂半幅：读数在秒级上来回走的幅度（默认 15%，0 = 关闭）</string>
+    <string name="wobble_rnd">随机区间（%）</string>
+    <string name="wobble_rnd_desc">逐条事件的均匀随机半宽（默认 15%，0 = 关闭）</string>
+    <string name="wobble_amp_hint_cadence">波动强度（步频侧）：作用在**步间隔**上的慢漂半幅。15 = 步频在一个慢周期里最多偏高/偏低 15%（真人走路本就不是恒定步频）。0 = 逐位回到"均匀步间隔"。</string>
+    <string name="wobble_rnd_hint_cadence">随机区间（步频侧）：每一步的间隔在 ±该比例内**逐条均匀抽取**。15 = 每步 ±15% 以内随机（不会累积漂移）。0 = 关闭逐条随机。</string>
+    <string name="wobble_amp_hint_orientation">波动强度（角度与指南针侧）：慢漂半幅，按**该类型的参考量**折算 —— 加速度/重力/线性=1g、陀螺=1 rad/s、磁场=50µT、方向角=180°、旋转矢量=π。15 = 参考量的 15%，0 = 逐位回到原输出。</string>
+    <string name="wobble_rnd_hint_orientation">随机区间（角度与指南针侧）：每条事件在 ±该比例的参考量内**均匀抽取**（与慢漂相互独立）。旋转矢量加在**半角**上，四元数因此仍是单位四元数。</string>
+    <string name="cadence_footer">步频公式只有一处（FakeLoc.cadenceForSpeed，钳在 30~300 步/分）。步进事件由系统框架侧按"步间隔"分摊下发，目标应用不需要进入作用域。事件投递速率跟随框架对每个传感器的采用值（真机 HAL 语义），无需手工调；位置上报间隔（运动循环拍长）仍在 Setting 页。</string>
+
+    <!-- 角度计和指南针模拟页 -->
+    <string name="angle_page_desc">角度计与指南针相关设置的归属页。**当前没有从「Setting」页搬过来的设置项**：方向/角度类的数值（磁场 σ、方向角 σ、旋转矢量 σ）是传感器噪声档，按用户口径仍留在「Calibration」页。</string>
+    <string name="angle_readout_injection">注入开关（Binder 外周传感器模拟）：%1$s</string>
+    <string name="angle_readout_bearing">当前下发朝向：%1$s</string>
+    <string name="angle_footer">这一页只做只读状态显示。要改数值请去：Calibration（磁场/方向角/旋转矢量噪声 σ、一键校准）与 Setting（Binder 外周传感器模拟开关）。</string>
+
+    <string name="stamina_chart_mode_theory">理论</string>
+    <string name="stamina_chart_mode_generated">生成</string>
+    <string name="stamina_chart_sample">本次生成：%1$s km 用 %2$s 分钟 · 平均配速 %3$s/km · 疲劳 %4$d 次（共 %5$s 分钟）</string>
+    <string name="stamina_reset">重置体力</string>
+    <string name="stamina_phase_unavailable">状态不可读（模块未装载或命令通道未握手）—— 体力模拟未生效</string>
+    <string name="stamina_phase_not_applied">参数尚未同步到系统侧（模拟会话未启动？）—— 当前数值来自内置默认</string>
+    <string name="stamina_reset_data">重置数据</string>
+    <string name="stamina_reset_data_confirm">把所有体力参数恢复为出厂默认，并重置当前体力与统计。\n\n开关状态会保留；旧参数不保留，之后只能手动调回。</string>
+    <string name="stamina_reset_data_ok">恢复默认</string>
+    <string name="stamina_reset_data_done">已恢复默认参数并重置体力</string>
+    <string name="stamina_params">参数（点击修改）</string>
+    <string name="stamina_decay">体力衰减</string>
+    <string name="stamina_decay_desc">满速跑动时每分钟消耗的体力</string>
+    <string name="stamina_rest_at">疲劳体力值</string>
+    <string name="stamina_rest_at_desc">体力降到该值以下进入疲劳</string>
+    <string name="stamina_resume">开跑阈值</string>
+    <string name="stamina_resume_desc">疲劳中冷却计数的方向分界，回到 0 即开跑（须高于休息体力值）</string>
+    <string name="stamina_transition">过渡时间</string>
+    <string name="stamina_transition_desc">进出疲劳时速度平滑所用的秒数（每次过渡重新随机，0 = 直接跳变）</string>
+    <string name="stamina_ignore_window">忽略窗口</string>
+    <string name="stamina_ignore_speed">忽略阈值</string>
+    <string name="stamina_ignore_window_desc">判断异常速度用的时间窗口</string>
+    <string name="stamina_ignore_speed_desc">快于它的表象移动不计消耗</string>
+    <string name="stamina_recover">恢复速度</string>
+    <string name="stamina_recover_desc">满体力时的恢复速率（体力越低回得越快，0% 时翻倍）</string>
+    <string name="stamina_walk_speed">疲劳时速度</string>
+    <string name="stamina_walk_speed_desc">疲劳期间的速度（m/s）—— 疲劳速度就是它，没有第二个旋钮</string>
+    <string name="stamina_floor">跑动降速下限</string>
+    <string name="stamina_floor_desc">跑动段体力见底前最低降到基础速度的几成</string>
+    <string name="stamina_random">随机化幅度</string>
+    <string name="stamina_random_desc">施加在衰减速率、每次过渡时长与每次疲劳时长上的随机浮动</string>
+    <string name="stamina_fatigue_sec">疲劳时长</string>
+    <string name="stamina_fatigue_sec_desc">一次疲劳的倒计时预算（秒）；低于开跑阈值倒得慢、高于倒得快</string>
+    <string name="stamina_metrics_label">这套参数跑出来</string>
+    <string name="stamina_metrics">首次疲劳 %1$s km（跑 %2$s 分）· 一次疲劳 %3$s 分 · 周期 %4$s 分 · 疲劳时 %5$s m/s · 1.5km 内 %6$d 次 / 2km 内 %7$d 次</string>
+    <string name="stamina_metrics_no_fatigue">10 km 内不会进疲劳（疲劳体力值 %.0f%% 太低，或体力衰减太小）</string>
+    <string name="stamina_metrics_unknown_cycle">周期：窗口内只出现过一次疲劳</string>
+    <string name="stamina_health_decay">⚠ 体力衰减过高：疲劳期体力净下降（上限约 %1$s 点/分），曲线会一路掉到 0 并卡住</string>
+    <string name="stamina_health_no_slowdown">⚠ 疲劳时速度不低于跑动速度，疲劳等于没降速（把「疲劳时速度」调低）</string>
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
     <string name="calibration_hint">这里存放注入到系统框架层的各路传感器噪声：逐轴标准差 σ（使用时按高斯分布逐事件生成动态值）与陀螺零偏 μ。可逐行手改，也可用「一键校准」按本机真实噪声自动填充。\n\n一键校准要把手机放在平稳的表面、保持静止 8 秒（按 50Hz 采集）；检测到移动会作废重来。校准必须在「模拟未运行」时进行——模拟一跑，框架侧就在压制真实传感器，那时采到的只会是我们自己注入的数据。\n\n中位数只有陀螺那一行会被注入：陀螺的零参考物理上就是 0，实测中位数就是它的真实零偏。加速度/重力/线性加速度/磁场的中位数里混着手机姿态与环境地磁的直流分量，注入会破坏模型，因此只作统计参照显示。</string>
     <string name="calibration_run">一键校准</string>
     <string name="calibration_reset">恢复默认</string>
     <string name="calibration_footer">σ 就是标准差本身，改大即更抖；σ = 0 表示该轴完全不抖。方向角与旋转矢量是融合量，不参与一键校准。</string>
-    <string name="binder_sensor_mock">Binder 外周传感器模拟</string>
-    <string name="binder_sensor_mock_desc">只在系统框架层伪造外周传感器，不向目标应用注入任何 hook\n需重启目标应用生效</string>
     <string name="dfused">融合定位处置</string>
     <string name="dfused_desc">对系统融合定位（fused）的处置方式\n伪装 = 让融合照常算，但结果换成模拟位置</string>
     <string name="cdma">网络降级</string>

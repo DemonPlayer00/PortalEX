@@ -31,6 +31,26 @@
         <item name="searchViewStyle">@style/Portal.SearchViewStyle</item>
         <item name="sliderStyle">@style/Portal.SliderTheme</item>
         <item name="android:popupMenuStyle">@style/PortalPopupMenuStyle</item>
+        <!-- 开关的**默认**样式：任何页面新增 SwitchMaterial/SwitchCompat 都自动与设置项一致 -->
+        <item name="switchStyle">@style/Portal.SwitchStyle</item>
+    </style>
+
+    <!--
+      开关样式 = **设置项里原本那一套**，现在提升为主题默认（不再逐处重复写）。
+
+      `SwitchMaterial`/`SwitchCompat` 的默认样式取自主题属性 `switchStyle`
+      （已核对 material 1.12.0 的 `SwitchMaterial` 构造器：`this(context, attrs, R.attr.switchStyle)`）。
+      父样式必须用 **`Widget.Material3.CompoundButton.Switch`** —— 那正是 M3 主题里
+      `switchStyle` 的现值（在 material 的 themes 里核实过）；写成 `…MaterialSwitch` 会**换一套外观**
+      （实测：胶囊从 115×70px 变成 223×111px、滑块从浅色变深色），设置页那一排会跟着一起变样。
+      下面两项也正是设置页每个开关上原本逐条写的两个属性 —— 所以这里**没有引入任何新外观**。
+
+      收尾时已把散落的重复属性删干净：`fragment_settings.xml`(7)、
+      `fragment_stamina.xml`(1)、`fragment_gnss_mock.xml`(4)。新增开关也不必再写。
+    -->
+    <style name="Portal.SwitchStyle" parent="Widget.Material3.CompoundButton.Switch">
+        <item name="useMaterialThemeColors">true</item>
+        <item name="trackTint">@color/switch_track_tint</item>
     </style>
 
     <!-- PopupMenu 展开动画：从右上角缩放展开/缩回（右上锚点 pivot 100%/0%） -->

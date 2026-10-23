@@ -3,7 +3,8 @@ package moe.fuqiuluo.xposed.hooks.camera
 
 import android.app.AppOpsManager
 import android.os.Bundle
-import de.robv.android.xposed.XC_MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.camera.CameraWatchState
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
@@ -48,7 +49,7 @@ internal object CameraWatch {
      * 取不到才退回字面量 26（该值自 API 21 起未变过）。
      */
     private val OP_CAMERA: Int = runCatching {
-        de.robv.android.xposed.XposedHelpers.getStaticIntField(AppOpsManager::class.java, "OP_CAMERA")
+        XposedHelpers.getStaticIntField(AppOpsManager::class.java, "OP_CAMERA")
     }.getOrDefault(26)
 
     private val state = CameraWatchState()
@@ -158,7 +159,7 @@ internal object CameraWatch {
      * 顺序刻意如此：**先按参数下标取 op code 并早退**（绝大多数调用不是相机），
      * 只有确认是相机才去碰 uid/包名与状态机。
      */
-    private fun onAppOpsCall(param: XC_MethodHook.MethodHookParam, methodName: String) {
+    private fun onAppOpsCall(param: MethodHookParam, methodName: String) {
         // Xposed 的 MethodHookParam.method 声明为 Member，这里就是 Method（hookAllMethods 只挂方法）
         val method = param.method as? Method ?: return
         val idx = indexCache[method] ?: indexesOf(method).also { indexCache[method] = it }
@@ -226,7 +227,7 @@ internal object CameraWatch {
     }
 
     /** `notifyCameraState(String cameraId, int facing, int newState)`：按类型取，同样不写死签名 */
-    private fun onCameraState(param: XC_MethodHook.MethodHookParam) {
+    private fun onCameraState(param: MethodHookParam) {
         val method = param.method as? Method ?: return
         val types = method.parameterTypes
         var cameraId: String? = null

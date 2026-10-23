@@ -101,19 +101,32 @@ static double advance_sway(long long now) {
     return g_sway_from + (g_sway_to - g_sway_from) * ease;
 }
 
-/* 推进一个栅格：dt = TICK_NS */
+/* 把世界推进到指定时刻：**dt 由调用方给（变步长）**，不再依赖固定栅格 */
+/** 上次推进到哪个时刻（变步长积分用）*/
+static long long g_last_advance_ns = 0;
+
+/** 上次算角速度的时刻（陀螺事件的真实间隔） */
+static long long g_last_gyro_ns = 0;
+
 /**
  * 初始化朝向状态（`vw_init` 调用）：随机初值、目标一致、标记"尚未平滑"。
  * 注意它**必须消耗与拆分前相同次数**的随机数（一次 rng_range），否则后续所有随机量都会错位。
  */
 void vw_gait_init(void) {
+    g_last_advance_ns = 0;
     g_azimuth = rng_range(0.0, 360.0);
     g_target_azimuth = g_azimuth;
     g_azimuth_init = 0;
 }
 
-void advance_one_tick(long long now) {
-    double dt = (double) g_tick_ns / 1e9;
+void vw_advance_to(long long now) {
+    if (g_last_advance_ns == 0) g_last_advance_ns = now;
+    double dt = (double) (now - g_last_advance_ns) / 1e9;
+    g_last_advance_ns = now;
+    /* 长时间停滞（进程被冻结）后不按真实间隔积分：状态是"当前姿态"，追一整段没有意义，
+     * 与旧实现"积压多了直接跳到窗口起点"同一思路。0.5s 足够覆盖正常的抖动与批处理。 */
+    if (dt < 0.0) dt = 0.0;
+    if (dt > 0.5) dt = 0.5;
     if (!g_azimuth_init) {
         g_azimuth = g_target_azimuth;
         g_azimuth_init = 1;
@@ -234,10 +247,14 @@ double gyro_z(long long now) {
     double az = virtual_azimuth(now);
     double raw = 0.0;
     if (g_gyro_init) {
-        double dt = (double) g_tick_ns / 1e9;
+        /* ⚠️ 这里原来写死用固定栅格当 dt。没有栅格之后必须用**真实的两次采样间隔**：
+         *    角速度 = 方位差 / 实际间隔；用名义周期会在采用值 ≠ 栅格时算出系统性偏差。 */
+        double dt = (double) (now - g_last_gyro_ns) / 1e9;
+        if (dt < 1e-3) dt = 1e-3;
         double d = shortest_delta(az, g_last_az_for_gyro);
         raw = (d * M_PI / 180.0) / dt;
     }
+    g_last_gyro_ns = now;
     g_gyro_init = 1;
     g_last_az_for_gyro = az;
     g_gyro_z += (raw - g_gyro_z) * GYRO_SMOOTH_ALPHA;
