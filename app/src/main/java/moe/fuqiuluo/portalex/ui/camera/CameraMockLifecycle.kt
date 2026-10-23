@@ -1,20 +1,19 @@
 package moe.fuqiuluo.portalex.ui.camera
 
 import android.content.Context
-import moe.fuqiuluo.portalex.vcam.CameraRealFake
+import java.util.concurrent.Executors
 
-/** 摄像头模拟与位置模拟的联动：位置模拟一停，虚拟相机也必须退出。 */
+/** 位置模拟关闭时，只通过 cammock 标准 stop 接口停止实现。 */
 object CameraMockLifecycle {
-    @Volatile private var restoring = false
+    @Volatile private var stopping = false
 
     fun stopForLocationMockOff(context: Context) {
-        if (!context.cameraMockEnabled || restoring) return
-        restoring = true
+        if (!context.cameraMockEnabled || stopping) return
+        stopping = true
         context.cameraMockEnabled = false
-        CameraMockVideoSource.sync(context)
-        Thread({
-            runCatching { CameraRealFake.setFake(context, false) }
-            restoring = false
-        }, "camera-mock-restore").start()
+        Executors.newSingleThreadExecutor().execute {
+            runCatching { CammockManager.stop(context) }
+            stopping = false
+        }
     }
 }
