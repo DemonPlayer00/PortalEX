@@ -99,10 +99,10 @@ object CammockManager {
         current.parentFile?.mkdirs()
         if (!staging.renameTo(current)) error("安装目录写入失败")
         val tokenFile = File(current, "auth.token")
-        if (!tokenFile.isFile) {
-            val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
-            tokenFile.writeText(bytes.joinToString("") { "%02x".format(it) })
-        }
+        // 必须每次导入重新生成，不能信任 zip 内自带的 auth.token。
+        tokenFile.delete()
+        val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        tokenFile.writeText(bytes.joinToString("") { "%02x".format(it) })
         tokenFile.setReadable(false, false)
         tokenFile.setReadable(true, true)
         File(current, "auth.nonce").delete()
