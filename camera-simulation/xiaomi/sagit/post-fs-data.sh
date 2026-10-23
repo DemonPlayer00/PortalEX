@@ -38,15 +38,6 @@ elif [ -x /debug_ramdisk/magiskpolicy ]; then
     /debug_ramdisk/magiskpolicy --live "allow hal_camera_default vendor_file dir { getattr read open search }" 2>/dev/null
 fi
 
-# 如果已有旧的 overlay，先摘掉（幂等）
-umount "$HALDIR" 2>/dev/null
-if mount -t overlay overlay -o "lowerdir=$HALDIR,upperdir=$UPPER,workdir=$WORK" "$HALDIR"; then
-    # 挂载后必须确认 provider 看到的确实是虚拟载荷，而不是旧 HAL。
-    if cmp -s "$UPPER/camera.msm8998.so" "$HALDIR/camera.msm8998.so"; then
-        echo "portalex-vcam: overlay mounted on $HALDIR (payload verified)" > "$LOG"
-    else
-        fail_boot "overlay mounted but payload mismatch"
-    fi
-else
-    fail_boot "overlay mount failed"
-fi
+# 不在开机时挂载虚拟 HAL：未启动 cammock 时保留真实相机。
+# app 的 start.sh 才会挂载 overlay。
+echo "portalex-vcam: ready (not mounted; start cammock to enable)" > /data/local/tmp/portalex-vcam.log

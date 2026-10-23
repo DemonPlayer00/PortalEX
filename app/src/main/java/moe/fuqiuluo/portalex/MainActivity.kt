@@ -89,7 +89,6 @@ import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
-import moe.fuqiuluo.portalex.ui.camera.CameraMockVideoSource
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
@@ -202,7 +201,6 @@ class MainActivity : AppCompatActivity() {
         }
         // 虚拟摄像头默认关：每次冷启动都清掉上次持久化的开启状态，绝不自动接管相机。
         cameraMockEnabled = false
-        CameraMockVideoSource.stop()
         requestRequiredPermissionsIfNeeded()
 
         WindowCompat.setDecorFitsSystemWindows(window, false)

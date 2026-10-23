@@ -733,7 +733,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 binding.switchCameraMock.isEnabled = true
                 if (result.isSuccess) {
                     context.cameraMockEnabled = next
-                    CameraMockVideoSource.sync(context)
                     updateSwitch()
                     updateStatus(CameraMockStore.points(context))
                     Toast.makeText(
@@ -743,7 +742,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                     ).show()
                 } else {
                     context.cameraMockEnabled = !next
-                    CameraMockVideoSource.sync(context)
                     updateSwitch()
                     Toast.makeText(context, "cammock 执行失败：${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
                 }
