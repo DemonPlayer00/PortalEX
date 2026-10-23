@@ -223,7 +223,33 @@ object CameraMockStore {
         val custom = LinkedHashSet<String>()
         custom.addAll(context.cameraMockCustomTags)
         points(context).forEach { p -> p.videos.forEach { v -> v.tags.forEach { custom.add(it) } } }
-        return CameraTags.PRESETS + custom.filterNot { tag -> CameraTags.PRESETS.any { it.equals(tag, true) } }
+        val hidden = context.cameraMockHiddenTags
+        return (CameraTags.PRESETS + custom.filterNot { tag -> CameraTags.PRESETS.any { it.equals(tag, true) } })
+            .filterNot { tag -> hidden.any { it.equals(tag, true) } }
+    }
+
+    fun removeTags(context: Context, tags: Collection<String>): Int {
+        val remove = tags.map { it.trim() }.filter { it.isNotEmpty() }
+        if (remove.isEmpty()) return 0
+        val hidden = context.cameraMockHiddenTags.toMutableSet().apply { addAll(remove) }
+        context.cameraMockHiddenTags = hidden
+        context.cameraMockCustomTags = context.cameraMockCustomTags.filterNot { t ->
+            remove.any { it.equals(t, true) }
+        }.toSet()
+        val routes = routes(context)
+        var changed = 0
+        val cleaned = routes.map { route ->
+            route.copy(videos = route.videos.map { v ->
+                val next = v.tags.filterNot { t -> remove.any { it.equals(t, true) } }
+                if (next != v.tags) changed++
+                v.copy(tags = next)
+            })
+        }
+        if (changed > 0) setRoutes(context, cleaned)
+        context.cameraMockTagFilter = context.cameraMockTagFilter.filterNot { t ->
+            remove.any { it.equals(t, true) }
+        }.toSet()
+        return changed
     }
 
     fun addCustomTag(context: Context, tag: String): Boolean {
@@ -232,6 +258,7 @@ object CameraMockStore {
         if (tags.any { it.equals(clean, true) }) return false
         tags.add(clean)
         context.cameraMockCustomTags = tags
+        context.cameraMockHiddenTags = context.cameraMockHiddenTags.filterNot { it.equals(clean, true) }.toSet()
         return true
     }
 
@@ -259,6 +286,11 @@ var Context.cameraMockEnabled: Boolean
 var Context.cameraMockCustomTags: Set<String>
     get() = sharedPrefs.getStringSet("cameraMockCustomTags", emptySet()) ?: emptySet()
     set(value) = sharedPrefs.edit { putStringSet("cameraMockCustomTags", value) }
+
+/** 被用户删除的标签（预置标签也允许从这里隐藏）。 */
+var Context.cameraMockHiddenTags: Set<String>
+    get() = sharedPrefs.getStringSet("cameraMockHiddenTags", emptySet()) ?: emptySet()
+    set(value) = sharedPrefs.edit { putStringSet("cameraMockHiddenTags", value) }
 
 /** 标签筛选（全含语义，见 CameraMockSelector.matches） */
 var Context.cameraMockTagFilter: Set<String>
