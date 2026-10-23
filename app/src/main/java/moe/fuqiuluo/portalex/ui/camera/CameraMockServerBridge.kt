@@ -31,12 +31,19 @@ object CameraMockServerBridge {
         }
         val socket = LocalSocket()
         try {
-            socket.connect(
-                LocalSocketAddress(
-                    CameraMockSelectionSocket.NAME,
-                    LocalSocketAddress.Namespace.ABSTRACT
+            try {
+                socket.connect(
+                    LocalSocketAddress(
+                        CameraMockSelectionSocket.NAME,
+                        LocalSocketAddress.Namespace.ABSTRACT
+                    )
                 )
-            )
+            } catch (e: java.io.IOException) {
+                // 没有 LSPosed/system_server 选片服务时，abstract socket 不存在；
+                // 不是文件权限问题，也不该把整次录制保存判为失败。
+                android.util.Log.w("CameraMockServerBridge", "system_server selection unavailable: ${e.message}", e)
+                return@runCatching -1
+            }
             socket.outputStream.write("IMPORT_LIBRARY\n".toByteArray())
             socket.outputStream.flush()
             val reply = socket.inputStream.bufferedReader().readLine()
