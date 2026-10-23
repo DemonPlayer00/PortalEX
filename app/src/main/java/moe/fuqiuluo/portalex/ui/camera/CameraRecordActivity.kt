@@ -249,7 +249,7 @@ class CameraRecordActivity : AppCompatActivity() {
      * VideoCapture。等待期间显示“准备中”，取消按钮仍可退出。
      */
     private fun prepareRecording() {
-        if (cameraMockEnabled || CameraMockVideoSource.isRunning) {
+        if (cameraMockEnabled) {
             Toast.makeText(this, "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
             return
         }

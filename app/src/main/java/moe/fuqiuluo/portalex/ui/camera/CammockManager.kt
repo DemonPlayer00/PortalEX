@@ -33,7 +33,7 @@ object CammockManager {
         if (!File(dir, "cammock.json").isFile) return false
         return providerFile(context).isFile ||
             File(dir, "module.prop").isFile ||
-            File(dir, "install.sh").isFile
+            File(dir, "install.sh").isFile || File(dir, "cammock_install.sh").isFile
     }
 
     fun isModule(context: Context): Boolean =
@@ -69,12 +69,12 @@ object CammockManager {
                     out.outputStream().use { out -> zip.copyTo(out) }
                     if (name == "provider" || name == "portal_camera_provider") hasProvider = true
                     if (name == "cammock.json" || name == "manifest.json") hasManifest = true
-                    if (name == "module.prop" || name == "install.sh") hasModule = true
+                    if (name == "module.prop" || name == "install.sh" || name == "cammock_install.sh") hasModule = true
                 }
             }
         } ?: error("无法读取 zip")
         if (!hasManifest) error("zip 必须包含 cammock.json")
-        if (!hasProvider && !hasModule) error("zip 必须包含 provider 或 module.prop/install.sh")
+        if (!hasProvider && !hasModule) error("zip 必须包含 provider 或 module.prop/install script")
         if (!File(staging, "provider").exists() && File(staging, "portal_camera_provider").exists()) {
             File(staging, "portal_camera_provider").renameTo(File(staging, "provider"))
         }
@@ -105,6 +105,58 @@ object CammockManager {
         )
     }.getOrElse { Install(false, emptyList(), "安装失败：${it.message}") }
 
+    /** 标准视频导出：实现写入 io/export/<videoId>.mp4。 */
+    fun exportVideo(context: Context, videoId: String): Result<File> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val box = File(currentDir(context), "io/export")
+        box.deleteRecursively(); box.mkdirs()
+        File(box, "request.txt").writeText(videoId)
+        runScript(context, "export.sh").getOrThrow()
+        val file = File(box, "$videoId.mp4")
+        if (!file.isFile) error("实现未生成导出视频：$videoId")
+        file
+    }
+
+    /** 标准上传：app 生成 io/upload 快照，由实现自己的 upload.sh 接收。 */
+    fun upload(context: Context): Result<Int> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val box = File(currentDir(context), "io/upload")
+        box.deleteRecursively(); box.mkdirs()
+        val routes = CameraMockStore.routes(context)
+        File(box, "routes.json").writeText(
+            moe.fuqiuluo.xposed.camera.CameraMockCodec.encodeRoutes(routes)
+        )
+        routes.forEach { route ->
+            route.videos.forEach { video ->
+                val src = CameraMockStore.videoFile(context, video.file)
+                if (src.isFile) src.copyTo(File(box, video.file), overwrite = true)
+            }
+        }
+        runScript(context, "upload.sh").getOrThrow()
+        routes.sumOf { it.videos.size }
+    }
+
+    /** 标准下载：实现写入 io/download，app 再把它导入本地库。 */
+    fun download(context: Context): Result<Int> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val box = File(currentDir(context), "io/download")
+        box.deleteRecursively(); box.mkdirs()
+        runScript(context, "download.sh").getOrThrow()
+        val json = File(box, "routes.json")
+        if (!json.isFile) error("实现未生成 io/download/routes.json")
+        val routes = moe.fuqiuluo.xposed.camera.CameraMockCodec.decodeRoutes(json.readText())
+        val videoDir = CameraMockStore.dir(context)
+        videoDir.mkdirs()
+        routes.forEach { route ->
+            route.videos.forEach { video ->
+                val src = File(box, video.file)
+                if (src.isFile) src.copyTo(File(videoDir, video.file), overwrite = true)
+            }
+        }
+        CameraMockStore.setRoutes(context, routes)
+        routes.sumOf { it.videos.size }
+    }
+
     /** PortalEX 只调用实现自己的 start.sh；provider/HAL 细节由实现负责。 */
     fun start(context: Context): Result<String> = runScript(context, "start.sh")
 
@@ -126,43 +178,12 @@ object CammockManager {
         out.trim().ifBlank { "$name 执行完成" }
     }
 
-    /** 运行实现自己的 installer；没有 installer 的 provider 实现走旧的释放路径。 */
-    fun releaseRuntime(context: Context): Result<String> = runCatching {
-        if (!isInstalled(context)) error("尚未安装摄像头实现")
-        val dir = currentDir(context).absolutePath
-        val installer = File(currentDir(context), "install.sh")
-        if (installer.isFile) {
-            val p = ProcessBuilder(context.suPath, "-c", "cd '$dir' && sh '$dir/install.sh'")
-                .redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().use { it.readText() }
-            if (!p.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)) {
-                p.destroyForcibly(); error("实现 installer 超时")
-            }
-            if (p.exitValue() != 0) error("实现 installer 失败：$out")
-            return@runCatching out.trim().ifBlank { "实现 installer 执行完成" }
-        }
-        if (isModule(context)) {
-            error("magisk-module 实现缺少 install.sh，不能由 PortalEX 直接对接 root 管理器")
-        }
-        val cmd = "mkdir -p $RUNTIME; " +
-            "cp -f '$dir/provider' $PROVIDER; " +
-            (if (File(currentDir(context), "meta.bin").exists()) "cp -f '$dir/meta.bin' $META; " else "") +
-            (if (File(currentDir(context), "tags.bin").exists()) "cp -f '$dir/tags.bin' $TAGS; " else "") +
-            "chmod 755 $PROVIDER"
-        val p = ProcessBuilder(context.suPath, "-c", cmd).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().use { it.readText() }
-        if (!p.waitFor(12, java.util.concurrent.TimeUnit.SECONDS)) {
-            p.destroyForcibly(); error("释放实现超时")
-        }
-        if (p.exitValue() != 0) error("释放实现失败：$out")
-        "已在 $RUNTIME 释放实现"
-    }
-
     /** 卸载私有实现；实现自己的 uninstall.sh 负责 root 模块清理。 */
     fun uninstall(context: Context): Result<String> = runCatching {
         if (!isInstalled(context)) return@runCatching "没有已安装实现"
         val dir = currentDir(context)
-        val uninstaller = File(dir, "uninstall.sh")
+        val uninstallerName = manifestJson(context)?.optString("uninstaller")?.takeIf { it.isNotBlank() } ?: "uninstall.sh"
+        val uninstaller = File(dir, uninstallerName)
         if (uninstaller.isFile) {
             val p = ProcessBuilder(context.suPath, "-c", "cd '${dir.absolutePath}' && sh '${uninstaller.absolutePath}'")
                 .redirectErrorStream(true).start()
