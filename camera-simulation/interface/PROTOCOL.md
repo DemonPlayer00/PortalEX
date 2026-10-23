@@ -11,7 +11,7 @@ and a device-side camera simulation backend.
   camera HAL shim. The backend reads the newest published NV21 frame only when
   the camera stack actually requests a frame.
 - Device backend: an implementation of the shared-frame reader
-  (`camera-simulation/oneplus/provider/src/frame_reader.cpp` is the OnePlus one).
+  (`camera-simulation/oneplus/PKG110/provider/src/frame_reader.cpp` is the OnePlus one).
 
 ## Playback semantics
 

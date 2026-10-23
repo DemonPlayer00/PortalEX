@@ -1,0 +1,1682 @@
+
+---
+events:
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:12 (find_program)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_UNAME"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "uname"
+    candidate_directories:
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+    searched_directories:
+      - "/var/www/harness/node_modules/.bin/uname"
+      - "/var/www/node_modules/.bin/uname"
+      - "/var/node_modules/.bin/uname"
+      - "/node_modules/.bin/uname"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/uname"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/uname"
+      - "/usr/local/bin/uname"
+    found: "/usr/bin/uname"
+    search_context:
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:213 (message)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      The target system is: Android - 1 - aarch64
+      The host system is: Linux - 7.3.0-2-cachyos - x86_64
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeUnixFindMake.cmake:5 (find_program)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_MAKE_PROGRAM"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "gmake"
+      - "make"
+      - "smake"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sbin/"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/gmake"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sbin/gmake"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/gmake"
+      - "/var/www/harness/node_modules/.bin/gmake"
+      - "/var/www/node_modules/.bin/gmake"
+      - "/var/node_modules/.bin/gmake"
+      - "/node_modules/.bin/gmake"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/gmake"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/gmake"
+      - "/usr/local/bin/gmake"
+      - "/usr/bin/gmake"
+      - "/bin/gmake"
+      - "/usr/lib/aarch64-linux-android/35/bin/gmake"
+      - "/usr/lib/aarch64-linux-android/35/sbin/gmake"
+      - "/usr/lib/aarch64-linux-android/35/gmake"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/make"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sbin/make"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/make"
+      - "/var/www/harness/node_modules/.bin/make"
+      - "/var/www/node_modules/.bin/make"
+      - "/var/node_modules/.bin/make"
+      - "/node_modules/.bin/make"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/make"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/make"
+      - "/usr/local/bin/make"
+    found: "/usr/bin/make"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:501 (find_file)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:538 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:122 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCCompilerId.c.in"
+    candidate_directories:
+      - "/usr/share/cmake/Modules/"
+    found: "/usr/share/cmake/Modules/CMakeCCompilerId.c.in"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:122 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang 
+      Build flags: -g;-DANDROID;-fdata-sections;-ffunction-sections;-funwind-tables;-fstack-protector-strong;-no-canonical-prefixes;-D_FORTIFY_SOURCE=2;-Wformat;-Werror=format-security
+      Id flags: -c;--target=aarch64-none-linux-android35 
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CMakeCCompilerId.o"
+      
+      The C compiler identification is Clang, found in:
+        /var/www/PortalEX/oneplus-provider/build29/CMakeFiles/4.4.4/CompilerIdC/CMakeCCompilerId.o
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_LINKER"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "ld.lld"
+      - "ld"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_NM"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-nm"
+      - "nm"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_OBJDUMP"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-objdump"
+      - "objdump"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_OBJCOPY"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-objcopy"
+      - "objcopy"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_READELF"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-readelf"
+      - "readelf"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_DLLTOOL"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-dlltool"
+      - "dlltool"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-dlltool"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_ADDR2LINE"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-addr2line"
+      - "addr2line"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-addr2line"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeFindBinUtils.cmake:247 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:200 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_TAPI"
+    description: "Path to a program."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "tapi"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/tapi"
+      - "/var/www/harness/node_modules/.bin/tapi"
+      - "/var/www/node_modules/.bin/tapi"
+      - "/var/node_modules/.bin/tapi"
+      - "/node_modules/.bin/tapi"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/tapi"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/tapi"
+      - "/usr/local/bin/tapi"
+      - "/usr/bin/tapi"
+      - "/bin/tapi"
+      - "/usr/lib/aarch64-linux-android/35/bin/tapi"
+      - "/usr/lib/aarch64-linux-android/35/sbin/tapi"
+      - "/usr/lib/aarch64-linux-android/35/tapi"
+    found: false
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/Clang-FindBinUtils.cmake:26 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:201 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_C_COMPILER_AR"
+    description: "LLVM archiver"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-ar-21.0"
+      - "llvm-ar-21"
+      - "llvm-ar21"
+      - "llvm-ar"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar-21.0"
+      - "/var/www/harness/node_modules/.bin/llvm-ar-21.0"
+      - "/var/www/node_modules/.bin/llvm-ar-21.0"
+      - "/var/node_modules/.bin/llvm-ar-21.0"
+      - "/node_modules/.bin/llvm-ar-21.0"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ar-21.0"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ar-21.0"
+      - "/usr/local/bin/llvm-ar-21.0"
+      - "/usr/bin/llvm-ar-21.0"
+      - "/bin/llvm-ar-21.0"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ar-21.0"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ar-21.0"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ar-21.0"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar-21"
+      - "/var/www/harness/node_modules/.bin/llvm-ar-21"
+      - "/var/www/node_modules/.bin/llvm-ar-21"
+      - "/var/node_modules/.bin/llvm-ar-21"
+      - "/node_modules/.bin/llvm-ar-21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ar-21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ar-21"
+      - "/usr/local/bin/llvm-ar-21"
+      - "/usr/bin/llvm-ar-21"
+      - "/bin/llvm-ar-21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ar-21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ar-21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ar-21"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar21"
+      - "/var/www/harness/node_modules/.bin/llvm-ar21"
+      - "/var/www/node_modules/.bin/llvm-ar21"
+      - "/var/node_modules/.bin/llvm-ar21"
+      - "/node_modules/.bin/llvm-ar21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ar21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ar21"
+      - "/usr/local/bin/llvm-ar21"
+      - "/usr/bin/llvm-ar21"
+      - "/bin/llvm-ar21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ar21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ar21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ar21"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/Clang-FindBinUtils.cmake:38 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:201 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_C_COMPILER_RANLIB"
+    description: "Generate index for LLVM archive"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-ranlib-21.0"
+      - "llvm-ranlib-21"
+      - "llvm-ranlib21"
+      - "llvm-ranlib"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib-21.0"
+      - "/var/www/harness/node_modules/.bin/llvm-ranlib-21.0"
+      - "/var/www/node_modules/.bin/llvm-ranlib-21.0"
+      - "/var/node_modules/.bin/llvm-ranlib-21.0"
+      - "/node_modules/.bin/llvm-ranlib-21.0"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ranlib-21.0"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ranlib-21.0"
+      - "/usr/local/bin/llvm-ranlib-21.0"
+      - "/usr/bin/llvm-ranlib-21.0"
+      - "/bin/llvm-ranlib-21.0"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ranlib-21.0"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ranlib-21.0"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ranlib-21.0"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib-21"
+      - "/var/www/harness/node_modules/.bin/llvm-ranlib-21"
+      - "/var/www/node_modules/.bin/llvm-ranlib-21"
+      - "/var/node_modules/.bin/llvm-ranlib-21"
+      - "/node_modules/.bin/llvm-ranlib-21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ranlib-21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ranlib-21"
+      - "/usr/local/bin/llvm-ranlib-21"
+      - "/usr/bin/llvm-ranlib-21"
+      - "/bin/llvm-ranlib-21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ranlib-21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ranlib-21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ranlib-21"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib21"
+      - "/var/www/harness/node_modules/.bin/llvm-ranlib21"
+      - "/var/www/node_modules/.bin/llvm-ranlib21"
+      - "/var/node_modules/.bin/llvm-ranlib21"
+      - "/node_modules/.bin/llvm-ranlib21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ranlib21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ranlib21"
+      - "/usr/local/bin/llvm-ranlib21"
+      - "/usr/bin/llvm-ranlib21"
+      - "/bin/llvm-ranlib21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ranlib21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ranlib21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ranlib21"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/Clang-FindBinUtils.cmake:50 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:201 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_C_COMPILER_CLANG_SCAN_DEPS"
+    description: "`clang-scan-deps` dependency scanner"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "clang-scan-deps-21.0"
+      - "clang-scan-deps-21"
+      - "clang-scan-deps21"
+      - "clang-scan-deps"
+      - "clang-scan-deps-21.0"
+      - "clang-scan-deps-21"
+      - "clang-scan-deps21"
+      - "clang-scan-deps"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps-21.0"
+      - "/var/www/harness/node_modules/.bin/clang-scan-deps-21.0"
+      - "/var/www/node_modules/.bin/clang-scan-deps-21.0"
+      - "/var/node_modules/.bin/clang-scan-deps-21.0"
+      - "/node_modules/.bin/clang-scan-deps-21.0"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/clang-scan-deps-21.0"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/clang-scan-deps-21.0"
+      - "/usr/local/bin/clang-scan-deps-21.0"
+      - "/usr/bin/clang-scan-deps-21.0"
+      - "/bin/clang-scan-deps-21.0"
+      - "/usr/lib/aarch64-linux-android/35/bin/clang-scan-deps-21.0"
+      - "/usr/lib/aarch64-linux-android/35/sbin/clang-scan-deps-21.0"
+      - "/usr/lib/aarch64-linux-android/35/clang-scan-deps-21.0"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps-21"
+      - "/var/www/harness/node_modules/.bin/clang-scan-deps-21"
+      - "/var/www/node_modules/.bin/clang-scan-deps-21"
+      - "/var/node_modules/.bin/clang-scan-deps-21"
+      - "/node_modules/.bin/clang-scan-deps-21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/clang-scan-deps-21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/clang-scan-deps-21"
+      - "/usr/local/bin/clang-scan-deps-21"
+      - "/usr/bin/clang-scan-deps-21"
+      - "/bin/clang-scan-deps-21"
+      - "/usr/lib/aarch64-linux-android/35/bin/clang-scan-deps-21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/clang-scan-deps-21"
+      - "/usr/lib/aarch64-linux-android/35/clang-scan-deps-21"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps21"
+      - "/var/www/harness/node_modules/.bin/clang-scan-deps21"
+      - "/var/www/node_modules/.bin/clang-scan-deps21"
+      - "/var/node_modules/.bin/clang-scan-deps21"
+      - "/node_modules/.bin/clang-scan-deps21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/clang-scan-deps21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/clang-scan-deps21"
+      - "/usr/local/bin/clang-scan-deps21"
+      - "/usr/bin/clang-scan-deps21"
+      - "/bin/clang-scan-deps21"
+      - "/usr/lib/aarch64-linux-android/35/bin/clang-scan-deps21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/clang-scan-deps21"
+      - "/usr/lib/aarch64-linux-android/35/clang-scan-deps21"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:501 (find_file)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:538 (CMAKE_DETERMINE_COMPILER_ID_WRITE)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:8 (CMAKE_DETERMINE_COMPILER_ID_BUILD)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "file"
+    variable: "src_in"
+    description: "Path to a file."
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: true
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "CMakeCXXCompilerId.cpp.in"
+    candidate_directories:
+      - "/usr/share/cmake/Modules/"
+    found: "/usr/share/cmake/Modules/CMakeCXXCompilerId.cpp.in"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:125 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ 
+      Build flags: -g;-DANDROID;-fdata-sections;-ffunction-sections;-funwind-tables;-fstack-protector-strong;-no-canonical-prefixes;-D_FORTIFY_SOURCE=2;-Wformat;-Werror=format-security
+      Id flags: -c;--target=aarch64-none-linux-android35 
+      
+      The output was:
+      0
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CMakeCXXCompilerId.o"
+      
+      The CXX compiler identification is Clang, found in:
+        /var/www/PortalEX/oneplus-provider/build29/CMakeFiles/4.4.4/CompilerIdCXX/CMakeCXXCompilerId.o
+      
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/Clang-FindBinUtils.cmake:26 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:207 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_CXX_COMPILER_AR"
+    description: "LLVM archiver"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-ar-21.0"
+      - "llvm-ar-21"
+      - "llvm-ar21"
+      - "llvm-ar"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar-21.0"
+      - "/var/www/harness/node_modules/.bin/llvm-ar-21.0"
+      - "/var/www/node_modules/.bin/llvm-ar-21.0"
+      - "/var/node_modules/.bin/llvm-ar-21.0"
+      - "/node_modules/.bin/llvm-ar-21.0"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ar-21.0"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ar-21.0"
+      - "/usr/local/bin/llvm-ar-21.0"
+      - "/usr/bin/llvm-ar-21.0"
+      - "/bin/llvm-ar-21.0"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ar-21.0"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ar-21.0"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ar-21.0"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar-21"
+      - "/var/www/harness/node_modules/.bin/llvm-ar-21"
+      - "/var/www/node_modules/.bin/llvm-ar-21"
+      - "/var/node_modules/.bin/llvm-ar-21"
+      - "/node_modules/.bin/llvm-ar-21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ar-21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ar-21"
+      - "/usr/local/bin/llvm-ar-21"
+      - "/usr/bin/llvm-ar-21"
+      - "/bin/llvm-ar-21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ar-21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ar-21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ar-21"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar21"
+      - "/var/www/harness/node_modules/.bin/llvm-ar21"
+      - "/var/www/node_modules/.bin/llvm-ar21"
+      - "/var/node_modules/.bin/llvm-ar21"
+      - "/node_modules/.bin/llvm-ar21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ar21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ar21"
+      - "/usr/local/bin/llvm-ar21"
+      - "/usr/bin/llvm-ar21"
+      - "/bin/llvm-ar21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ar21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ar21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ar21"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/Clang-FindBinUtils.cmake:38 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:207 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_CXX_COMPILER_RANLIB"
+    description: "Generate index for LLVM archive"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "llvm-ranlib-21.0"
+      - "llvm-ranlib-21"
+      - "llvm-ranlib21"
+      - "llvm-ranlib"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib-21.0"
+      - "/var/www/harness/node_modules/.bin/llvm-ranlib-21.0"
+      - "/var/www/node_modules/.bin/llvm-ranlib-21.0"
+      - "/var/node_modules/.bin/llvm-ranlib-21.0"
+      - "/node_modules/.bin/llvm-ranlib-21.0"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ranlib-21.0"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ranlib-21.0"
+      - "/usr/local/bin/llvm-ranlib-21.0"
+      - "/usr/bin/llvm-ranlib-21.0"
+      - "/bin/llvm-ranlib-21.0"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ranlib-21.0"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ranlib-21.0"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ranlib-21.0"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib-21"
+      - "/var/www/harness/node_modules/.bin/llvm-ranlib-21"
+      - "/var/www/node_modules/.bin/llvm-ranlib-21"
+      - "/var/node_modules/.bin/llvm-ranlib-21"
+      - "/node_modules/.bin/llvm-ranlib-21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ranlib-21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ranlib-21"
+      - "/usr/local/bin/llvm-ranlib-21"
+      - "/usr/bin/llvm-ranlib-21"
+      - "/bin/llvm-ranlib-21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ranlib-21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ranlib-21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ranlib-21"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib21"
+      - "/var/www/harness/node_modules/.bin/llvm-ranlib21"
+      - "/var/www/node_modules/.bin/llvm-ranlib21"
+      - "/var/node_modules/.bin/llvm-ranlib21"
+      - "/node_modules/.bin/llvm-ranlib21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/llvm-ranlib21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/llvm-ranlib21"
+      - "/usr/local/bin/llvm-ranlib21"
+      - "/usr/bin/llvm-ranlib21"
+      - "/bin/llvm-ranlib21"
+      - "/usr/lib/aarch64-linux-android/35/bin/llvm-ranlib21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/llvm-ranlib21"
+      - "/usr/lib/aarch64-linux-android/35/llvm-ranlib21"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "find-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Compiler/Clang-FindBinUtils.cmake:50 (find_program)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:207 (include)"
+      - "CMakeLists.txt:2 (project)"
+    mode: "program"
+    variable: "CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS"
+    description: "`clang-scan-deps` dependency scanner"
+    settings:
+      SearchFramework: "NEVER"
+      SearchAppBundle: "NEVER"
+      CMAKE_FIND_USE_CMAKE_PATH: false
+      CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH: false
+      CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH: true
+      CMAKE_FIND_USE_CMAKE_SYSTEM_PATH: true
+      CMAKE_FIND_USE_INSTALL_PREFIX: true
+    names:
+      - "clang-scan-deps-21.0"
+      - "clang-scan-deps-21"
+      - "clang-scan-deps21"
+      - "clang-scan-deps"
+      - "clang-scan-deps-21.0"
+      - "clang-scan-deps-21"
+      - "clang-scan-deps21"
+      - "clang-scan-deps"
+    candidate_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/"
+      - "/var/www/harness/node_modules/.bin/"
+      - "/var/www/node_modules/.bin/"
+      - "/var/node_modules/.bin/"
+      - "/node_modules/.bin/"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/"
+      - "/usr/local/bin/"
+      - "/usr/bin/"
+      - "/bin/"
+      - "/usr/lib/aarch64-linux-android/35/bin/"
+      - "/usr/lib/aarch64-linux-android/35/sbin/"
+      - "/usr/lib/aarch64-linux-android/35/"
+    searched_directories:
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps-21.0"
+      - "/var/www/harness/node_modules/.bin/clang-scan-deps-21.0"
+      - "/var/www/node_modules/.bin/clang-scan-deps-21.0"
+      - "/var/node_modules/.bin/clang-scan-deps-21.0"
+      - "/node_modules/.bin/clang-scan-deps-21.0"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/clang-scan-deps-21.0"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/clang-scan-deps-21.0"
+      - "/usr/local/bin/clang-scan-deps-21.0"
+      - "/usr/bin/clang-scan-deps-21.0"
+      - "/bin/clang-scan-deps-21.0"
+      - "/usr/lib/aarch64-linux-android/35/bin/clang-scan-deps-21.0"
+      - "/usr/lib/aarch64-linux-android/35/sbin/clang-scan-deps-21.0"
+      - "/usr/lib/aarch64-linux-android/35/clang-scan-deps-21.0"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps-21"
+      - "/var/www/harness/node_modules/.bin/clang-scan-deps-21"
+      - "/var/www/node_modules/.bin/clang-scan-deps-21"
+      - "/var/node_modules/.bin/clang-scan-deps-21"
+      - "/node_modules/.bin/clang-scan-deps-21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/clang-scan-deps-21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/clang-scan-deps-21"
+      - "/usr/local/bin/clang-scan-deps-21"
+      - "/usr/bin/clang-scan-deps-21"
+      - "/bin/clang-scan-deps-21"
+      - "/usr/lib/aarch64-linux-android/35/bin/clang-scan-deps-21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/clang-scan-deps-21"
+      - "/usr/lib/aarch64-linux-android/35/clang-scan-deps-21"
+      - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps21"
+      - "/var/www/harness/node_modules/.bin/clang-scan-deps21"
+      - "/var/www/node_modules/.bin/clang-scan-deps21"
+      - "/var/node_modules/.bin/clang-scan-deps21"
+      - "/node_modules/.bin/clang-scan-deps21"
+      - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin/clang-scan-deps21"
+      - "/home/DemonPlayer/.local/share/dsh-desktop/bin/clang-scan-deps21"
+      - "/usr/local/bin/clang-scan-deps21"
+      - "/usr/bin/clang-scan-deps21"
+      - "/bin/clang-scan-deps21"
+      - "/usr/lib/aarch64-linux-android/35/bin/clang-scan-deps21"
+      - "/usr/lib/aarch64-linux-android/35/sbin/clang-scan-deps21"
+      - "/usr/lib/aarch64-linux-android/35/clang-scan-deps21"
+    found: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps"
+    search_context:
+      CMAKE_PREFIX_PATH:
+        - "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64"
+      ENV{PATH}:
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/var/www/node_modules/.bin"
+        - "/var/node_modules/.bin"
+        - "/node_modules/.bin"
+        - "/usr/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/node-gyp-bin"
+        - "/home/DemonPlayer/.local/share/dsh-desktop/bin"
+        - "/var/www/harness/node_modules/.bin"
+        - "/usr/local/bin"
+        - "/usr/bin"
+        - "/bin"
+      CMAKE_SYSTEM_PREFIX_PATH:
+        - "/usr/lib/aarch64-linux-android/35"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+      CMAKE_FIND_ROOT_PATH: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865"
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:123 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y"
+      binary: "/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y"
+    cmakeVariables:
+      ANDROID_ABI: "arm64-v8a"
+      ANDROID_ARM_MODE: "thumb"
+      ANDROID_PIE: "TRUE"
+      ANDROID_PLATFORM: "android-35"
+      ANDROID_STL: "c++_static"
+      ANDROID_TOOLCHAIN: "clang"
+      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps"
+      CMAKE_CXX_COMPILER_TARGET: "aarch64-none-linux-android35"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_C_COMPILER_TARGET: "aarch64-none-linux-android35"
+      CMAKE_C_FLAGS: "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat "
+      CMAKE_C_FLAGS_DEBUG: "-fno-limit-debug-info "
+      CMAKE_EXE_LINKER_FLAGS: "-static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  "
+      CMAKE_POSITION_INDEPENDENT_CODE: "TRUE"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: false
+      stdout: |
+        Change Dir: '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_81ee6/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_81ee6.dir/build.make CMakeFiles/cmTC_81ee6.dir/build
+        make[1]: Entering directory '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y'
+        Building C object CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o
+        /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android35 --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot   -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat   -fPIE   -v -MD -MT CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -MF CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o.d -o CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c
+        Android (13989888, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)
+        Target: aarch64-none-linux-android35
+        Thread model: posix
+        InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin
+         (in-process)
+         "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" -cc1 -triple aarch64-none-linux-android35 -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model pic -pic-level 2 -pic-is-pie -mframe-pointer=non-leaf -ffp-contract=on -fno-rounding-math -mconstructor-aliases -funwind-tables=2 -enable-tlsdesc -target-cpu generic -target-feature +v8a -target-feature +fp-armv8 -target-feature +neon -target-feature +fix-cortex-a53-835769 -target-abi aapcs -debug-info-kind=constructor -dwarf-version=4 -debugger-tuning=gdb -fdebug-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y -v -ffunction-sections -fdata-sections -fcoverage-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y -resource-dir /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21 -dependency-file CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o.d -MT CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -sys-header-deps -D ANDROID -D _FORTIFY_SOURCE=2 -isysroot /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -Wformat -ferror-limit 19 -stack-protector 2 -fno-signed-char -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -target-feature +outline-atomics -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -x c /usr/share/cmake/Modules/CMakeCCompilerABI.c
+        clang -cc1 version 21.0.0 based upon LLVM 21.0.0 default target x86_64-unknown-linux-gnu
+        ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include"
+        ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include
+        End of search list.
+        Linking C executable cmTC_81ee6
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_81ee6.dir/link.txt --verbose=1
+        Android (13989888, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)
+        Target: aarch64-none-linux-android35
+        Thread model: posix
+        InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin
+         "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_81ee6 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o
+        /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android35 --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat   -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments   -v CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -o cmTC_81ee6
+        make[1]: Leaving directory '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:255 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include]
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android]
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+        end of search list found
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include]
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android]
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+        implicit include dirs: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:291 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|wild|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|wild))("|,| |$)]
+        ignore line: [Change Dir: '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_81ee6/fast]
+        ignore line: [/usr/bin/make  -f CMakeFiles/cmTC_81ee6.dir/build.make CMakeFiles/cmTC_81ee6.dir/build]
+        ignore line: [make[1]: Entering directory '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y']
+        ignore line: [Building C object CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o]
+        ignore line: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android35 --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot   -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat   -fPIE   -v -MD -MT CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -MF CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o.d -o CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [Android (13989888  +pgo  +bolt  +lto  +mlgo  based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)]
+        ignore line: [Target: aarch64-none-linux-android35]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin]
+        ignore line: [ (in-process)]
+        ignore line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" -cc1 -triple aarch64-none-linux-android35 -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCCompilerABI.c -mrelocation-model pic -pic-level 2 -pic-is-pie -mframe-pointer=non-leaf -ffp-contract=on -fno-rounding-math -mconstructor-aliases -funwind-tables=2 -enable-tlsdesc -target-cpu generic -target-feature +v8a -target-feature +fp-armv8 -target-feature +neon -target-feature +fix-cortex-a53-835769 -target-abi aapcs -debug-info-kind=constructor -dwarf-version=4 -debugger-tuning=gdb -fdebug-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y -v -ffunction-sections -fdata-sections -fcoverage-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-1Yqn5Y -resource-dir /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21 -dependency-file CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o.d -MT CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -sys-header-deps -D ANDROID -D _FORTIFY_SOURCE=2 -isysroot /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -Wformat -ferror-limit 19 -stack-protector 2 -fno-signed-char -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -target-feature +outline-atomics -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o -x c /usr/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [clang -cc1 version 21.0.0 based upon LLVM 21.0.0 default target x86_64-unknown-linux-gnu]
+        ignore line: [ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include"]
+        ignore line: [ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+        ignore line: [End of search list.]
+        ignore line: [Linking C executable cmTC_81ee6]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_81ee6.dir/link.txt --verbose=1]
+        ignore line: [Android (13989888  +pgo  +bolt  +lto  +mlgo  based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)]
+        ignore line: [Target: aarch64-none-linux-android35]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin]
+        link line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_81ee6 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o] ==> linker [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld]
+        link line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_81ee6 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o] ==> linker architecture flags [-m;aarch64linux]
+        link line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_81ee6 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld] ==> ignore
+          arg [--sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot] ==> ignore
+          arg [-EL] ==> ignore
+          arg [--fix-cortex-a53-843419] ==> ignore
+          arg [-znow] ==> ignore
+          arg [-zrelro] ==> ignore
+          arg [-zmax-page-size=16384] ==> ignore
+          arg [--use-android-relr-tags] ==> ignore
+          arg [--pack-dyn-relocs=relr] ==> ignore
+          arg [--hash-style=gnu] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [aarch64linux] ==> ignore
+          arg [-pie] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/system/bin/linker64] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_81ee6] ==> ignore
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o] ==> obj [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib]
+          arg [--build-id=sha1] ==> ignore
+          arg [--no-undefined-version] ==> ignore
+          arg [--fatal-warnings] ==> ignore
+          arg [--no-undefined] ==> ignore
+          arg [CMakeFiles/cmTC_81ee6.dir/CMakeCCompilerABI.c.o] ==> ignore
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a] ==> lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+          arg [-l:libunwind.a] ==> lib [-l:libunwind.a]
+          arg [-ldl] ==> lib [dl]
+          arg [-lc] ==> lib [c]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a] ==> lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+          arg [-l:libunwind.a] ==> lib [-l:libunwind.a]
+          arg [-ldl] ==> lib [dl]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o] ==> obj [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o]
+        linker tool for 'C': /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld -m;aarch64linux
+        remove lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+        remove lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib]
+        implicit libs: [-l:libunwind.a;dl;c;-l:libunwind.a;dl]
+        implicit objs: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o]
+        implicit dirs: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Internal/CMakeDetermineLinkerId.cmake:41 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:337 (cmake_determine_linker_id)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Running the C compiler's linker: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" "-v"
+      LLD 21.0.0 (/mnt/disks/build-disk/src/googleplex-android/llvm-r563880-release/out/llvm-project/llvm 5e96669f06077099aa41290cdb4c5e6fa0f59349) (compatible with GNU linkers)
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:123 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC"
+      binary: "/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC"
+    cmakeVariables:
+      ANDROID_ABI: "arm64-v8a"
+      ANDROID_ARM_MODE: "thumb"
+      ANDROID_PIE: "TRUE"
+      ANDROID_PLATFORM: "android-35"
+      ANDROID_STL: "c++_static"
+      ANDROID_TOOLCHAIN: "clang"
+      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-scan-deps"
+      CMAKE_CXX_COMPILER_TARGET: "aarch64-none-linux-android35"
+      CMAKE_CXX_FLAGS: "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat  "
+      CMAKE_CXX_FLAGS_DEBUG: "-fno-limit-debug-info "
+      CMAKE_CXX_SCAN_FOR_MODULES: "OFF"
+      CMAKE_CXX_STDLIB_MODULES_JSON: ""
+      CMAKE_C_COMPILER_TARGET: "aarch64-none-linux-android35"
+      CMAKE_EXE_LINKER_FLAGS: "-static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments  "
+      CMAKE_POSITION_INDEPENDENT_CODE: "TRUE"
+      CMAKE_SYSROOT: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: false
+      stdout: |
+        Change Dir: '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_38a92/fast
+        /usr/bin/make  -f CMakeFiles/cmTC_38a92.dir/build.make CMakeFiles/cmTC_38a92.dir/build
+        make[1]: Entering directory '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC'
+        Building CXX object CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o
+        /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=aarch64-none-linux-android35 --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot   -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat    -fPIE   -v -MD -MT CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -MF CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o.d -o CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Android (13989888, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)
+        Target: aarch64-none-linux-android35
+        Thread model: posix
+        InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin
+         (in-process)
+         "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" -cc1 -triple aarch64-none-linux-android35 -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model pic -pic-level 2 -pic-is-pie -mframe-pointer=non-leaf -ffp-contract=on -fno-rounding-math -mconstructor-aliases -funwind-tables=2 -enable-tlsdesc -target-cpu generic -target-feature +v8a -target-feature +fp-armv8 -target-feature +neon -target-feature +fix-cortex-a53-835769 -target-abi aapcs -debug-info-kind=constructor -dwarf-version=4 -debugger-tuning=gdb -fdebug-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC -v -ffunction-sections -fdata-sections -fcoverage-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC -resource-dir /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21 -dependency-file CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o.d -MT CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -sys-header-deps -D ANDROID -D _FORTIFY_SOURCE=2 -isysroot /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1 -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -Wformat -fdeprecated-macro -ferror-limit 19 -stack-protector 2 -fno-signed-char -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -target-feature +outline-atomics -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -x c++ /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        clang -cc1 version 21.0.0 based upon LLVM 21.0.0 default target x86_64-unknown-linux-gnu
+        ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include"
+        ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android
+         /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include
+        End of search list.
+        Linking CXX executable cmTC_38a92
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_38a92.dir/link.txt --verbose=1
+        Android (13989888, +pgo, +bolt, +lto, +mlgo, based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)
+        Target: aarch64-none-linux-android35
+        Thread model: posix
+        InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin
+         "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_38a92 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -Bstatic -lc++ -Bdynamic -lm /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o
+        /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=aarch64-none-linux-android35 --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat    -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments   -v CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_38a92
+        make[1]: Leaving directory '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:255 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CXX implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1]
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include]
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android]
+          add: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+        end of search list found
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1]
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include]
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android]
+        collapse include dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+        implicit include dirs: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:291 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|wild|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|"|[0-9]+>[ 	-]*Build:[ 	0-9]+ ms[ 	]*)?[ 	]*(([^"]*[/\\])?(ld[0-9]*(|\\.[a-rt-z][a-z]*|\\.s[a-np-z][a-z]*|\\.so[a-z]+)|wild))("|,| |$)]
+        ignore line: [Change Dir: '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/make -f Makefile cmTC_38a92/fast]
+        ignore line: [/usr/bin/make  -f CMakeFiles/cmTC_38a92.dir/build.make CMakeFiles/cmTC_38a92.dir/build]
+        ignore line: [make[1]: Entering directory '/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC']
+        ignore line: [Building CXX object CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o]
+        ignore line: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=aarch64-none-linux-android35 --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot   -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat    -fPIE   -v -MD -MT CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -MF CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o.d -o CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Android (13989888  +pgo  +bolt  +lto  +mlgo  based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)]
+        ignore line: [Target: aarch64-none-linux-android35]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin]
+        ignore line: [ (in-process)]
+        ignore line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" -cc1 -triple aarch64-none-linux-android35 -emit-obj -disable-free -clear-ast-before-backend -disable-llvm-verifier -discard-value-names -main-file-name CMakeCXXCompilerABI.cpp -mrelocation-model pic -pic-level 2 -pic-is-pie -mframe-pointer=non-leaf -ffp-contract=on -fno-rounding-math -mconstructor-aliases -funwind-tables=2 -enable-tlsdesc -target-cpu generic -target-feature +v8a -target-feature +fp-armv8 -target-feature +neon -target-feature +fix-cortex-a53-835769 -target-abi aapcs -debug-info-kind=constructor -dwarf-version=4 -debugger-tuning=gdb -fdebug-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC -v -ffunction-sections -fdata-sections -fcoverage-compilation-dir=/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/CMakeScratch/TryCompile-t0RKqC -resource-dir /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21 -dependency-file CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o.d -MT CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -sys-header-deps -D ANDROID -D _FORTIFY_SOURCE=2 -isysroot /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1 -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include -internal-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include -internal-externc-isystem /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -Wformat -fdeprecated-macro -ferror-limit 19 -stack-protector 2 -fno-signed-char -fgnuc-version=4.2.1 -fskip-odr-check-in-gmf -fcxx-exceptions -fexceptions -target-feature +outline-atomics -D__GCC_HAVE_DWARF2_CFI_ASM=1 -o CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -x c++ /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [clang -cc1 version 21.0.0 based upon LLVM 21.0.0 default target x86_64-unknown-linux-gnu]
+        ignore line: [ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local/include"]
+        ignore line: [ignoring nonexistent directory "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/include]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android]
+        ignore line: [ /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include]
+        ignore line: [End of search list.]
+        ignore line: [Linking CXX executable cmTC_38a92]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_38a92.dir/link.txt --verbose=1]
+        ignore line: [Android (13989888  +pgo  +bolt  +lto  +mlgo  based on r563880c) clang version 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f06077099aa41290cdb4c5e6fa0f59349)]
+        ignore line: [Target: aarch64-none-linux-android35]
+        ignore line: [Thread model: posix]
+        ignore line: [InstalledDir: /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin]
+        link line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_38a92 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -Bstatic -lc++ -Bdynamic -lm /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o] ==> linker [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld]
+        link line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_38a92 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -Bstatic -lc++ -Bdynamic -lm /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o] ==> linker architecture flags [-m;aarch64linux]
+        link line: [ "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" --sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -EL --fix-cortex-a53-843419 -z now -z relro -z max-page-size=16384 --use-android-relr-tags --pack-dyn-relocs=relr --hash-style=gnu --eh-frame-hdr -m aarch64linux -pie -dynamic-linker /system/bin/linker64 -o cmTC_38a92 /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35 -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android -L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib --build-id=sha1 --no-undefined-version --fatal-warnings --no-undefined CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o -Bstatic -lc++ -Bdynamic -lm /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl -lc /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a -l:libunwind.a -ldl /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld] ==> ignore
+          arg [--sysroot=/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot] ==> ignore
+          arg [-EL] ==> ignore
+          arg [--fix-cortex-a53-843419] ==> ignore
+          arg [-znow] ==> ignore
+          arg [-zrelro] ==> ignore
+          arg [-zmax-page-size=16384] ==> ignore
+          arg [--use-android-relr-tags] ==> ignore
+          arg [--pack-dyn-relocs=relr] ==> ignore
+          arg [--hash-style=gnu] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [aarch64linux] ==> ignore
+          arg [-pie] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/system/bin/linker64] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_38a92] ==> ignore
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o] ==> obj [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android]
+          arg [-L/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib] ==> dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib]
+          arg [--build-id=sha1] ==> ignore
+          arg [--no-undefined-version] ==> ignore
+          arg [--fatal-warnings] ==> ignore
+          arg [--no-undefined] ==> ignore
+          arg [CMakeFiles/cmTC_38a92.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+          arg [-Bstatic] ==> search static
+          arg [-lc++] ==> lib [c++]
+          arg [-Bdynamic] ==> search dynamic
+          arg [-lm] ==> lib [m]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a] ==> lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+          arg [-l:libunwind.a] ==> lib [-l:libunwind.a]
+          arg [-ldl] ==> lib [dl]
+          arg [-lc] ==> lib [c]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a] ==> lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+          arg [-l:libunwind.a] ==> lib [-l:libunwind.a]
+          arg [-ldl] ==> lib [dl]
+          arg [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o] ==> obj [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o]
+        linker tool for 'CXX': /home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld -m;aarch64linux
+        remove lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+        remove lib [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/libclang_rt.builtins-aarch64-android.a]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android]
+        collapse library dir [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib] ==> [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib]
+        implicit libs: [c++;m;-l:libunwind.a;dl;c;-l:libunwind.a;dl]
+        implicit objs: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtbegin_dynamic.o;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/crtend_android.o]
+        implicit dirs: [/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/21/lib/linux/aarch64;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android;/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Internal/CMakeDetermineLinkerId.cmake:41 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:337 (cmake_determine_linker_id)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Running the CXX compiler's linker: "/home/DemonPlayer/Android/Sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/ld.lld" "-v"
+      LLD 21.0.0 (/mnt/disks/build-disk/src/googleplex-android/llvm-r563880-release/out/llvm-project/llvm 5e96669f06077099aa41290cdb4c5e6fa0f59349) (compatible with GNU linkers)
+...
