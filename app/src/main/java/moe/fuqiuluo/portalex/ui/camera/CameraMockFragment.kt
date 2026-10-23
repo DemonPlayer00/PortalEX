@@ -267,7 +267,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         binding.cameraMockMapToggle.setOnClickListener { toggleMap() }
         // 说明与目标应用放进对话框：它们"读一次就够"，留在页面上会把视频点列表挤没
         binding.cameraMockInfo.setOnClickListener { showInfoDialog() }
-        binding.cameraMockCreateTag.setOnClickListener { createTagDialog() }
+        binding.cameraMockCreateTag.setOnClickListener { showTagManager() }
 
         return binding.root
     }
@@ -583,7 +583,69 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             .show()
     }
 
-    private fun createTagDialog() {
+    private fun showTagManager() {
+        val ctx = requireContext()
+        val root = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(32, 8, 32, 0)
+        }
+        val chips = com.google.android.material.chip.ChipGroup(ctx).apply {
+            isSingleSelection = false
+            setPadding(0, 8, 0, 8)
+        }
+        fun rebuildChips() {
+            chips.removeAllViews()
+            CameraMockStore.allTags(ctx).forEach { tag ->
+                chips.addView(com.google.android.material.chip.Chip(ctx).apply {
+                    text = tag
+                    isCheckable = true
+                })
+            }
+        }
+        rebuildChips()
+        root.addView(chips)
+
+        val actions = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+        }
+        actions.addView(com.google.android.material.button.MaterialButton(ctx).apply {
+            text = "添加标签"
+            setOnClickListener {
+                createTagDialog { rebuildChips() }
+            }
+        })
+        actions.addView(com.google.android.material.button.MaterialButton(ctx).apply {
+            text = "删除选中"
+            setOnClickListener {
+                val selected = (0 until chips.childCount)
+                    .map { chips.getChildAt(it) as com.google.android.material.chip.Chip }
+                    .filter { it.isChecked }.map { it.text.toString() }
+                if (selected.isEmpty()) {
+                    Toast.makeText(ctx, "请先选择标签", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                MaterialAlertDialogBuilder(ctx)
+                    .setTitle("删除标签")
+                    .setMessage("将从标签库和所有视频中移除：${selected.joinToString()}")
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("删除") { _, _ ->
+                        CameraMockStore.removeTags(ctx, selected)
+                        refresh()
+                    }
+                    .show()
+            }
+        })
+        root.addView(actions)
+
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle("标签管理")
+            .setView(root)
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    private fun createTagDialog(onCreated: (() -> Unit)? = null) {
         val ctx = requireContext()
         val input = android.widget.EditText(ctx).apply {
             hint = "标签名（最多 ${moe.fuqiuluo.xposed.camera.CameraTags.MAX_LEN} 字）"
@@ -597,6 +659,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 val ok = CameraMockStore.addCustomTag(ctx, input.text?.toString().orEmpty())
                 Toast.makeText(ctx, if (ok) "标签已创建" else "标签为空或已存在", Toast.LENGTH_SHORT).show()
                 refresh()
+                onCreated?.invoke()
             }
             .show()
     }
