@@ -42,5 +42,3 @@ include(":app")
 include(":xposed")
 include(":system-api")
 include(":nmea")
-// 摄像头 HAL 包装层（Magisk 模块载荷，32 位；见 camera-hal/build.gradle.kts）
-include(":camera-hal")
