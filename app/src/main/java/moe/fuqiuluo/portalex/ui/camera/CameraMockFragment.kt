@@ -705,6 +705,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private fun toggleMock() {
         val context = requireContext()
         val next = !context.cameraMockEnabled
+        android.util.Log.i("CameraMockFragment", "toggleMock next=$next enabled=${context.cameraMockEnabled} installed=${CammockManager.isInstalled(context)} module=${CammockManager.isModule(context)}")
         if (next && !CammockManager.isInstalled(context)) {
             MaterialAlertDialogBuilder(context)
                 .setTitle("未安装摄像头实现")
@@ -721,6 +722,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (next) {
             val lm = mockServiceViewModel.locationManager
             if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {
+                android.util.Log.w("CameraMockFragment", "camera start blocked: location mock not started")
                 Toast.makeText(context, "请先开启位置模拟，再启动摄像头模拟", Toast.LENGTH_LONG).show()
                 return
             }
@@ -728,7 +730,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         binding.switchCameraMock.isEnabled = false
         binding.cameraMockStatus.text = if (next) "正在启动 cammock…" else "正在停止 cammock…"
         Executors.newSingleThreadExecutor().execute {
+            android.util.Log.i("CameraMockFragment", "call cammock ${if (next) "start" else "stop"}")
             val result = if (next) CammockManager.start(context) else CammockManager.stop(context)
+            android.util.Log.i("CameraMockFragment", "cammock result success=${result.isSuccess} value=${result.getOrNull()} error=${result.exceptionOrNull()?.message}")
             main.post {
                 binding.switchCameraMock.isEnabled = true
                 if (result.isSuccess) {

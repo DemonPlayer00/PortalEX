@@ -181,8 +181,15 @@ object CammockManager {
         if (!tokenFile.isFile) error("实现缺少 auth.token，请重新导入")
         val token = tokenFile.readText().trim()
         if (token.length < 16) error("实现 auth.token 无效")
+        val nonceFile = File(dir, "auth.nonce")
+        // 上次 root 脚本可能留下 root:root 600 的 nonce；app 自己删不掉/写不了。
+        // 先让 root 清理，再写入本次一次性 nonce。
+        runCatching {
+            ProcessBuilder(context.suPath, "-c", "rm -f '${nonceFile.absolutePath}'")
+                .start().waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+        }
         val nonce = java.util.UUID.randomUUID().toString().replace("-", "")
-        File(dir, "auth.nonce").writeText(nonce)
+        nonceFile.writeText(nonce)
         val cmd = "cd '${dir.absolutePath}' && " +
             "PORTALEX_CAMMOCK_TOKEN='$token' PORTALEX_CAMMOCK_NONCE='$nonce' " +
             "sh '${script.absolutePath}'"
