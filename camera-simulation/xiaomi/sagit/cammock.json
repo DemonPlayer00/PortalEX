@@ -1,0 +1,7 @@
+{
+  "name": "Xiaomi MI 6 (sagit) HAL cammock",
+  "type": "magisk-module",
+  "supportedModels": ["MI 6", "sagit"],
+  "entry": "system/vendor/lib/hw/camera.msm8998.so",
+  "moduleId": "portalex-vcam-test"
+}
