@@ -18,6 +18,44 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/su_path_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="5dp">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/su_path_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:text="su 路径"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/su_path_value"
+                    app:layout_constraintTop_toTopOf="parent" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/su_path_desc"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:text="部分设备 su 不在 PATH，可填写绝对路径"
+                    android:textSize="11sp"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/su_path_value"
+                    app:layout_constraintTop_toBottomOf="@id/su_path_title" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/su_path_value"
+                    android:layout_width="120dp"
+                    android:layout_height="wrap_content"
+                    android:gravity="end"
+                    android:text="su"
+                    android:textSize="11sp"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
             <LinearLayout
                 android:id="@+id/selinux_layout"
                 android:visibility="gone"
