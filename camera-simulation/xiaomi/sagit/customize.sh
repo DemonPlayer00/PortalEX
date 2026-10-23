@@ -5,8 +5,12 @@
 ui_print "- PortalEX MI6/sagit cammock 安装自检"
 
 fail() {
-    ui_print "! $1"
-    abort "安装中止：$1"
+    MSG="$1"
+    ui_print "! $MSG"
+    ui_print "! 自检失败，拒绝继续安装；相机 HAL 不会被修改。"
+    ui_print "! 请检查模块载荷、机型代号、/cache 和 root 管理器后重试。"
+    echo "PORTALEX_CAMMOCK_INSTALL_FAILED: $MSG" > /data/local/tmp/portalex-vcam-error.txt 2>/dev/null || true
+    abort "安装中止：$MSG。请检查 /data/local/tmp/portalex-vcam-error.txt"
 }
 
 [ -f "$MODPATH/module.prop" ] || fail "缺少 module.prop"

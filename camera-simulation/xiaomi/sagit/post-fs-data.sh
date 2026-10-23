@@ -10,7 +10,9 @@ WORK=$BASE/work
 LOG=/data/local/tmp/portalex-vcam.log
 
 fail_boot() {
-    echo "portalex-vcam: FAILED: $1" >> "$LOG"
+    MSG="$1"
+    echo "portalex-vcam: FAILED: $MSG" >> "$LOG"
+    echo "PORTALEX_CAMMOCK_BOOT_FAILED: $MSG" > /data/local/tmp/portalex-vcam-error.txt 2>/dev/null || true
     umount "$HALDIR" 2>/dev/null
     exit 1
 }
