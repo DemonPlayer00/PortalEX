@@ -270,7 +270,10 @@
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/camera_point_list"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp" />
 
         </com.google.android.material.card.MaterialCardView>
 
