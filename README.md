@@ -6,7 +6,7 @@
 
 Telegram: <https://t.me/portal_fuqiuluo>（原 Portal 项目频道，历史与社区仍在）
 
-基于 LSPosed 的虚拟定位模块：只通过 Hook 系统服务实现虚拟定位，**不修改、不集成进目标 APP**。
+基于 LSPosed 的虚拟定位与相机模拟模块：定位只通过 Hook 系统服务实现，**不修改、不集成进目标 APP**；相机模拟通过外置 cammock 实现接入。
 安装并启动后自动生效，无需对目标应用做任何操作。
 
 ---
@@ -64,6 +64,9 @@ Portal 曾经是一位作者（[ella8192](https://github.com/ella8192)）的优�
 - [x] 路线模拟：沿历史路线自动行驶，平滑转向、速度对齐，完成提示（音 + 振动）
 - [x] 速度 / 海拔 / 精度 / 位置上报间隔设置：模拟参数可调
 - [x] 移动中方位角实时变更（bearing 跟随移动方向）
+- [x] 摄像头模拟：PortalEX 只负责统一控制与数据接口，具体 HAL/provider 由独立的
+      [PortalEX_cammock](https://github.com/DemonPlayer00/PortalEX_cammock) 仓库按设备实现；
+      支持实现导入、启动/停止、视频上传/下载/导出和鉴权握手
 - [x] 体力模拟：跑动消耗、空闲恢复、疲劳降速与冷却，参数可调，附「理论 / 生成」双曲线与参数体检
 - [x] 传感器模拟（外周）：**步频侧**与**角度与指南针侧**各一个开关（**默认都开**），
       分别落在 `Cadence & Acceleration Mock` 与 `Angle & Compass Mock` 页；
@@ -82,6 +85,62 @@ Portal 曾经是一位作者（[ella8192](https://github.com/ella8192)）的优�
 - [ ] GPS 状态码模拟
 - [ ] Cell 基站信息模拟
 - [ ] Wi-Fi 信息模拟
+
+## Camera Mock / cammock
+
+PortalEX 主仓库**不包含任何设备专属的相机实现**。相机模拟由外部 cammock 实现负责，
+按设备放在独立仓库中：
+
+```text
+PortalEX（调用方）
+  └─ CammockManager
+       ├─ 安装/更新/卸载 cammock
+       ├─ start.sh / stop.sh
+       ├─ upload.sh / download.sh / export.sh
+       └─ token + 一次性 nonce 握手
+                 │
+                 ▼
+PortalEX_cammock（执行方）
+  ├─ OnePlus AIDL provider
+  └─ Xiaomi HAL-overlay module
+```
+
+主仓库只保留：
+
+- `CammockManager` 与 Camera Mock UI；
+- 标准脚本调用约定；
+- app 私有 `files/cammock/current/` 下的实现管理；
+- 帧文件协议与 system_server 选择/录制/上传/下载逻辑。
+
+设备相关的 HAL、provider、producer、相机方向/颜色校正都留在 cammock 仓库。
+这样新增设备时不需要改动 PortalEX 主仓库，也不会把某一台设备的校正逻辑带到另一台设备。
+
+### 实现包约定
+
+一个 cammock 实现至少包含：
+
+```text
+cammock.json      # 名称、supportedModels、entry/type
+start.sh          # 启动
+stop.sh           # 停止
+```
+
+可选：
+
+```text
+upload.sh / download.sh / export.sh   # 数据接口
+cammock_install.sh / module.prop      # root 模块安装
+provider / *.so                       # 设备侧执行体
+auth.token                            # 导入时由 PortalEX 重新生成
+```
+
+控制与数据接口详见
+[PortalEX_cammock/interface/PROTOCOL.md](https://github.com/DemonPlayer00/PortalEX_cammock/blob/master/interface/PROTOCOL.md)。
+
+> [!warning]
+>
+> 安装/启动 cammock 需要 root；不同实现的 root 形态不同（AIDL provider、HAL overlay、
+> root 模块）。请只安装与当前设备匹配的实现，并确认 `supportedModels`。
 
 ## 如何检测 PortalEX / How to detect?
 
