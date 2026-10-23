@@ -610,7 +610,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         } else {
             "需要安装摄像头实现（按机型适配）"
         }
-        binding.cameraMockImportImpl.text = if (installed) "重新导入实现" else "导入实现"
+        binding.cameraMockImportImpl.text = if (installed) "重导" else "导入"
         binding.cameraMockUpdateImpl.visibility = if (installed) View.VISIBLE else View.GONE
         binding.cameraMockUninstallImpl.visibility = if (installed) View.VISIBLE else View.GONE
     }
