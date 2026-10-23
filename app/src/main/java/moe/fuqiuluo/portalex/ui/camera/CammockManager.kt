@@ -105,6 +105,58 @@ object CammockManager {
         )
     }.getOrElse { Install(false, emptyList(), "安装失败：${it.message}") }
 
+    /** 标准视频导出：实现写入 io/export/<videoId>.mp4。 */
+    fun exportVideo(context: Context, videoId: String): Result<File> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val box = File(currentDir(context), "io/export")
+        box.deleteRecursively(); box.mkdirs()
+        File(box, "request.txt").writeText(videoId)
+        runScript(context, "export.sh").getOrThrow()
+        val file = File(box, "$videoId.mp4")
+        if (!file.isFile) error("实现未生成导出视频：$videoId")
+        file
+    }
+
+    /** 标准上传：app 生成 io/upload 快照，由实现自己的 upload.sh 接收。 */
+    fun upload(context: Context): Result<Int> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val box = File(currentDir(context), "io/upload")
+        box.deleteRecursively(); box.mkdirs()
+        val routes = CameraMockStore.routes(context)
+        File(box, "routes.json").writeText(
+            moe.fuqiuluo.xposed.camera.CameraMockCodec.encodeRoutes(routes)
+        )
+        routes.forEach { route ->
+            route.videos.forEach { video ->
+                val src = CameraMockStore.videoFile(context, video.file)
+                if (src.isFile) src.copyTo(File(box, video.file), overwrite = true)
+            }
+        }
+        runScript(context, "upload.sh").getOrThrow()
+        routes.sumOf { it.videos.size }
+    }
+
+    /** 标准下载：实现写入 io/download，app 再把它导入本地库。 */
+    fun download(context: Context): Result<Int> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val box = File(currentDir(context), "io/download")
+        box.deleteRecursively(); box.mkdirs()
+        runScript(context, "download.sh").getOrThrow()
+        val json = File(box, "routes.json")
+        if (!json.isFile) error("实现未生成 io/download/routes.json")
+        val routes = moe.fuqiuluo.xposed.camera.CameraMockCodec.decodeRoutes(json.readText())
+        val videoDir = CameraMockStore.dir(context)
+        videoDir.mkdirs()
+        routes.forEach { route ->
+            route.videos.forEach { video ->
+                val src = File(box, video.file)
+                if (src.isFile) src.copyTo(File(videoDir, video.file), overwrite = true)
+            }
+        }
+        CameraMockStore.setRoutes(context, routes)
+        routes.sumOf { it.videos.size }
+    }
+
     /** PortalEX 只调用实现自己的 start.sh；provider/HAL 细节由实现负责。 */
     fun start(context: Context): Result<String> = runScript(context, "start.sh")
 
