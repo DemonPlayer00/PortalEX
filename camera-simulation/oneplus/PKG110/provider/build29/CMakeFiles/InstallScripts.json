@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/var/www/PortalEX/oneplus-provider/build29/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

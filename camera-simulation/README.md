@@ -8,7 +8,7 @@ PortalEX app
   CameraFrameSink  →  /data/local/tmp/portalex/cammock.frames
                               │
                               ▼ 相机 request 时才读
-设备实现 (oneplus/provider)
+设备实现 (oneplus/PKG110/provider)
   frame_reader.cpp  →  YUV/JPEG 相机流
 ```
 
@@ -17,7 +17,7 @@ PortalEX app
 - `interface/VcamFramePlayer.kt` — 标准播放状态机：load / pause / resume / limit / loop / stay。
 - `interface/PROTOCOL.md` — 共享帧文件协议与语义。
 - `android/VcamDebugActivity.kt` — 临时隐藏控制器（测试用，最终应移除或隐藏入口）。
-- `oneplus/provider/` — OnePlus AIDL provider 接管实现，含 `frame_reader.cpp`。
+- `oneplus/PKG110/provider/` — OnePlus AIDL provider 接管实现，含 `frame_reader.cpp`。
 
 ## 当前 OnePlus 实现
 
@@ -35,7 +35,7 @@ PortalEX app
 ./gradlew :app:assembleArm64Debug
 
 # provider
-cd camera-simulation/oneplus/provider
+cd camera-simulation/oneplus/PKG110/provider
 cmake -S . -B build \
   -DCMAKE_TOOLCHAIN_FILE=$HOME/Android/Sdk/ndk/27.3.13750724/build/cmake/android.toolchain.cmake \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-35 -DANDROID_STL=c++_static
@@ -67,7 +67,7 @@ OnePlus 前摄预览会做一次水平镜像。不要在 app、`frame_reader`、
 当前约定：**源图只预镜像一次**。
 
 - `app/src/main/assets/vcam_face.jpg` 是水平预镜像图；
-- `oneplus/provider/assets/face.rgb` 是同一张图的 RGB24 版本，
+- `oneplus/PKG110/provider/assets/face.rgb` 是同一张图的 RGB24 版本，
   部署到 `/sdcard/GlaDos_File/OnePlusProvider/face.rgb`；
 - 运行时不再做任何水平/垂直翻转。
 
