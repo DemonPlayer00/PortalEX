@@ -218,11 +218,21 @@ object CameraMockStore {
 
     // ---- 清单（下发给模块侧的唯一形态）----
 
-    /** 库内出现过的全部标签（预设在前，自定义按首次出现顺序），供筛选与打标签界面用 */
+    /** 预设 + Camera Mock 页创建的自定义 + 库内视频标签。 */
     fun allTags(context: Context): List<String> {
         val custom = LinkedHashSet<String>()
+        custom.addAll(context.cameraMockCustomTags)
         points(context).forEach { p -> p.videos.forEach { v -> v.tags.forEach { custom.add(it) } } }
         return CameraTags.PRESETS + custom.filterNot { tag -> CameraTags.PRESETS.any { it.equals(tag, true) } }
+    }
+
+    fun addCustomTag(context: Context, tag: String): Boolean {
+        val clean = CameraTags.sanitize(listOf(tag)).firstOrNull() ?: return false
+        val tags = context.cameraMockCustomTags.toMutableSet()
+        if (tags.any { it.equals(clean, true) }) return false
+        tags.add(clean)
+        context.cameraMockCustomTags = tags
+        return true
     }
 
     fun manifest(context: Context): CameraMockManifest = CameraMockManifest(
@@ -244,6 +254,11 @@ object CameraMockStore {
 var Context.cameraMockEnabled: Boolean
     get() = sharedPrefs.getBoolean(CameraMockProtocol.Pref.ENABLED, false)
     set(value) = sharedPrefs.edit { putBoolean(CameraMockProtocol.Pref.ENABLED, value) }
+
+/** Camera Mock 页创建的自定义标签。 */
+var Context.cameraMockCustomTags: Set<String>
+    get() = sharedPrefs.getStringSet("cameraMockCustomTags", emptySet()) ?: emptySet()
+    set(value) = sharedPrefs.edit { putStringSet("cameraMockCustomTags", value) }
 
 /** 标签筛选（全含语义，见 CameraMockSelector.matches） */
 var Context.cameraMockTagFilter: Set<String>

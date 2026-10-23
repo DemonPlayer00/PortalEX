@@ -16,16 +16,25 @@ import java.util.Locale
 /** 某个视频点下的视频清单：名称 + 时长/标签 + （改标签 / 删除） */
 class CameraVideoAdapter(
     private val dataSet: MutableList<CameraVideo>,
-    private val onEditTags: (CameraVideo) -> Unit,
+    private val onEdit: (CameraVideo) -> Unit,
     private val onDelete: (CameraVideo) -> Unit,
     private val onExport: (CameraVideo) -> Unit
 ) : RecyclerView.Adapter<CameraVideoAdapter.ViewHolder>() {
+    private var filterTags: Set<String> = emptySet()
+
+    fun setFilterTags(tags: Set<String>) {
+        filterTags = tags
+        notifyDataSetChanged()
+    }
+
+    private fun matches(video: CameraVideo): Boolean =
+        video.tags.isEmpty() || filterTags.all { t -> video.tags.any { it.equals(t, true) } }
+
 
     class ViewHolder(root: View) : RecyclerView.ViewHolder(root) {
         val name: MaterialTextView = root.findViewById(R.id.video_name)
         val meta: MaterialTextView = root.findViewById(R.id.video_meta)
         val exportButton: MaterialButton = root.findViewById(R.id.video_export_button)
-        val tagsButton: MaterialButton = root.findViewById(R.id.video_tags_button)
         val deleteButton: MaterialButton = root.findViewById(R.id.video_delete_button)
     }
 
@@ -55,8 +64,9 @@ class CameraVideoAdapter(
             if (video.track.isNotEmpty()) append(" · 轨迹 ").append(video.track.size).append(" 点")
             append(" · 标签：").append(CameraMockFormat.tags(video.tags))
         }
+        holder.itemView.alpha = if (matches(video)) 1f else 0.45f
+        holder.itemView.setOnClickListener { onEdit(video) }
         holder.exportButton.setOnClickListener { onExport(video) }
-        holder.tagsButton.setOnClickListener { onEditTags(video) }
         holder.deleteButton.setOnClickListener { onDelete(video) }
     }
 }
