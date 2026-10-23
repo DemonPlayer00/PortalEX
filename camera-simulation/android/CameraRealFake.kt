@@ -4,6 +4,7 @@ import android.content.Context
 import android.hardware.camera2.CameraManager
 import android.os.SystemClock
 import java.util.concurrent.TimeUnit
+import moe.fuqiuluo.portalex.ext.suPath
 
 /**
  * 临时真/假相机切换器。
@@ -24,7 +25,7 @@ object CameraRealFake {
      * 收到断开，并重新枚举 provider。不要重启 servicemanager。
      */
     fun reloadAllCameras(context: Context): Result<String> = runCatching {
-        val p = ProcessBuilder("su", "-c", "setprop ctl.restart cameraserver")
+        val p = ProcessBuilder(context.suPath, "-c", "setprop ctl.restart cameraserver")
             .redirectErrorStream(true)
             .start()
         val output = p.inputStream.bufferedReader().use { it.readText() }
@@ -53,7 +54,7 @@ object CameraRealFake {
             "kill $(pidof portal_camera_provider) 2>/dev/null; " +
                 "setprop ctl.start vendor.camera-provider"
         }
-        val p = ProcessBuilder("su", "-c", cmd)
+        val p = ProcessBuilder(context.suPath, "-c", cmd)
             .redirectErrorStream(true)
             .start()
         val output = p.inputStream.bufferedReader().use { it.readText() }
