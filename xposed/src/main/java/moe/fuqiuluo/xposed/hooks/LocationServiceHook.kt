@@ -162,6 +162,8 @@ data class MockGnssData(
 )
 
 internal object LocationServiceHook: BaseLocationHook() {
+    /** 同一 AIDL listener class 只挂一次；动态类/代理类持续注册时避免撞 LSPosed 64 次限制。 */
+    private val hookedListenerClasses = java.util.concurrent.ConcurrentHashMap.newKeySet<Class<*>>()
     /**
      * 一条位置监听器注册。
      *
@@ -413,7 +415,9 @@ internal object LocationServiceHook: BaseLocationHook() {
         if (FakeLoc.enableDebugLog)
             Logger.debug("will hook ILocationListener: ${classListener.name}")
 
-        if(Hooks.hookAllMethods(classListener, "onLocationChanged", object: MethodHook() {
+        if (!hookedListenerClasses.add(classListener)) return
+
+        if(classListener.onceHookAllMethod("onLocationChanged", object: MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     // 框架投递到达（无论是否开模拟）：刷新「最近收到位置」时刻
                     markFrameworkDelivery(param.thisObject)
@@ -441,6 +445,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                     }
                 }
             }).isEmpty()) {
+            hookedListenerClasses.remove(classListener)
             Logger.error("hook onLocationChanged failed")
             return // If the hook fails, the listener is not added
         }
