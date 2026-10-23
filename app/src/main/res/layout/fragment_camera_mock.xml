@@ -69,7 +69,7 @@
                     android:id="@+id/camera_mock_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="2dp"
                     android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
                     android:textColor="?attr/colorOnSurface"
                     android:textStyle="bold"
@@ -88,64 +88,82 @@
                     android:id="@+id/camera_mock_impl_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="2dp"
                     android:text="需要安装摄像头实现"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall"
                     android:textColor="?attr/colorOnSurfaceVariant" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/camera_mock_import_impl"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:minWidth="0dp"
-                    android:text="导入实现"
-                    android:textSize="12sp" />
-
                 <LinearLayout
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
                     android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/camera_mock_import_impl"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="0dp"
+                        android:layout_height="34dp"
+                        android:layout_weight="1"
+                        android:insetBottom="0dp"
+                        android:insetTop="0dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:text="导入"
+                        android:textSize="11sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/camera_mock_update_impl"
                         style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_width="0dp"
+                        android:layout_height="34dp"
+                        android:layout_weight="1"
+                        android:insetBottom="0dp"
+                        android:insetTop="0dp"
                         android:minWidth="0dp"
-                        android:text="更新实现"
-                        android:textSize="12sp" />
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:text="更新"
+                        android:textSize="11sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/camera_mock_uninstall_impl"
                         style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_width="0dp"
+                        android:layout_height="34dp"
+                        android:layout_weight="1"
+                        android:insetBottom="0dp"
+                        android:insetTop="0dp"
                         android:minWidth="0dp"
-                        android:text="卸载实现"
-                        android:textSize="12sp" />
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:text="卸载"
+                        android:textSize="11sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/switch_camera_mock"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="0dp"
+                        android:layout_height="34dp"
+                        android:layout_weight="1.35"
+                        android:insetBottom="0dp"
+                        android:insetLeft="0dp"
+                        android:insetRight="0dp"
+                        android:insetTop="0dp"
+                        android:minWidth="0dp"
+                        android:padding="4dp"
+                        android:text="@string/camera_mock_start"
+                        android:textColor="?attr/colorOnPrimary"
+                        android:textSize="11sp"
+                        app:cornerRadius="12dp"
+                        app:icon="@drawable/rounded_play_arrow_24"
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp"
+                        app:iconTint="?attr/colorOnPrimary" />
 
                 </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/switch_camera_mock"
-                    style="@style/Widget.Material3.Button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="28dp"
-                    android:layout_marginTop="8dp"
-                    android:insetBottom="0dp"
-                    android:insetLeft="0dp"
-                    android:insetRight="0dp"
-                    android:insetTop="0dp"
-                    android:padding="6dp"
-                    android:text="@string/camera_mock_start"
-                    android:textColor="?attr/colorOnPrimary"
-                    android:textSize="12sp"
-                    app:cornerRadius="12dp"
-                    app:icon="@drawable/rounded_play_arrow_24"
-                    app:iconGravity="textStart"
-                    app:iconPadding="0dp"
-                    app:iconTint="?attr/colorOnPrimary" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
