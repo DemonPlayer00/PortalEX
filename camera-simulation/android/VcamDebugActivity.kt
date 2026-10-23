@@ -26,7 +26,6 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import moe.fuqiuluo.portalex.ui.camera.CameraFrameSink
-import moe.fuqiuluo.portalex.ui.camera.CameraMockServerBridge
 import java.io.File
 import kotlin.math.max
 
@@ -242,13 +241,6 @@ class VcamDebugActivity : Activity() {
         main.post(tick)
         if (intent?.getBooleanExtra("toggle", false) == true) {
             main.postDelayed({ modeButton.performClick() }, 800)
-        }
-        if (intent?.getBooleanExtra("download_library", false) == true) {
-            Thread {
-                val json = CameraMockServerBridge.downloadSnapshot()
-                android.util.Log.i("VcamDebug", "download_library=" + (json?.take(80) ?: "null"))
-                main.post { status.text = if (json == null) "下载库失败" else "下载库成功 ${json.length} 字节" }
-            }.start()
         }
     }
 
