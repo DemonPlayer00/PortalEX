@@ -126,16 +126,15 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         Executors.newSingleThreadExecutor().execute {
             val ok = runCatching {
                 val videoFile = CameraMockStore.videoFile(ctx, video.file)
-                val exportStream = if (videoFile.isFile) {
-                    videoFile.inputStream()
+                val exportSource = if (videoFile.isFile) {
+                    videoFile
                 } else {
-                    // 本地已由 system_server 导入删除：通过 selection socket 取 fd。
-                    CameraMockServerBridge.openVideo(video.id).getOrElse { error("无法从 system_server 取视频：${it.message}") }
+                    CammockManager.exportVideo(ctx, video.id).getOrThrow()
                 }
                 ctx.contentResolver.openOutputStream(uri)?.use { output ->
                     java.util.zip.ZipOutputStream(output).use { zip ->
                         zip.putNextEntry(java.util.zip.ZipEntry(video.file))
-                        exportStream.use { it.copyTo(zip) }
+                        exportSource.inputStream().use { it.copyTo(zip) }
                         zip.closeEntry()
                         val track = JSONObject().apply {
                             put("videoId", video.id)
@@ -459,7 +458,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     private fun autoUploadLibrary() {
         val ctx = requireContext()
         Executors.newSingleThreadExecutor().execute {
-            CameraMockServerBridge.upload(ctx)
+            CammockManager.upload(ctx)
         }
     }
 
