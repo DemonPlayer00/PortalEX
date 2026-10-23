@@ -629,9 +629,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         MaterialAlertDialogBuilder(ctx)
             .setTitle("标签管理")
             .setView(root)
-            .setPositiveButton("添加标签") { _, _ -> createTagDialog() }
-            .setNeutralButton("删除选中") { _, _ -> deleteSelected() }
-            .setNegativeButton("关闭", null)
+            .setNeutralButton("添加标签") { _, _ -> createTagDialog() }
+            .setNegativeButton("删除选中") { _, _ -> deleteSelected() }
+            .setPositiveButton("关闭", null)
             .show()
     }
 
