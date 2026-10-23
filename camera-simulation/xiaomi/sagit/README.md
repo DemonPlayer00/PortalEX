@@ -1,10 +1,23 @@
-# portalex-vcam-test
+# Xiaomi MI 6 / sagit cammock
 
-MI6（sagit / LineageOS 22.2 / Android 15）测试模块。
+MI 6 uses a 32-bit vendor Camera HAL (`/vendor/lib/hw/camera.msm8998.so`),
+so it does not use the OnePlus AIDL provider path.
 
-- `system/vendor/lib/hw/camera.msm8998.so` = `vcam.so`（虚拟 camera HAL）
-- `system/vendor/lib/hw/camera.msm8998.orig.so` = 原厂 HAL 副本（只用于转发相机元数据/请求模板）
-- provider 仍是系统的 `android.hardware.camera.provider@2.4-service`，它按原路径加载 HAL；
-  本模块只替换 HAL，不替换 provider，不改 /vendor。
+This directory is an APatch/Magisk HAL-overlay module:
 
-停用模块 + 重启即恢复原相机。
+- `system/vendor/lib/hw/camera.msm8998.so` — virtual camera HAL payload
+- `post-fs-data.sh` — mounts the HAL overlay
+- `service.sh` / `sepolicy.rule` — module lifecycle and policy
+
+`cammock.json` declares:
+
+```json
+{
+  "type": "magisk-module",
+  "supportedModels": ["MI 6", "sagit"]
+}
+```
+
+Install the directory as a module zip through the device's root manager.
+A reboot is required before the HAL is used. Disable the module and reboot to
+restore the stock camera.
