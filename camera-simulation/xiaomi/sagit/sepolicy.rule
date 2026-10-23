@@ -1,0 +1,4 @@
+allow hal_camera_default magisk_file file { read open getattr map execute }
+allow hal_camera_default vendor_file file { read open getattr map execute }
+allow hal_camera_default cache_file dir { getattr read open search }
+allow hal_camera_default cache_file file { read open getattr map execute }

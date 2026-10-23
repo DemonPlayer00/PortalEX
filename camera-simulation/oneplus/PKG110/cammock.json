@@ -1,0 +1,7 @@
+{
+  "name": "PortalEX OnePlus cammock provider",
+  "supportedModels": ["PKG110"],
+  "entry": "provider",
+  "meta": "meta.bin",
+  "tags": "tags.bin"
+}
