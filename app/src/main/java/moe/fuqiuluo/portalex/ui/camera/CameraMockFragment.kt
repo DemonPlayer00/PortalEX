@@ -268,6 +268,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         binding.cameraMockMapToggle.setOnClickListener { toggleMap() }
         // 说明与目标应用放进对话框：它们"读一次就够"，留在页面上会把视频点列表挤没
         binding.cameraMockInfo.setOnClickListener { showInfoDialog() }
+        binding.cameraMockCreateTag.setOnClickListener { createTagDialog() }
 
         return binding.root
     }
@@ -542,7 +543,14 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     private fun refresh() {
         val context = requireContext()
-        val points = CameraMockStore.points(context).sortedBy { it.name }
+        val filter = context.cameraMockTagFilter
+        fun matches(point: CameraVideoPoint): Boolean =
+            point.videos.any { v ->
+                v.tags.isEmpty() || filter.all { t -> v.tags.any { it.equals(t, true) } }
+            }
+        val points = CameraMockStore.points(context)
+            .sortedWith(compareByDescending<CameraVideoPoint> { matches(it) }.thenBy { it.name })
+        adapter.setFilterTags(filter)
         adapter.replaceAll(points)
         drawPoints(points)
         rebuildFilterChips()
@@ -569,8 +577,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                     .filter { it.isChecked }
                     .map { it.text.toString() }
                 context.cameraMockTagFilter = CameraTags.sanitize(checked).toSet()
-                updateSwitch()
-                updateStatus(CameraMockStore.points(context))
+                refresh()
             }
             group.addView(chip)
         }
@@ -607,6 +614,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                         Toast.makeText(context, result.getOrElse { restore.exceptionOrNull()?.message ?: "卸载失败" }, Toast.LENGTH_LONG).show()
                     }
                 }
+            }
+            .show()
+    }
+
+    private fun createTagDialog() {
+        val ctx = requireContext()
+        val input = android.widget.EditText(ctx).apply {
+            hint = "标签名（最多 ${moe.fuqiuluo.xposed.camera.CameraTags.MAX_LEN} 字）"
+            setSingleLine(true)
+        }
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle("创建标签")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("创建") { _, _ ->
+                val ok = CameraMockStore.addCustomTag(ctx, input.text?.toString().orEmpty())
+                Toast.makeText(ctx, if (ok) "标签已创建" else "标签为空或已存在", Toast.LENGTH_SHORT).show()
+                refresh()
             }
             .show()
     }

@@ -54,19 +54,6 @@
                 android:textSize="12sp" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/video_tags_button"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:insetBottom="0dp"
-                android:insetTop="0dp"
-                android:minWidth="0dp"
-                android:paddingStart="10dp"
-                android:paddingEnd="10dp"
-                android:text="@string/camera_video_tags"
-                android:textSize="12sp" />
-
-            <com.google.android.material.button.MaterialButton
                 android:id="@+id/video_delete_button"
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"

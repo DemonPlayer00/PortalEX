@@ -9,6 +9,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import android.widget.LinearLayout
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -44,6 +45,7 @@ import moe.fuqiuluo.xposed.utils.WorldMath
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
+import moe.fuqiuluo.xposed.camera.CameraTags
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
@@ -239,7 +241,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
         videoAdapter = CameraVideoAdapter(
             mutableListOf(),
-            onEditTags = { video -> editTags(video) },
+            onEdit = { video -> editVideo(video) },
             onDelete = { video -> confirmDelete(video) },
             onExport = { video -> exportVideo(video) }
         )
@@ -433,7 +435,12 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     }
 
     private fun refreshVideos() {
+        val filter = requireContext().cameraMockTagFilter
+        fun matches(v: CameraVideo): Boolean =
+            v.tags.isEmpty() || filter.all { t -> v.tags.any { it.equals(t, true) } }
         val videos = working?.videos.orEmpty()
+            .sortedWith(compareByDescending<CameraVideo> { matches(it) }.thenBy { it.recordedAt })
+        videoAdapter.setFilterTags(filter)
         videoAdapter.replaceAll(videos)
         binding.cameraVideoLabel.text = getString(R.string.camera_video_list) + "（${videos.size}）"
         // 还没有视频时给出下一步该干什么，而不是一个空列表
@@ -458,20 +465,56 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
 
 
-    private fun editTags(video: CameraVideo) {
+    private fun editVideo(video: CameraVideo) {
         val ctx = requireContext()
-        CameraTagDialog.show(
-            context = ctx,
-            selected = video.tags,
-            libraryTags = CameraMockStore.allTags(ctx)
-        ) { tags ->
-            val point = working ?: return@show
-            working = point.copy(
-                videos = point.videos.map { if (it.id == video.id) it.copy(tags = tags) else it }
-            )
-            CameraMockStore.upsert(ctx, working!!)
-            refreshVideos()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 8, 32, 0)
         }
+        val nameLayout = com.google.android.material.textfield.TextInputLayout(ctx).apply {
+            hint = "视频名字"
+        }
+        val nameEdit = com.google.android.material.textfield.TextInputEditText(ctx).apply {
+            setText(video.name)
+            setSingleLine(true)
+        }
+        nameLayout.addView(nameEdit)
+        root.addView(nameLayout)
+
+        val chips = com.google.android.material.chip.ChipGroup(ctx).apply {
+            isSingleSelection = false
+            setPadding(0, 12, 0, 0)
+        }
+        CameraMockStore.allTags(ctx).forEach { tag ->
+            val chip = com.google.android.material.chip.Chip(ctx).apply {
+                text = tag
+                isCheckable = true
+                isChecked = video.tags.any { it.equals(tag, true) }
+                setOnCheckedChangeListener { _, _ -> }
+            }
+            chips.addView(chip)
+        }
+        root.addView(chips)
+
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle("编辑视频")
+            .setView(root)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确定") { _, _ ->
+                val point = working ?: return@setPositiveButton
+                val name = nameEdit.text?.toString()?.trim().orEmpty().ifEmpty { video.name }
+                val tags = (0 until chips.childCount)
+                    .map { chips.getChildAt(it) as com.google.android.material.chip.Chip }
+                    .filter { it.isChecked }.map { it.text.toString() }
+                    .let { CameraTags.sanitize(it).toList() }
+                working = point.copy(videos = point.videos.map {
+                    if (it.id == video.id) it.copy(name = name, tags = tags) else it
+                })
+                CameraMockStore.upsert(ctx, working!!)
+                refreshVideos()
+                autoUploadLibrary()
+            }
+            .show()
     }
 
     private fun confirmDelete(video: CameraVideo) {
