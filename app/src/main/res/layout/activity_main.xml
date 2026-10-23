@@ -27,13 +27,21 @@
       · 列表用 `0dp + weight=1` 吃掉剩余高度并在内部滚动。
       两组菜单之间的细分隔线（含上下 margin）由 `DrawerGroupDivider` 画在指定菜单项上方。
     -->
+    <!--
+      ⚠️ 圆角只靠 background 是不够的：里面两层的**矩形背景会把圆角盖掉**
+      （头部是 side_nav_bar 渐变、列表是 NavigationView 自己的 surface 背景）。
+      所以这里是"圆角背景 + clipToOutline"两条一起上：clipToOutline 让子视图按背景的
+      轮廓裁剪（GradientDrawable 的圆角会进 outline），于是头部的渐变也跟着圆角走。
+      NavigationView 自己的背景置空，免得它在圆角外面又画一层直角底色。
+    -->
     <LinearLayout
         android:id="@+id/drawer_container"
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_gravity="start"
         android:orientation="vertical"
-        android:background="?attr/colorSurfaceContainerLow">
+        android:background="@drawable/bg_drawer"
+        android:clipToOutline="true">
 
         <include layout="@layout/nav_header_main" />
 
@@ -42,6 +50,7 @@
             android:layout_width="wrap_content"
             android:layout_height="0dp"
             android:layout_weight="1"
+            android:background="@android:color/transparent"
             app:menu="@menu/activity_main_drawer" />
 
     </LinearLayout>

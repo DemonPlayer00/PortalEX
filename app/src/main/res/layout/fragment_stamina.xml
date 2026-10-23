@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  体力模拟独立页。
+  参数行不在 XML 里逐条写死，而是由 StaminaFragment 按同一模板（item_stamina_value.xml）动态插入 ——
+  "加一个参数"只需在 Kotlin 的 rows 列表里加一条，不必再复制一段 XML（复制出来的行最容易漏改 id）。
+-->
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- 开关 -->
+            <LinearLayout
+                android:id="@+id/stamina_enable_layout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="5dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/stamina_enable"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/stamina_enable_desc"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/stamina_switch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_vertical"/>
+            </LinearLayout>
+
+            <!--
+              倍率 × 距离预览图（用户口径）：
+              横向窗口 2km、可左右滑动看更远；一条实线=无随机，两条半透明=±随机极值。
+              图自己处理横向滚动与刻度栏，见 StaminaChartView 的类注释。
+            -->
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="@string/stamina_chart_title"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_chart_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/stamina_chart_desc"
+                android:textSize="11sp" />
+
+            <!-- 理论 / 生成 两页切换。点"生成"= 用真实引擎重跑一条，所以它同时也是刷新键 -->
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/stamina_chart_mode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:checkedButton="@id/stamina_chart_mode_theory"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_chart_mode_theory"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="88dp"
+                    android:text="@string/stamina_chart_mode_theory" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_chart_mode_generated"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="88dp"
+                    android:text="@string/stamina_chart_mode_generated" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <moe.fuqiuluo.portalex.android.widget.StaminaChartView
+                android:id="@+id/stamina_chart"
+                android:layout_width="match_parent"
+                android:layout_height="190dp"
+                android:layout_marginTop="6dp" />
+
+            <!-- 理论页：这套参数跑出来的结果 + 体检（生成页隐藏，那里显示本次实际跑法） -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_chart_metrics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:textSize="11sp" />
+
+            <!-- 生成页的本次跑法摘要（理论页隐藏） -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_chart_sample"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <!-- 当前状态 -->
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/stamina_status"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="100.0 %"
+                android:textSize="28sp" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_phase"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_effective"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/stamina_stats"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_reset"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/stamina_reset" />
+
+                <!-- 重置数据：恢复出厂参数（破坏性 ⇒ 弹窗确认） -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/stamina_reset_data"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/stamina_reset_data" />
+            </LinearLayout>
+
+            <!-- 参数区（行由代码插入） -->
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/stamina_params"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <LinearLayout
+                android:id="@+id/stamina_rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+        </LinearLayout>
+    </ScrollView>
+</androidx.constraintlayout.widget.ConstraintLayout>

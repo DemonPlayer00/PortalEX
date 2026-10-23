@@ -47,9 +47,7 @@
                     android:id="@+id/selinux_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -135,50 +133,6 @@
             </androidx.constraintlayout.widget.ConstraintLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/cadence_scale_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:padding="5dp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="4dp">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/cadence_scale_title"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:text="步频倍率"
-                    android:textColor="?attr/colorOnSurfaceVariant"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/cadence_scale_value"
-                    app:layout_constraintHorizontal_bias="0"
-                    app:layout_constraintTop_toTopOf="parent"/>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/cadence_scale_desc"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:text="微调「步频 ↔ 速度」的关系；1=不调整，可填整数或小数（0.2~3.0）"
-                    android:textSize="11sp"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/cadence_scale_value"
-                    app:layout_constraintHorizontal_bias="0"
-                    app:layout_constraintTop_toBottomOf="@id/cadence_scale_title"/>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/cadence_scale_value"
-                    android:layout_width="96dp"
-                    android:layout_height="wrap_content"
-                    android:minWidth="52dp"
-                    android:gravity="end"
-                    android:text="1.00×"
-                    android:textSize="11sp"
-                    app:layout_constraintBaseline_toBaselineOf="@id/cadence_scale_title"
-                    app:layout_constraintEnd_toEndOf="parent" />
-            </androidx.constraintlayout.widget.ConstraintLayout>
-
-            <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/accuracy_layout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -247,9 +201,7 @@
                     android:id="@+id/debug_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!-- 融合定位处置：与其它设置项同一排布（左标题+说明，右侧当前值；点一行改值）。
@@ -323,9 +275,7 @@
                     android:id="@+id/cdma_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
@@ -369,50 +319,6 @@
 
             </androidx.constraintlayout.widget.ConstraintLayout>
 
-            <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/sensor_grid_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:padding="5dp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="4dp">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/sensor_grid_title"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:text="注入栅格分辨率"
-                    android:textColor="?attr/colorOnSurfaceVariant"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/sensor_grid_value"
-                    app:layout_constraintHorizontal_bias="0"
-                    app:layout_constraintTop_toTopOf="parent"/>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/sensor_grid_desc"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:text="自动=跟框架；可填 20~400(Hz)。栅格只决定「最快能表现出的速率」"
-                    android:textSize="11sp"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/sensor_grid_value"
-                    app:layout_constraintHorizontal_bias="0"
-                    app:layout_constraintTop_toBottomOf="@id/sensor_grid_title"/>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/sensor_grid_value"
-                    android:layout_width="96dp"
-                    android:layout_height="wrap_content"
-                    android:minWidth="52dp"
-                    android:gravity="end"
-                    android:text="自动"
-                    android:textSize="11sp"
-                    app:layout_constraintBaseline_toBaselineOf="@id/sensor_grid_title"
-                    app:layout_constraintEnd_toEndOf="parent" />
-
-            </androidx.constraintlayout.widget.ConstraintLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/satellite_count_layout"
@@ -483,9 +389,7 @@
                     android:id="@+id/disable_wlan_scan_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <LinearLayout
@@ -516,44 +420,7 @@
                     android:id="@+id/loop_broadcast_location_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/binder_sensor_mock_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:padding="5dp">
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="center_vertical"
-                    android:orientation="vertical">
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/binder_sensor_mock"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
-                    <com.google.android.material.textview.MaterialTextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="11sp"
-                        android:text="@string/binder_sensor_mock_desc" />
-                </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/binder_sensor_mock_switch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!-- 后台保活（默认开）：前台服务 + partial wake lock，见 MockKeepAliveService -->
@@ -587,9 +454,7 @@
                     android:id="@+id/keep_alive_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
 
             <!-- 电池优化白名单：点一下申请系统豁免（后台活跃权限） -->
@@ -648,10 +513,9 @@
                     android:id="@+id/allow_landscape_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    app:useMaterialThemeColors="true"
-                    app:trackTint="@color/switch_track_tint"/>
+                    android:layout_gravity="center_vertical"/>
             </LinearLayout>
+
         </LinearLayout>
 
     </ScrollView>

@@ -6,8 +6,8 @@ import android.telephony.CellIdentityCdma
 import android.telephony.CellInfo
 import android.telephony.CellInfoCdma
 import android.telephony.CellSignalStrengthCdma
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
 import moe.fuqiuluo.xposed.utils.BinderUtils
@@ -15,6 +15,7 @@ import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.beforeHook
 import moe.fuqiuluo.xposed.utils.onceHookAllMethod
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
+import moe.fuqiuluo.xposed.utils.MethodHook
 
 object MiuiBlurLocationProviderHook: BaseLocationHook() {
     operator fun invoke(classLoader: ClassLoader) {
@@ -23,7 +24,7 @@ object MiuiBlurLocationProviderHook: BaseLocationHook() {
             BlindHookLocation(cMiuiBlurLocationManagerImpl, classLoader)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val hooker: XC_MethodHook.MethodHookParam.() -> Unit = {
+                val hooker: MethodHookParam.() -> Unit = {
                     if (FakeLoc.enable && !BinderUtils.isSystemAppsCall()) {
                         result = CellIdentityCdma::class.java.getConstructor(
                             Int::class.java,

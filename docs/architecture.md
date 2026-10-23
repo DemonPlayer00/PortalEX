@@ -28,6 +28,23 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
   还是"这是本帧状态"；门面保证所有调用点（hook/设置页/原生诊断）一行都不用改。
 - app 侧那份只是"镜像"：`mirrorLocal()` 写镜像、`push()` 才下发
   （`service/ConfigSync.kt`，**下发的唯一出口**）。
+
+### 1.1 App 只当遥控器（2026-09-16 起）
+
+**唯一的世界在 system_server**，App 不持有任何模拟状态、也不推进任何模拟逻辑：
+
+| 谁 | 持有什么 | 位置 |
+| --- | --- | --- |
+| system_server | 推进引擎（位移 = 速度 × 体力倍率 × Δt）、体力状态机、路线数据与播放进度、传感器/位置交付 | `utils/MotionEngine.kt`、`utils/StaminaRuntime.kt`、`hooks/MotionClock.kt` |
+| App | 参数与路线**编辑产物**、摇杆意图、显示与收尾 | `MockServiceViewModel`（遥控循环）、`StaminaController`、`service/PortalLocationClient.kt` |
+
+- 为什么不可反过来（"App 推进、模块缩放"）：交付给应用的是**绝对坐标**，模块侧事后缩放
+  只能做出永远落后的滞后积分器（路线走不到终点）。**谁推进、谁缩放必须是同一处**，
+  详见 `docs/sensor-architecture.md` 第三节。
+- App 的循环（`MockServiceViewModel`）每拍只做三件事：下发**变化了的**意图
+  （`set_route`/`route_control`/`set_rocker`）、回读状态（`get_motion` 4Hz）、收尾与保活。
+- App 的**位置显示**走普通客户端路径：`PortalLocationClient` 直接 `requestLocationUpdates`，
+  与第三方应用收到的是同一 tick 的同一帧（这是"注入生效"的自证；百度 SDK 只留取城市名）。
 - 因此历史上一大类 bug 都是"两个副本不一致"：改字段只改了本进程、或系统进程重启后配置丢失。
 
 ## 2. 跨进程协议
@@ -97,10 +114,12 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
 
 | 项 | 值 | 出处 |
 |---|---|---|
-| 生成栅格 | 2.5 ~ 10 ms（有采用值时可低至 2.5ms） | `virtual_world.c` `MIN_TICK_NS` / `TICK_NS` |
+| 事件调度 | **每通道"下次应发时刻"**（无固定栅格）：周期取框架采用值，相位自由累加 | `virtual_world.c` `next_due_ns` / `channel_period_ns` |
+| 默认周期（无采用值时兜底） | 快档 20 ms、慢档 40 ms | `g_chan[]` 的 `def_period_ns` |
 | 延迟队列（两个消费者交接） | 96 条 | `DEFER_CAP` |
 | 步事件队列 | 64 条 | `STEP_QUEUE_CAP` |
-| 单次追赶上限 | 200 拍（≈2s） | `MAX_TICKS_PER_CALL` |
+| 单次生成上限 | 128 条（安全阀；正常一次只有几条） | `MAX_EVENTS_PER_CALL` |
+| 步事件过期窗口 | 2 s | `STALE_WINDOW_NS` |
 | 时间戳抖动 | 周期的 ±5%，钳 150µs~2ms，**严格不越过 now** | `jitter_ts` |
 | 步态波形 | 一个周期 = **9 步**（"波长 ×3"两次迭代而来） | `vw_gait.c` `g_gait_steps` |
 | 噪声档 | 逐轴 σ（20 槽：σ 与陀螺零偏）+ 高丝动态值 | `vw_noise.c` / `SensorNoise.kt` |

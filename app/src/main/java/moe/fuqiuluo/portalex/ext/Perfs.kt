@@ -156,6 +156,20 @@ var Context.debug: Boolean
     }
 
 /**
+ * 「逐帧记录」（[moe.fuqiuluo.portalex.service.FrameRecorder]）开关：把客户端收到的每一帧
+ * 落盘，供离线分析配速曲线。
+ *
+ * **刻意与 [debug] 分开**：`debug` 会同时打开模块侧的逐帧日志，那是 ~800 行/秒的
+ * system_server 日志洪水 —— 做交付/时延类测量时它就是**扰动源**，不能和"只想安静录帧"
+ * 共用一个开关。默认关闭，不改变任何既有行为。
+ */
+var Context.frameRecord: Boolean
+    get() = sharedPrefs.getBoolean("frame_record", false)
+    set(value) = sharedPrefs.edit {
+        putBoolean("frame_record", value)
+    }
+
+/**
  * 融合定位处置（三态互斥，见 [moe.fuqiuluo.xposed.utils.FusedMode]）：
  * **默认伪装** —— 在检测到融合定位的设备上，让融合照常跑、但把它交给应用的结果改写成
  * 模拟位置；"拒绝"是把系统能力报成不可用，"放行"则不做任何干预（不推荐）。
@@ -234,19 +248,6 @@ var Context.cadenceScale: Float
     }
 
 /**
- * 注入栅格分辨率（Hz）。**0 = 自动**（跟随框架采用值，上限 400Hz）。
- *
- * 语义：栅格只是"能表现出来的最快速率"——调细**不会**改变任何传感器自己的采用速率
- * （每个通道仍按框架仲裁后的周期发数据），只是让更快的档位能落地；调粗则会把它压慢。
- * 钳在 20~400Hz。（原生层还会再钳一次 2.5~50ms，防手滑。）
- */
-var Context.sensorGridHz: Int
-    get() = sharedPrefs.getInt("sensorGridHz", 0)
-    set(value) = sharedPrefs.edit(commit = true) {
-        putInt("sensorGridHz", if (value <= 0) 0 else value.coerceIn(20, 400))
-    }
-
-/**
  * 注入噪声档（Calibration 页）：[SensorNoise.COUNT] 个槽（逐轴 σ + 陀螺零偏），见 SensorNoise。
  *
  * 存成 "a,b,c,…" 串（而不是 putFloatArray）：读取路径要能容错——长度不符/损坏/
@@ -260,6 +261,39 @@ var Context.sensorNoise: FloatArray
     set(value) = sharedPrefs.edit(commit = true) {
         putString("sensorNoise", SensorNoise.encode(SensorNoise.sanitize(value)))
     }
+
+/**
+ * 按组波动（两个功能页各两条，单位 **%**，默认 15）。
+ *
+ * 与噪声档是两层：噪声档（Calibration 页）是"每条事件的传感器本底噪声"，
+ * 这里是叠加在它之上的慢漂（波动强度）与逐条随机（随机区间）。施加口径见
+ * `xposed/src/main/cpp/vw_wobble.c` 文件头：按**该类型的参考量**加绝对偏差，
+ * 步频侧作用在**步间隔**上。
+ *
+ * 0 = 逐位兼容（原生层不碰随机数、不做算术 ⇒ 输出与没有这个功能时完全一致）。
+ */
+private fun Context.wobblePref(key: String, value: Float) =
+    sharedPrefs.edit(commit = true) { putFloat(key, value.coerceIn(0f, 100f)) }
+
+/** 步频侧·波动强度（%，默认 15）：慢漂半幅 */
+var Context.cadenceWobbleAmp: Float
+    get() = sharedPrefs.getFloat("cadenceWobAmp", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("cadenceWobAmp", value)
+
+/** 步频侧·随机区间（%，默认 15）：逐条事件均匀随机半宽 */
+var Context.cadenceWobbleRnd: Float
+    get() = sharedPrefs.getFloat("cadenceWobRnd", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("cadenceWobRnd", value)
+
+/** 角度与指南针侧·波动强度（%，默认 15） */
+var Context.orientationWobbleAmp: Float
+    get() = sharedPrefs.getFloat("orientationWobAmp", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("orientationWobAmp", value)
+
+/** 角度与指南针侧·随机区间（%，默认 15） */
+var Context.orientationWobbleRnd: Float
+    get() = sharedPrefs.getFloat("orientationWobRnd", 15f).coerceIn(0f, 100f)
+    set(value) = wobblePref("orientationWobRnd", value)
 
 /**
  * 最近一次一键校准的统计明细（逐轴中位数 + σ）。
@@ -280,9 +314,10 @@ var Context.sensorNoiseReport: String
  * 触发条件**不是"会话开着"**，而是"没有人操作但位置还在走"：自动播放、摇杆锁定后继续走。
  * 空闲（会话开着但没动）、手指按着摇杆、关掉本项时都不占前台、不持锁 —— 遵循系统省电策略。
  *
- * 为什么这几条需要它：App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结 ——
- * 冻结期间运动循环整段停摆（实测灭屏/后台场景下 tick 空洞 25.6s/47.7s），而 system_server
- * 仍在按保活节奏推帧（位置不动、vel≈0），目标跑步应用看到"原地不动"。
+ * 为什么"无人值守"仍需要它（迁移后理由已经变了）：**推进不再需要 App 活着**
+ * （世界在 system_server，App 被冻也照样走），但"播完要放提示音/振动、把悬停按钮状态收回来"
+ * 需要一个活着的观察者 —— 而 App 退后台就是 cached 进程，会被 Cached Apps Freezer 冻结。
+ * 顺带它也让 App 的**位置订阅**（普通客户端视角，地图蓝点）继续收帧。
  */
 var Context.keepAliveInBackground: Boolean
     get() = sharedPrefs.getBoolean("keepAliveInBackground", true)
@@ -298,10 +333,16 @@ var Context.keepAliveInBackground: Boolean
  *
  * 注意默认值只在**偏好里还没有这个键**时生效：用户手动关掉过，就以存下来的值为准。
  */
-var Context.binderSensorMock: Boolean
-    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, true)
+var Context.cadenceMock: Boolean
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.CADENCE_MOCK, true)
     set(value) = sharedPrefs.edit {
-        putBoolean(PortalProtocol.Pref.BINDER_SENSOR_MOCK, value)
+        putBoolean(PortalProtocol.Pref.CADENCE_MOCK, value)
+    }
+
+var Context.orientationMock: Boolean
+    get() = sharedPrefs.getBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, true)
+    set(value) = sharedPrefs.edit {
+        putBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, value)
     }
 
 /**
@@ -313,6 +354,8 @@ var Context.allowLandscape: Boolean
     set(value) = sharedPrefs.edit {
         putBoolean("allowLandscape", value)
     }
+
+
 
 
 

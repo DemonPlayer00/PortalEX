@@ -1,7 +1,8 @@
 package moe.fuqiuluo.xposed.hooks.blindhook
 
 import android.location.Location
-import de.robv.android.xposed.XC_MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.onceHook
@@ -42,7 +43,7 @@ object BlindHook {
         val isList: Boolean,
         val isArray: Boolean,
         val handler: (Member, T?) -> T?
-    ): XC_MethodHook() {
+    ): MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             val data = param.args[index] as? T ?: return
 
@@ -55,7 +56,7 @@ object BlindHook {
         val isList: Boolean,
         val isArray: Boolean,
         val handler: (Member, T?) -> T?
-    ): XC_MethodHook() {
+    ): MethodHook() {
         override fun afterHookedMethod(param: MethodHookParam) {
             val data = param.result as? T ?: return
 

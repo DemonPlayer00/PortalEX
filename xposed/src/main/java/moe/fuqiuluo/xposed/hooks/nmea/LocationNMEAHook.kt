@@ -1,19 +1,20 @@
 package moe.fuqiuluo.xposed.hooks.nmea
 
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.onceHookBefore
 import moe.fuqiuluo.xposed.utils.onceHookMethodBefore
 import java.util.Collections
+import moe.fuqiuluo.xposed.utils.Hooks
 
 object LocationNMEAHook: BaseLocationHook() {
     operator fun invoke(classILocationManager: Class<*>) {
         hookGnssNmea(classILocationManager)
 
-        val doNothingMethod = object: XC_MethodHook() {
+        val doNothingMethod = object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam?) {
                 if (param == null || param.args.isEmpty()) return
 
@@ -30,12 +31,12 @@ object LocationNMEAHook: BaseLocationHook() {
             }
         }
 
-        XposedBridge.hookAllMethods(classILocationManager, "addGnssMeasurementsListener", doNothingMethod)
-        XposedBridge.hookAllMethods(classILocationManager, "removeGnssMeasurementsListener", doNothingMethod)
-        XposedBridge.hookAllMethods(classILocationManager, "addGnssNavigationMessageListener", doNothingMethod)
-        XposedBridge.hookAllMethods(classILocationManager, "removeGnssNavigationMessageListener", doNothingMethod)
-        XposedBridge.hookAllMethods(classILocationManager, "addGnssAntennaInfoListener", doNothingMethod)
-        XposedBridge.hookAllMethods(classILocationManager, "removeGnssAntennaInfoListener", doNothingMethod)
+        Hooks.hookAllMethods(classILocationManager, "addGnssMeasurementsListener", doNothingMethod)
+        Hooks.hookAllMethods(classILocationManager, "removeGnssMeasurementsListener", doNothingMethod)
+        Hooks.hookAllMethods(classILocationManager, "addGnssNavigationMessageListener", doNothingMethod)
+        Hooks.hookAllMethods(classILocationManager, "removeGnssNavigationMessageListener", doNothingMethod)
+        Hooks.hookAllMethods(classILocationManager, "addGnssAntennaInfoListener", doNothingMethod)
+        Hooks.hookAllMethods(classILocationManager, "removeGnssAntennaInfoListener", doNothingMethod)
     }
 
     private fun hookGnssNmea(classILocationManager: Class<*>) {

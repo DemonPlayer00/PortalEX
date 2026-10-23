@@ -73,6 +73,23 @@ typedef struct {
 /** 该类型是否属于本模块接管（自产 + 压制真实值）的集合 */
 int vw_owns_type(int32_t type);
 
+/**
+ * **按类开关**：关掉的那一侧，[vw_owns_type] 直接判"不归我们管" ⇒ 真实事件原样放行
+ * ⇒ 那一侧一个事件都不会被注入。默认两侧都开（与拆分前逐位一致）。
+ * @param cadence     步频侧（TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR）
+ * @param orientation 角度与指南针侧（加速度/陀螺/磁场/朝向）
+ */
+void vw_set_class_enable(int cadence, int orientation);
+
+/** 该 type 所属侧当前是否开着（不可识别的 type 恒为 0） */
+int vw_class_enabled(int32_t type);
+
+/** 记一次"该 type 的真实事件被我们压制"（按类累计，见 vw_suppressed_counts） */
+void vw_note_suppressed_class(int32_t type);
+
+/** 读按类压制计数：关掉的一侧**停止增长**即"那一侧没被接管"的运行时证据 */
+void vw_suppressed_counts(long long *cadence, long long *orientation);
+
 /** 进程内一次性初始化（虚拟世界的固有常量：场强/磁倾角/bias/漂移） */
 void vw_init(void);
 
@@ -122,11 +139,14 @@ void vw_set_acc_via_poll(int on);
 /** 当前是否有任何类型走 poll 路径（决定 poll 出口要不要注入） */
 int vw_poll_types_enabled(void);
 
-/** 固定注入栅格（纳秒；0 = 自动跟随采用值）。钳在 2.5ms~50ms */
-void vw_set_tick_override(long long ns);
+/**
+ * 下一个"该出事件的时刻"（纳秒；0 = 当前没有到点的源）。
+ * Java 泵睡到该时刻即可 —— 事件是被推出去的，不再由固定栅格轮询出来。
+ */
+long long vw_next_due_ns(long long now_nanos);
 
-/** 当前栅格（纳秒）与延迟队列统计（诊断） */
-int vw_tick_ns_dbg(void);
+/** 当前**最细的活跃周期**（纳秒；0 = 没有周期通道）与延迟队列统计（诊断） */
+int vw_finest_period_dbg(void);
 int vw_defer_stats(int *pending, long long *dropped);
 
 /** 生成期间的统计（诊断用） */
@@ -157,19 +177,19 @@ long long vw_real_step_counter(void);
 void vw_note_real_event(int32_t type, const float *data);
 
 /**
- * 「按应用期望出数据」：把框架观测到的采用速率与活跃状态灌进栅格通道。
+ * 「按应用期望出数据」：把框架观测到的采用速率与活跃状态灌进周期通道。
  *
  * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播给所有人；这里照同一个模型走。
- * `period_ns` = 框架 dump 的 `selected`（0 = 未指定 ⇒ 用默认栅格）；`active` = 是否有人订阅。
+ * `period_ns` = 框架 dump 的 `selected`（0 = 未指定 ⇒ 用默认周期）；`active` = 是否有人订阅。
  * 没人订阅（且近期也没有真实事件）时该类型**静默**——真机 HAL 没被启用时同样一条都不出。
- * 只对栅格通道生效；步数两条流是 on-change，不受影响。
+ * 只对周期通道生效；步数两条流是 on-change，不受影响。
  */
 void vw_set_channel_hint(int32_t type, long long period_ns, long long batch_ns, int active);
 
 /** 先把所有栅格通道标成不活跃，再按 dump 灌活跃者（缺席即静默，见实现注释） */
 void vw_clear_channel_hints(void);
 
-/** 各栅格通道的生效速率（诊断字符串："1:20ms 2:40ms(idle) …"），返回写入长度 */
+/** 各周期通道的生效速率（诊断字符串："1:20ms 2:40ms(idle) …"），返回写入长度 */
 int vw_dump_rates(char *out, size_t out_size);
 
 /*
@@ -204,6 +224,46 @@ void vw_get_noise(float *out, int count);
 
 /** 噪声档短字符串（诊断/回显用），返回写入长度 */
 int vw_dump_noise(char *out, size_t out_size);
+
+/*
+ * ---- 按组波动（两个功能页各两条参数） ----
+ *
+ * 与噪声档是**两层**：噪声档（上面）是"每条事件的传感器本底噪声"，这里是叠加在它之上的
+ * **慢漂**（秒级来回走）与**逐条随机**。两条参数都是相对量（0..1 的分数，UI 上是百分比）：
+ *   · amp 「波动强度」：慢漂半幅（时间常数 1.5s 的一阶低通随机游走 × amp）
+ *   · rnd 「随机区间」：逐条事件均匀随机半宽（±rnd）
+ * 施加口径 = `dev × 该类型的参考量`（不是逐值百分比），理由见 vw_wobble.c 文件头；
+ * 步频侧没有分量，作用在**步间隔**上（interval × (1 + dev)）。
+ *
+ * 0 值是**逐位兼容**的：两条都为 0 时不碰随机数、不做任何算术，输出与未引入本功能时完全一致。
+ */
+#define VW_WOB_GROUP_CADENCE 0     /* 步频侧：TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
+#define VW_WOB_GROUP_ORIENTATION 1 /* 角度与指南针侧：加速度/重力/线性/陀螺/磁场/方向角/旋转矢量 */
+#define VW_WOB_GROUP_COUNT 2
+
+/** 设置某一组的波动参数（[amp]/[rnd] 为 0..1 的分数；超出钳位，NaN 归 0）。 */
+void vw_set_group_wobble(int group, float amp, float rnd);
+
+/** 读回某一组的波动参数（0..1 的分数） */
+void vw_get_group_wobble(int group, float *amp, float *rnd);
+
+/** 波动参数短字符串（诊断/回显用），返回写入长度 */
+int vw_dump_wobble(char *out, size_t out_size);
+
+/** 诊断：一次推送里带 ≥2 步的次数（`per = span/delta` 会压缩间隔） */
+long long vw_step_multi_push_count(void);
+
+/** 诊断：被判为"计数器基线搬移"而未发出的步数（见 vw_update_state 的重基判定） */
+long long vw_step_rebase_skipped(void);
+
+/** 诊断：jitter 把时间戳钳到 now 的次数（事件被"提前"送达） */
+long long vw_jitter_clamp_count(void);
+
+/** 诊断：jitter 因"不单调"把时间戳强抬成上一条+1 的次数 */
+long long vw_jitter_force_count(void);
+
+/** 诊断：与上一条步事件间隔 < 100ms 的发出次数（"两条步事件几乎同时"的签名） */
+long long vw_step_short_gap_count(void);
 
 /** 累计发出的步事件数（一步计一次，counter/detector 两条事件算一步） */
 long long vw_step_events_total(void);

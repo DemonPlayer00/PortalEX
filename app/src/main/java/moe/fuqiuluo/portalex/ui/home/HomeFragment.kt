@@ -14,6 +14,8 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import com.baidu.location.BDAbstractLocationListener
+import moe.fuqiuluo.portalex.service.PortalLocationClient
+import moe.fuqiuluo.portalex.ext.reportDuration
 import com.baidu.location.BDLocation
 import com.baidu.location.LocationClient
 import com.baidu.location.LocationClientOption
@@ -23,7 +25,6 @@ import com.baidu.mapapi.map.MapPoi
 import com.baidu.mapapi.map.MapStatusUpdateFactory
 import com.baidu.mapapi.map.MarkerOptions
 import com.baidu.mapapi.map.MyLocationConfiguration
-import com.baidu.mapapi.map.MyLocationData
 import com.baidu.mapapi.map.PolylineOptions
 import com.baidu.mapapi.model.LatLng
 import com.baidu.mapapi.search.geocode.ReverseGeoCodeOption
@@ -157,23 +158,12 @@ class HomeFragment : Fragment(), MapControlsHost {
         option.setCoorType(Portal.DEFAULT_COORD_STR)
         option.setScanSpan(1000)
         mLocationClient.locOption = option
+        // 百度定位 SDK 只剩一个用途：**取城市名**（搜索限定范围）。位置显示不再用它 ——
+        // 它是黑盒融合引擎（自己的进程/网络定位），给的点与注入链不是同一来源，
+        // 拿它画点地图就在说谎；位置显示统一走 LocationManager（见下）。
         mLocationClient.registerLocationListener(object : BDAbstractLocationListener() {
             override fun onReceiveLocation(loc: BDLocation?) {
-                if (loc == null) return
-                val locData = MyLocationData.Builder()
-                    .accuracy(loc.radius)
-                    .direction(loc.direction)
-                    .latitude(loc.latitude)
-                    .longitude(loc.longitude)
-                    .build()
-
-                if (loc.city != null)
-                    MainActivity.mCityString = loc.city
-
-                with(baiduMapViewModel) {
-                    currentLocation = loc.wgs84
-                    baiduMap.setMyLocationData(locData)
-                }
+                if (loc?.city != null) MainActivity.mCityString = loc.city
             }
         })
         baiduMapViewModel.mLocationClient = mLocationClient
@@ -181,6 +171,14 @@ class HomeFragment : Fragment(), MapControlsHost {
             mLocationClient.enableLocInForeground(1, it)
         }
         mLocationClient.start()
+
+        // **普通客户端视角**（迁移步骤③）：与任何第三方应用一样向框架订阅 ——
+        // 收到的就是被注入链改写过的帧，所以"地图上的点"= "应用真正收到的点"（注入的自证）。
+        PortalLocationClient.subscribe(this, requireContext(), requireContext().reportDuration.toLong()) { fix ->
+            if (baiduMapViewModel.isExists) {
+                baiduMapViewModel.applyFix(fix.lat, fix.lon, fix.bearing, fix.accuracy)
+            }
+        }
 
 
         binding.mapTypeGroup.setOnCheckedChangeListener { _, checkedId ->
@@ -534,6 +532,8 @@ class HomeFragment : Fragment(), MapControlsHost {
             mLocationClient.disableLocInForeground(true)
             mLocationClient.stop()
         }
+        // 位置订阅同样随视图释放（owner 粒度退订：另一页还订阅着时不会被误停）
+        PortalLocationClient.unsubscribe(this)
         // 地图视图同样随视图销毁：生命周期只转发了 create/resume/pause/saveInstanceState，
         // 不转发 onDestroy 的话 GL 线程、SDK 线程池与显存不随 view 释放
         // （实测：每轮进出首页 +1 个 pool-N 线程、线程总数 +1、PSS 约 +2 MB，单调累积）

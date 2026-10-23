@@ -30,6 +30,8 @@
         <item name="searchViewStyle">@style/Portal.SearchViewStyle</item>
         <item name="sliderStyle">@style/Portal.SliderTheme</item>
         <item name="android:popupMenuStyle">@style/PortalPopupMenuStyle</item>
+        <!-- 开关默认样式：与浅色主题同一个（定义在 values/themes.xml，颜色随选择器） -->
+        <item name="switchStyle">@style/Portal.SwitchStyle</item>
     </style>
 
     <style name="AppTheme.Dark" parent="AppTheme" />

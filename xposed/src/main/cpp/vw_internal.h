@@ -25,12 +25,15 @@ extern "C" {
  */
 extern pthread_mutex_t g_lock;
 
-/** 世界的基础时间栅格（10ms）：所有周期都是它的整数倍，事件天然按时间升序交织 */
-#define TICK_NS 10000000LL
-
 /* ---- PRNG（vw_rand.c） ---- */
 /** 进程级播种（常量种子 ⊕ 启动时间 ⊕ pid）：`vw_init` 调一次；不调也能跑，只是各进程同序列 */
 void vw_rng_seed_process(void);
+
+/**
+ * **仅测试用**：把随机流钉到确定状态（生产种子按设计不可复现，见 vw_rand.c）。
+ * 用于断言"某个代码路径有没有消耗随机数"这类**流位置**性质。
+ */
+void vw_rng_seed_fixed(uint64_t seed);
 uint64_t vw_rng_next(void);
 double vw_rng_unit(void);
 double vw_rng_range(double lo, double hi);
@@ -48,13 +51,17 @@ static inline double rng_range(double lo, double hi) { return vw_rng_range(lo, h
  */
 extern int g_moving;
 extern double g_speed;
-extern long long g_tick_ns;
 extern double g_target_azimuth;
 
 
-/** 推进虚拟世界一拍（相位 PLL、摆动、微抖、方位平滑、角速度低通） */
+/** 初始化步态/朝向状态 */
 void vw_gait_init(void);
-void advance_one_tick(long long now);
+/**
+ * 把虚拟世界推进到 [now]（相位 PLL、摆动、微抖、方位平滑）——**步长可变**。
+ * 旧实现是按固定栅格一拍一拍推（`advance_one_tick`，dt = 栅格）；没有栅格之后
+ * 由生成器按"事件到点时刻"惰性推进，公式本身都是 dt 参数化的（指数平滑），换步长等价。
+ */
+void vw_advance_to(long long now);
 /** 记一次"这一步在 IMU 上也必须正好是一个峰" */
 void gait_note_step(long long ts);
 /** 当前步态加速度（设备坐标；静止时全 0） */
@@ -74,6 +81,28 @@ float vw_noise_raw(int index);
 void add_noise_i(portal_sensor_event_t *e, int index, float sigma);
 /** 三轴逐轴叠加（[base] 为该传感器 σ 的起始槽） */
 void add_noise_xyz(portal_sensor_event_t *e, int base);
+
+/* ---- 按组波动（vw_wobble.c） ---- */
+/**
+ * 本事件的波动偏差（相对量，约 ±(amp+rnd)）—— **无锁**，调用方必须已持有 [g_lock]。
+ * ⚠️ 会**推进慢漂状态并消耗随机数**：同一事件只该取一次（角度类与向量类共用同一个 dev）；
+ * 参数全 0 时在碰随机数之前就返回 0，因此 0 值不改变随机流。
+ */
+double vw_wobble_dev(int group, long long now);
+/**
+ * 向量类专用偏差（**绝对单位**，= 慢漂全额 ×[ref] + 逐条随机 ≤[ref]/180，100ms 采样保持）：
+ * 同窗内所有传感器拿到同一个值 ⇒ `accel = gravity + linear` 成立、读数也不逐条乱跳。
+ */
+double vw_wobble_vec_dev(int group, double ref, long long now);
+
+/** 角度类专用偏差（度）：慢漂按 180° 折算 + 逐条抖动**最多 1°**（见 vw_wobble.c） */
+double vw_wobble_angle_dev(int group, long long now);
+/** 该类型的参考量（0 = 不吃波动）：向量类 = 各分量共用的绝对偏差尺度 */
+double vw_wobble_ref(int32_t type);
+/** 该类型要吃波动的**分量个数**（0 = 单独处理或不吃：旋转矢量加在半角上） */
+int vw_wobble_dims(int32_t type);
+/** 步间隔波动：把基准间隔按「1 + dev」缩放（dev = 0 时原样返回，逐位一致） */
+long long vw_wobble_step_interval(long long base, long long now);
 
 #ifdef __cplusplus
 }

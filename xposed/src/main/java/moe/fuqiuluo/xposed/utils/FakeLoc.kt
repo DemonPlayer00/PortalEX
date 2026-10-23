@@ -36,12 +36,51 @@ object FakeLoc {
     var enableMockWifi: Boolean
         get() = LocConfig.enableMockWifi
         set(value) { LocConfig.enableMockWifi = value }
-    var enableBinderSensorMock: Boolean
-        get() = LocConfig.enableBinderSensorMock
-        set(value) { LocConfig.enableBinderSensorMock = value }
-    var sensorGridHz: Int
-        get() = LocConfig.sensorGridHz
-        set(value) { LocConfig.sensorGridHz = value }
+    /** 步频侧外周传感器模拟（步数计数器/检测器） */
+    var enableCadenceMock: Boolean
+        get() = LocConfig.enableCadenceMock
+        set(value) { LocConfig.enableCadenceMock = value }
+
+    /** 角度与指南针侧外周传感器模拟（加速度/陀螺/磁场） */
+    var enableOrientationMock: Boolean
+        get() = LocConfig.enableOrientationMock
+        set(value) { LocConfig.enableOrientationMock = value }
+
+    /** 任一侧还开着 ⇒ 这条链仍需装载（见 [LocConfig.anySensorMockEnabled]） */
+    val anySensorMockEnabled: Boolean
+        get() = LocConfig.anySensorMockEnabled
+
+    /*
+     * 按组波动（两个功能页各两条，单位 %，默认 15）：
+     *   · cadenceWobbleAmp/Rnd     —— 步频侧（波动强度 / 随机区间）
+     *   · orientationWobbleAmp/Rnd —— 角度与指南针侧
+     * 施加口径见 vw_wobble.c；0 值是逐位兼容值。
+     */
+    var cadenceWobbleAmp: Float
+        get() = LocConfig.cadenceWobbleAmp
+        set(value) { LocConfig.cadenceWobbleAmp = value }
+
+    var cadenceWobbleRnd: Float
+        get() = LocConfig.cadenceWobbleRnd
+        set(value) { LocConfig.cadenceWobbleRnd = value }
+
+    var orientationWobbleAmp: Float
+        get() = LocConfig.orientationWobbleAmp
+        set(value) { LocConfig.orientationWobbleAmp = value }
+
+    var orientationWobbleRnd: Float
+        get() = LocConfig.orientationWobbleRnd
+        set(value) { LocConfig.orientationWobbleRnd = value }
+    /** 体力参数（定序数组；见 [LocConfig.staminaWire]） */
+    var staminaWire: FloatArray
+        get() = LocConfig.staminaWire
+        set(value) { LocConfig.staminaWire = value }
+
+    /** 定位上报间隔（毫秒）：App 设置项，模块时钟按它出帧（见 [LocConfig.reportDurationMs]） */
+    var reportDurationMs: Long
+        get() = LocConfig.reportDurationMs
+        set(value) { LocConfig.reportDurationMs = value }
+
     var noiseProfile: FloatArray
         get() = LocConfig.noiseProfile
         set(value) { LocConfig.noiseProfile = value }
@@ -101,6 +140,12 @@ object FakeLoc {
     /** 把噪声档下发给原生层（实现见 [LocConfig.applyNoiseProfile]）。 */
     fun applyNoiseProfile(native: (Int, Float) -> Unit) = LocConfig.applyNoiseProfile(native)
 
+    /** 把两组波动参数下发给原生层（实现见 [LocConfig.applyGroupWobble]）。 */
+    fun applyGroupWobble(native: (Int, Float, Float) -> Unit) = LocConfig.applyGroupWobble(native)
+
+    /** 波动参数的一行回显（日志/诊断用）。 */
+    fun wobbleLine(): String = LocConfig.wobbleLine()
+
     var speedAmplitude: Double
         get() = LocConfig.speedAmplitude
         set(value) { LocConfig.speedAmplitude = value }
@@ -142,6 +187,9 @@ object FakeLoc {
         get() = VirtualWorld.offset_altitude
     /** 取一次"静止保底速度"：慢随机游走 + 一阶低通（实现见 [VirtualWorld.speedFloorSample]）。 */
     fun speedFloorSample(): Double = VirtualWorld.speedFloorSample()
+
+    /** 取一次"运动期速度偏移"：会话偏置 + 秒级快分量（实现见 [VirtualWorld.speedOffsetSample]）。 */
+    fun speedOffsetSample(amplitude: Double): Double = VirtualWorld.speedOffsetSample(amplitude)
     /** 步频-移动速度线性模型（实现见 [VirtualWorld.cadenceForSpeed]）。 */
     fun cadenceForSpeed(speed: Double): Int = VirtualWorld.cadenceForSpeed(speed)
     /** 注入朝向：平滑中轴 + 低频漂移（实现见 [VirtualWorld.processedBearing]）。 */

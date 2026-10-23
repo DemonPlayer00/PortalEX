@@ -6,8 +6,13 @@ import android.os.Bundle
 import android.os.Bundle as AndroidBundle
 import android.util.Log
 import moe.fuqiuluo.portalex.ext.altitude
-import moe.fuqiuluo.portalex.ext.binderSensorMock
+import moe.fuqiuluo.portalex.ext.cadenceMock
+import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
+import moe.fuqiuluo.portalex.ext.cadenceWobbleAmp
+import moe.fuqiuluo.portalex.ext.cadenceWobbleRnd
+import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
+import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.enableAGPS
@@ -17,9 +22,10 @@ import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
-import moe.fuqiuluo.portalex.ext.sensorGridHz
+import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
@@ -65,7 +71,8 @@ object ConfigSync {
     /**
      * 只写**本进程镜像**（不下发）。
      *
-     * 摇杆/运动循环读的是本进程这份 `FakeLoc`，所以设置项改完要立刻镜像一下；
+     * 本进程这份 `FakeLoc` 现在是**显示用的镜像**（真正的世界在 system_server），
+     * 所以设置项改完镜像一下，界面/订阅才看到同一个值；
      * 而"下发"是另一件事（[push]）。把这两件事分开写，是为了不再出现"以为下发了、
      * 其实只改了本地镜像"这种假象。
      */
@@ -80,8 +87,9 @@ object ConfigSync {
         FakeLoc.enableNMEA = context.enableNMEA
         FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
         FakeLoc.disableGetFromLocation = !context.enableGetFromLocation
-        FakeLoc.enableBinderSensorMock = context.binderSensorMock
-        FakeLoc.sensorGridHz = context.sensorGridHz
+        // 两侧各读自己的 pref（开关分别在「步频」「角度和指南针」两个功能页上）
+        FakeLoc.enableCadenceMock = context.cadenceMock
+        FakeLoc.enableOrientationMock = context.orientationMock
         FakeLoc.cadenceScale = context.cadenceScale.toDouble()
         FakeLoc.noiseProfile = context.sensorNoise
     }
@@ -114,11 +122,15 @@ object ConfigSync {
         rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
         rely.putBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)
         rely.putBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
-        rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
+        rely.putBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+        rely.putBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
         rely.putFloat(Key.CADENCE_SCALE, FakeLoc.cadenceScale.toFloat())
         // 注入噪声档：读不到键（旧版 App）时系统侧保持当前值，行为逐位不变
         rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
+        // 体力参数：App 只编辑参数，状态机在系统侧（见 StaminaController / StaminaRuntime）
+        rely.putFloatArray(Key.STAMINA_CONFIG, StaminaController.config().toWire())
+        // 定位上报间隔（毫秒）：推进搬到系统侧后，出帧节奏由模块时钟按它决定
+        rely.putLong(Key.REPORT_DURATION, context.reportDuration.toLong())
 
         return resultOf(MockServiceHelper.send(locationManager, rely))
     }
@@ -129,17 +141,28 @@ object ConfigSync {
      * 这条命令同时是**启动时唯一会走到的传感器侧配置载体** ⇒ 噪声档与注入栅格随它一起恢复，
      * 否则系统进程重启后校准结果就丢了（退回内置默认）。
      */
-    fun setSensorMock(context: Context, locationManager: LocationManager?, enabled: Boolean): Result {
+    fun setSensorMock(context: Context, locationManager: LocationManager?, cadence: Boolean, orientation: Boolean): Result {
         if (locationManager == null) return Result.NO_SERVICE
         val rely = Bundle()
         rely.putString(Key.COMMAND_ID, Cmd.SET_SENSOR_MOCK)
-        rely.putBoolean(Key.BINDER_SENSOR_MOCK, enabled)
+        rely.putBoolean(Key.CADENCE_MOCK, cadence)
+        rely.putBoolean(Key.ORIENTATION_MOCK, orientation)
         runCatching {
             FakeLoc.noiseProfile = context.sensorNoise
-            FakeLoc.sensorGridHz = context.sensorGridHz
             rely.putFloatArray(Key.NOISE_PROFILE, FakeLoc.noiseProfile)
-            rely.putInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
         }.onFailure { Log.w(TAG, "传感器侧配置恢复失败：${it.message}") }
+        runCatching {
+            // 两组波动（各两条，%）：与噪声档同一条命令一起下发 —— 这条命令是"传感器侧配置"
+            // 的载体，系统进程重启后靠它恢复，少一项就会退回内置默认。
+            FakeLoc.cadenceWobbleAmp = context.cadenceWobbleAmp
+            FakeLoc.cadenceWobbleRnd = context.cadenceWobbleRnd
+            FakeLoc.orientationWobbleAmp = context.orientationWobbleAmp
+            FakeLoc.orientationWobbleRnd = context.orientationWobbleRnd
+            rely.putFloat(Key.CADENCE_WOB_AMP, FakeLoc.cadenceWobbleAmp)
+            rely.putFloat(Key.CADENCE_WOB_RND, FakeLoc.cadenceWobbleRnd)
+            rely.putFloat(Key.ORIENTATION_WOB_AMP, FakeLoc.orientationWobbleAmp)
+            rely.putFloat(Key.ORIENTATION_WOB_RND, FakeLoc.orientationWobbleRnd)
+        }.onFailure { Log.w(TAG, "波动参数下发失败：${it.message}") }
         return resultOf(MockServiceHelper.send(locationManager, rely))
     }
 
@@ -148,7 +171,7 @@ object ConfigSync {
      * 关着开关时也要发 —— 系统侧进程重启后不该残留"开着"的状态。
      */
     fun restoreAfterHandshake(context: Context, locationManager: LocationManager?): Result {
-        val sensor = setSensorMock(context, locationManager, context.binderSensorMock)
+        val sensor = setSensorMock(context, locationManager, context.cadenceMock, context.orientationMock)
         val config = push(context, locationManager)
         // 两者任一失败都要如实上报；传感器开关的失败更严重（决定注入层装不装）
         return if (sensor != Result.OK) sensor else config
