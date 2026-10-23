@@ -232,6 +232,7 @@ object CameraMockCodec {
     private const val K_DURATION = "durationMs"
     private const val K_TAGS = "tags"
     private const val K_ADDED_AT = "addedAt"
+    private const val K_CREATED_AT = "createdAt"
     private const val K_RECORDED_AT = "recordedAt"
     private const val K_TRACK = "track"
     private const val K_T = "t"
@@ -252,6 +253,44 @@ object CameraMockCodec {
     /** 只编/解"视频点数组"：app 侧把库存在偏好里时用它（开关与筛选另存简单类型，见 CameraMockStore） */
     fun encodePoints(points: List<CameraVideoPoint>): String =
         MiniJson.write(points.map { pointToMap(it) })
+
+    /** 路线存储：route → captures(时间轴/轨迹) → video file */
+    fun encodeRoutes(routes: List<CameraRoute>): String =
+        MiniJson.write(routes.map { routeToMap(it) })
+
+    fun decodeRoutes(text: String): List<CameraRoute> {
+        val list = MiniJson.parse(text) as? List<*> ?: return emptyList()
+        return list.mapNotNull { routeFromMap(it as? Map<*, *> ?: return@mapNotNull null) }
+    }
+
+    fun pointsToRoutes(points: List<CameraVideoPoint>): List<CameraRoute> = points.map { p ->
+        CameraRoute(
+            id = p.id,
+            name = p.name,
+            lat = p.lat,
+            lon = p.lon,
+            createdAt = p.videos.mapNotNull { v -> v.recordedAt.takeIf { it > 0 } ?: v.addedAt }
+                .minOrNull() ?: 0L,
+            videos = p.videos.sortedBy { it.recordedAt.takeIf { r -> r > 0 } ?: it.addedAt }
+        )
+    }
+
+    fun routesToPoints(routes: List<CameraRoute>): List<CameraVideoPoint> = routes.map { r ->
+        CameraVideoPoint(r.id, r.name, r.lat, r.lon, r.videos.sortedBy { it.recordedAt })
+    }
+
+    private fun routeToMap(r: CameraRoute): Map<String, Any?> =
+        pointToMap(CameraVideoPoint(r.id, r.name, r.lat, r.lon, r.videos))
+            .toMutableMap().apply { put(K_CREATED_AT, r.createdAt) }
+
+    private fun routeFromMap(m: Map<*, *>): CameraRoute? {
+        val point = pointFromMap(m) ?: return null
+        return CameraRoute(
+            point.id, point.name, point.lat, point.lon,
+            (m[K_CREATED_AT] as? Number)?.toLong() ?: 0L,
+            point.videos.sortedBy { it.recordedAt }
+        )
+    }
 
     fun decodePoints(text: String): List<CameraVideoPoint> {
         val list = MiniJson.parse(text) as? List<*> ?: return emptyList()

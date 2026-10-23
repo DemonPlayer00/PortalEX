@@ -20,19 +20,19 @@ import com.baidu.mapapi.map.BaiduMap
 import com.baidu.mapapi.map.LogoPosition
 import com.baidu.mapapi.map.MapStatus
 import com.baidu.mapapi.map.MapStatusUpdateFactory
-import com.baidu.mapapi.map.MyLocationData
+import com.baidu.mapapi.map.Overlay
+import com.baidu.mapapi.map.OverlayOptions
+import com.baidu.mapapi.map.MarkerOptions
+import com.baidu.mapapi.map.PolylineOptions
+import com.baidu.mapapi.map.BitmapDescriptorFactory
 import com.baidu.mapapi.model.LatLng
-import com.baidu.location.BDAbstractLocationListener
-import com.baidu.location.BDLocation
-import com.baidu.location.LocationClient
-import com.baidu.location.LocationClientOption
+import com.baidu.mapapi.model.LatLngBounds
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.android.widget.FabBarView
-import moe.fuqiuluo.portalex.bdmap.locateMe
 import moe.fuqiuluo.portalex.bdmap.setMapConfig
 import moe.fuqiuluo.portalex.databinding.FragmentCameraPointEditBinding
 import moe.fuqiuluo.portalex.ext.gcj02
@@ -40,11 +40,14 @@ import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
+import moe.fuqiuluo.xposed.utils.WorldMath
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
 import org.json.JSONArray
-import kotlin.random.Random
+import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.io.File
 
 /**
  * **视频点编辑页**：上半地图（准星 = 该点坐标），下半是这个点名下的视频清单
@@ -67,7 +70,6 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
 
-    private lateinit var mLocationClient: LocationClient
     private lateinit var videoAdapter: CameraVideoAdapter
 
     /** 正在编辑的点（内存工作副本）；null = 还没加载（首次 onResume 时按参数或地图中心建） */
@@ -75,6 +77,8 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     /** 地图是否已经给出过有效中心：没就绪前不拿"北京默认中心"去覆盖坐标 */
     private var mapReady = false
+    private var routeOverlay: Overlay? = null
+    private var initialFitDone = false
 
     /**
      * 摄像头权限用**经典 requestPermissions + onRequestPermissionsResult**，
@@ -109,6 +113,62 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         )
     }
 
+    private var pendingExport: CameraVideo? = null
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        val video = pendingExport ?: return@registerForActivityResult
+        pendingExport = null
+        if (uri == null) return@registerForActivityResult
+        val ctx = requireContext()
+        Executors.newSingleThreadExecutor().execute {
+            val ok = runCatching {
+                val videoFile = CameraMockStore.videoFile(ctx, video.file)
+                val exportStream = if (videoFile.isFile) {
+                    videoFile.inputStream()
+                } else {
+                    // 本地已由 system_server 导入删除：通过 selection socket 取 fd。
+                    CameraMockServerBridge.openVideo(video.id).getOrElse { error("无法从 system_server 取视频：${it.message}") }
+                }
+                ctx.contentResolver.openOutputStream(uri)?.use { output ->
+                    java.util.zip.ZipOutputStream(output).use { zip ->
+                        zip.putNextEntry(java.util.zip.ZipEntry(video.file))
+                        exportStream.use { it.copyTo(zip) }
+                        zip.closeEntry()
+                        val track = JSONObject().apply {
+                            put("videoId", video.id)
+                            put("videoName", video.name)
+                            put("file", video.file)
+                            put("durationMs", video.durationMs)
+                            put("recordedAt", video.recordedAt)
+                            put("tags", JSONArray(video.tags))
+                            put("track", JSONArray().apply {
+                                video.track.forEach { p -> put(JSONObject().apply {
+                                    put("t", p.tMs); put("lat", p.lat); put("lon", p.lon)
+                                }) }
+                            })
+                        }
+                        zip.putNextEntry(java.util.zip.ZipEntry("track.json"))
+                        zip.write(track.toString().toByteArray())
+                        zip.closeEntry()
+                    }
+                } ?: error("无法写入导出文件")
+            }.onFailure { exception ->
+                activity?.runOnUiThread {
+                    Toast.makeText(ctx, "导出失败：${exception.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            if (ok.isSuccess) activity?.runOnUiThread {
+                Toast.makeText(ctx, "已导出视频与路径时间轴", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun exportVideo(video: CameraVideo) {
+        pendingExport = video
+        exportLauncher.launch("cammock-${video.name.take(40).replace(Regex("[^A-Za-z0-9._-]"), "_")}.zip")
+    }
+
     private fun parseTrack(json: String?): List<CameraVideoTrackPoint> {
         if (json.isNullOrBlank()) return emptyList()
         return runCatching {
@@ -122,27 +182,6 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 ).takeIf { it.lat.isFinite() && it.lon.isFinite() }
             }
         }.getOrDefault(emptyList())
-    }
-
-    private val importLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isNullOrEmpty()) return@registerForActivityResult
-        lifecycleScope.launch {
-            var ok = 0
-            uris.forEach { uri ->
-                val video = CameraMockStore.importVideo(requireContext(), uri)
-                if (video != null) {
-                    addVideo(video)
-                    ok++
-                }
-            }
-            Toast.makeText(
-                requireContext(),
-                if (ok == uris.size) "已导入 $ok 段视频" else "导入 $ok/${uris.size} 段（其余不可读）",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
     }
 
     override fun onCreateView(
@@ -169,11 +208,9 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             setCompassEnable(true)
             uiSettings.isCompassEnabled = true
             uiSettings.isOverlookingGesturesEnabled = true
-            isMyLocationEnabled = true
-            setMapConfig(
-                baiduMapViewModel.perspectiveState,
-                if (Random.nextBoolean()) R.drawable.icon_my_location else null
-            )
+            // 预览只显示路线，不再画当前位置/定位点
+            isMyLocationEnabled = false
+            setMapConfig(baiduMapViewModel.perspectiveState, null)
             setOnMapStatusChangeListener(object : BaiduMap.OnMapStatusChangeListener {
                 override fun onMapStatusChangeStart(status: MapStatus?) = Unit
                 override fun onMapStatusChangeStart(status: MapStatus?, reason: Int) = Unit
@@ -203,12 +240,12 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         videoAdapter = CameraVideoAdapter(
             mutableListOf(),
             onEditTags = { video -> editTags(video) },
-            onDelete = { video -> confirmDelete(video) }
+            onDelete = { video -> confirmDelete(video) },
+            onExport = { video -> exportVideo(video) }
         )
         binding.cameraVideoList.layoutManager = LinearLayoutManager(requireContext())
         binding.cameraVideoList.adapter = videoAdapter
 
-        initLocationClient()
         return binding.root
     }
 
@@ -218,43 +255,6 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         binding.bmapView.onCreate(requireContext(), savedInstanceState)
     }
 
-    private fun initLocationClient() {
-        mLocationClient = LocationClient(requireContext())
-        val option = LocationClientOption().apply {
-            isOpenGps = true
-            enableSimulateGps = false
-            setIsNeedAddress(false)
-            setNeedDeviceDirect(true)
-            isLocationNotify = true
-            setIgnoreKillProcess(true)
-            setIsNeedLocationDescribe(false)
-            setIsNeedLocationPoiList(false)
-            isOpenGnss = true
-            setIsNeedAltitude(false)
-            locationMode = LocationClientOption.LocationMode.Hight_Accuracy
-            setCoorType(Portal.DEFAULT_COORD_STR)
-            setScanSpan(1000)
-        }
-        mLocationClient.locOption = option
-        mLocationClient.registerLocationListener(object : BDAbstractLocationListener() {
-            override fun onReceiveLocation(loc: BDLocation?) {
-                if (loc == null) return
-                val locData = MyLocationData.Builder()
-                    .accuracy(loc.radius)
-                    .direction(loc.direction)
-                    .latitude(loc.latitude)
-                    .longitude(loc.longitude)
-                    .build()
-                with(baiduMapViewModel) {
-                    currentLocation = loc.wgs84
-                    baiduMap.setMyLocationData(locData)
-                }
-            }
-        })
-        baiduMapViewModel.mLocationClient = mLocationClient
-        mLocationClient.enableLocInForeground(1, baiduMapViewModel.mNotification)
-        mLocationClient.start()
-    }
 
     override fun onResume() {
         super.onResume()
@@ -264,23 +264,12 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 FabBarView.Action(
                     R.drawable.baseline_control_camera_24,
                     getString(R.string.camera_record)
-                ) { startRecording() },
-                FabBarView.Action(
-                    R.drawable.ic_menu_gallery,
-                    getString(R.string.camera_import)
-                ) { importLauncher.launch(arrayOf("video/*")) },
-                FabBarView.Action(
-                    R.drawable.baseline_save_24,
-                    getString(R.string.camera_point_save)
-                ) { saveAndExit() },
-                FabBarView.Action(
-                    R.drawable.baseline_my_location_24,
-                    getString(R.string.follow_location)
-                ) { baiduMapViewModel.baiduMap.locateMe() }
+                ) { startRecording() }
             )
         )
         if (working == null) loadPoint()
         refreshVideos()
+        fitRouteToMap()
         updateCoordReadout()
     }
 
@@ -303,10 +292,6 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        if (::mLocationClient.isInitialized && mLocationClient.isStarted) {
-            mLocationClient.disableLocInForeground(true)
-            mLocationClient.stop()
-        }
         _binding?.bmapView?.onDestroy()
         _binding = null
     }
@@ -332,7 +317,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     private fun updateCoordReadout() {
         val coord = crosshairWgs84() ?: return
-        binding.cameraCoordReadout.text = "准星 ${CameraMockFormat.coord(coord.first, coord.second)}"
+        binding.cameraCoordReadout.text = "路线中心 ${CameraMockFormat.coord(coord.first, coord.second)}"
     }
 
     private fun loadPoint() {
@@ -342,17 +327,109 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         if (existing != null) {
             working = existing
             binding.cameraPointNameInput.setText(existing.name)
-            runCatching {
-                baiduMapViewModel.baiduMap.setMapStatus(
-                    MapStatusUpdateFactory.newLatLngZoom(Pair(existing.lat, existing.lon).gcj02, 19f)
-                )
-            }
             mapReady = true
+            drawRoute()
+            fitRouteToMap()
         } else {
             val center = crosshairWgs84() ?: Pair(39.908722, 116.397499)
             working = CameraMockStore.newPoint("", center.first, center.second)
         }
         updateCoordReadout()
+    }
+
+    /** 路线预览：把当前点下所有视频的轨迹连成一条蓝色折线（不再画准星）。 */
+    private fun drawRoute() {
+        val map = runCatching { baiduMapViewModel.baiduMap }.getOrNull() ?: return
+        routeOverlay?.let { runCatching { it.remove() } }
+        routeOverlay = null
+        val raw = working?.videos.orEmpty()
+            .flatMap { it.track }
+            .sortedBy { it.tMs }
+        // 室内静止时百度可能连续返回同一坐标：12 个点全相同。
+        // 去重后不足 2 个点就没有“路线形状”，只画一个蓝色定位点，避免零长折线。
+        val distinct = raw.distinctBy { "%.6f,%.6f".format(it.lat, it.lon) }
+        if (distinct.size < 2) {
+            val point = raw.firstOrNull() ?: working?.let {
+                CameraVideoTrackPoint(0L, it.lat, it.lon)
+            } ?: return
+            routeOverlay = runCatching {
+                map.addOverlay(
+                    MarkerOptions()
+                        .position((point.lat to point.lon).gcj02)
+                        .icon(BitmapDescriptorFactory.fromResource(R.drawable.icon_selected_location_16))
+                )
+            }.getOrNull()
+            return
+        }
+        val points = distinct.map { (it.lat to it.lon).gcj02 }
+        val options = PolylineOptions()
+            .points(points)
+            .width(8)
+            .color(0xFF1E88E5.toInt())
+            .zIndex(2)
+        routeOverlay = runCatching { map.addOverlay(options) }.getOrNull()
+    }
+
+    /**
+     * 路线预览初始视角：按轨迹实际跨度自动选择缩放级别，让路线/单点都清晰可见。
+     *  - 单点或静止轨迹：19 级近景 + 点标记；
+     *  - 短距离室内路线：按跨度 19/18/17 级；
+     *  - 长路线：用 LatLngBounds 适配整条路线形状和总体位置。
+     */
+    private fun fitRouteToMap() {
+        val map = runCatching { baiduMapViewModel.baiduMap }.getOrNull() ?: return
+        val point = working ?: return
+        val raw = point.videos.orEmpty()
+            .flatMap { it.track }
+            .sortedBy { it.tMs }
+            .ifEmpty { listOf(CameraVideoTrackPoint(0L, point.lat, point.lon)) }
+        val distinct = raw.distinctBy { "%.6f,%.6f".format(it.lat, it.lon) }
+        val centerLat = (distinct.minOf { it.lat } + distinct.maxOf { it.lat }) / 2.0
+        val centerLon = (distinct.minOf { it.lon } + distinct.maxOf { it.lon }) / 2.0
+        val center = (centerLat to centerLon).gcj02
+
+        if (distinct.size < 2) {
+            runCatching {
+                map.setMapStatus(MapStatusUpdateFactory.newLatLngZoom(center, 19f))
+            }
+            initialFitDone = true
+            return
+        }
+
+        val span = distinct.maxOf { a ->
+            distinct.maxOf { b ->
+                WorldMath.haversine(a.lat, a.lon, b.lat, b.lon)
+            }
+        }
+        val zoom = when {
+            span < 8 -> 19f
+            span < 25 -> 18f
+            span < 60 -> 17f
+            span < 150 -> 16f
+            span < 400 -> 15f
+            else -> null
+        }
+        if (zoom != null) {
+            runCatching {
+                map.setMapStatus(MapStatusUpdateFactory.newLatLngZoom(center, zoom))
+            }
+            initialFitDone = true
+            return
+        }
+
+        // 长路线：bounds 保证完整形状，视野由 SDK 按地图 View 尺寸计算。
+        val route = distinct.map { (it.lat to it.lon).gcj02 }
+        val builder = LatLngBounds.Builder()
+        route.forEach { builder.include(it) }
+        val bounds = runCatching { builder.build() }.getOrNull()
+        if (bounds != null) {
+            val w = binding.bmapView.width.takeIf { it > 0 } ?: 1080
+            val h = binding.bmapView.height.takeIf { it > 0 } ?: 720
+            runCatching {
+                map.setMapStatus(MapStatusUpdateFactory.newLatLngBounds(bounds, w, h))
+            }
+            initialFitDone = true
+        }
     }
 
     private fun refreshVideos() {
@@ -361,6 +438,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         binding.cameraVideoLabel.text = getString(R.string.camera_video_list) + "（${videos.size}）"
         // 还没有视频时给出下一步该干什么，而不是一个空列表
         binding.cameraVideoList.visibility = if (videos.isEmpty()) View.GONE else View.VISIBLE
+        drawRoute()
     }
 
     private fun addVideo(video: CameraVideo) {
@@ -368,7 +446,17 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         working = point.copy(videos = point.videos + video)
         CameraMockStore.upsert(requireContext(), working!!)
         refreshVideos()
+        autoUploadLibrary()
     }
+
+    private fun autoUploadLibrary() {
+        val ctx = requireContext()
+        Executors.newSingleThreadExecutor().execute {
+            CameraMockServerBridge.upload(ctx)
+        }
+    }
+
+
 
     private fun editTags(video: CameraVideo) {
         val ctx = requireContext()
@@ -452,23 +540,5 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         CameraMockStore.upsert(requireContext(), working!!)
     }
 
-    private fun saveAndExit() {
-        val point = working
-        if (point == null) {
-            findNavController().popBackStack()
-            return
-        }
-        val name = binding.cameraPointNameInput.text?.toString()?.trim().orEmpty()
-        if (name.isEmpty()) {
-            Toast.makeText(requireContext(), "请填写点位名称", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (crosshairWgs84() == null) {
-            Toast.makeText(requireContext(), "地图尚未就绪，请稍后再试", Toast.LENGTH_SHORT).show()
-            return
-        }
-        persistIfMeaningful()
-        Toast.makeText(requireContext(), "已保存「$name」", Toast.LENGTH_SHORT).show()
-        findNavController().popBackStack()
-    }
+
 }

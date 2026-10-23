@@ -89,6 +89,8 @@ import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
+import moe.fuqiuluo.portalex.ui.camera.CameraMockVideoSource
+import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
 class MainActivity : AppCompatActivity() {
@@ -194,6 +196,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 启动即完成 Camera Mock 旧点库 → route/capture 存储迁移，并清理历史 fixture 预设。
+        runCatching {
+            moe.fuqiuluo.portalex.ui.camera.CameraMockStore.routes(this)
+        }
+        // 虚拟摄像头默认关：每次冷启动都清掉上次持久化的开启状态，绝不自动接管相机。
+        cameraMockEnabled = false
+        CameraMockVideoSource.stop()
+        requestRequiredPermissionsIfNeeded()
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -493,6 +503,21 @@ class MainActivity : AppCompatActivity() {
         popup.show()
     }
 
+    private fun requestRequiredPermissionsIfNeeded() {
+        val required = arrayOf(
+            android.Manifest.permission.CAMERA,
+            android.Manifest.permission.ACCESS_FINE_LOCATION,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        val missing = required.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, it) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing.toTypedArray(), REQUEST_STARTUP_PERMISSIONS)
+        }
+    }
+
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
         // recreate（深/浅切换）后此方法每次重 inflate menu——visibility 必须按
@@ -721,6 +746,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val REQUEST_STARTUP_PERMISSIONS = 1001
         private const val REQUEST_PERMISSIONS_CODE = 111
 
         /** 活动识别（步数）权限用**独立请求码**：它的结果是非阻断的，不能和主清单混在一起判定 */

@@ -44,12 +44,20 @@ object CameraMockProtocol {
         /** app → 模块：当前表象位置（回包键 [Key.HAS_POSITION]/[Key.LAT]/[Key.LON]） */
         const val POSITION = "position"
 
+        /** system_server → app：拉取完整路线库（回包键 [Key.MANIFEST_JSON]，内容为 routes） */
+        const val ROUTES = "routes"
+
+        /** system_server → app：导入完成后删除本地视频本体（只保留元数据） */
+        const val DELETE_LOCAL_VIDEOS = "delete_local_videos"
+
         /** 模块 → app：上报本次拦截结果（谁、选中了哪段、从第几毫秒起播），供 Test 页观测 */
         const val REPORT = "report"
     }
 
     object Key {
         const val MANIFEST_JSON = "manifest_json"
+        const val ROUTES_JSON = "routes_json"
+        const val DELETED = "deleted"
         const val HAS_POSITION = "has_position"
         const val LAT = "lat"
         const val LON = "lon"
@@ -68,5 +76,6 @@ object CameraMockProtocol {
         const val TAG_FILTER = "cameraMockTagFilter"
         const val TARGETS = "cameraMockTargets"
         const val LIBRARY = "cameraMockLibrary"
+        const val ROUTES = "cameraMockRoutes"
     }
 }

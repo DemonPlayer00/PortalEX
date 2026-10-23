@@ -291,8 +291,16 @@ class MockServiceViewModel : ViewModel() {
                         MockServiceHelper.getLocation(value)
                     } else null
                     simulated ?: runCatching {
-                        (value.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                            ?: value.getLastKnownLocation(LocationManager.NETWORK_PROVIDER))
+                        val providers = buildList {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                add(LocationManager.FUSED_PROVIDER)
+                            }
+                            add(LocationManager.NETWORK_PROVIDER)
+                            add(LocationManager.GPS_PROVIDER)
+                        }
+                        providers.asSequence()
+                            .mapNotNull { value.getLastKnownLocation(it) }
+                            .maxByOrNull { it.time }
                             ?.let { it.latitude to it.longitude }
                     }.getOrNull()
                 }

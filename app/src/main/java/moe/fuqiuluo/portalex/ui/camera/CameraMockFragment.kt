@@ -4,12 +4,14 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.location.LocationManager
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -18,6 +20,8 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
@@ -34,12 +38,14 @@ import com.baidu.mapapi.map.MapStatusUpdateFactory
 import com.baidu.mapapi.map.MarkerOptions
 import com.baidu.mapapi.map.Overlay
 import com.baidu.mapapi.map.OverlayOptions
+import com.baidu.mapapi.map.PolylineOptions
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
+import moe.fuqiuluo.portalex.vcam.CameraRealFake
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 
 
@@ -49,6 +55,7 @@ import moe.fuqiuluo.xposed.camera.CameraMockSelector
 import moe.fuqiuluo.xposed.camera.CameraTags
 import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
 import org.json.JSONArray
+import java.util.concurrent.Executors
 import moe.fuqiuluo.xposed.utils.WorldMath
 
 /**
@@ -85,7 +92,29 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private var rebuildingFilter = false
 
     private var mapExpanded = false
+    private val main = Handler(Looper.getMainLooper())
     private var pendingRecordAfterPermission = false
+    private val cammockImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val ctx = requireContext()
+        Executors.newSingleThreadExecutor().execute {
+            val result = CammockManager.importArchive(ctx, uri)
+            main.post {
+                Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
+                if (!result.supported) {
+                    MaterialAlertDialogBuilder(ctx)
+                        .setTitle("机型适配警告")
+                        .setMessage(result.message)
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+                updateImplementationUi()
+                refresh()
+            }
+        }
+    }
 
     private val recordLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -106,24 +135,64 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 Toast.makeText(requireContext(), "录制没有可用位置", Toast.LENGTH_SHORT).show()
                 return@registerForActivityResult
             }
-        val point = CameraMockStore.newPoint(
-            "录制 " + java.text.SimpleDateFormat(
-                "MM-dd HH:mm", java.util.Locale.getDefault()
-            ).format(java.util.Date(recordedAt.takeIf { it > 0 } ?: System.currentTimeMillis())),
-            start.first, start.second
-        )
         val video = CameraMockStore.registerRecorded(
             requireContext(), file, null,
             recordedAt = recordedAt,
             track = track
         )
-        CameraMockStore.upsert(requireContext(), point.copy(videos = listOf(video)))
+        val points = CameraMockStore.points(requireContext())
+        val previous = points.minByOrNull { p ->
+            val end = p.videos.lastOrNull()?.track?.lastOrNull()
+            val lat = end?.lat ?: p.lat
+            val lon = end?.lon ?: p.lon
+            WorldMath.haversine(start.first, start.second, lat, lon)
+        }
+        val distance = previous?.let { p ->
+            val end = p.videos.lastOrNull()?.track?.lastOrNull()
+            val lat = end?.lat ?: p.lat
+            val lon = end?.lon ?: p.lon
+            WorldMath.haversine(start.first, start.second, lat, lon)
+        } ?: Double.MAX_VALUE
+        if (previous != null && distance <= 80.0) {
+            val merged = previous.copy(
+                videos = (previous.videos + video).sortedBy { it.recordedAt }
+            )
+            CameraMockStore.upsert(requireContext(), merged)
+            Toast.makeText(
+                requireContext(),
+                "已追加到「${previous.name}」：${track.size} 个轨迹点",
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            val point = CameraMockStore.newPoint(
+                "路线 " + java.text.SimpleDateFormat(
+                    "MM-dd HH:mm", java.util.Locale.getDefault()
+                ).format(java.util.Date(recordedAt.takeIf { it > 0 } ?: System.currentTimeMillis())),
+                start.first, start.second
+            )
+            CameraMockStore.upsert(requireContext(), point.copy(videos = listOf(video)))
+            Toast.makeText(
+                requireContext(),
+                "已新建路线：${track.size} 个轨迹点，视频已串联",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
         refresh()
-        Toast.makeText(
-            requireContext(),
-            "已录制 ${track.size} 个轨迹点，视频已挂到新点位",
-            Toast.LENGTH_SHORT
-        ).show()
+        autoUploadLibrary()
+    }
+
+    private fun autoUploadLibrary() {
+        val ctx = requireContext()
+        Executors.newSingleThreadExecutor().execute {
+            val result = CameraMockServerBridge.upload(ctx)
+            main.post {
+                result.onSuccess { n ->
+                    Toast.makeText(ctx, "已存储到 system_server", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(ctx, "自动上传失败：${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     override fun onCreateView(
@@ -141,6 +210,33 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
         binding.cameraPointList.layoutManager = LinearLayoutManager(requireContext())
         binding.cameraPointList.adapter = adapter
+        ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
+            0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT
+        ) {
+            override fun onMove(
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+                target: RecyclerView.ViewHolder
+            ): Boolean = false
+
+            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
+                val position = viewHolder.adapterPosition
+                if (position == RecyclerView.NO_POSITION) return
+                val point = adapter[position]
+                val ctx = requireContext()
+                MaterialAlertDialogBuilder(ctx)
+                    .setTitle("删除路段")
+                    .setMessage("将删除「${point.name}」及其下全部 ${point.videos.size} 段视频，无法恢复。")
+                    .setNegativeButton("取消") { _, _ -> adapter.notifyItemChanged(position) }
+                    .setPositiveButton("删除") { _, _ ->
+                        CameraMockStore.removePoint(ctx, point.id)
+                        autoUploadLibrary()
+                        refresh()
+                        Toast.makeText(ctx, "已删除路段和 ${point.videos.size} 段视频", Toast.LENGTH_SHORT).show()
+                    }
+                    .show()
+            }
+        }).attachToRecyclerView(binding.cameraPointList)
 
         /* MapView 需要自己的一套生命周期（onCreate/onResume/onPause/onDestroy），
          * 不转发的话地图不会初始化、恢复渲染 —— 与路线编辑页同一套写法 */
@@ -162,6 +258,13 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
 
         binding.switchCameraMock.setOnClickListener { toggleMock() }
+        binding.cameraMockImportImpl.setOnClickListener {
+            cammockImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+        }
+        binding.cameraMockUpdateImpl.setOnClickListener {
+            cammockImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+        }
+        binding.cameraMockUninstallImpl.setOnClickListener { confirmUninstallCammock() }
         binding.cameraMockMapToggle.setOnClickListener { toggleMap() }
         // 说明与目标应用放进对话框：它们"读一次就够"，留在页面上会把视频点列表挤没
         binding.cameraMockInfo.setOnClickListener { showInfoDialog() }
@@ -193,31 +296,15 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     private fun updateFabActions() {
         val fabBar = (activity as? MainActivity)?.fabBar ?: return
-        if (mapExpanded) {
-            fabBar.setActions(
-                listOf(
-                    FabBarView.Action(
-                        R.drawable.baseline_control_camera_24,
-                        getString(R.string.camera_record)
-                    ) { startRecordingFromMap() }
-                )
+        // 录制完成自动上传；下载/预览已转移到路线编辑页。
+        fabBar.setActions(
+            listOf(
+                FabBarView.Action(
+                    R.drawable.baseline_control_camera_24,
+                    getString(R.string.camera_record)
+                ) { startRecordingFromMap() }
             )
-        } else {
-            fabBar.setActions(
-                listOf(
-                    FabBarView.Action(
-                        R.drawable.baseline_add_location_alt_24,
-                        getString(R.string.camera_point_new)
-                    ) {
-                        findNavController().navigate(R.id.nav_camera_point_edit)
-                    },
-                    FabBarView.Action(
-                        R.drawable.baseline_settings_24,
-                        getString(R.string.camera_mock_targets)
-                    ) { showTargetsDialog() }
-                )
-            )
-        }
+        )
     }
 
     /**
@@ -225,10 +312,60 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      * 录制期间 CameraRecordActivity 每秒采样 CameraMockRuntime.position()，
      * 结果中的 track 会随视频一起落库。
      */
+    private fun uploadLibraryToServer() {
+        Executors.newSingleThreadExecutor().execute {
+            val result = CameraMockServerBridge.upload(requireContext())
+            main.post {
+                result.onSuccess { n ->
+                    Toast.makeText(requireContext(), "已上传 $n 段视频，等待 system_server 导入", Toast.LENGTH_LONG).show()
+                }.onFailure {
+                    Toast.makeText(requireContext(), "上传失败：${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun downloadLibraryFromServer() {
+        Executors.newSingleThreadExecutor().execute {
+            val snapshot = CameraMockServerBridge.downloadSnapshot()
+            main.post {
+                if (snapshot == null) {
+                    Toast.makeText(requireContext(), "system_server 还没有下载快照", Toast.LENGTH_LONG).show()
+                    return@post
+                }
+                runCatching {
+                    val routes = moe.fuqiuluo.xposed.camera.CameraMockCodec.decodeRoutes(snapshot)
+                    CameraMockStore.setRoutes(requireContext(), routes)
+                    refresh()
+                    Toast.makeText(requireContext(), "已下载 ${routes.size} 条路线", Toast.LENGTH_SHORT).show()
+                }.onFailure {
+                    Toast.makeText(requireContext(), "下载库解析失败：${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     private fun startRecordingFromMap() {
-        val position = CameraMockRuntime.position()
-        if (position == null) {
-            Toast.makeText(requireContext(), "无法获取当前位置，请先在首页完成定位", Toast.LENGTH_LONG).show()
+        val locationManager = requireContext()
+            .getSystemService(LocationManager::class.java)
+        val locationOn = locationManager != null && (
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                runCatching { locationManager.isLocationEnabled }.getOrDefault(false)
+            } else {
+                runCatching {
+                    locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                        locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) ||
+                        (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
+                            locationManager.isProviderEnabled(LocationManager.FUSED_PROVIDER))
+                }.getOrDefault(false)
+            }
+            )
+        if (!locationOn) {
+            Toast.makeText(requireContext(), "请先打开位置服务，再录制移动轨迹", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (requireContext().cameraMockEnabled || CameraMockVideoSource.isRunning) {
+            Toast.makeText(requireContext(), "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
             return
         }
         val lm = mockServiceViewModel.locationManager
@@ -236,11 +373,44 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             Toast.makeText(requireContext(), "请先关闭位置模拟，再录制真实移动轨迹", Toast.LENGTH_LONG).show()
             return
         }
+        // 室内可能暂时没有最后已知位置；不阻塞拍摄，录制期间由融合定位补点。
+        val position = CameraMockRuntime.position()
+        if (position == null) {
+            Toast.makeText(
+                requireContext(),
+                "正在使用融合定位，开始录制后请稍等几秒",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        confirmRecording()
+    }
+
+    /** 拍摄前明确使用方法：脸在自拍镜头中，然后边走边录。 */
+    private fun confirmRecording() {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("录制路线")
+            .setMessage("请确保脸在自拍镜头中，点击开始后保持拍摄并走动；视频时间轴会同时记录移动轨迹。")
+            .setPositiveButton("开始") { _, _ -> launchRecorder() }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun launchRecorder() {
+        val missing = ArrayList<String>()
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) !=
             PackageManager.PERMISSION_GRANTED
+        ) missing += Manifest.permission.CAMERA
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
         ) {
+            missing += Manifest.permission.ACCESS_FINE_LOCATION
+            missing += Manifest.permission.ACCESS_COARSE_LOCATION
+        }
+        if (missing.isNotEmpty()) {
             pendingRecordAfterPermission = true
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+            requestPermissions(missing.toTypedArray(), REQUEST_CAMERA)
             return
         }
         recordLauncher.launch(Intent(requireContext(), CameraRecordActivity::class.java))
@@ -250,10 +420,18 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CAMERA && pendingRecordAfterPermission) {
             pendingRecordAfterPermission = false
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            val cameraOk = ContextCompat.checkSelfPermission(
+                requireContext(), Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+            val locationOk = ContextCompat.checkSelfPermission(
+                requireContext(), Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
+                requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            if (cameraOk && locationOk) {
                 recordLauncher.launch(Intent(requireContext(), CameraRecordActivity::class.java))
             } else {
-                Toast.makeText(requireContext(), "没有摄像头权限", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), "需要摄像头和位置权限才能录制轨迹", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -319,7 +497,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private fun drawPoints(points: List<CameraVideoPoint>) {
         val map = runCatching { binding.cameraMockMap.map }.getOrNull() ?: return
         val pointIcon = BitmapDescriptorFactory.fromResource(R.drawable.icon_selected_location_16)
-        val hereIcon = BitmapDescriptorFactory.fromResource(R.drawable.icon_my_location)
         pointOverlays.forEach { runCatching { it.remove() } }
         pointOverlays = emptyList()
         val options = ArrayList<OverlayOptions>(points.size + 1)
@@ -334,14 +511,20 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .title("${point.name}（${point.videos.size} 段）")
                 .extraInfo(bundle)
         }
-        /* 当前表象位置：没有位置模拟时不画（**不猜坐标** —— 猜错会让人以为选片错了） */
-        val here = CameraMockRuntime.position()
-        if (here != null) {
-            options += MarkerOptions()
-                .position((here.first to here.second).gcj02)
-                .icon(hereIcon)
-                .title(getString(R.string.camera_mock_current_position))
+        /* 每段视频的轨迹线：把路线和时间轴里的移动轨迹画出来 */
+        points.forEach { point ->
+            point.videos.forEach { video ->
+                if (video.track.size >= 2) {
+                    val line = video.track.map { (it.lat to it.lon).gcj02 }
+                    options += PolylineOptions()
+                        .points(line)
+                        .width(10)
+                        .color(0xFF1E88E5.toInt())
+                        .zIndex(1)
+                }
+            }
         }
+
         if (options.isNotEmpty()) {
             pointOverlays = runCatching { map.addOverlays(options) }
                 .onFailure { Log.w("CameraMockFragment", "addOverlays 失败（地图标记没画出来）", it) }
@@ -349,10 +532,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
         Log.i(
             "CameraMockFragment",
-            "地图标记：点位 ${points.size} 个 / 覆盖物 ${pointOverlays.size} 个 / 有表象位置 ${here != null}"
+            "地图路线：点位 ${points.size} 个 / 覆盖物 ${pointOverlays.size} 个"
         )
-        val focus = here?.let { (it.first to it.second).gcj02 }
-            ?: points.firstOrNull()?.let { (it.lat to it.lon).gcj02 }
+        val focus = points.firstOrNull()?.let { (it.lat to it.lon).gcj02 }
         if (focus != null) {
             runCatching { map.setMapStatus(MapStatusUpdateFactory.newLatLng(focus)) }
         }
@@ -366,6 +548,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         rebuildFilterChips()
         updateSwitch()
         updateStatus(points)
+        updateImplementationUi()
     }
 
     private fun rebuildFilterChips() {
@@ -404,6 +587,44 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         )?.let { binding.switchCameraMock.icon = it }
     }
 
+    private fun confirmUninstallCammock() {
+        val context = requireContext()
+        MaterialAlertDialogBuilder(context)
+            .setTitle("卸载摄像头实现")
+            .setMessage("将删除 app 私有目录和 /data/local/tmp/portalex/cammock 下的实现文件。")
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton("卸载") { _, _ ->
+                binding.cameraMockUninstallImpl.isEnabled = false
+                Executors.newSingleThreadExecutor().execute {
+                    val restore = CameraRealFake.setFake(context, false)
+                    val result = CammockManager.uninstall(context)
+                    main.post {
+                        binding.cameraMockUninstallImpl.isEnabled = true
+                        context.cameraMockEnabled = false
+                        CameraMockVideoSource.sync(context)
+                        updateSwitch()
+                        updateImplementationUi()
+                        Toast.makeText(context, result.getOrElse { restore.exceptionOrNull()?.message ?: "卸载失败" }, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun updateImplementationUi() {
+        if (_binding == null) return
+        val ctx = requireContext()
+        val installed = CammockManager.isInstalled(ctx)
+        binding.cameraMockImplStatus.text = if (installed) {
+            "实现已安装：" + CammockManager.supportedModels(ctx).joinToString().ifBlank { "未声明机型" }
+        } else {
+            "需要安装摄像头实现（按机型适配）"
+        }
+        binding.cameraMockImportImpl.text = if (installed) "重新导入实现" else "导入实现"
+        binding.cameraMockUpdateImpl.visibility = if (installed) View.VISIBLE else View.GONE
+        binding.cameraMockUninstallImpl.visibility = if (installed) View.VISIBLE else View.GONE
+    }
+
     private fun updateStatus(points: List<moe.fuqiuluo.xposed.camera.CameraVideoPoint>) {
         val context = requireContext()
         val enabled = context.cameraMockEnabled
@@ -415,38 +636,12 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             "未启动 · ${points.size} 个点位 / $videos 段视频"
         }
 
-        // 预计命中：把模块侧的选片规则在本页复算一遍（位置未知时不猜）
-        val position = CameraMockRuntime.position()
-        val manifest = CameraMockStore.manifest(context)
-        binding.cameraMockPosition.text = when {
-            !enabled -> getString(R.string.camera_mock_position_idle)
-            position == null -> getString(R.string.camera_mock_position_unknown)
-            else -> {
-                val hits = manifest.points.mapNotNull { p ->
-                    val matched = p.videos.count { CameraMockSelector.matches(it.tags, manifest.tagFilter) }
-                    if (matched == 0) null else Triple(p, matched, WorldMath.haversine(position.first, position.second, p.lat, p.lon))
-                }
-                val nearest = hits.minByOrNull { it.third }
-                if (nearest == null) {
-                    "筛选「${if (filter.isEmpty()) "全部" else filter.joinToString("、")}」下没有可用视频 —— 目标应用将看到真实摄像头"
-                } else {
-                    "当前模拟位置 ${CameraMockFormat.coord(position.first, position.second)} → 命中「${nearest.first.name}」" +
-                            "（${nearest.second} 段匹配，距离 ${nearest.third.toInt()} m）"
-                }
-            }
-        }
 
     }
 
     /** ⓘ：玩法说明 + 当前目标应用 + 系统侧观测到的摄像头活动（页面顶部只留"一眼要看"的三行） */
     private fun showInfoDialog() {
         val context = requireContext()
-        val targets = context.cameraMockTargets
-        val targetLine = if (targets.isEmpty()) {
-            getString(R.string.camera_mock_targets_unset)
-        } else {
-            getString(R.string.camera_mock_targets_value, targets.joinToString("、"))
-        }
         // 控制面回读：system_server 侧（AppOps + CameraServiceProxy）看到的相机活动，
         // 对目标应用零注入 —— 拦截尚未接入时，这块就是"能不能看见"的全部依据
         val events = runCatching {
@@ -456,7 +651,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         MaterialAlertDialogBuilder(context)
             .setTitle(R.string.camera_mock)
             .setMessage(
-                getString(R.string.camera_mock_hint) + "\n\n" + targetLine +
+                getString(R.string.camera_mock_hint) +
                         "\n\n最近摄像头活动（系统侧观测，零应用注入）：\n" + (events ?: "（暂无：模拟未运行或系统服务未就绪）")
             )
             .setPositiveButton(R.string.got_it, null)
@@ -467,50 +662,60 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private fun toggleMock() {
         val context = requireContext()
         val next = !context.cameraMockEnabled
-        context.cameraMockEnabled = next
-        /* 开关直接决定产帧线程的启停：关掉即让 HAL 停止接管（露出真实相机） */
-        CameraMockVideoSource.sync(context)
-        updateSwitch()
-        updateStatus(CameraMockStore.points(context))
-        val hint = if (next) {
-            if (context.cameraMockTargets.isEmpty()) {
-                R.string.camera_mock_started_open
-            } else {
-                R.string.camera_mock_started_targeted
-            }
-        } else {
-            R.string.camera_mock_stopped
+        if (next && !CammockManager.isInstalled(context)) {
+            MaterialAlertDialogBuilder(context)
+                .setTitle("未安装摄像头实现")
+                .setMessage("摄像头 hook 实现按机型单独适配，需要先导入 cammock zip。")
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton("导入实现") { _, _ ->
+                    cammockImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                }
+                .show()
+            return
         }
-        Toast.makeText(context, getString(hint), Toast.LENGTH_LONG).show()
-    }
-
-    /**
-     * 目标应用清单：**空 = 不限制**（凡被注入且开关打开的进程都命中）。
-     * 用一行文本编辑而不是应用选择器：包名是我们唯一能可靠比对的东西，
-     * 而"列出已安装应用"会引入 `QUERY_ALL_PACKAGES` 这类与项目立场冲突的权限。
-     */
-    private fun showTargetsDialog() {
-        val context = requireContext()
-        val input = EditText(context).apply {
-            setText(context.cameraMockTargets.joinToString("\n"))
-            hint = "com.example.app"
-            setSingleLine(false)
-        }
-        MaterialAlertDialogBuilder(context)
-            .setTitle(R.string.camera_mock_targets)
-            .setMessage(R.string.camera_mock_targets_desc)
-            .setView(input)
-            .setPositiveButton(R.string.save) { _, _ ->
-                context.cameraMockTargets = input.text.toString()
-                    .split('\n', ',', ' ', '，')
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .toSet()
-                refresh()
+        if (next) {
+            val lm = mockServiceViewModel.locationManager
+            if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {
+                Toast.makeText(
+                    context,
+                    "请先开启位置模拟，再启动摄像头模拟",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
             }
-            .setNegativeButton(R.string.cancel, null)
-            .create()
-            .also { it.setCanceledOnTouchOutside(false); it.show() }
+        }
+        binding.switchCameraMock.isEnabled = false
+        binding.cameraMockStatus.text = if (next) "正在启动虚拟摄像头 provider…" else "正在恢复真实相机…"
+        Executors.newSingleThreadExecutor().execute {
+            // 启动按钮同时负责 provider 启停：只改开关而不换 provider，
+            // 目标应用仍然看到真实相机。
+            val release = if (next) CammockManager.releaseRuntime(context) else Result.success("")
+            val result = release.fold(
+                onSuccess = { CameraRealFake.setFake(context, next) },
+                onFailure = { Result.failure(it) }
+            )
+            main.post {
+                binding.switchCameraMock.isEnabled = true
+                if (result.isSuccess) {
+                    context.cameraMockEnabled = next
+                    CameraMockVideoSource.sync(context)
+                    updateSwitch()
+                    updateStatus(CameraMockStore.points(context))
+                    val hint = if (next) R.string.camera_mock_started_open else R.string.camera_mock_stopped
+                    Toast.makeText(context, getString(hint), Toast.LENGTH_LONG).show()
+                } else {
+                    context.cameraMockEnabled = !next
+                    CameraMockVideoSource.sync(context)
+                    updateSwitch()
+                    updateStatus(CameraMockStore.points(context))
+                    Toast.makeText(
+                        context,
+                        "provider 切换失败：${result.exceptionOrNull()?.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     /**
