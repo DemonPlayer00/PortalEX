@@ -6,6 +6,7 @@ import android.os.Build
 import org.json.JSONObject
 import moe.fuqiuluo.portalex.ext.suPath
 import java.io.File
+import java.security.SecureRandom
 import java.util.zip.ZipInputStream
 
 /** 摄像头 hook 实现的外置安装器；只管理 app 私有目录中的实现。 */
@@ -97,6 +98,14 @@ object CammockManager {
         current.deleteRecursively()
         current.parentFile?.mkdirs()
         if (!staging.renameTo(current)) error("安装目录写入失败")
+        val tokenFile = File(current, "auth.token")
+        if (!tokenFile.isFile) {
+            val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+            tokenFile.writeText(bytes.joinToString("") { "%02x".format(it) })
+        }
+        tokenFile.setReadable(false, false)
+        tokenFile.setReadable(true, true)
+        File(current, "auth.nonce").delete()
         Install(
             supported, models,
             if (supported) "已安装：${models.joinToString()}" else
@@ -165,10 +174,19 @@ object CammockManager {
 
     private fun runScript(context: Context, name: String): Result<String> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
-        val script = File(currentDir(context), name)
+        val dir = currentDir(context)
+        val script = File(dir, name)
         if (!script.isFile) error("实现缺少 $name")
-        val p = ProcessBuilder(context.suPath, "-c",
-            "cd '${currentDir(context).absolutePath}' && sh '${script.absolutePath}'")
+        val tokenFile = File(dir, "auth.token")
+        if (!tokenFile.isFile) error("实现缺少 auth.token，请重新导入")
+        val token = tokenFile.readText().trim()
+        if (token.length < 16) error("实现 auth.token 无效")
+        val nonce = java.util.UUID.randomUUID().toString().replace("-", "")
+        File(dir, "auth.nonce").writeText(nonce)
+        val cmd = "cd '${dir.absolutePath}' && " +
+            "PORTALEX_CAMMOCK_TOKEN='$token' PORTALEX_CAMMOCK_NONCE='$nonce' " +
+            "sh '${script.absolutePath}'"
+        val p = ProcessBuilder(context.suPath, "-c", cmd)
             .redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().use { it.readText() }
         if (!p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
