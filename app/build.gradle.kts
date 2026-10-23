@@ -157,6 +157,14 @@ android {
     }
     sourceSets {
         getByName("main").jniLibs.srcDirs("libs")
+        getByName("main").java.srcDirs(
+            rootProject.file("camera-simulation/android"),
+            rootProject.file("camera-simulation/interface")
+        )
+        getByName("main").kotlin.srcDirs(
+            rootProject.file("camera-simulation/android"),
+            rootProject.file("camera-simulation/interface")
+        )
     }
 
     configureAppSigningConfigsForRelease(project)

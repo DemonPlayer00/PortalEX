@@ -77,6 +77,12 @@
             用来单独验证「YUV 分析流」这条注入路径，并作为"多应用并发取流"的第二个会话来源。
             不导出（只有 adb/root 能起），不参与任何正常流程。
         -->
+        <!-- 临时隐藏控制器：只用于验证 camera-simulation 标准接口 -->
+        <activity
+            android:name=".vcam.VcamDebugActivity"
+            android:exported="true"
+            android:label="Vcam Debug" />
+
         <activity
             android:name=".ui.camera.CameraProbeActivity"
             android:exported="false"
