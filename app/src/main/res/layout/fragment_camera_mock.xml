@@ -142,28 +142,27 @@
                         android:text="卸载"
                         android:textSize="11sp" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/switch_camera_mock"
-                        style="@style/Widget.Material3.Button"
-                        android:layout_width="0dp"
-                        android:layout_height="34dp"
-                        android:layout_weight="1.35"
-                        android:insetBottom="0dp"
-                        android:insetLeft="0dp"
-                        android:insetRight="0dp"
-                        android:insetTop="0dp"
-                        android:minWidth="0dp"
-                        android:padding="4dp"
-                        android:text="@string/camera_mock_start"
-                        android:textColor="?attr/colorOnPrimary"
-                        android:textSize="11sp"
-                        app:cornerRadius="12dp"
-                        app:icon="@drawable/rounded_play_arrow_24"
-                        app:iconGravity="textStart"
-                        app:iconPadding="0dp"
-                        app:iconTint="?attr/colorOnPrimary" />
-
                 </LinearLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/switch_camera_mock"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:layout_marginTop="6dp"
+                    android:insetBottom="0dp"
+                    android:insetLeft="0dp"
+                    android:insetRight="0dp"
+                    android:insetTop="0dp"
+                    android:padding="6dp"
+                    android:text="@string/camera_mock_start"
+                    android:textColor="?attr/colorOnPrimary"
+                    android:textSize="12sp"
+                    app:cornerRadius="12dp"
+                    app:icon="@drawable/rounded_play_arrow_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp"
+                    app:iconTint="?attr/colorOnPrimary" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -208,9 +207,25 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="end"
-            android:orientation="horizontal"
-            android:paddingEnd="8dp">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <HorizontalScrollView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:scrollbars="none">
+
+                <com.google.android.material.chip.ChipGroup
+                    android:id="@+id/camera_mock_filter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    app:chipSpacingHorizontal="6dp"
+                    app:singleSelection="false" />
+
+            </HorizontalScrollView>
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/camera_mock_create_tag"
@@ -219,20 +234,9 @@
                 android:layout_height="40dp"
                 android:minWidth="0dp"
                 android:text="创建标签"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
 
         </LinearLayout>
-
-        <!--  标签筛选：预设标签 + 库内出现过的自定义标签；多选，全含语义  -->
-        <com.google.android.material.chip.ChipGroup
-            android:id="@+id/camera_mock_filter"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_marginTop="2dp"
-            android:layout_marginEnd="8dp"
-            app:chipSpacingVertical="0dp"
-            app:singleSelection="false" />
 
         <TextView
             android:id="@+id/camera_point_label"
