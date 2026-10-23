@@ -13,6 +13,13 @@ import moe.fuqiuluo.xposed.utils.SensorNoise
 val Context.sharedPrefs
     get() = getSharedPreferences(PortalProtocol.PREFS_NAME, Context.MODE_PRIVATE)!!
 
+/** root shell 路径；部分设备把 su 移出 PATH，需要可配置。 */
+var Context.suPath: String
+    get() = sharedPrefs.getString("suPath", "su")?.takeIf { it.isNotBlank() } ?: "su"
+    set(value) = sharedPrefs.edit {
+        putString("suPath", value.trim().ifBlank { "su" })
+    }
+
 var Context.selectLocation: HistoricalLocation?
     get() {
         return sharedPrefs.getString("selectedLocation", null)?.let {

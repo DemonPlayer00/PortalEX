@@ -32,6 +32,7 @@ import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
 import moe.fuqiuluo.portalex.ext.reportDuration
+import moe.fuqiuluo.portalex.ext.suPath
 
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.ext.speed
@@ -134,6 +135,19 @@ class SettingsFragment : Fragment() {
         val root: View = binding.root
 
         val context = requireContext()
+        binding.suPathValue.text = context.suPath
+        binding.suPathLayout.setOnClickListener {
+            showDialog("设置 su 路径", context.suPath) { path ->
+                val p = path.trim()
+                if (p.isEmpty()) {
+                    showToast("su 路径不能为空")
+                    return@showDialog
+                }
+                context.suPath = p
+                binding.suPathValue.text = context.suPath
+                showToast("su 路径已更新")
+            }
+        }
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
         binding.selinuxSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
