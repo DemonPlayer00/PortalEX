@@ -698,36 +698,37 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .show()
             return
         }
-        if (CammockManager.isModule(context)) {
-            // MI6 这类 HAL 模块在开机时由 root 管理器加载；这里只负责提交实现
-            // 自己的 install.sh，并同步 app 的“已启动”状态，不再走 AIDL provider。
-            binding.switchCameraMock.isEnabled = false
-            Executors.newSingleThreadExecutor().execute {
-                val result = if (next) CammockManager.releaseRuntime(context)
-                    else Result.success("MI6 HAL 模块关闭需要重启或禁用模块")
-                main.post {
-                    binding.switchCameraMock.isEnabled = true
-                    if (result.isSuccess) {
-                        context.cameraMockEnabled = next
-                        updateSwitch()
-                        updateStatus(CameraMockStore.points(context))
-                        Toast.makeText(
-                            context,
-                            if (next) "MI6 cammock 已启动（HAL 模块已加载）" else "MI6 cammock 已标记关闭；如仍生效请重启",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } else {
-                        Toast.makeText(
-                            context,
-                            "模块安装失败：${result.exceptionOrNull()?.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    refresh()
-                }
+        // 所有实现统一由 cammock 的 start.sh / stop.sh 执行；
+        // PortalEX 只负责位置模拟前置检查和状态显示。
+        if (next) {
+            val lm = mockServiceViewModel.locationManager
+            if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {
+                Toast.makeText(context, "请先开启位置模拟，再启动摄像头模拟", Toast.LENGTH_LONG).show()
+                return
             }
-            return
         }
+        binding.switchCameraMock.isEnabled = false
+        binding.cameraMockStatus.text = if (next) "正在启动 cammock…" else "正在停止 cammock…"
+        Executors.newSingleThreadExecutor().execute {
+            val result = if (next) CammockManager.start(context) else CammockManager.stop(context)
+            main.post {
+                binding.switchCameraMock.isEnabled = true
+                if (result.isSuccess) {
+                    context.cameraMockEnabled = next
+                    updateSwitch()
+                    updateStatus(CameraMockStore.points(context))
+                    Toast.makeText(
+                        context,
+                        result.getOrDefault(if (next) "摄像头模拟已启动" else "摄像头模拟已停止"),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(context, "cammock 执行失败：${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                }
+                refresh()
+            }
+        }
+        return
         if (next) {
             val lm = mockServiceViewModel.locationManager
             if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {

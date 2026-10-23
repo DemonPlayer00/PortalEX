@@ -105,6 +105,27 @@ object CammockManager {
         )
     }.getOrElse { Install(false, emptyList(), "安装失败：${it.message}") }
 
+    /** PortalEX 只调用实现自己的 start.sh；provider/HAL 细节由实现负责。 */
+    fun start(context: Context): Result<String> = runScript(context, "start.sh")
+
+    /** 停止也由实现自己的 stop.sh 负责。 */
+    fun stop(context: Context): Result<String> = runScript(context, "stop.sh")
+
+    private fun runScript(context: Context, name: String): Result<String> = runCatching {
+        if (!isInstalled(context)) error("尚未安装摄像头实现")
+        val script = File(currentDir(context), name)
+        if (!script.isFile) error("实现缺少 $name")
+        val p = ProcessBuilder(context.suPath, "-c",
+            "cd '${currentDir(context).absolutePath}' && sh '${script.absolutePath}'")
+            .redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().use { it.readText() }
+        if (!p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+            p.destroyForcibly(); error("$name 执行超时")
+        }
+        if (p.exitValue() != 0) error("$name 失败：${out.trim()}")
+        out.trim().ifBlank { "$name 执行完成" }
+    }
+
     /** 运行实现自己的 installer；没有 installer 的 provider 实现走旧的释放路径。 */
     fun releaseRuntime(context: Context): Result<String> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
