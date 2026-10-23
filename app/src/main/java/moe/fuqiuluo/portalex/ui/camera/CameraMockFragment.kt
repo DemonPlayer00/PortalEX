@@ -45,7 +45,6 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
-import moe.fuqiuluo.portalex.vcam.CameraRealFake
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 
 
@@ -284,7 +283,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         updateFabActions()
         /* 页面回到前台时对齐一次产帧线程：开关可能是在别处（或上一次进程）打开的，
          * 而"开着的开关"必须对应一个真的在产帧的线程，否则 HAL 那边会一直发最后一帧 */
-        CameraMockVideoSource.sync(requireContext())
         refresh()
     }
 
@@ -369,7 +367,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             Toast.makeText(requireContext(), "请先打开位置服务，再录制移动轨迹", Toast.LENGTH_LONG).show()
             return
         }
-        if (requireContext().cameraMockEnabled || CameraMockVideoSource.isRunning) {
+        if (requireContext().cameraMockEnabled) {
             Toast.makeText(requireContext(), "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
             return
         }
@@ -607,15 +605,13 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             .setPositiveButton("卸载") { _, _ ->
                 binding.cameraMockUninstallImpl.isEnabled = false
                 Executors.newSingleThreadExecutor().execute {
-                    val restore = CameraRealFake.setFake(context, false)
                     val result = CammockManager.uninstall(context)
                     main.post {
                         binding.cameraMockUninstallImpl.isEnabled = true
                         context.cameraMockEnabled = false
-                        CameraMockVideoSource.sync(context)
                         updateSwitch()
                         updateImplementationUi()
-                        Toast.makeText(context, result.getOrElse { restore.exceptionOrNull()?.message ?: "卸载失败" }, Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, result.getOrElse { "卸载失败" }, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -733,49 +729,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             }
         }
         return
-        if (next) {
-            val lm = mockServiceViewModel.locationManager
-            if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {
-                Toast.makeText(
-                    context,
-                    "请先开启位置模拟，再启动摄像头模拟",
-                    Toast.LENGTH_LONG
-                ).show()
-                return
-            }
-        }
-        binding.switchCameraMock.isEnabled = false
-        binding.cameraMockStatus.text = if (next) "正在启动虚拟摄像头 provider…" else "正在恢复真实相机…"
-        Executors.newSingleThreadExecutor().execute {
-            // 启动按钮同时负责 provider 启停：只改开关而不换 provider，
-            // 目标应用仍然看到真实相机。
-            val release = if (next) CammockManager.releaseRuntime(context) else Result.success("")
-            val result = release.fold(
-                onSuccess = { CameraRealFake.setFake(context, next) },
-                onFailure = { Result.failure(it) }
-            )
-            main.post {
-                binding.switchCameraMock.isEnabled = true
-                if (result.isSuccess) {
-                    context.cameraMockEnabled = next
-                    CameraMockVideoSource.sync(context)
-                    updateSwitch()
-                    updateStatus(CameraMockStore.points(context))
-                    val hint = if (next) R.string.camera_mock_started_open else R.string.camera_mock_stopped
-                    Toast.makeText(context, getString(hint), Toast.LENGTH_LONG).show()
-                } else {
-                    context.cameraMockEnabled = !next
-                    CameraMockVideoSource.sync(context)
-                    updateSwitch()
-                    updateStatus(CameraMockStore.points(context))
-                    Toast.makeText(
-                        context,
-                        "provider 切换失败：${result.exceptionOrNull()?.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
     }
 
     /**

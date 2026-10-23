@@ -33,7 +33,7 @@ object CammockManager {
         if (!File(dir, "cammock.json").isFile) return false
         return providerFile(context).isFile ||
             File(dir, "module.prop").isFile ||
-            File(dir, "install.sh").isFile
+            File(dir, "install.sh").isFile || File(dir, "cammock_install.sh").isFile
     }
 
     fun isModule(context: Context): Boolean =
@@ -69,12 +69,12 @@ object CammockManager {
                     out.outputStream().use { out -> zip.copyTo(out) }
                     if (name == "provider" || name == "portal_camera_provider") hasProvider = true
                     if (name == "cammock.json" || name == "manifest.json") hasManifest = true
-                    if (name == "module.prop" || name == "install.sh") hasModule = true
+                    if (name == "module.prop" || name == "install.sh" || name == "cammock_install.sh") hasModule = true
                 }
             }
         } ?: error("无法读取 zip")
         if (!hasManifest) error("zip 必须包含 cammock.json")
-        if (!hasProvider && !hasModule) error("zip 必须包含 provider 或 module.prop/install.sh")
+        if (!hasProvider && !hasModule) error("zip 必须包含 provider 或 module.prop/install script")
         if (!File(staging, "provider").exists() && File(staging, "portal_camera_provider").exists()) {
             File(staging, "portal_camera_provider").renameTo(File(staging, "provider"))
         }
@@ -126,43 +126,12 @@ object CammockManager {
         out.trim().ifBlank { "$name 执行完成" }
     }
 
-    /** 运行实现自己的 installer；没有 installer 的 provider 实现走旧的释放路径。 */
-    fun releaseRuntime(context: Context): Result<String> = runCatching {
-        if (!isInstalled(context)) error("尚未安装摄像头实现")
-        val dir = currentDir(context).absolutePath
-        val installer = File(currentDir(context), "install.sh")
-        if (installer.isFile) {
-            val p = ProcessBuilder(context.suPath, "-c", "cd '$dir' && sh '$dir/install.sh'")
-                .redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().use { it.readText() }
-            if (!p.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)) {
-                p.destroyForcibly(); error("实现 installer 超时")
-            }
-            if (p.exitValue() != 0) error("实现 installer 失败：$out")
-            return@runCatching out.trim().ifBlank { "实现 installer 执行完成" }
-        }
-        if (isModule(context)) {
-            error("magisk-module 实现缺少 install.sh，不能由 PortalEX 直接对接 root 管理器")
-        }
-        val cmd = "mkdir -p $RUNTIME; " +
-            "cp -f '$dir/provider' $PROVIDER; " +
-            (if (File(currentDir(context), "meta.bin").exists()) "cp -f '$dir/meta.bin' $META; " else "") +
-            (if (File(currentDir(context), "tags.bin").exists()) "cp -f '$dir/tags.bin' $TAGS; " else "") +
-            "chmod 755 $PROVIDER"
-        val p = ProcessBuilder(context.suPath, "-c", cmd).redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().use { it.readText() }
-        if (!p.waitFor(12, java.util.concurrent.TimeUnit.SECONDS)) {
-            p.destroyForcibly(); error("释放实现超时")
-        }
-        if (p.exitValue() != 0) error("释放实现失败：$out")
-        "已在 $RUNTIME 释放实现"
-    }
-
     /** 卸载私有实现；实现自己的 uninstall.sh 负责 root 模块清理。 */
     fun uninstall(context: Context): Result<String> = runCatching {
         if (!isInstalled(context)) return@runCatching "没有已安装实现"
         val dir = currentDir(context)
-        val uninstaller = File(dir, "uninstall.sh")
+        val uninstallerName = manifestJson(context)?.optString("uninstaller")?.takeIf { it.isNotBlank() } ?: "uninstall.sh"
+        val uninstaller = File(dir, uninstallerName)
         if (uninstaller.isFile) {
             val p = ProcessBuilder(context.suPath, "-c", "cd '${dir.absolutePath}' && sh '${uninstaller.absolutePath}'")
                 .redirectErrorStream(true).start()
