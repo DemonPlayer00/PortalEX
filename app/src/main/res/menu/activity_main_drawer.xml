@@ -29,6 +29,7 @@
             android:id="@+id/nav_camera_mock"
             android:icon="@drawable/baseline_control_camera_24"
             android:title="@string/menu_camera_mock" />
+        <item
             android:id="@+id/nav_stamina"
             android:icon="@drawable/baseline_directions_run_24"
             android:title="@string/menu_stamina" />

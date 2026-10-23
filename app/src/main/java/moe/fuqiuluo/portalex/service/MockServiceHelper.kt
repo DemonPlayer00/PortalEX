@@ -87,6 +87,11 @@ object MockServiceHelper {
 
     fun isMockStart(locationManager: LocationManager): Boolean {
         if (!::randomKey.isInitialized) {
+            // Camera Mock 等入口可能在 ViewModel 初始化前查询状态：
+            // 先补一次握手，避免把“尚未 exchange_key”误判成“位置模拟未启动”。
+            runCatching { tryInitService(locationManager) }
+        }
+        if (!::randomKey.isInitialized) {
             return false
         }
         val rely = Bundle()

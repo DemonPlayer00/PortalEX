@@ -46,6 +46,7 @@
         android:name="moe.fuqiuluo.portalex.ui.camera.CameraPointEditFragment"
         android:label="@string/menu_camera_mock"
         tools:layout="@layout/fragment_camera_point_edit" />
+    <fragment
         android:id="@+id/nav_cadence"
         android:name="moe.fuqiuluo.portalex.ui.cadence.CadenceFragment"
         android:label="@string/menu_cadence"
@@ -72,7 +73,8 @@
     <fragment
         android:id="@+id/nav_stamina"
         android:name="moe.fuqiuluo.portalex.ui.stamina.StaminaFragment"
-        android:label="@string/menu_stamina" />
+        android:label="@string/menu_stamina"
+        tools:layout="@layout/fragment_stamina" />
     <fragment
         android:id="@+id/nav_settings"
         android:name="moe.fuqiuluo.portalex.ui.settings.SettingsFragment"
