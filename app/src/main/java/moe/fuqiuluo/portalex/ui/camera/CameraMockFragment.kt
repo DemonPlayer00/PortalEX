@@ -187,7 +187,11 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             val result = CameraMockServerBridge.upload(ctx)
             main.post {
                 result.onSuccess { n ->
-                    Toast.makeText(ctx, "已存储到 system_server", Toast.LENGTH_SHORT).show()
+                    if (n > 0) {
+                        Toast.makeText(ctx, "已存储到 system_server", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(ctx, "system_server 未连接，视频保留在本地", Toast.LENGTH_SHORT).show()
+                    }
                 }.onFailure {
                     Toast.makeText(ctx, "自动上传失败：${it.message}", Toast.LENGTH_LONG).show()
                 }
