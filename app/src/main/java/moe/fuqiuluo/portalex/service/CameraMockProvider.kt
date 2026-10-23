@@ -12,7 +12,6 @@ import android.text.TextUtils
 import android.util.Log
 import moe.fuqiuluo.portalex.ui.camera.CameraMockRuntime
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
-import moe.fuqiuluo.portalex.ui.camera.cameraMockTargets
 import moe.fuqiuluo.portalex.ui.camera.CameraMockStore
 import moe.fuqiuluo.xposed.camera.CameraMockCodec
 import moe.fuqiuluo.xposed.camera.CameraMockProtocol
@@ -57,6 +56,30 @@ class CameraMockProvider : ContentProvider() {
         CameraMockRuntime.noteAccess("${stamp()} $method uid=$uid pkg=${claimed ?: "-"}")
 
         return when (method) {
+            CameraMockProtocol.Method.ROUTES -> Bundle().apply {
+                putString(CameraMockProtocol.Key.STATUS, "ok")
+                putString(
+                    CameraMockProtocol.Key.ROUTES_JSON,
+                    CameraMockCodec.encodeRoutes(CameraMockStore.routes(ctx))
+                )
+            }
+
+            CameraMockProtocol.Method.DELETE_LOCAL_VIDEOS -> {
+                var deleted = 0
+                CameraMockStore.routes(ctx).forEach { route ->
+                    route.videos.forEach { video ->
+                        if (CameraMockStore.videoFile(ctx, video.file).exists()) {
+                            CameraMockStore.deleteVideoFile(ctx, video.file)
+                            deleted++
+                        }
+                    }
+                }
+                Bundle().apply {
+                    putString(CameraMockProtocol.Key.STATUS, "ok")
+                    putInt(CameraMockProtocol.Key.DELETED, deleted)
+                }
+            }
+
             CameraMockProtocol.Method.MANIFEST -> Bundle().apply {
                 putString(
                     CameraMockProtocol.Key.STATUS, "ok"
@@ -131,13 +154,9 @@ class CameraMockProvider : ContentProvider() {
      *     它挡的是"随手扫到我们的应用"，不是恶意应用）。
      */
     private fun gate(uid: Int, claimedPackage: String?, claimedUid: Int): String? {
-        val ctx = context ?: return "no-context"
+        if (context == null) return "no-context"
         if (uid == Process.myUid() || uid == Process.SYSTEM_UID || uid == 0) return null
-        val targets = ctx.cameraMockTargets
-        if (targets.isEmpty()) return null
-        if (claimedPackage.isNullOrBlank()) return "target-list-set-but-no-pkg-claim"
-        if (claimedUid != uid) return "uid-claim-mismatch"
-        if (targets.none { TextUtils.equals(it, claimedPackage) }) return "not-a-target"
+        // 目标应用筛选已移除：只保留 provider 的清单/素材读取能力。
         return null
     }
 

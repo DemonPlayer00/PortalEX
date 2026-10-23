@@ -79,7 +79,9 @@ class CameraProbeActivity : Activity() {
             Log.i(
                 TAG,
                 "  相机 $id: facing=${ch?.get(CameraCharacteristics.LENS_FACING)} " +
-                        "sensor=${ch?.get(CameraCharacteristics.SENSOR_ORIENTATION)}"
+                        "sensor=${ch?.get(CameraCharacteristics.SENSOR_ORIENTATION)} " +
+                        "video=${ch?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(android.media.MediaRecorder::class.java)?.maxByOrNull { it.width.toLong() * it.height }} " +
+                        "jpeg=${ch?.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(android.graphics.ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }} "
             )
         }
         val id = if (ids.contains(wantId.toString())) wantId.toString() else ids.firstOrNull()

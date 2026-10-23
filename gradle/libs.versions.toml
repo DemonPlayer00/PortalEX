@@ -1,4 +1,6 @@
 [versions]
+camerax = "1.4.2"
+playServicesLocation = "21.3.0"
 agp = "9.3.0"
 # libxposed 现代 API。2026-09-18 从 101 升到 **102**：要用 102 才有的热重载回调
 # （onHotReloading/onHotReloaded + HotReloadedParam.getOldHookHandles），目标是
@@ -20,6 +22,12 @@ navigationUiKtx = "2.8.3"
 jetbrainsKotlinJvm = "2.4.20"
 
 [libraries]
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+androidx-camera-video = { group = "androidx.camera", name = "camera-video", version.ref = "camerax" }
+play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

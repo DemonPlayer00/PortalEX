@@ -31,7 +31,6 @@ import moe.fuqiuluo.portalex.ui.camera.CameraMockRuntime
 import moe.fuqiuluo.portalex.ui.camera.CameraMockStore
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ui.camera.cameraMockTagFilter
-import moe.fuqiuluo.portalex.ui.camera.cameraMockTargets
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
 /**
@@ -118,7 +117,6 @@ class TestFragment : Fragment() {
             appendLine("开关           ${if (ctx.cameraMockEnabled) "开" else "关"}")
             appendLine("素材           ${points.size} 个视频点 / ${points.sumOf { it.videos.size }} 段视频")
             appendLine("标签筛选       ${ctx.cameraMockTagFilter.joinToString("、").ifEmpty { "（不筛选）" }}")
-            appendLine("目标应用       ${ctx.cameraMockTargets.joinToString("、").ifEmpty { "（未指定 = 不限制）" }}")
             appendLine(
                 "当前表象位置   " + (CameraMockRuntime.position()?.let {
                     "%.6f, %.6f".format(it.first, it.second)

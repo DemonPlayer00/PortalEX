@@ -94,6 +94,10 @@ object CameraMockVideoSource {
     @Volatile
     private var running = false
 
+    /** 最近一次被 HAL 消费的帧请求序号；不变时说明没有摄像头请求。 */
+    @Volatile
+    private var lastConsumerRequestSeq = -1
+
     val isRunning: Boolean get() = running
 
     /** 按总开关状态同步启停。开关变化、页面回到前台时调用它即可。 */
@@ -217,6 +221,8 @@ object CameraMockVideoSource {
              * （"先关、等真的能产帧了再开"）。提前调用会被它覆盖 —— 实测踩过：
              * seq 一直涨、enabled 恒为 0，HAL 全程不接管。 */
             CameraFrameSink.setEnabled(true)
+            // 还没人调用相机时不要先填一帧；等 HAL 的 request seq 变化。
+            lastConsumerRequestSeq = CameraFrameSink.requestSeq()
 
             codec = MediaCodec.createDecoderByType(mime)
             /* 不给 Surface（见类注释第 1 条） */
@@ -443,6 +449,13 @@ object CameraMockVideoSource {
         var wall0 = 0L
         var published = 0L
         while (running) {
+            // 摄像头未被调用（HAL 没有新的 capture request）时不生产、不填充帧。
+            val requestSeq = CameraFrameSink.requestSeq()
+            if (requestSeq == lastConsumerRequestSeq) {
+                SystemClock.sleep(20)
+                continue
+            }
+            lastConsumerRequestSeq = requestSeq
             if (!inputDone) {
                 val inIdx = codec.dequeueInputBuffer(10_000)
                 if (inIdx >= 0) {

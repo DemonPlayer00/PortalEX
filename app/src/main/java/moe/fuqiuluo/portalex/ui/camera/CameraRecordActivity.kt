@@ -4,26 +4,32 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Matrix
-import android.graphics.SurfaceTexture
-import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.params.StreamConfigurationMap
-import android.media.MediaRecorder
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
-import android.os.HandlerThread
+import android.os.Looper
 import android.util.Log
-import android.util.Size
-import android.view.Surface
-import android.view.TextureView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.AspectRatio
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
+import android.graphics.RectF
+import android.util.Size
+import android.widget.FrameLayout
+import java.util.Collections
+import java.util.concurrent.Executors
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.ActivityCameraRecordBinding
 import moe.fuqiuluo.xposed.camera.CameraTags
@@ -31,14 +37,14 @@ import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.Executor
 
 /**
- * **应用内录制**（刻意不走系统相机 Intent）：录出来的画面要能挂到地图坐标上，
- * 由我们自己控制落盘位置与参数，也避免"系统相机应用被我们的摄像头 hook 拦成假画面"这种自噬。
+ * 现场录制页：CameraX 负责预览方向、比例、镜像与录制编码。
  *
- * 只录视频轨（不录音频）：摄像头模拟要的是画面，环境音没有意义，也省掉录音权限。
- * 时长上限 [MAX_DURATION_MS]：素材是给"视频点"用的，几十秒一段就够，超长的文件
- * 只会拖慢模块侧的解码与循环。
+ * 旧实现手写 Camera2 + TextureView 矩阵，方向、比例、布局三者互相打架；
+ * 这里改用 PreviewView（FIT_CENTER）和 VideoCapture，预览/视频由 CameraX
+ * 统一按传感器方向和屏幕旋转处理，不再自行交换宽高。
  */
 class CameraRecordActivity : AppCompatActivity() {
 
@@ -47,75 +53,75 @@ class CameraRecordActivity : AppCompatActivity() {
         const val RESULT_TRACK_JSON = "track_json"
         const val RESULT_RECORDED_AT = "recorded_at"
         private const val TAG = "CameraRecord"
-        private const val MAX_DURATION_MS = 60_000L
+        // 允许长视频：2 小时；实际停止仍由用户或存储/相机异常决定。
+        private const val MAX_DURATION_MS = 2 * 60 * 60 * 1000L
+        private const val OCCUPANCY_TIMEOUT_MS = MAX_DURATION_MS + 5 * 60_000L
     }
 
     private lateinit var binding: ActivityCameraRecordBinding
+    private val uiExecutor: Executor by lazy { ContextCompat.getMainExecutor(this) }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var thread: HandlerThread? = null
-    private var handler: Handler? = null
-    private var cameraDevice: CameraDevice? = null
-    private var session: CameraCaptureSession? = null
-    private var recorder: MediaRecorder? = null
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var recording: Recording? = null
 
-    /** 录制尺寸（**传感器方向**下的尺寸，交给 MediaRecorder，方向由 setOrientationHint 表达） */
-    private var videoSize: Size = Size(1280, 720)
-
-    /**
-     * 预览尺寸（**显示方向**下的尺寸）。
-     *
-     * 与 [videoSize] 刻意分开：传感器方向 90/270 时（前置通常是 270），
-     * 帧在缓冲区里就是"躺着"的 —— 预览的 SurfaceTexture 必须按**转置后**的尺寸取缓冲，
-     * 屏幕上的画面才是正的。录制面不受影响（录制文件靠 `setOrientationHint` 表达方向）。
-     */
-    private var previewSize: Size = Size(720, 1280)
-
-    private var sensorOrientation = 270
-
-    /** 是否使用前置摄像头（用户口径：录制走前置） */
-    private var usingFrontCamera = true
-    private var outputFile: File? = null
-    private var recording = false
+    private var recordingActive = false
+    private var preparing = false
+    private var firstLocation: Pair<Double, Double>? = null
     private var recordStartedAt = 0L
     private val trackPoints = ArrayList<CameraVideoTrackPoint>()
     private var lastTrackSampleAt = 0L
+    private var locationSampler: CameraLocationSampler? = null
+    private var outputFile: File? = null
+    private var usingFrontCamera = true
+    private var faceOverlay: FaceOverlayView? = null
+    private val faceExecutor = Executors.newSingleThreadExecutor()
+    private val faceSamples = Collections.synchronizedList(ArrayList<RectF>())
+    private var faceCalibrationPending = false
+    private var faceCalibrating = false
+    private var faceCalibrationDeadline = 0L
 
-    /**
-     * 计时器跑在相机线程上，**任何 View 操作都必须回到主线程**。
-     *
-     * 实测踩过（MI6/LineageOS 15，点「开始录制」即崩）：
-     * `CalledFromWrongThreadException: Only the original thread that created a view hierarchy can touch its views`
-     * —— 直接 `binding.cameraRecordStatus.text = …` 会抛在 HandlerThread 上。
-     */
     private val ticker = object : Runnable {
         override fun run() {
-            if (!recording) return
+            if (!recordingActive) return
             val elapsed = System.currentTimeMillis() - recordStartedAt
             sampleTrack()
-            runOnUiThread {
-                if (recording) binding.cameraRecordStatus.text = statusText(elapsed)
-            }
+            binding.cameraRecordStatus.text = statusText(elapsed)
             if (elapsed >= MAX_DURATION_MS) {
-                // 到点自动停：stopRecording 只在主线程执行（见它的注释）
-                runOnUiThread { stopRecording() }
+                stopRecording()
                 return
             }
-            handler?.postDelayed(this, 500)
+            mainHandler.postDelayed(this, 500)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 录制期间不锁屏；Activity 退出时窗口标志随窗口销毁。
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         binding = ActivityCameraRecordBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        val ht = HandlerThread("camera-record").also { it.start() }
-        thread = ht
-        handler = Handler(ht.looper)
-
+        binding.root.keepScreenOn = true
+        val overlay = FaceOverlayView(this)
+        binding.cameraPreviewContainer.addView(
+            overlay, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        overlay.isClickable = false
+        overlay.isFocusable = false
+        overlay.expected = CameraFaceCalibration.load(this)
+        faceOverlay = overlay
+        binding.cameraFaceCalibrate.setOnClickListener { beginFaceCalibration() }
         binding.cameraRecordStatus.text = statusText(0L)
         binding.cameraRecordButton.setOnClickListener {
-            if (recording) stopRecording() else startRecording()
+            when {
+                recordingActive -> stopRecording()
+                preparing -> Unit
+                else -> prepareRecording()
+            }
         }
         binding.cameraRecordCancel.setOnClickListener { cancelAndFinish() }
 
@@ -126,267 +132,265 @@ class CameraRecordActivity : AppCompatActivity() {
             finish()
             return
         }
+        binding.cameraPreview.scaleType = androidx.camera.view.PreviewView.ScaleType.FIT_CENTER
+        binding.cameraPreview.implementationMode =
+            androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
+        bindCamera()
+    }
 
-        binding.cameraPreview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {
-                openCamera()
-            }
+    fun onFaceCalibrate(view: android.view.View) {
+        Log.i(TAG, "face calibrate click")
+        beginFaceCalibration()
+    }
 
-            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {
-                configureTransform(width, height)
-            }
+    private fun beginFaceCalibration() {
+        if (faceCalibrating) return
+        faceCalibrationPending = true
+        faceSamples.clear()
+        binding.cameraRecordStatus.text = "人脸框校准：请移动到识别区，即将切到后台"
+        mainHandler.postDelayed({ moveTaskToBack(true) }, 500)
+    }
 
-            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean = true
+    override fun onResume() {
+        super.onResume()
+        if (!faceCalibrationPending) return
+        faceCalibrationPending = false
+        faceCalibrating = true
+        faceSamples.clear()
+        faceCalibrationDeadline = System.currentTimeMillis() + 2000L
+        binding.cameraRecordStatus.text = "校准中：保持手机不动，正在采集人脸位置…"
+    }
 
-            override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
+    private fun finishFaceCalibration() {
+        if (!faceCalibrating) return
+        faceCalibrating = false
+        val box = CameraFaceCalibration.calibrate(faceSamples.toList())
+        if (box == null) {
+            binding.cameraRecordStatus.text = "校准失败：未采集到足够的人脸帧"
+            Toast.makeText(this, "未识别到足够的人脸，请重试", Toast.LENGTH_LONG).show()
+        } else {
+            CameraFaceCalibration.save(this, box)
+            faceOverlay?.expected = box
+            binding.cameraRecordStatus.text = "人脸框校准完成"
+            Toast.makeText(this, "人脸框已校准", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // ---- 相机 ----
-
-    private fun openCamera() {
-        val manager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-
-        // 前置优先：素材是"我在这个位置看到的画面"，用前置更容易对着要拍的方向取景。
-        // 没有前置（部分设备/被占用）才退回后置 —— 绝不因为"要前置"直接不给录。
-        val front = manager.cameraIdList.firstOrNull { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
-        }
-        val cameraId = front ?: manager.cameraIdList.firstOrNull { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-        } ?: manager.cameraIdList.firstOrNull()
-
-        if (cameraId == null) {
-            Toast.makeText(this, "没有可用摄像头", Toast.LENGTH_SHORT).show()
-            finish()
-            return
-        }
-        usingFrontCamera = front != null
-        // 镜头标识写进状态栏：录出来的素材是"前置还是后置"对素材挑选有实际意义
-        runOnUiThread { binding.cameraRecordStatus.text = statusText(0L) }
-
-        val characteristics = manager.getCameraCharacteristics(cameraId)
-        sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 270
-        val map: StreamConfigurationMap? =
-            characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        videoSize = chooseSize(map?.getOutputSizes(MediaRecorder::class.java))
-        previewSize = choosePreviewSize(map?.getOutputSizes(SurfaceTexture::class.java), videoSize)
-
+    private fun analyzeFace(image: ImageProxy) {
         try {
-            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(device: CameraDevice) {
-                    cameraDevice = device
-                    startPreview()
-                    // 相机是"拿到就必须还"的资源：本轮持有开始计时（默认 3 分钟上限），
-                    // 到点强制释放，避免小时级持续负载把机器烤热。
-                    CameraOccupancyGuard.start("record") { onCameraOccupancyTimeout() }
+            Log.i("CameraFace", "analyze frame ${image.width}x${image.height}")
+            val rect = CameraFaceDetector.detect(this, image)
+            mainHandler.post {
+                faceOverlay?.sourceAspect = if (image.imageInfo.rotationDegrees % 180 == 0) {
+                    image.width.toFloat() / image.height
+                } else {
+                    image.height.toFloat() / image.width
                 }
-
-                override fun onDisconnected(device: CameraDevice) {
-                    device.close()
-                    cameraDevice = null
+                faceOverlay?.actual = rect
+                if (rect != null && faceCalibrating) faceSamples.add(rect)
+                if (faceCalibrating && System.currentTimeMillis() >= faceCalibrationDeadline) {
+                    finishFaceCalibration()
                 }
-
-                override fun onError(device: CameraDevice, error: Int) {
-                    Log.e(TAG, "相机打开失败：$error")
-                    device.close()
-                    cameraDevice = null
-                    runOnUiThread {
-                        Toast.makeText(this@CameraRecordActivity, "相机打开失败（$error）", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }, handler)
-        } catch (t: Throwable) {
-            Log.e(TAG, "openCamera 异常", t)
-            Toast.makeText(this, "相机不可用：${t.message}", Toast.LENGTH_SHORT).show()
-            finish()
+            }
+        } finally {
+            image.close()
         }
     }
 
-    /** 取一个不超过 1080p 的尺寸：素材够清晰，又不至于让解码端吃力 */
-    private fun chooseSize(sizes: Array<Size>?): Size {
-        if (sizes.isNullOrEmpty()) return Size(1280, 720)
-        val maxPixels = 1920 * 1080
-        return sizes
-            .filter { it.width * it.height <= maxPixels }
-            .maxByOrNull { it.width * it.height }
-            ?: sizes.minByOrNull { it.width * it.height }!!
+    private fun bindCamera() {
+        val providerFuture = ProcessCameraProvider.getInstance(this)
+        providerFuture.addListener({
+            runCatching {
+                val provider = providerFuture.get()
+                cameraProvider = provider
+                val preview = Preview.Builder()
+                    .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                    .build()
+                preview.setSurfaceProvider(binding.cameraPreview.surfaceProvider)
+
+                val quality = QualitySelector.fromOrderedList(
+                    listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD),
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+                val recorder = Recorder.Builder()
+                    .setQualitySelector(quality)
+                    .build()
+                val capture = VideoCapture.withOutput(recorder)
+                videoCapture = capture
+
+                val selector = if (provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                    usingFrontCamera = true
+                    CameraSelector.DEFAULT_FRONT_CAMERA
+                } else {
+                    usingFrontCamera = false
+                    CameraSelector.DEFAULT_BACK_CAMERA
+                }
+                provider.unbindAll()
+                val faceAnalysis = ImageAnalysis.Builder()
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setTargetResolution(Size(640, 480))
+                    .build()
+                faceAnalysis.setAnalyzer(faceExecutor) { image -> analyzeFace(image) }
+                provider.bindToLifecycle(this, selector, preview, capture, faceAnalysis)
+                CameraOccupancyGuard.start("record", OCCUPANCY_TIMEOUT_MS) {
+                    onCameraOccupancyTimeout()
+                }
+                Log.i(TAG, "CameraX bound: front=$usingFrontCamera")
+            }.onFailure {
+                Log.e(TAG, "CameraX 绑定失败", it)
+                Toast.makeText(this, "相机启动失败：${it.message}", Toast.LENGTH_LONG).show()
+                finish()
+            }
+        }, uiExecutor)
     }
 
     /**
-     * 选预览尺寸：与录制尺寸同比例、且**取显示方向**（传感器 90/270 时把宽高换过来）。
-     *
-     * 为什么必须换：SurfaceTexture 的默认缓冲尺寸决定了它在屏幕上的朝向 ——
-     * 前置传感器方向 270°，不换的话预览会横躺 90°（录制文件反而是正的，
-     * 因为方向由 `setOrientationHint` 表达）。换过之后本页在竖屏下**不需要任何旋转矩阵**。
+     * 点击后不立刻录：先启动融合定位，直到拿到第一个定位点才真正开始
+     * VideoCapture。等待期间显示“准备中”，取消按钮仍可退出。
      */
-    private fun choosePreviewSize(sizes: Array<Size>?, record: Size): Size {
-        val swapNeeded = sensorOrientation == 90 || sensorOrientation == 270
-        val wantWidth = if (swapNeeded) record.height else record.width
-        val wantHeight = if (swapNeeded) record.width else record.height
-        if (sizes.isNullOrEmpty()) return Size(wantWidth, wantHeight)
-        val targetRatio = wantWidth.toDouble() / wantHeight
-        return sizes
-            .filter { kotlin.math.abs(it.width.toDouble() / it.height - targetRatio) < 0.02 }
-            .minByOrNull { kotlin.math.abs(it.width - wantWidth) + kotlin.math.abs(it.height - wantHeight) }
-            ?: Size(wantWidth, wantHeight)
-    }
-
-    private fun previewSurface(): Surface? {
-        val st = binding.cameraPreview.surfaceTexture ?: return null
-        st.setDefaultBufferSize(previewSize.width, previewSize.height)
-        return Surface(st)
-    }
-
-    private fun startPreview() {
-        val device = cameraDevice ?: return
-        val surface = previewSurface() ?: return
-        // 本方法跑在相机线程上：setTransform 是 View 操作，必须回主线程
-        val viewWidth = binding.cameraPreview.width
-        val viewHeight = binding.cameraPreview.height
-        runOnUiThread { configureTransform(viewWidth, viewHeight) }
-        try {
-            val request = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(surface)
-            }
-            device.createCaptureSession(
-                listOf(surface),
-                object : CameraCaptureSession.StateCallback() {
-                    override fun onConfigured(s: CameraCaptureSession) {
-                        session = s
-                        runCatching { s.setRepeatingRequest(request.build(), null, handler) }
-                    }
-
-                    override fun onConfigureFailed(s: CameraCaptureSession) {
-                        Log.e(TAG, "预览会话配置失败")
-                    }
-                },
-                handler
-            )
-        } catch (t: Throwable) {
-            Log.e(TAG, "startPreview 异常", t)
+    private fun prepareRecording() {
+        if (cameraMockEnabled || CameraMockVideoSource.isRunning) {
+            Toast.makeText(this, "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
+            return
         }
+        if (videoCapture == null) {
+            Toast.makeText(this, "相机还未就绪", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (recordingActive || preparing) return
+
+        preparing = true
+        firstLocation = null
+        binding.cameraRecordButton.isEnabled = false
+        binding.cameraRecordButton.setText("准备中…")
+        binding.cameraRecordStatus.text = "准备中：等待第一个定位点…"
+
+        locationSampler = CameraLocationSampler(this).apply {
+            onLocation = { pos ->
+                // 回调可能来自 GMS/LocationManager 线程，切回主线程再启动录制
+                mainHandler.post {
+                    if (preparing) onFirstLocation(pos)
+                }
+            }
+        }.also { it.start() }
+
+        // lastLocation 命中时不会触发 onLocation，主动检查一次
+        mainHandler.postDelayed({
+            if (preparing) {
+                locationSampler?.latestPosition()?.let { onFirstLocation(it) }
+            }
+        }, 300)
     }
 
-    private fun startRecording() {
-        val device = cameraDevice ?: return
-        val preview = previewSurface() ?: return
-        // 每次录制一个新文件：文件名即视频 id（provider 按 id 找文件）
+    private fun onFirstLocation(pos: Pair<Double, Double>) {
+        if (!preparing) return
+        preparing = false
+        firstLocation = pos
+        binding.cameraRecordStatus.text = "定位已就绪，开始录制…"
+        beginVideoRecording()
+    }
+
+    private fun beginVideoRecording() {
+        val capture = videoCapture ?: run {
+            resetPreparing()
+            Toast.makeText(this, "相机还未就绪", Toast.LENGTH_SHORT).show()
+            return
+        }
         val file = CameraMockStore.newVideoFile(this)
         outputFile = file
-
-        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this)
-        else @Suppress("DEPRECATION") MediaRecorder()
-        recorder = rec
-        try {
-            rec.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            rec.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            rec.setVideoSize(videoSize.width, videoSize.height)
-            rec.setVideoFrameRate(30)
-            rec.setVideoEncodingBitRate(8_000_000)
-            rec.setOrientationHint(sensorOrientation)
-            rec.setOutputFile(file.absolutePath)
-            rec.prepare()
-        } catch (t: Throwable) {
-            Log.e(TAG, "MediaRecorder 准备失败", t)
-            Toast.makeText(this, "录制初始化失败：${t.message}", Toast.LENGTH_SHORT).show()
-            releaseRecorder()
+        val options = FileOutputOptions.Builder(file).build()
+        runCatching {
+            recording = capture.output.prepareRecording(this, options)
+                .start(uiExecutor) { event ->
+                    when (event) {
+                        is VideoRecordEvent.Start -> onRecordStarted()
+                        is VideoRecordEvent.Finalize -> onRecordFinalized(event)
+                    }
+                }
+        }.onFailure {
+            Log.e(TAG, "录制启动失败", it)
+            Toast.makeText(this, "录制启动失败：${it.message}", Toast.LENGTH_LONG).show()
             runCatching { file.delete() }
-            return
-        }
-
-        val recorderSurface = rec.surface
-        session?.close()
-        session = null
-        try {
-            device.createCaptureSession(
-                listOf(preview, recorderSurface),
-                object : CameraCaptureSession.StateCallback() {
-                    override fun onConfigured(s: CameraCaptureSession) {
-                        session = s
-                        try {
-                            val request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
-                                addTarget(preview)
-                                addTarget(recorderSurface)
-                            }
-                            s.setRepeatingRequest(request.build(), null, handler)
-                            rec.start()
-                            recording = true
-                            recordStartedAt = System.currentTimeMillis()
-                            trackPoints.clear()
-                            lastTrackSampleAt = 0L
-                            sampleTrack()
-                            runOnUiThread {
-                                binding.cameraRecordButton.setText(R.string.camera_record_stop)
-                                binding.cameraRecordStatus.text = statusText(0L)
-                            }
-                            handler?.post(ticker)
-                        } catch (t: Throwable) {
-                            Log.e(TAG, "开始录制失败", t)
-                            runOnUiThread { Toast.makeText(this@CameraRecordActivity, "开始录制失败", Toast.LENGTH_SHORT).show() }
-                        }
-                    }
-
-                    override fun onConfigureFailed(s: CameraCaptureSession) {
-                        Log.e(TAG, "录制会话配置失败")
-                        runOnUiThread { Toast.makeText(this@CameraRecordActivity, "录制会话配置失败", Toast.LENGTH_SHORT).show() }
-                    }
-                },
-                handler
-            )
-        } catch (t: Throwable) {
-            Log.e(TAG, "createCaptureSession(录制) 异常", t)
-            releaseRecorder()
+            outputFile = null
+            resetPreparing()
         }
     }
 
-    /**
-     * 停止并保存。**只在主线程调用**：它要改按钮文案、弹 Toast、finish ——
-     * 相机线程上直接做这些会崩（`CalledFromWrongThreadException` / 无 Looper 的 Toast）。
-     */
-    private fun stopRecording() {
-        if (!recording) return
-        recording = false
-        handler?.removeCallbacks(ticker)
-        val file = outputFile
-        val startedAt = recordStartedAt
-        val track = synchronized(trackPoints) { trackPoints.toList() }
-        val saved = try {
-            recorder?.stop()
-            true
-        } catch (t: Throwable) {
-            // MediaRecorder.stop 抛异常 = 文件不可用（时长过短/编码器异常），必须删掉半截文件
-            Log.e(TAG, "停止录制失败", t)
-            false
-        }
-        releaseRecorder()
-        recordStartedAt = 0L
+    private fun resetPreparing() {
+        preparing = false
+        firstLocation = null
+        locationSampler?.stop()
+        locationSampler = null
+        binding.cameraRecordButton.isEnabled = true
         binding.cameraRecordButton.setText(R.string.camera_record_start)
+    }
 
-        if (!saved || file == null || !file.exists() || file.length() == 0L) {
+    private fun onRecordStarted() {
+        recordingActive = true
+        recordStartedAt = System.currentTimeMillis()
+        lastTrackSampleAt = recordStartedAt
+        trackPoints.clear()
+        firstLocation?.let {
+            synchronized(trackPoints) {
+                trackPoints.add(CameraVideoTrackPoint(0L, it.first, it.second))
+            }
+        }
+        sampleTrack()
+        mainHandler.post(ticker)
+        binding.cameraRecordButton.isEnabled = true
+        binding.cameraRecordButton.setText(R.string.camera_record_stop)
+    }
+
+    private fun stopRecording() {
+        if (!recordingActive) return
+        recordingActive = false
+        preparing = false
+        mainHandler.removeCallbacks(ticker)
+        locationSampler?.stop()
+        locationSampler = null
+        binding.cameraRecordButton.isEnabled = true
+        binding.cameraRecordButton.setText(R.string.camera_record_start)
+        runCatching { recording?.stop() }
+    }
+
+    private fun onRecordFinalized(event: VideoRecordEvent.Finalize) {
+        recordingActive = false
+        preparing = false
+        mainHandler.removeCallbacks(ticker)
+        locationSampler?.stop()
+        locationSampler = null
+        recording = null
+        val file = outputFile
+        if (event.hasError()) {
+            Log.e(TAG, "录制失败 error=${event.error} cause=${event.cause}")
+            Toast.makeText(this, "录制失败（${event.error}）", Toast.LENGTH_LONG).show()
             file?.let { runCatching { it.delete() } }
-            Toast.makeText(this, "录制失败，未保存", Toast.LENGTH_SHORT).show()
-            setResult(Activity.RESULT_CANCELED)
+            outputFile = null
+            binding.cameraRecordButton.isEnabled = true
+            binding.cameraRecordButton.setText(R.string.camera_record_start)
+            return
+        }
+        if (file == null || !file.exists()) {
+            Toast.makeText(this, "录制文件丢失", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
-        val data = Intent().putExtra(RESULT_FILE_NAME, file.name)
-        data.putExtra(RESULT_RECORDED_AT, startedAt)
-        data.putExtra(RESULT_TRACK_JSON, encodeTrack(track))
+        val track = synchronized(trackPoints) { trackPoints.toList() }
+        val data = Intent().apply {
+            putExtra(RESULT_FILE_NAME, file.name)
+            putExtra(RESULT_RECORDED_AT, recordStartedAt)
+            putExtra(RESULT_TRACK_JSON, encodeTrack(track))
+        }
         setResult(Activity.RESULT_OK, data)
         finish()
     }
 
-    /** 每秒采样一次模拟位置；MainActivity 未提供位置时轨迹为空，不影响视频本身。 */
     private fun sampleTrack() {
-        if (!recording) return
+        if (!recordingActive) return
         val now = System.currentTimeMillis()
         if (now - lastTrackSampleAt < 1000L) return
         lastTrackSampleAt = now
-        val pos = CameraMockRuntime.position() ?: return
+        val pos = locationSampler?.latestPosition() ?: CameraMockRuntime.position() ?: return
         val t = (now - recordStartedAt).coerceAtLeast(0L)
         synchronized(trackPoints) {
             if (trackPoints.size < CameraTags.MAX_TRACK_POINTS) {
@@ -395,66 +399,22 @@ class CameraRecordActivity : AppCompatActivity() {
         }
     }
 
-    private fun encodeTrack(points: List<CameraVideoTrackPoint>): String {
+    private fun encodeTrack(track: List<CameraVideoTrackPoint>): String {
         val arr = JSONArray()
-        points.forEach { p ->
+        track.forEach {
             arr.put(JSONObject().apply {
-                put("t", p.tMs)
-                put("lat", p.lat)
-                put("lon", p.lon)
+                put("t", it.tMs)
+                put("lat", it.lat)
+                put("lon", it.lon)
             })
         }
         return arr.toString()
     }
 
-    /** 取消并退出（主线程） */
-    private fun cancelAndFinish() {
-        if (recording) {
-            recording = false
-            handler?.removeCallbacks(ticker)
-            runCatching { recorder?.stop() }
-            releaseRecorder()
-            outputFile?.let { runCatching { it.delete() } }
-        }
-        setResult(Activity.RESULT_CANCELED)
-        finish()
-    }
-
-    private fun releaseRecorder() {
-        runCatching { recorder?.reset() }
-        runCatching { recorder?.release() }
-        recorder = null
-    }
-
-    /**
-     * 预览居中适配：TextureView 的尺寸由布局决定，而缓冲是 [previewSize] ——
-     * 两者比例不一致时按"填满并居中裁剪"处理，避免画面被拉伸变形。
-     *
-     * 这里**不做旋转**：本页锁定竖屏（AndroidManifest 的 screenOrientation），
-     * 且 [previewSize] 已经是显示方向的尺寸，所以竖屏下唯一要处理的就只剩比例。
-     * 也**不做镜像**：录制出来的文件会原样喂给别的应用当摄像头画面，前后不一致的镜像
-     * 会让"预览看到的"与"录下来的"不是同一张图（文字会反）——这里以所见即所得为准。
-     */
-    private fun configureTransform(viewWidth: Int, viewHeight: Int) {
-        if (viewWidth == 0 || viewHeight == 0) return
-        val viewRatio = viewWidth.toFloat() / viewHeight
-        val bufferRatio = previewSize.width.toFloat() / previewSize.height
-        val matrix = Matrix()
-        if (viewRatio > bufferRatio) {
-            val scale = viewRatio / bufferRatio
-            matrix.setScale(1f, scale, viewWidth / 2f, viewHeight / 2f)
-        } else {
-            val scale = bufferRatio / viewRatio
-            matrix.setScale(scale, 1f, viewWidth / 2f, viewHeight / 2f)
-        }
-        binding.cameraPreview.setTransform(matrix)
-    }
-
-    /** 状态栏文案：镜头 + 已录时长 + 上限（上限是硬停，必须让用户看见） */
-    private fun statusText(elapsedMs: Long): String = "%s · %s / 最长 %d 秒".format(
+    private fun statusText(elapsedMs: Long): String = "%s · %s / 最长 %d 分钟".format(
         if (usingFrontCamera) "前置" else "后置",
         formatMs(elapsedMs),
-        MAX_DURATION_MS / 1000
+        MAX_DURATION_MS / 60_000L
     )
 
     private fun formatMs(ms: Long): String {
@@ -462,34 +422,46 @@ class CameraRecordActivity : AppCompatActivity() {
         return "%02d:%02d".format(totalSec / 60, totalSec % 60)
     }
 
-    override fun onStop() {
-        super.onStop()
-        // 退到后台一律停：录制中被打断会留下坏文件，且相机必须让出来
-        if (recording) cancelAndFinish()
+    private fun cancelAndFinish() {
+        recordingActive = false
+        preparing = false
+        mainHandler.removeCallbacks(ticker)
+        locationSampler?.stop()
+        locationSampler = null
+        runCatching { recording?.close() }
+        recording = null
+        outputFile?.let { runCatching { it.delete() } }
+        outputFile = null
+        setResult(Activity.RESULT_CANCELED)
+        finish()
     }
 
-    /** 占用超时：**剥夺相机**（停录 → 关会话 → 关设备 → 结束界面），并让用户看到原因 */
     private fun onCameraOccupancyTimeout() {
-        runCatching { releaseRecorder() }
-        runCatching { session?.close() }
-        runCatching { cameraDevice?.close() }
-        session = null
-        cameraDevice = null
-        Toast.makeText(this, "相机占用已达上限（${CameraOccupancyGuard.DEFAULT_TIMEOUT_MS / 60000} 分钟），已自动释放", Toast.LENGTH_LONG).show()
+        runCatching { recording?.close() }
+        recording = null
+        cameraProvider?.unbindAll()
+        Toast.makeText(
+            this,
+            "相机占用已达上限（${CameraOccupancyGuard.DEFAULT_TIMEOUT_MS / 60000} 分钟），已自动释放",
+            Toast.LENGTH_LONG
+        ).show()
         finish()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (recordingActive || preparing) cancelAndFinish()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        faceExecutor.shutdown()
         CameraOccupancyGuard.stop()
-        handler?.removeCallbacks(ticker)
-        runCatching { session?.close() }
-        session = null
-        runCatching { cameraDevice?.close() }
-        cameraDevice = null
-        releaseRecorder()
-        thread?.quitSafely()
-        thread = null
-        handler = null
+        mainHandler.removeCallbacks(ticker)
+        runCatching { recording?.close() }
+        recording = null
+        cameraProvider?.unbindAll()
+        locationSampler?.stop()
+        locationSampler = null
     }
 }

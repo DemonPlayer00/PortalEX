@@ -1,5 +1,7 @@
 #include "provider.h"
 #include "frame_reader.h"
+#include "selection_client.h"
+#include "video_source.h"
 #include "camera_metadata_tags.h"
 
 #include <dlfcn.h>
@@ -11,6 +13,7 @@
 #include <unistd.h>
 
 #include <cstring>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -34,6 +37,11 @@ extern "C" bool portal_jpeg_encode_rgb(const uint8_t* rgb, int w, int h, int qua
                                        uint8_t** out, size_t* out_len);
 
 namespace portal {
+std::mutex gSelectionMutex;
+ServerSelection gSelection;
+static uint64_t gOutputSeq = 0;
+std::atomic<bool> gManualMode{false};
+
 namespace {
 
 struct native_handle_t {
@@ -208,7 +216,8 @@ static int gFaceW = 0, gFaceH = 0;
 
 static bool loadFaceImage() {
     const char* path = getenv("PORTAL_IMAGE");
-    if (!path || !*path) path = "/sdcard/GlaDos_File/OnePlusProvider/face.rgb";
+    // 不再默认加载 sdcard 上的人脸资源；没有显式 PORTAL_IMAGE 时保持黑屏。
+    if (!path || !*path) return false;
     FILE* f = fopen(path, "rb");
     if (!f) {
         ALOGE("provider: face image not found: %s", path);
@@ -260,27 +269,8 @@ void drawRgb(uint8_t* rgb, int w, int h, int frame) {
         }
         return;
     }
-    int radius = std::max(8, std::min(w, h) / 7);
-    int spanX = std::max(1, w - 2 * radius);
-    int spanY = std::max(1, h - 2 * radius);
-    int cx = radius + tri(frame * 9, spanX);
-    int cy = radius + tri(frame * 5 + 17, spanY);
-    int r2 = radius * radius, rin = (radius - 4) * (radius - 4);
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            int bar = ((x + frame * 7) % w) * 8 / w;
-            if (bar > 7) bar = 7;
-            const uint8_t* c = kBars[bar];
-            int dx = x - cx, dy = y - cy, d2 = dx * dx + dy * dy;
-            uint8_t* p = rgb + ((size_t)y * w + x) * 3;
-            if (d2 <= r2) {
-                uint8_t v = d2 > rin ? 0 : 255;
-                p[0] = p[1] = p[2] = v;
-            } else {
-                p[0] = c[0]; p[1] = c[1]; p[2] = c[2];
-            }
-        }
-    }
+    // 没有任何帧/人脸资源时输出黑帧。
+    std::memset(rgb, 0, (size_t)w * h * 3);
 }
 
 void drawYuv(YCbCr& yc, int w, int h, int frame) {
@@ -303,6 +293,16 @@ void drawYuv(YCbCr& yc, int w, int h, int frame) {
         }
         return;
     }
+    // 没有任何帧/人脸资源时输出黑帧。
+    for (int y = 0; y < h; y++) {
+        std::memset((uint8_t*)yc.y + (size_t)y * yc.ystride, 16, (size_t)w);
+        if (yc.cb && yc.cr && yc.cstride) {
+            size_t ci = (size_t)(y / 2) * yc.cstride;
+            std::memset((uint8_t*)yc.cb + ci, 128, (size_t)(w / 2) * yc.chroma_step);
+            std::memset((uint8_t*)yc.cr + ci, 128, (size_t)(w / 2) * yc.chroma_step);
+        }
+    }
+    return;
     int radius = std::max(8, std::min(w, h) / 7);
     int spanX = std::max(1, w - 2 * radius);
     int spanY = std::max(1, h - 2 * radius);
@@ -335,7 +335,12 @@ void drawYuv(YCbCr& yc, int w, int h, int frame) {
 static CameraMetadata buildRequestSettings();
 static CameraMetadata makeResultMetadata(const CameraMetadata& req, int64_t ts);
 
-PortalSession::PortalSession(std::shared_ptr<ICameraDeviceCallback> cb) : mCallback(std::move(cb)) {}
+PortalSession::PortalSession(std::shared_ptr<ICameraDeviceCallback> cb)
+        : mCallback(std::move(cb)) {
+    mSessionId = std::to_string(
+            (long long)std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
 ndk::ScopedAStatus PortalSession::close() {
     std::lock_guard<std::mutex> l(mLock);
@@ -416,16 +421,23 @@ ndk::ScopedAStatus PortalSession::isReconfigurationRequired(
     return ndk::ScopedAStatus::ok();
 }
 
-bool PortalSession::fillBuffer(const StreamBuffer& sb, const StreamInfo& info, int64_t timestamp) {
-    native_handle_t* nh = toNative(sb.buffer);
-    if (!nh) return false;
+bool PortalSession::fillBuffer(const StreamBuffer& sb, const StreamInfo& info, int64_t timestamp,
+                               void* cachedNhVoid) {
+    static int fillDbg = 0;
+    const bool dbg = ++fillDbg <= 20;
+    if (dbg) ALOGE("provider: fill enter #%d blob=%d cached=%d", fillDbg, info.blob ? 1 : 0, cachedNhVoid != nullptr);
+    native_handle_t* nh = cachedNhVoid ? (native_handle_t*)cachedNhVoid : toNative(sb.buffer);
+    const bool ownsNh = cachedNhVoid == nullptr;
+    if (!nh) { if (dbg) ALOGE("provider: fill no native handle #%d", fillDbg); return false; }
     Mapper& m = mapper();
-    if (!m.self) { nh_delete(nh); return false; }
+    if (!m.self) { if (ownsNh) nh_delete(nh); return false; }
     native_handle_t* imported = nullptr;
-    if (m.import(m.self, nh, (void**)&imported) != 0) {
-        nh_close(nh);
-        nh_delete(nh);
-        return false;
+    int importRc = m.import(m.self, nh, (void**)&imported);
+    if (importRc != 0 || imported == nullptr) {
+        // 部分 HAL 直接给的是已可锁定的 native_handle；import 失败不应丢帧。
+        if (dbg) ALOGE("provider: fill import failed #%d rc=%d nfds=%d nints=%d, use raw handle",
+                       fillDbg, importRc, nh->numFds, nh->numInts);
+        imported = nullptr;
     }
     Rect rect{0, 0, info.width, info.height};
     const uint32_t usage = 0x33;
@@ -464,28 +476,97 @@ bool PortalSession::fillBuffer(const StreamBuffer& sb, const StreamInfo& info, i
     } else {
         YCbCr yc{};
         if (m.lockYCbCr(m.self, use, usage, &rect, &yc) == 0 && yc.y) {
-            if (!frame_reader_draw_yuv(yc.y, yc.cb, yc.cr, yc.ystride, yc.cstride,
-                                       yc.chroma_step, info.width, info.height)) {
-                drawYuv(yc, info.width, info.height, (int)(timestamp % 100000));
+            static bool loggedYuv = false;
+            if (!loggedYuv) {
+                loggedYuv = true;
+                ALOGE("provider: target YUV yStride=%zu cStride=%zu step=%zu manual=%d fd=%d",
+                      yc.ystride, yc.cstride, yc.chroma_step,
+                      gManualMode.load() ? 1 : 0, gSelection.fd);
+            }
+            bool drew = false;
+            {
+                std::lock_guard<std::mutex> l(gSelectionMutex);
+                if (!gManualMode.load() && gSelection.fd >= 0) {
+                    drew = video_source_play(gSelection.fd, gSelection.startMs,
+                                             yc.y, yc.cb, yc.cr, yc.ystride, yc.cstride,
+                                             yc.chroma_step, info.width, info.height);
+                }
+            }
+            if (!drew) {
+                // 仅显式调试模式才回退到共享帧文件；正常模式不读外部 cammock。
+                if (gManualMode.load()) {
+                    frame_reader_draw_yuv(yc.y, yc.cb, yc.cr, yc.ystride, yc.cstride,
+                                          yc.chroma_step, info.width, info.height);
+                } else {
+                    drawYuv(yc, info.width, info.height, (int)(timestamp % 100000));
+                }
+            }
+            // 相机 output buffer 级探针：确认每次 request 写出的内容/序号。
+            {
+                uint64_t seq = ++gOutputSeq;
+                if (seq % 10 == 1) {
+                    const uint8_t* yp = (const uint8_t*)yc.y;
+                    uint64_t h = 1469598103934665603ULL;
+                    for (int i = 0; i < 64 && i < info.width; ++i) {
+                        h ^= yp[i]; h *= 1099511628211ULL;
+                    }
+                    ALOGE("provider: out seq=%llu ts=%lld hash=%llx",
+                          (unsigned long long)seq, (long long)timestamp,
+                          (unsigned long long)h);
+                }
             }
             ok = true;
         } else {
             static bool logged = false;
-            if (!logged) { logged = true; ALOGE("provider: lockYCbCr failed"); }
+            if (!logged || dbg) ALOGE("provider: lockYCbCr failed #%d", fillDbg);
+        if (!logged) logged = true;
         }
         int fence = -1;
         m.unlock(m.self, use, &fence);
     }
-    m.freeBuf(m.self, use);
-    nh_close(nh);
-    nh_delete(nh);
+    if (imported) m.freeBuf(m.self, imported);
+    if (ownsNh) { nh_close(nh); nh_delete(nh); }
     return ok;
+}
+
+static bool portal_manual_frame_mode() {
+    // 正常生产路径只由 system_server selection 驱动。
+    // cammock 手动帧仅保留显式调试环境变量，不再读取 /data/local/tmp 下的文件。
+    return getenv("PORTAL_USE_CAMMOCK") != nullptr;
 }
 
 ndk::ScopedAStatus PortalSession::processCaptureRequest(
         const std::vector<CaptureRequest>& requests,
         const std::vector<BufferCache>&, int32_t* out) {
     int32_t done = 0;
+    ALOGE("provider: processCaptureRequest called requests=%zu", requests.size());
+    static uint64_t lastSelectionQueryNs = 0;
+    static uint64_t selectionValidUntilNs = 0;
+    const bool useCammock = portal_manual_frame_mode();
+    gManualMode.store(useCammock);
+    uint64_t now = nowNs();
+    // 确认一个视频点后进入静默期：播放期间不再向 system_server 重新选点。
+    // 这样同一个视频不会因为 3 秒刷新而重开/seek；至少完整播放当前片段，
+    // 到 EOS 后只做最后 3 秒循环。只有当前没有有效选片时才请求。
+    bool haveSelection;
+    {
+        std::lock_guard<std::mutex> l(gSelectionMutex);
+        haveSelection = gSelection.valid && gSelection.fd >= 0;
+    }
+    if (!useCammock && !haveSelection && now >= selectionValidUntilNs) {
+        lastSelectionQueryNs = now;
+        ServerSelection sel = selection_request(mSessionId);
+        std::lock_guard<std::mutex> l(gSelectionMutex);
+        if (gSelection.fd >= 0) ::close(gSelection.fd);
+        gSelection = sel;
+        if (sel.valid) {
+            selectionValidUntilNs = now + 3000000000ULL;
+            ALOGE("provider: selection locked video=%s start=%lld, hold 3s+",
+                  sel.videoId, (long long)sel.startMs);
+        } else {
+            selectionValidUntilNs = now + 2000000000ULL;
+        }
+    }
     for (const auto& req : requests) {
         frame_reader_note_request();
         int64_t ts = nowNs();
@@ -497,7 +578,21 @@ ndk::ScopedAStatus PortalSession::processCaptureRequest(
             for (const auto& sb : req.outputBuffers) {
                 auto it = mStreams.find(sb.streamId);
                 if (it == mStreams.end()) continue;
-                fillBuffer(sb, it->second, ts);
+                // AIDL buffer cache：同一个 bufferId 的后续请求可能把 handle 省略。
+                const auto key = std::make_pair(sb.streamId, sb.bufferId);
+                const bool emptyHandle = sb.buffer.fds.empty() && sb.buffer.ints.empty();
+                void* cachedNh = nullptr;
+                if (emptyHandle) {
+                    auto cached = mBufferHandles.find(key);
+                    if (cached != mBufferHandles.end()) cachedNh = cached->second;
+                } else {
+                    auto old = mBufferHandles.find(key);
+                    if (old != mBufferHandles.end() && old->second) {
+                        nh_close((native_handle_t*)old->second); nh_delete((native_handle_t*)old->second);
+                    }
+                    mBufferHandles[key] = toNative(sb.buffer);
+                }
+                fillBuffer(sb, it->second, ts, cachedNh);
                 StreamBuffer out;
                 out.streamId = sb.streamId;
                 out.bufferId = sb.bufferId;

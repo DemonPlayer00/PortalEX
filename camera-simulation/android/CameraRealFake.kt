@@ -15,9 +15,9 @@ import java.util.concurrent.TimeUnit
  */
 object CameraRealFake {
 
-    private const val PROVIDER = "/data/local/tmp/portal_camera_provider"
-    private const val META = "/sdcard/GlaDos_File/OnePlusProvider/portal_meta.bin"
-    private const val TAGS = "/sdcard/GlaDos_File/OnePlusProvider/portal_tags.bin"
+    private const val PROVIDER = "/data/local/tmp/portalex/cammock/provider"
+    private const val META = "/data/local/tmp/portalex/cammock/meta.bin"
+    private const val TAGS = "/data/local/tmp/portalex/cammock/tags.bin"
 
     /**
      * 系统级强制重载：重启 cameraserver，让所有 CameraService 客户端

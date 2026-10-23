@@ -22,18 +22,6 @@
             android:clickable="true"
             android:focusable="true" />
 
-        <!-- 准星：取点位置取地图中心，屏幕上需要一个参照物（与路线模拟页同一套做法） -->
-        <ImageView
-            android:id="@+id/camera_crosshair"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:clickable="false"
-            android:contentDescription="@string/draw_crosshair"
-            android:focusable="false"
-            android:importantForAccessibility="no"
-            android:src="@drawable/ic_draw_crosshair" />
-
         <com.google.android.material.card.MaterialCardView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

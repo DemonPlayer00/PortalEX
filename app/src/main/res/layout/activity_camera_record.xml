@@ -11,10 +11,20 @@
     android:background="@android:color/black"
     tools:context=".ui.camera.CameraRecordActivity">
 
-    <TextureView
-        android:id="@+id/camera_preview"
+    <!-- 预览窗口：外边距 24dp，内部 TextureView 等比显示、顶部对齐 -->
+    <FrameLayout
+        android:id="@+id/camera_preview_container"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:padding="24dp">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/camera_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:implementationMode="compatible"
+            app:scaleType="fitCenter" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/camera_record_status"
@@ -50,6 +60,16 @@
             app:icon="@drawable/rounded_play_arrow_24"
             app:iconGravity="textStart"
             app:iconTint="?attr/colorOnPrimary" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/camera_face_calibrate"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="52dp"
+            android:layout_marginStart="12dp"
+            android:text="人脸框校准"
+            android:onClick="onFaceCalibrate"
+            android:textColor="@android:color/white" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/camera_record_cancel"
