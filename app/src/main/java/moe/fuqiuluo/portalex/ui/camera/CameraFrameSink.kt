@@ -81,6 +81,8 @@ object CameraFrameSink {
     private const val OFF_PHOTO_REQ_H = 100
     /** HAL 回写：拍照请求序号（HAL 在请求阶段就 +1，通知我们"现在就编一张"） */
     private const val OFF_PHOTO_REQ_SEQ = 104
+    /** 后端写入：相机请求序号（OnePlus 实现使用；0 = 后端未实现） */
+    private const val OFF_CONSUMER_REQ_SEQ = 108
 
     private var raf: RandomAccessFile? = null
     private var map: ByteBuffer? = null
@@ -215,6 +217,10 @@ object CameraFrameSink {
     @Synchronized
     fun photoRequestSeq(): Int = map?.getInt(OFF_PHOTO_REQ_SEQ) ?: 0
 
+    /** 后端写入的相机请求序号；app 据此只在有相机请求时产帧。 */
+    @Synchronized
+    fun requestSeq(): Int = map?.getInt(OFF_CONSUMER_REQ_SEQ) ?: 0
+
     /** HAL 回写的"它实际的流尺寸"（HAL 在取帧时填），拿不到返回 null */
     @Synchronized
     fun consumerSize(): Pair<Int, Int>? {
@@ -284,6 +290,39 @@ object CameraFrameSink {
         seq += 1
         m.putInt(OFF_SEQ, seq)
         m.putLong(OFF_TIMESTAMP, System.nanoTime()) // HAL 用它做"生产者心跳"
+        nextSlot = (nextSlot + 1) % SLOTS
+        return true
+    }
+
+    /**
+     * 直接发布一帧 NV12（Y + UV）。给没有 ImageReader 的调试控制器用；
+     * 与 publish(image) 写同一套槽位/序号，HAL 不需要区分来源。
+     */
+    @Synchronized
+    fun publishNv21(nv12: ByteArray, w: Int, h: Int): Boolean {
+        val m = map ?: return false
+        if (w < width || h < height) return false
+        if (nv12.size < w * h * 3 / 2) return false
+        val base = HDR_BYTES + nextSlot * slotBytes
+        val yRows = height
+        val uvRows = height / 2
+        if (base + yStride * yRows + uvStride * uvRows > m.capacity()) return false
+        for (r in 0 until yRows) {
+            val src = r * w
+            m.position(base + r * yStride)
+            m.put(nv12, src, width)
+        }
+        val uvBase = base + yStride * yRows
+        val uvSrcBase = w * h
+        for (r in 0 until uvRows) {
+            val src = uvSrcBase + r * w
+            m.position(uvBase + r * uvStride)
+            m.put(nv12, src, width)
+        }
+        m.putInt(OFF_WRITE_IDX, nextSlot)
+        seq += 1
+        m.putInt(OFF_SEQ, seq)
+        m.putLong(OFF_TIMESTAMP, System.nanoTime())
         nextSlot = (nextSlot + 1) % SLOTS
         return true
     }
