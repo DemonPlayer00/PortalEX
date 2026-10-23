@@ -698,6 +698,29 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .show()
             return
         }
+        if (next && CammockManager.isModule(context)) {
+            binding.switchCameraMock.isEnabled = false
+            Executors.newSingleThreadExecutor().execute {
+                val result = CammockManager.releaseRuntime(context)
+                main.post {
+                    binding.switchCameraMock.isEnabled = true
+                    Toast.makeText(
+                        context,
+                        result.getOrElse { "模块安装失败：${it.message}" },
+                        Toast.LENGTH_LONG
+                    ).show()
+                    refresh()
+                }
+            }
+            return
+        }
+        if (!next && CammockManager.isModule(context)) {
+            Executors.newSingleThreadExecutor().execute {
+                CammockManager.uninstall(context)
+                main.post { refresh() }
+            }
+            return
+        }
         if (next) {
             val lm = mockServiceViewModel.locationManager
             if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {
