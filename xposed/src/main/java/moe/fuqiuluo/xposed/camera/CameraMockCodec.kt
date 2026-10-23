@@ -232,6 +232,11 @@ object CameraMockCodec {
     private const val K_DURATION = "durationMs"
     private const val K_TAGS = "tags"
     private const val K_ADDED_AT = "addedAt"
+    private const val K_RECORDED_AT = "recordedAt"
+    private const val K_TRACK = "track"
+    private const val K_T = "t"
+    private const val K_TP_LAT = "lat"
+    private const val K_TP_LON = "lon"
 
     fun encode(manifest: CameraMockManifest): String {
         val root = LinkedHashMap<String, Any?>()
@@ -265,7 +270,15 @@ object CameraMockCodec {
                 K_FILE to v.file,
                 K_DURATION to v.durationMs,
                 K_TAGS to CameraTags.sanitize(v.tags),
-                K_ADDED_AT to v.addedAt
+                K_ADDED_AT to v.addedAt,
+                K_RECORDED_AT to v.recordedAt,
+                K_TRACK to v.track.map { tp ->
+                    linkedMapOf<String, Any?>(
+                        K_T to tp.tMs,
+                        K_TP_LAT to tp.lat,
+                        K_TP_LON to tp.lon
+                    )
+                }
             )
         }
     )
@@ -287,7 +300,17 @@ object CameraMockCodec {
                     file = file,
                     durationMs = ((v[K_DURATION] as? Number)?.toLong() ?: 0L).coerceAtLeast(0L),
                     tags = CameraTags.sanitize(strings(v[K_TAGS])),
-                    addedAt = (v[K_ADDED_AT] as? Number)?.toLong() ?: 0L
+                    addedAt = (v[K_ADDED_AT] as? Number)?.toLong() ?: 0L,
+                    recordedAt = (v[K_RECORDED_AT] as? Number)?.toLong() ?: 0L,
+                    track = CameraTags.sanitizeTrack(
+                        (v[K_TRACK] as? List<*>)?.mapNotNull { raw ->
+                            val m = raw as? Map<*, *> ?: return@mapNotNull null
+                            val t = (m[K_T] as? Number)?.toLong() ?: return@mapNotNull null
+                            val lat = (m[K_TP_LAT] as? Number)?.toDouble() ?: return@mapNotNull null
+                            val lon = (m[K_TP_LON] as? Number)?.toDouble() ?: return@mapNotNull null
+                            CameraVideoTrackPoint(t, lat, lon)
+                        }
+                    )
                 )
             )
         }

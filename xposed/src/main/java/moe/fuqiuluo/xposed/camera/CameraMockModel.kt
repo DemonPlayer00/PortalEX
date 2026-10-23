@@ -23,7 +23,18 @@ data class CameraVideo(
     val durationMs: Long,
     /** 标签：预设（晴/阴/白天/黑夜）+ 任意自定义，见 [CameraTags] */
     val tags: List<String>,
-    val addedAt: Long
+    val addedAt: Long,
+    /** 录制开始的墙钟时间（毫秒）；0 = 导入/未知 */
+    val recordedAt: Long = 0L,
+    /** 录制期间记录的位置轨迹（wgs84，按时间排序）；导入视频为空 */
+    val track: List<CameraVideoTrackPoint> = emptyList()
+)
+
+/** 录制期间的一个路径采样点；tMs 是相对录制开始的毫秒偏移。 */
+data class CameraVideoTrackPoint(
+    val tMs: Long,
+    val lat: Double,
+    val lon: Double
 )
 
 data class CameraVideoPoint(
@@ -87,10 +98,14 @@ data class CameraMockSelection(
 object CameraTags {
     const val SUNNY = "晴"
     const val CLOUDY = "阴"
+    const val RAIN = "雨"
+    const val SNOW = "雪"
+    const val WIND = "风"
+    const val FOG = "雾"
     const val DAY = "白天"
     const val NIGHT = "黑夜"
 
-    val PRESETS = listOf(SUNNY, CLOUDY, DAY, NIGHT)
+    val PRESETS = listOf(SUNNY, CLOUDY, RAIN, SNOW, WIND, FOG, DAY, NIGHT)
 
     /** 单个标签的最大长度：防手滑粘贴整段文本把清单撑爆（跨进程 Bundle 有 1MB 上限） */
     const val MAX_LEN = 24
@@ -99,6 +114,19 @@ object CameraTags {
     const val MAX_COUNT = 16
 
     /** 归一化 + 去重 + 截断（保序）。空白标签丢弃，比较用大小写不敏感。 */
+    /** 轨迹点上限：约 2 小时 × 1 秒；防止异常录制把清单撑爆 */
+    const val MAX_TRACK_POINTS = 7200
+
+    fun sanitizeTrack(points: Collection<CameraVideoTrackPoint>?): List<CameraVideoTrackPoint> {
+        if (points == null) return emptyList()
+        return points.asSequence()
+            .filter { it.tMs >= 0 && it.lat.isFinite() && it.lon.isFinite() &&
+                      it.lat in -90.0..90.0 && it.lon in -180.0..180.0 }
+            .sortedBy { it.tMs }
+            .take(MAX_TRACK_POINTS)
+            .toList()
+    }
+
     fun sanitize(tags: Collection<String>?): List<String> {
         if (tags == null) return emptyList()
         val out = ArrayList<String>(tags.size)

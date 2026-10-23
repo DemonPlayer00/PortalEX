@@ -42,6 +42,8 @@ import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
+import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
+import org.json.JSONArray
 import kotlin.random.Random
 
 /**
@@ -96,7 +98,30 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             Toast.makeText(requireContext(), "录制文件丢失", Toast.LENGTH_SHORT).show()
             return@registerForActivityResult
         }
-        addVideo(CameraMockStore.registerRecorded(requireContext(), file, null))
+        val track = parseTrack(result.data?.getStringExtra(CameraRecordActivity.RESULT_TRACK_JSON))
+        val recordedAt = result.data?.getLongExtra(CameraRecordActivity.RESULT_RECORDED_AT, 0L) ?: 0L
+        addVideo(
+            CameraMockStore.registerRecorded(
+                requireContext(), file, null,
+                recordedAt = recordedAt,
+                track = track
+            )
+        )
+    }
+
+    private fun parseTrack(json: String?): List<CameraVideoTrackPoint> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                CameraVideoTrackPoint(
+                    tMs = o.optLong("t", 0L),
+                    lat = o.optDouble("lat", Double.NaN),
+                    lon = o.optDouble("lon", Double.NaN)
+                ).takeIf { it.lat.isFinite() && it.lon.isFinite() }
+            }
+        }.getOrDefault(emptyList())
     }
 
     private val importLauncher = registerForActivityResult(

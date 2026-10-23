@@ -13,6 +13,7 @@ import moe.fuqiuluo.xposed.camera.CameraMockProtocol
 import moe.fuqiuluo.xposed.camera.CameraTags
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
+import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
 import java.io.File
 import java.util.UUID
 
@@ -138,14 +139,23 @@ object CameraMockStore {
      * 默认名取**拍摄时间**而不是文件名：文件名是 uuid，列表里看到一串十六进制
      * 既认不出是哪一段，也没法在选素材时判断先后。
      */
-    fun registerRecorded(context: Context, file: File, name: String?, tags: List<String> = emptyList()): CameraVideo =
+    fun registerRecorded(
+        context: Context,
+        file: File,
+        name: String?,
+        tags: List<String> = emptyList(),
+        recordedAt: Long = 0L,
+        track: List<CameraVideoTrackPoint> = emptyList()
+    ): CameraVideo =
         CameraVideo(
             id = file.nameWithoutExtension,
             name = name?.takeIf { it.isNotBlank() } ?: defaultRecordName(),
             file = file.name,
             durationMs = probeDurationMs(file),
             tags = CameraTags.sanitize(tags),
-            addedAt = System.currentTimeMillis()
+            addedAt = System.currentTimeMillis(),
+            recordedAt = recordedAt,
+            track = CameraTags.sanitizeTrack(track)
         )
 
     /** 默认录制名：`录制 09-12 17:34`（月-日 时:分，够用且不跨年歧义） */

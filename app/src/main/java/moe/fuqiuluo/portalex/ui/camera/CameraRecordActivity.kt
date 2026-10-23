@@ -26,6 +26,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.ActivityCameraRecordBinding
+import moe.fuqiuluo.xposed.camera.CameraTags
+import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 /**
@@ -40,6 +44,8 @@ class CameraRecordActivity : AppCompatActivity() {
 
     companion object {
         const val RESULT_FILE_NAME = "file_name"
+        const val RESULT_TRACK_JSON = "track_json"
+        const val RESULT_RECORDED_AT = "recorded_at"
         private const val TAG = "CameraRecord"
         private const val MAX_DURATION_MS = 60_000L
     }
@@ -71,6 +77,8 @@ class CameraRecordActivity : AppCompatActivity() {
     private var outputFile: File? = null
     private var recording = false
     private var recordStartedAt = 0L
+    private val trackPoints = ArrayList<CameraVideoTrackPoint>()
+    private var lastTrackSampleAt = 0L
 
     /**
      * 计时器跑在相机线程上，**任何 View 操作都必须回到主线程**。
@@ -83,6 +91,7 @@ class CameraRecordActivity : AppCompatActivity() {
         override fun run() {
             if (!recording) return
             val elapsed = System.currentTimeMillis() - recordStartedAt
+            sampleTrack()
             runOnUiThread {
                 if (recording) binding.cameraRecordStatus.text = statusText(elapsed)
             }
@@ -307,6 +316,9 @@ class CameraRecordActivity : AppCompatActivity() {
                             rec.start()
                             recording = true
                             recordStartedAt = System.currentTimeMillis()
+                            trackPoints.clear()
+                            lastTrackSampleAt = 0L
+                            sampleTrack()
                             runOnUiThread {
                                 binding.cameraRecordButton.setText(R.string.camera_record_stop)
                                 binding.cameraRecordStatus.text = statusText(0L)
@@ -340,6 +352,8 @@ class CameraRecordActivity : AppCompatActivity() {
         recording = false
         handler?.removeCallbacks(ticker)
         val file = outputFile
+        val startedAt = recordStartedAt
+        val track = synchronized(trackPoints) { trackPoints.toList() }
         val saved = try {
             recorder?.stop()
             true
@@ -359,8 +373,38 @@ class CameraRecordActivity : AppCompatActivity() {
             finish()
             return
         }
-        setResult(Activity.RESULT_OK, Intent().putExtra(RESULT_FILE_NAME, file.name))
+        val data = Intent().putExtra(RESULT_FILE_NAME, file.name)
+        data.putExtra(RESULT_RECORDED_AT, startedAt)
+        data.putExtra(RESULT_TRACK_JSON, encodeTrack(track))
+        setResult(Activity.RESULT_OK, data)
         finish()
+    }
+
+    /** 每秒采样一次模拟位置；MainActivity 未提供位置时轨迹为空，不影响视频本身。 */
+    private fun sampleTrack() {
+        if (!recording) return
+        val now = System.currentTimeMillis()
+        if (now - lastTrackSampleAt < 1000L) return
+        lastTrackSampleAt = now
+        val pos = CameraMockRuntime.position() ?: return
+        val t = (now - recordStartedAt).coerceAtLeast(0L)
+        synchronized(trackPoints) {
+            if (trackPoints.size < CameraTags.MAX_TRACK_POINTS) {
+                trackPoints.add(CameraVideoTrackPoint(t, pos.first, pos.second))
+            }
+        }
+    }
+
+    private fun encodeTrack(points: List<CameraVideoTrackPoint>): String {
+        val arr = JSONArray()
+        points.forEach { p ->
+            arr.put(JSONObject().apply {
+                put("t", p.tMs)
+                put("lat", p.lat)
+                put("lon", p.lon)
+            })
+        }
+        return arr.toString()
     }
 
     /** 取消并退出（主线程） */
