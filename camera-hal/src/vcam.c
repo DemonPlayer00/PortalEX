@@ -40,6 +40,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
@@ -615,6 +617,54 @@ struct portal_jpeg_blob {
     uint32_t jpeg_size;
 };
 
+/* app 侧 CameraMockVideoSource 写入的 NV21 共享帧；启用时直接搬进相机 buffer。 */
+static int g_cammock_fd = -1;
+static void *g_cammock_map = MAP_FAILED;
+static size_t g_cammock_len = 0;
+static uint32_t g_cammock_last_seq = 0;
+
+static bool copy_cammock_yuv(uint8_t *base, struct portal_android_ycbcr *yc,
+                             uint32_t w, uint32_t h) {
+    if (base == NULL || yc == NULL || yc->ystride == 0) return false;
+    if (g_cammock_fd < 0) {
+        g_cammock_fd = open("/data/local/tmp/portalex/cammock.frames", O_RDONLY | O_CLOEXEC);
+        if (g_cammock_fd < 0) return false;
+        struct stat st;
+        if (fstat(g_cammock_fd, &st) != 0 || st.st_size < 4096) return false;
+        g_cammock_len = (size_t)st.st_size;
+        g_cammock_map = mmap(NULL, g_cammock_len, PROT_READ, MAP_SHARED, g_cammock_fd, 0);
+        if (g_cammock_map == MAP_FAILED) return false;
+    }
+    if (g_cammock_map == MAP_FAILED || g_cammock_len < 4096 + 4u * 1024u * 1024u) return false;
+    const uint32_t *hdr = (const uint32_t *)g_cammock_map;
+    if (hdr[0] != 0x46584550u || hdr[1] != 1u || hdr[9] == 0u) return false;
+    uint32_t sw = hdr[2], sh = hdr[3], ys = hdr[4], uvs = hdr[5];
+    uint32_t slot_bytes = hdr[7], slots = hdr[8], seq = hdr[10], idx = hdr[11];
+    if (sw == 0 || sh == 0 || ys < sw || uvs < sw || slots == 0 || idx >= slots) return false;
+    if (w > sw || h > sh) return false;
+    size_t off = 4096u + (size_t)idx * slot_bytes;
+    if (off + (size_t)ys * sh > g_cammock_len || off + (size_t)ys * sh + (size_t)uvs * (sh / 2) > g_cammock_len) return false;
+    const uint8_t *src = (const uint8_t *)g_cammock_map + off;
+    for (uint32_t y = 0; y < h; y++) {
+        memcpy(base + (size_t)y * yc->ystride, src + (size_t)y * ys, w);
+    }
+    if (yc->cb && yc->cr && yc->cstride > 0) {
+        const uint8_t *uv = src + (size_t)ys * sh;
+        for (uint32_t y = 0; y < h / 2; y++) {
+            for (uint32_t x = 0; x < w / 2; x++) {
+                size_t di = (size_t)y * yc->cstride + (size_t)x * yc->chroma_step;
+                size_t si = (size_t)y * uvs + (size_t)x * 2;
+                ((uint8_t *)yc->cb)[di] = uv[si];
+                ((uint8_t *)yc->cr)[di] = uv[si + 1];
+            }
+        }
+    }
+    if (seq != g_cammock_last_seq) {
+        g_cammock_last_seq = seq;
+    }
+    return true;
+}
+
 static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int format) {
     if (handle == NULL || w == 0 || h == 0) return false;
     /* PRIVATE/IMPLEMENTATION_DEFINED 面：先让 GPU 按 gralloc 真实布局渲染。 */
@@ -713,6 +763,11 @@ static bool paint(void *handle, uint32_t w, uint32_t h, uint32_t frame, int form
         return false;
     }
     uint8_t *base = (uint8_t *)yc.y;
+    if (base != NULL && yc.ystride > 0 && copy_cammock_yuv(base, &yc, w, h)) {
+        int fence = -1;
+        g_gbm_unlock(g_gbm_self, handle, &fence);
+        return true;
+    }
     if (base != NULL && yc.ystride > 0) {
         static const int bar_rgb[8][3] = {
             {255, 0, 0},   {255, 128, 0}, {255, 255, 0}, {0, 255, 0},

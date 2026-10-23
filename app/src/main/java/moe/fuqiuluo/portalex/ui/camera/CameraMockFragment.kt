@@ -183,14 +183,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private fun autoUploadLibrary() {
         val ctx = requireContext()
         Executors.newSingleThreadExecutor().execute {
-            val result = CameraMockServerBridge.upload(ctx)
+            val result = CammockManager.upload(ctx)
             main.post {
                 result.onSuccess { n ->
-                    if (n > 0) {
-                        Toast.makeText(ctx, "已存储到 system_server", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(ctx, "system_server 未连接，视频保留在本地", Toast.LENGTH_SHORT).show()
-                    }
+                    Toast.makeText(ctx, "已通过 cammock 上传 $n 段视频", Toast.LENGTH_SHORT).show()
                 }.onFailure {
                     Toast.makeText(ctx, "自动上传失败：${it.message}", Toast.LENGTH_LONG).show()
                 }
@@ -315,38 +311,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      * 录制期间 CameraRecordActivity 每秒采样 CameraMockRuntime.position()，
      * 结果中的 track 会随视频一起落库。
      */
-    private fun uploadLibraryToServer() {
-        Executors.newSingleThreadExecutor().execute {
-            val result = CameraMockServerBridge.upload(requireContext())
-            main.post {
-                result.onSuccess { n ->
-                    Toast.makeText(requireContext(), "已上传 $n 段视频，等待 system_server 导入", Toast.LENGTH_LONG).show()
-                }.onFailure {
-                    Toast.makeText(requireContext(), "上传失败：${it.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
 
-    private fun downloadLibraryFromServer() {
-        Executors.newSingleThreadExecutor().execute {
-            val snapshot = CameraMockServerBridge.downloadSnapshot()
-            main.post {
-                if (snapshot == null) {
-                    Toast.makeText(requireContext(), "system_server 还没有下载快照", Toast.LENGTH_LONG).show()
-                    return@post
-                }
-                runCatching {
-                    val routes = moe.fuqiuluo.xposed.camera.CameraMockCodec.decodeRoutes(snapshot)
-                    CameraMockStore.setRoutes(requireContext(), routes)
-                    refresh()
-                    Toast.makeText(requireContext(), "已下载 ${routes.size} 条路线", Toast.LENGTH_SHORT).show()
-                }.onFailure {
-                    Toast.makeText(requireContext(), "下载库解析失败：${it.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
 
     private fun startRecordingFromMap() {
         val locationManager = requireContext()
@@ -715,6 +680,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 binding.switchCameraMock.isEnabled = true
                 if (result.isSuccess) {
                     context.cameraMockEnabled = next
+                    CameraMockVideoSource.sync(context)
                     updateSwitch()
                     updateStatus(CameraMockStore.points(context))
                     Toast.makeText(
@@ -723,6 +689,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
+                    context.cameraMockEnabled = !next
+                    CameraMockVideoSource.sync(context)
+                    updateSwitch()
                     Toast.makeText(context, "cammock 执行失败：${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
                 }
                 refresh()
