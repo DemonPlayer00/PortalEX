@@ -22,6 +22,7 @@ import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle
 import moe.fuqiuluo.xposed.utils.PortalProtocol
 
 object MockServiceHelper {
@@ -185,6 +186,10 @@ object MockServiceHelper {
         // 会话结束 ⇒ 前台服务必须跟着走（不做"没人开会话却常驻"的幽灵）
         runCatching { Portal.appContext }.getOrNull()?.let { MockKeepAliveService.stop(it) }
         FakeLoc.enable = false
+        // 位置模拟关闭 ⇒ 摄像头模拟一并关闭，避免留下一个还在接管的虚拟相机。
+        runCatching { Portal.appContext }.getOrNull()?.let {
+            CameraMockLifecycle.stopForLocationMockOff(it)
+        }
         if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             return !isMockStart(locationManager)
         }

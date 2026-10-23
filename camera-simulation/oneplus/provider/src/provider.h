@@ -22,6 +22,7 @@ AIBinder* portalWaitForService(const char* instance);
 #include <string>
 #include <vector>
 
+struct native_handle_t;
 namespace portal {
 
 struct StreamInfo {
@@ -69,10 +70,15 @@ class PortalSession : public aidl::android::hardware::camera::device::BnCameraDe
 
   private:
     bool fillBuffer(const aidl::android::hardware::camera::device::StreamBuffer& sb,
-                    const StreamInfo& info, int64_t timestamp);
+                    const StreamInfo& info, int64_t timestamp,
+                    void* cachedNh = nullptr);
 
     std::shared_ptr<aidl::android::hardware::camera::device::ICameraDeviceCallback> mCallback;
+    /** 同一相机 session 的选片去重键：3 秒刷新时用于给上次视频加权。 */
+    std::string mSessionId;
     std::map<int, StreamInfo> mStreams;
+    /** AIDL 后续请求可能只给 bufferId，不重复给 native_handle；缓存首次句柄。 */
+    std::map<std::pair<int32_t, int64_t>, void*> mBufferHandles;
     std::mutex mLock;
     bool mClosed = false;
 };

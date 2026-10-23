@@ -26,6 +26,8 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import moe.fuqiuluo.portalex.ui.camera.CameraFrameSink
+import moe.fuqiuluo.portalex.ui.camera.CameraMockServerBridge
+import java.io.File
 import kotlin.math.max
 
 /**
@@ -99,6 +101,28 @@ class VcamDebugActivity : Activity() {
         root.addView(Button(this).apply {
             text = "加载内置人脸 (640x480)"
             setOnClickListener { loadAssetFace() }
+        }, lp())
+
+        root.addView(Button(this).apply {
+            text = "模式：视频点（默认）"
+            val modeFile = File("/data/local/tmp/portalex/provider_mode")
+            fun syncLabel() {
+                text = if (modeFile.exists() && modeFile.readText().trim() == "manual") {
+                    "模式：手动帧（点击切视频点）"
+                } else {
+                    "模式：视频点（默认，点击切手动帧）"
+                }
+            }
+            syncLabel()
+            setOnClickListener {
+                val toManual = !(modeFile.exists() && modeFile.readText().trim() == "manual")
+                runCatching {
+                    modeFile.parentFile?.mkdirs()
+                    modeFile.writeText(if (toManual) "manual" else "video")
+                }
+                syncLabel()
+                status.text = if (toManual) "已切换手动帧模式：provider 下一帧生效" else "已切换视频点模式（默认）"
+            }
         }, lp())
 
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -216,11 +240,15 @@ class VcamDebugActivity : Activity() {
         openSink()
         running = true
         main.post(tick)
-        if (intent?.getBooleanExtra("auto", false) == true) {
-            main.postDelayed({ loadAssetFace() }, 300)
-        }
         if (intent?.getBooleanExtra("toggle", false) == true) {
             main.postDelayed({ modeButton.performClick() }, 800)
+        }
+        if (intent?.getBooleanExtra("download_library", false) == true) {
+            Thread {
+                val json = CameraMockServerBridge.downloadSnapshot()
+                android.util.Log.i("VcamDebug", "download_library=" + (json?.take(80) ?: "null"))
+                main.post { status.text = if (json == null) "下载库失败" else "下载库成功 ${json.length} 字节" }
+            }.start()
         }
     }
 

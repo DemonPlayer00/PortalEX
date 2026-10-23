@@ -169,14 +169,9 @@
     <string name="camera_mock_info">玩法说明</string>
     <string name="got_it">知道了</string>
     <string name="camera_mock_filter_label">标签筛选（多个标签为「全含」）</string>
-    <string name="camera_mock_targets">目标应用</string>
-    <string name="camera_mock_targets_desc">留空 = 不限制。一行一个包名，例如 com.tencent.mm</string>
-    <string name="camera_mock_targets_unset">目标应用：未指定（所有被注入的应用都会命中）</string>
-    <string name="camera_mock_targets_value">目标应用：%1$s</string>
     <string name="camera_mock_position_idle">未启动：目标应用看到的仍是真实摄像头</string>
     <string name="camera_mock_position_unknown">当前模拟位置未知 → 本次在全部匹配素材里随机取一段</string>
     <string name="camera_mock_started_open">摄像头模拟已启动：所有被注入的应用都会命中</string>
-    <string name="camera_mock_started_targeted">摄像头模拟已启动：仅指定的目标应用会命中</string>
     <string name="camera_mock_stopped">摄像头模拟已停止</string>
     <string name="camera_point_list">视频点</string>
     <string name="camera_point_new">新建视频点</string>

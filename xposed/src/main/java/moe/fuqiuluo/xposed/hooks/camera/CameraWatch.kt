@@ -77,6 +77,7 @@ internal object CameraWatch {
             .filter { it != null }
         step("AppOpsService") { hookAppOps(candidates) }
         step("CameraServiceProxy") { hookCameraServiceProxy(candidates) }
+        step("SelectionServer") { CameraMockSelectionServer.start() }
     }
 
     /** 按候选名字 × 候选类加载器查找；找不到返回 null（调用方走延迟捕获兜底） */

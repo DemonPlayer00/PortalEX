@@ -8,7 +8,6 @@ import moe.fuqiuluo.xposed.hooks.fused.AndroidFusedLocationProviderHook
 import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
-import moe.fuqiuluo.xposed.hooks.camera.CameraMockHooks
 import moe.fuqiuluo.xposed.hooks.camera.CameraWatch
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.SystemRuntimeChannel
@@ -103,11 +102,9 @@ class FakeLocation {
                     // process on each package」——重复安装会让每个方法上挂两遍钩子。
                     return
                 }
-                Logger.info("应用侧传感 hook 已临时停用（模拟由系统框架侧接管）：${info.packageName}")
-                // 摄像头模拟是唯一必须注入目标应用的功能族；装不上也不影响其它注入。
-                step("CameraMockHooks") {
-                    CameraMockHooks.install(info.classLoader, info.packageName)
-                }
+                // 纪律：用户应用进程一律不安装任何 hook。
+                // 摄像头模拟也必须走 system_server / provider 数据面，不能在目标应用里替换输出面。
+                Logger.info("用户应用进程不注入 hook：${info.packageName}")
                 return
             }
 

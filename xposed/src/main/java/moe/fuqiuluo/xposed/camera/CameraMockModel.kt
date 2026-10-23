@@ -37,6 +37,21 @@ data class CameraVideoTrackPoint(
     val lon: Double
 )
 
+/**
+ * 路线：一条按时间排序的拍摄序列。
+ *  - CameraRoute 只描述“地点 + 拍摄顺序”；
+ *  - 每个 CameraVideo 自身携带 recordedAt 与 track（视频时间轴 + 移动轨迹）。
+ * 这样存储口径固定为 **route → capture(timeline) → video**，不再只有孤立的视频点。
+ */
+data class CameraRoute(
+    val id: String,
+    val name: String,
+    val lat: Double,
+    val lon: Double,
+    val createdAt: Long,
+    val videos: List<CameraVideo>
+)
+
 data class CameraVideoPoint(
     /** 稳定 id */
     val id: String,

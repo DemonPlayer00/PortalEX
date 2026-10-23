@@ -10,6 +10,7 @@ import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.xposed.camera.CameraMockCodec
 import moe.fuqiuluo.xposed.camera.CameraMockManifest
 import moe.fuqiuluo.xposed.camera.CameraMockProtocol
+import moe.fuqiuluo.xposed.camera.CameraRoute
 import moe.fuqiuluo.xposed.camera.CameraTags
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
@@ -39,31 +40,75 @@ object CameraMockStore {
 
     // ---- 库读写 ----
 
+    /**
+     * 路线库读取：唯一持久化格式是 route → captures(timeline) → video。
+     * 旧 cameraMockLibrary 只在首次升级时迁移一次，成功后清空。
+     */
+    fun routes(context: Context): List<CameraRoute> {
+        // 历史脚本预置的 fixture 素材不属于用户数据，升级时一并清掉（含已不在 JSON 里的孤儿文件）。
+        deleteVideoFile(context, "fixture-clip.mp4")
+        val raw = context.cameraMockRoutes
+        val source = if (raw.isNotBlank()) {
+            CameraMockCodec.decodeRoutes(raw)
+        } else {
+            val legacy = CameraMockCodec.decodePoints(context.cameraMockLibrary)
+            if (legacy.isNotEmpty()) {
+                val migrated = CameraMockCodec.pointsToRoutes(legacy)
+                context.cameraMockRoutes = CameraMockCodec.encodeRoutes(migrated)
+                context.cameraMockLibrary = ""
+                migrated
+            } else emptyList()
+        }
+        // 历史测试脚本曾写入 fixture-point / fixture-clip；这些不是用户路线，升级时清掉。
+        val cleaned = source.filterNot { route ->
+            route.id == "fixture-point" || route.name == "fixture-point" ||
+                (route.videos.isNotEmpty() && route.videos.all {
+                    it.id == "fixture-video" || it.file == "fixture-clip.mp4"
+                })
+        }
+        if (cleaned.size != source.size) {
+            cleaned.flatMap { it.videos }.forEach { deleteVideoFile(context, it.file) }
+            context.cameraMockRoutes = CameraMockCodec.encodeRoutes(cleaned)
+            context.cameraMockUpdatedAt = System.currentTimeMillis()
+        }
+        return cleaned
+    }
+
+    fun setRoutes(context: Context, routes: List<CameraRoute>) {
+        context.cameraMockRoutes = CameraMockCodec.encodeRoutes(routes)
+        context.cameraMockUpdatedAt = System.currentTimeMillis()
+    }
+
+    /** UI 兼容层：旧页面仍按 CameraVideoPoint 读取，但底层已经按路线存储。 */
     fun points(context: Context): List<CameraVideoPoint> =
-        CameraMockCodec.decodePoints(context.cameraMockLibrary)
+        CameraMockCodec.routesToPoints(routes(context))
 
     fun setPoints(context: Context, points: List<CameraVideoPoint>) {
-        context.cameraMockLibrary = CameraMockCodec.encodePoints(points)
-        context.cameraMockUpdatedAt = System.currentTimeMillis()
+        setRoutes(context, CameraMockCodec.pointsToRoutes(points))
     }
 
     fun point(context: Context, id: String): CameraVideoPoint? =
         points(context).firstOrNull { it.id == id }
 
-    /** 新增或整条替换（按 id） */
+    /** 新增或整条替换（按 route id）；保留原 route 的 createdAt。 */
     fun upsert(context: Context, point: CameraVideoPoint) {
-        val list = points(context).toMutableList()
+        val list = routes(context).toMutableList()
+        val route = CameraMockCodec.pointsToRoutes(listOf(point)).first()
         val index = list.indexOfFirst { it.id == point.id }
-        if (index >= 0) list[index] = point else list.add(point)
-        setPoints(context, list)
+        if (index >= 0) {
+            list[index] = route.copy(createdAt = list[index].createdAt)
+        } else {
+            list.add(route)
+        }
+        setRoutes(context, list)
     }
 
-    /** 删除点位，并把它名下视频的本体文件一并删掉（避免留下孤儿文件占空间） */
+    /** 删除路线，并把它名下视频的本体文件一并删掉（避免留下孤儿文件占空间） */
     fun removePoint(context: Context, id: String) {
-        val list = points(context)
+        val list = routes(context)
         val target = list.firstOrNull { it.id == id } ?: return
         target.videos.forEach { deleteVideoFile(context, it.file) }
-        setPoints(context, list.filterNot { it.id == id })
+        setRoutes(context, list.filterNot { it.id == id })
     }
 
     fun newPoint(name: String, lat: Double, lon: Double): CameraVideoPoint =
@@ -184,7 +229,7 @@ object CameraMockStore {
         enabled = context.cameraMockEnabled,
         tagFilter = context.cameraMockTagFilter.toList(),
         points = points(context),
-        targets = context.cameraMockTargets.toList(),
+        targets = emptyList(),
         updatedAt = context.cameraMockUpdatedAt
     )
 }
@@ -207,21 +252,20 @@ var Context.cameraMockTagFilter: Set<String>
         putStringSet(CameraMockProtocol.Pref.TAG_FILTER, CameraTags.sanitize(value).toSet())
     }
 
-/** 允许拦截的目标应用包名；空 = 不限制（见 CameraMockProvider.gate） */
-var Context.cameraMockTargets: Set<String>
-    get() = sharedPrefs.getStringSet(CameraMockProtocol.Pref.TARGETS, emptySet()) ?: emptySet()
-    set(value) = sharedPrefs.edit {
-        putStringSet(
-            CameraMockProtocol.Pref.TARGETS,
-            value.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        )
-    }
+
 
 /** 视频库的原始 JSON（读写在 [CameraMockStore] 里；这里私有，避免别处绕过编码器写坏它） */
 private var Context.cameraMockLibrary: String
     get() = sharedPrefs.getString(CameraMockProtocol.Pref.LIBRARY, null) ?: ""
     // commit=true：库是"用户一条条录进来的素材索引"，丢了就得重录一遍
     set(value) = sharedPrefs.edit(commit = true) { putString(CameraMockProtocol.Pref.LIBRARY, value) }
+
+/** 路线库 JSON（唯一事实来源；旧 LIBRARY 仅用于迁移） */
+private var Context.cameraMockRoutes: String
+    get() = sharedPrefs.getString(CameraMockProtocol.Pref.ROUTES, null) ?: ""
+    set(value) = sharedPrefs.edit(commit = true) {
+        putString(CameraMockProtocol.Pref.ROUTES, value)
+    }
 
 private var Context.cameraMockUpdatedAt: Long
     get() = sharedPrefs.getLong("cameraMockUpdatedAt", 0L)
