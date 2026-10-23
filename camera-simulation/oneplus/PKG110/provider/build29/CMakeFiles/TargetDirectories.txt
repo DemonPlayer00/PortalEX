@@ -1,3 +1,0 @@
-/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/portal_camera_provider.dir
-/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/edit_cache.dir
-/var/www/PortalEX/oneplus-provider/build29/CMakeFiles/rebuild_cache.dir
