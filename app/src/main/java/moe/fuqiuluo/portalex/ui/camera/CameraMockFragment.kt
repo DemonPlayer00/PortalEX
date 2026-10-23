@@ -605,43 +605,33 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         rebuildChips()
         root.addView(chips)
 
-        val actions = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.END
-        }
-        actions.addView(com.google.android.material.button.MaterialButton(ctx).apply {
-            text = "添加标签"
-            setOnClickListener {
-                createTagDialog { rebuildChips() }
+        fun selectedTags(): List<String> = (0 until chips.childCount)
+            .map { chips.getChildAt(it) as com.google.android.material.chip.Chip }
+            .filter { it.isChecked }.map { it.text.toString() }
+
+        fun deleteSelected() {
+            val selected = selectedTags()
+            if (selected.isEmpty()) {
+                Toast.makeText(ctx, "请先选择标签", Toast.LENGTH_SHORT).show()
+                return
             }
-        })
-        actions.addView(com.google.android.material.button.MaterialButton(ctx).apply {
-            text = "删除选中"
-            setOnClickListener {
-                val selected = (0 until chips.childCount)
-                    .map { chips.getChildAt(it) as com.google.android.material.chip.Chip }
-                    .filter { it.isChecked }.map { it.text.toString() }
-                if (selected.isEmpty()) {
-                    Toast.makeText(ctx, "请先选择标签", Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
+            MaterialAlertDialogBuilder(ctx)
+                .setTitle("删除标签")
+                .setMessage("将从标签库和所有视频中移除：${selected.joinToString()}")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除") { _, _ ->
+                    CameraMockStore.removeTags(ctx, selected)
+                    refresh()
                 }
-                MaterialAlertDialogBuilder(ctx)
-                    .setTitle("删除标签")
-                    .setMessage("将从标签库和所有视频中移除：${selected.joinToString()}")
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("删除") { _, _ ->
-                        CameraMockStore.removeTags(ctx, selected)
-                        refresh()
-                    }
-                    .show()
-            }
-        })
-        root.addView(actions)
+                .show()
+        }
 
         MaterialAlertDialogBuilder(ctx)
             .setTitle("标签管理")
             .setView(root)
-            .setNegativeButton("关闭", null)
+            .setNeutralButton("添加标签") { _, _ -> createTagDialog() }
+            .setNegativeButton("删除选中") { _, _ -> deleteSelected() }
+            .setPositiveButton("关闭", null)
             .show()
     }
 
