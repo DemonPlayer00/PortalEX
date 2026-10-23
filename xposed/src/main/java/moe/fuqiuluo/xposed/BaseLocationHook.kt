@@ -4,7 +4,8 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.SystemClock
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.Hooks
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.microbios.nmea.NMEA
@@ -69,7 +70,9 @@ abstract class BaseLocationHook: BaseDivineService() {
         location.altitude = frameAltitude
         // 速度由实际模拟位移推算（FakeLoc.measuredSpeed）：移动中 = 实测速度 ± 抖动，静止 = 0。
         // 早期实现直接写入配置速度，与注入的位置变化无关（跨帧对比位移与 speed 即可发现矛盾）。
-        val speedAmp = Random.nextDouble(-FakeLoc.speedAmplitude, FakeLoc.speedAmplitude)
+        // 速度噪声：两尺度（会话偏置 + 秒级快分量），见 VirtualWorld.speedOffsetSample。
+        // 旧实现是逐帧独立的 U(-a,+a) —— 客户端只要画瞬时速度就必然满屏锯齿。
+        val speedAmp = FakeLoc.speedOffsetSample(FakeLoc.speedAmplitude)
         // 速度：按**交付间隔窗口**取平均（间隔参数在此进入数据链）——
         // 旧实现直接写瞬时 measuredSpeed（400ms 衰减窗口）：交付间隔由应用决定（可 900ms+）时，
         // 采样常踩到衰减谷值或跳变之间的空档 → 帧携带 vel=0 → 应用侧整段间隔不计步 → 步频偏低。
@@ -83,6 +86,7 @@ abstract class BaseLocationHook: BaseDivineService() {
             // 速度精度：真实设备量级 0.1~0.5 m/s。原实现借用该字段承载模拟速度
             // （值恒等于速度，异常且可被检测），改为独立随机小值。
             location.speedAccuracyMetersPerSecond = Random.nextDouble(0.1, 0.5).toFloat()
+        }
 
         /*
          * 速度保底：静止定位在真机语义里**没有有效航向**（speed==0 ⇒ hasBearing 无意义），
@@ -90,6 +94,11 @@ abstract class BaseLocationHook: BaseDivineService() {
          * （"停下 1 秒后指南针变 0、角度计不再变化"），而我们的位置数据本身是对的
          * （停下后 vel=0.0 / bear=295° 稳定）。这里给模拟会话留一个极小的速度，
          * 让 bearing 保持有效，指针停在最后朝向。
+         *
+         * ⚠️ **必须在上面那个 SDK/`hasSpeedAccuracy()` 判断之外**。它原先被嵌在里面，
+         * 于是在"载波 fix 不带速度精度"的 ROM 上**整段是死代码**：真机实测静止帧的
+         * `speed` 恰好 0.0（步道乐跑详情页的配速曲线因此在 313~996 s/km 之间炸成锯齿）。
+         * 保底速度服务于 `hasBearing()`，与载波有没有速度精度字段毫无关系。
          */
         if (FakeLoc.enable && location.speed < FakeLoc.speedFloor) {
             /*
@@ -99,7 +108,6 @@ abstract class BaseLocationHook: BaseDivineService() {
              */
             // 低通 + 慢随机游走（见 FakeLoc.speedFloorSample）：与真机静止噪声的时间相关性一致
             location.speed = FakeLoc.speedFloorSample().toFloat()
-        }
         }
 
         if (location.altitude == 0.0) {
@@ -154,17 +162,52 @@ abstract class BaseLocationHook: BaseDivineService() {
                 location.mslAltitudeAccuracyMeters = Random.nextDouble(1.0, 5.0).toFloat()
             }
         }
-        kotlin.runCatching {
-            XposedHelpers.callMethod(location, "makeComplete")
-        }.onFailure {
-            Logger.error("makeComplete failed", it)
-        }
+        completeLocation(location)
 
         if (FakeLoc.enableDebugLog) {
             Logger.debug("injectLocation success! $location")
         }
 
         return location
+    }
+
+    /**
+     * `Location.makeComplete()` 的**方法解析缓存**（按类）。
+     *
+     * 为什么必须缓存：这是注入路径上**每个应用、每一帧**都要走的一次调用，
+     * 而 `XposedHelpers.callMethod` = 反射查找（沿类层次比对参数类型）+ invoke。
+     * 早期实现在这里逐帧 `callMethod` + `runCatching`：反射查找之外还要为"这个方法不存在"
+     * 的 ROM 每帧造一次异常。现在每类只解析一次，并**把"不存在"也缓存下来**
+     * （`CACHE_MISS` 哨兵），失败路径不再有异常构造。
+     */
+    private companion object {
+        /** 负结果哨兵：该类没有 makeComplete（部分 ROM/低版本），别再每帧找一次 */
+        private val CACHE_MISS = Any()
+
+        /** key = Location 的实际类（子类也各自解析一次，避免把子类的方法挂错） */
+        private val completeCache = java.util.concurrent.ConcurrentHashMap<Class<*>, Any>()
+    }
+
+    private fun completeLocation(location: Location) {
+        val cls = location.javaClass
+        val cached = completeCache[cls]
+        if (cached === CACHE_MISS) return
+        val method = (cached as? java.lang.reflect.Method) ?: run {
+            val found = runCatching {
+                XposedHelpers.findMethodBestMatch(cls, "makeComplete")
+            }.getOrNull()
+            completeCache[cls] = found ?: CACHE_MISS
+            if (found == null) {
+                Logger.debug("makeComplete 不存在（$cls），本类不再重试")
+            }
+            found ?: return
+        }
+        runCatching { Hooks.invokeOriginalMethod(method, location, arrayOf()) }
+            .onFailure {
+                // 调用失败（方法签名不符/内部异常）：把缓存摘掉，下次重新解析一次
+                completeCache.remove(cls)
+                Logger.error("makeComplete failed", it)
+            }
     }
 
     /**

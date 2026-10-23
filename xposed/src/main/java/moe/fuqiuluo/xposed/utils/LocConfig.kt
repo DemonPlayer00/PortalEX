@@ -59,10 +59,29 @@ internal object LocConfig {
      * 关闭时该路径完全不安装（不加载 .so、不起线程），行为与旧版本逐位一致。
      */
     @Volatile
-    var enableBinderSensorMock = true
+    /**
+     * 外周传感器模拟**按传感器类别拆成两个开关**（2026-09-18 用户裁决）：
+     *  · [enableCadenceMock]     —— 步频侧：`TYPE_STEP_COUNTER` / `TYPE_STEP_DETECTOR`
+     *  · [enableOrientationMock] —— 角度与指南针侧：加速度 / 陀螺 / 磁场（朝向那一路）
+     *
+     * 两侧**都默认开**，与原总开关的行为逐位一致 —— 拆分不得静默改变行为。
+     * **旧键不继承**：读不到新键就各取默认（用户裁决，代价是"曾手动关过总开关的设备升级后会变回开"）。
+     */
+    var enableCadenceMock = true
+    var enableOrientationMock = true
+
+    /**
+     * 任一侧还开着 ⇒ 外周传感器这条链仍需**装载**。
+     *
+     * 为什么需要这个谓词：模块里原来那五处门控（装载/卸载、监督线程停摆与唤醒、泵循环、滴答）
+     * 都是"整体生死"判断，与具体传感器类别无关。拆成两个开关之后它们必须问"**还该不该活着**"，
+     * 而不是"某一个开关开没开" —— 否则只开一侧时整条链会被另一侧关掉。
+     * 按类别的强制不在这里，在 native 的按通道门控（下一步）。
+     */
+    val anySensorMockEnabled: Boolean
+        get() = enableCadenceMock || enableOrientationMock
 
     /** 注入栅格分辨率（Hz）：0 = 自动跟随框架采用值；非 0 时固定为 1e9/该值（原生层钳 2.5~50ms） */
-    var sensorGridHz = 0
 
     /**
      * 注入噪声档（Calibration 页）：[SensorNoise.COUNT] 个半宽，索引见 [SensorNoise]。
@@ -80,6 +99,53 @@ internal object LocConfig {
         noiseProfile = values
         for (i in 0 until SensorNoise.COUNT) native(i, values[i])
     }
+
+    /**
+     * 按组波动（两个功能页各两条参数，单位 **%**，默认 15）。
+     *
+     * 与 [noiseProfile] 是**两层**：噪声档是"每条事件的传感器本底噪声"，这里是叠加在它之上的
+     * 慢漂与逐条随机。施加口径（参考量而非逐值百分比、旋转矢量加在半角上、步频侧作用于步间隔）
+     * 见 `xposed/src/main/cpp/vw_wobble.c` 文件头。
+     */
+    @Volatile var cadenceWobbleAmp: Float = WOBBLE_DEFAULT_PERCENT
+    @Volatile var cadenceWobbleRnd: Float = WOBBLE_DEFAULT_PERCENT
+    @Volatile var orientationWobbleAmp: Float = WOBBLE_DEFAULT_PERCENT
+    @Volatile var orientationWobbleRnd: Float = WOBBLE_DEFAULT_PERCENT
+
+    /** 两条参数的默认值（%） */
+    const val WOBBLE_DEFAULT_PERCENT = 15f
+    const val WOBBLE_MAX_PERCENT = 100f
+
+    /** 规范化：NaN/负值归 0，超过上限钳位（与原生侧同一口径，见 vw_wobble.c） */
+    fun sanitizeWobble(percent: Float): Float = when {
+        percent.isNaN() -> 0f
+        percent < 0f -> 0f
+        percent > WOBBLE_MAX_PERCENT -> WOBBLE_MAX_PERCENT
+        else -> percent
+    }
+
+    /**
+     * 把两组波动参数下发给原生层（system_server 内才有效果；其它进程只是镜像值）。
+     * [native] 收 `(group, ampPercent, rndPercent)`，与 `BinderSensorNative.setGroupWobble` 同参。
+     */
+    fun applyGroupWobble(native: (Int, Float, Float) -> Unit) {
+        val ca = sanitizeWobble(cadenceWobbleAmp)
+        val cr = sanitizeWobble(cadenceWobbleRnd)
+        val oa = sanitizeWobble(orientationWobbleAmp)
+        val or = sanitizeWobble(orientationWobbleRnd)
+        cadenceWobbleAmp = ca
+        cadenceWobbleRnd = cr
+        orientationWobbleAmp = oa
+        orientationWobbleRnd = or
+        native(0, ca, cr)
+        native(1, oa, or)
+    }
+
+    /** 波动参数的一行回显（日志/诊断页用） */
+    fun wobbleLine(): String =
+        "步频 %.1f%%/%.1f%% 角度 %.1f%%/%.1f%%".format(
+            cadenceWobbleAmp, cadenceWobbleRnd, orientationWobbleAmp, orientationWobbleRnd
+        )
 
     /**
      * 原生注入层是否已成功装载（由 BinderSensorMock 在 system_server 内回填，只读诊断用）：
@@ -150,6 +216,25 @@ internal object LocConfig {
      * 这样默认值下输出与改动前完全一致（不会因为换了钳位区间而改变既有行为）。
      */
     var cadenceScale = 1.0
+
+    /**
+     * 体力参数（`StaminaConfig.toWire()` 的定序数组）。
+     *
+     * App 下发 → 模块解析（[StaminaRuntime.applyWire]）。**模块是体力状态机的持有者**：
+     * 状态不再挂在 App 的生命周期上（杀掉 App 再开，体力延续）。长度不符时模块保持旧值，
+     * 绝不读半个配置（见 `StaminaConfig.fromWire`）。
+     */
+    var staminaWire: FloatArray = FloatArray(0)
+
+    /**
+     * 定位**上报间隔（毫秒）**：App 的设置项，迁移后由模块时钟（[moe.fuqiuluo.xposed.hooks.MotionClock]）
+     * 按它对外出帧。
+     *
+     * 为什么必须下发：推进搬到系统侧之后，出帧节奏不再由 App 循环决定；
+     * 而"客户端每秒看到几帧"是用户可感知且可被检测的量，不该因为这次迁移而改变。
+     * 实际投递时再钳进 20~2000ms（设置页允许 1ms，那等于 1000Hz 刷帧）。
+     */
+    var reportDurationMs: Long = 100L
 
     /**
      * 模拟会话期间的速度保底（m/s）。

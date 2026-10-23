@@ -8,6 +8,7 @@ import android.os.Parcel
 import android.os.Process
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
+import moe.fuqiuluo.xposed.hooks.MotionClock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
@@ -17,7 +18,10 @@ import moe.fuqiuluo.xposed.utils.FusedMode
 import moe.fuqiuluo.xposed.utils.FusedStatus
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.MotionEngine
+import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import moe.fuqiuluo.xposed.utils.PortalDiag
+import moe.fuqiuluo.xposed.utils.LocConfig
 import moe.fuqiuluo.xposed.utils.SensorNoise
 import java.util.Collections
 import kotlin.random.Random
@@ -144,6 +148,9 @@ object RemoteCommandHandler {
                     FakeLoc.bearing = kotlin.random.Random.nextDouble(0.0, 360.0)
                 }
 
+                // 系统侧推进时钟：会话启动即起拍 —— 推进与体力都在这一侧（见 MotionClock）
+                MotionClock.start()
+
                 // 实验性：Binder 外周传感器模拟随会话开始推流（开关关闭时无动作）
                 BinderSensorMock.onSimulationChanged()
 
@@ -155,6 +162,8 @@ object RemoteCommandHandler {
             Cmd.STOP -> {
                 FakeLoc.enable = false
                 FakeLoc.hasBearings = false
+                // 停拍：路线/摇杆意图都不跨会话残留（体力**保留** —— 状态在系统侧，App 重启不回满）
+                MotionClock.stop()
                 BinderSensorMock.onSimulationChanged()
                 return true
             }
@@ -190,18 +199,11 @@ object RemoteCommandHandler {
             }
             Cmd.SET_SENSOR_MOCK -> {
                 // 实验性：Binder 外周传感器模拟开关（只下发给系统侧，不经代理转发）
-                val enabled = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
-                FakeLoc.enableBinderSensorMock = enabled
-                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档与注入栅格随它一起恢复
-                // （否则系统进程重启后栅格退回自动，噪声档也会退回内置默认）
+                applySensorMockSwitches(rely)
+                // 启动时这条命令是"传感器侧配置"的唯一载体：噪声档与两组波动随它一起恢复
+                // （否则系统进程重启后这些配置会退回内置默认）
                 applyNoiseProfile(rely)
-                val gridHz = rely.getInt(Key.SENSOR_GRID_HZ, -1)
-                if (gridHz >= 0) {
-                    FakeLoc.sensorGridHz = gridHz
-                    if (BinderSensorMock.isNativeReady) {
-                        pushToNative("栅格恢复") { BinderSensorNative.setGridHz(gridHz) }
-                    }
-                }
+                applyGroupWobble(rely)
                 if (!BinderSensorMock.onConfigChanged()) {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
                     return false
@@ -228,7 +230,60 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.IS_SENSOR_MOCK -> {
-                rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+                putSensorMockSwitches(rely)
+                return true
+            }
+            Cmd.SET_ROCKER -> {
+                // 摇杆意图：**只表达"往哪个方向走"**，走多少由系统侧按速度×体力倍率推进
+                // （旧实现每拍送一个 move 位移，推进在 App ⇒ 位置流的连续性依赖 App 进程活着）
+                val active = rely.getBoolean(Key.ENABLE, false)
+                val bearing = rely.numberOr(Key.BEARING, FakeLoc.bearing)
+                val changed = Math.abs(bearing - FakeLoc.bearing) > 0.5
+                MotionEngine.setRocker(active, bearing)
+                // 摇杆起来了 ⇒ 世界要开始动：叫醒停摆的推进时钟（空闲时它不转）
+                MotionClock.wake()
+                // 朝向立即生效：摇杆只转向不位移时（暂停中/极慢速），若不写朝向、不投递，
+                // 应用侧要等下一帧位移才看到新朝向——就是"转了半天不动，然后跳一下"。
+                FakeLoc.bearing = ((bearing % 360.0) + 360.0) % 360.0
+                FakeLoc.hasBearings = true
+                val nowNanos = SystemClock.elapsedRealtimeNanos()
+                if (changed && FakeLoc.isSystemServerProcess &&
+                    nowNanos - lastBearingPushNanos >= BEARING_PUSH_MIN_INTERVAL_NANOS
+                ) {
+                    lastBearingPushNanos = nowNanos
+                    LocationServiceHook.callOnLocationChanged(force = true)
+                }
+                return true
+            }
+            Cmd.SET_ROUTE -> {
+                // 路线数据（展开后的播放路径点）：App 只上传，不推进
+                val lat = rely.getDoubleArray(Key.ROUTE_LAT)
+                val lon = rely.getDoubleArray(Key.ROUTE_LON)
+                val points = MotionEngine.setRoute(lat, lon)
+                Logger.info("MotionEngine: 路线已上传 ${points} 点，全长 %.1f m".format(MotionEngine.distance()))
+                return true
+            }
+            Cmd.ROUTE_CONTROL -> {
+                val play = rely.getBoolean(Key.ENABLE, false)
+                MotionClock.wake()
+                if (play && !MotionEngine.setPlaying(true)) {
+                    Logger.warn("MotionEngine: 收到播放指令但没有路线数据，忽略")
+                    return false
+                }
+                if (!play) MotionEngine.setPlaying(false)
+                return true
+            }
+            Cmd.GET_MOTION -> {
+                fillMotionStatus(rely)
+                return true
+            }
+            Cmd.GET_STAMINA -> {
+                StaminaRuntime.writeStatus(rely)
+                return true
+            }
+            Cmd.RESET_STAMINA -> {
+                StaminaRuntime.reset()
+                Logger.info("StaminaRuntime: 已重置 —— ${StaminaRuntime.statusLine()}")
                 return true
             }
             Cmd.GET_LOCATION -> {
@@ -261,6 +316,7 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.SET_SPEED -> {
+                MotionClock.wake()
                 FakeLoc.speed = rely.numberOr("speed", FakeLoc.speed)
                 return true
             }
@@ -366,15 +422,24 @@ object RemoteCommandHandler {
                 val disableGetFromLocation = rely.getBoolean(Key.DISABLE_GET_FROM_LOCATION, FakeLoc.disableGetFromLocation)
                 val loopBroadcastLocation = rely.getBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
                 // 开关：读不到键时保持当前值（= 模块默认，现为开；旧版 App 不下发该键也不改变结论）
-                val binderSensorMock = rely.getBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
-                // 注入栅格分辨率（Hz，0=自动）：读不到键时保持当前值（旧版 App 不下发）
-                val sensorGridHz = rely.getInt(Key.SENSOR_GRID_HZ, FakeLoc.sensorGridHz)
+                val binderCadenceMock = rely.getBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+                val binderOrientationMock = rely.getBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
                 // 步频倍率（微调步频↔速度）：读不到键时保持当前值
                 val cadenceScale = rely.numberOr("cadence_scale", FakeLoc.cadenceScale)
                 // 注入噪声档（Calibration 页）：读不到键时保持当前值（旧版 App 不下发）
                 val noiseProfile = rely.getFloatArray(Key.NOISE_PROFILE)?.let { SensorNoise.sanitize(it) }
+                // 体力参数：模块侧解析并生效（状态机在系统侧，见 StaminaRuntime）
+                val staminaWire = rely.getFloatArray(Key.STAMINA_CONFIG)
+                // 定位上报间隔（毫秒）：模块时钟按它出帧（读不到键保持当前值）
+                // 兼容 Int/Long/Float：Bundle.getLong 在类型不符时**静默返回默认值**
+                val reportDuration = (rely.get(Key.REPORT_DURATION) as? Number)?.toLong() ?: 0L
 
                 FakeLoc.enable = enable
+                // 推进会话与推进时钟同生共死：只改 enable 而不起拍，会造出"开关开着、位置不动"
+                // 的静默状态（旧实现没有时钟，这个坑是迁移带进来的）
+                if (FakeLoc.isSystemServerProcess) {
+                    if (enable) MotionClock.start() else MotionClock.stop()
+                }
                 FakeLoc.speed = speed
                 FakeLoc.altitude = altitude
                 FakeLoc.accuracy = accuracy
@@ -392,12 +457,14 @@ object RemoteCommandHandler {
 
                 // Binder 外周传感器模拟：仅在 system_server 内生效（装载/卸载原生注入层）。
                 // 非 system_server 进程只镜像开关值，不做任何安装。
-                FakeLoc.enableBinderSensorMock = binderSensorMock
-                FakeLoc.sensorGridHz = sensorGridHz
+                FakeLoc.enableCadenceMock = binderCadenceMock
+                FakeLoc.enableOrientationMock = binderOrientationMock
                 FakeLoc.cadenceScale = if (cadenceScale <= 0.0) 1.0 else cadenceScale
-                if (BinderSensorMock.isNativeReady) {
-                    pushToNative("栅格设置下发") { BinderSensorNative.setGridHz(sensorGridHz) }
+                if (staminaWire != null) {
+                    FakeLoc.staminaWire = staminaWire
+                    StaminaRuntime.applyWire(staminaWire)
                 }
+                if (reportDuration > 0L) FakeLoc.reportDurationMs = reportDuration
                 if (noiseProfile != null) {
                     FakeLoc.noiseProfile = noiseProfile
                     if (BinderSensorMock.isNativeReady) {
@@ -436,7 +503,7 @@ object RemoteCommandHandler {
                 rely.putBoolean(Key.HOOK_WIFI, FakeLoc.hookWifi)
                 rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
                 rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
-                rely.putBoolean(Key.BINDER_SENSOR_MOCK, FakeLoc.enableBinderSensorMock)
+                putSensorMockSwitches(rely)
                 return true
             }
             Cmd.BROADCAST_LOCATION -> {
@@ -504,6 +571,31 @@ object RemoteCommandHandler {
         updateCoordinate(lat, lon)
     }
 
+    /**
+     * **系统侧推进引擎的落点入口**（见 [MotionClock]）：坐标 + 显式朝向一次写入。
+     *
+     * 走的是同一个 [updateCoordinate]（位移历史/静止检测都在里面），只是带上
+     * "本拍朝向由推进引擎给定"的语义 —— 路线切线、摇杆方向都不该再靠位移反推
+     * （弧长步长小，位移法的 1m 门控会挡住朝向更新）。
+     */
+    fun applyMotionCoordinate(lat: Double, lon: Double, bearing: Double?): Boolean =
+        updateCoordinate(lat, lon, updateBearing = bearing != null, explicitBearing = bearing)
+
+    /** 推进状态回传（App 的进度显示与"播完了"收尾都读它） */
+    private fun fillMotionStatus(rely: Bundle) {
+        val st = MotionEngine.status()
+        rely.putDouble(Key.LAT, FakeLoc.latitude)
+        rely.putDouble(Key.LON, FakeLoc.longitude)
+        rely.putDouble(Key.BEARING, FakeLoc.bearing)
+        rely.putString(Key.MOTION_MODE, st.mode.name.lowercase())
+        rely.putBoolean(Key.MOTION_PLAYING, st.playing)
+        rely.putBoolean(Key.MOTION_COMPLETED, st.completed)
+        rely.putDouble(Key.ROUTE_TRAVELLED, st.travelledMeters)
+        rely.putDouble(Key.ROUTE_DISTANCE, st.distanceMeters)
+        rely.putInt(Key.ROUTE_POINTS, st.points)
+        StaminaRuntime.writeStatus(rely)
+    }
+
     /** 朝向变化推流的最小间隔：摇杆拖动事件很密，限到 ~12Hz 足够平滑且不异常 */
     private const val BEARING_PUSH_MIN_INTERVAL_NANOS = 80_000_000L
     @Volatile private var lastBearingPushNanos = 0L
@@ -512,6 +604,27 @@ object RemoteCommandHandler {
     @Volatile private var bearingRefLat = Double.NaN
     @Volatile private var bearingRefLon = Double.NaN
     private const val BEARING_REF_MIN_DIST_M = 3.0
+
+    /**
+     * 应用外周传感器模拟的两个开关（按传感器类别拆分，2026-09-18 用户裁决）。
+     *
+     * 兼容口径（过渡期，最后一轮删）：**旧键在时按旧键同时设两侧** —— App 侧这一轮还没搬完开关，
+     * 两端混跑必须不崩且行为一致；新键存在则以新键为准。
+     */
+    private fun applySensorMockSwitches(rely: android.os.Bundle) {
+        if (rely.containsKey(Key.CADENCE_MOCK)) {
+            FakeLoc.enableCadenceMock = rely.getBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+        }
+        if (rely.containsKey(Key.ORIENTATION_MOCK)) {
+            FakeLoc.enableOrientationMock = rely.getBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
+        }
+    }
+
+    /** 回包：两个新键 + 旧的镜像（旧键给没升级的 App 读，最后一轮删） */
+    private fun putSensorMockSwitches(rely: android.os.Bundle) {
+        rely.putBoolean(Key.CADENCE_MOCK, FakeLoc.enableCadenceMock)
+        rely.putBoolean(Key.ORIENTATION_MOCK, FakeLoc.enableOrientationMock)
+    }
 
     private fun updateCoordinate(
         newLat: Double,
@@ -586,6 +699,35 @@ object RemoteCommandHandler {
             }
         }
         Logger.info("Binder 外周传感器模拟：噪声档=${SensorNoise.encode(FakeLoc.noiseProfile)}")
+    }
+
+    /**
+     * 下发两组波动参数（步频侧 / 角度与指南针侧，各两条，单位 %）。
+     *
+     * 与噪声档同一套口径：键不在（旧版 App）就**什么都不做**，原生层保持内置默认 15%；
+     * 值先经 [LocConfig.sanitizeWobble] 规范化（NaN/负值归 0、超上限钳位），
+     * 所以界面上的手滑不会把原生参数写坏。
+     */
+    private fun applyGroupWobble(rely: Bundle) {
+        var any = false
+        fun take(key: String, set: (Float) -> Unit) {
+            if (!rely.containsKey(key)) return
+            set(LocConfig.sanitizeWobble(rely.getFloat(key)))
+            any = true
+        }
+        take(Key.CADENCE_WOB_AMP) { FakeLoc.cadenceWobbleAmp = it }
+        take(Key.CADENCE_WOB_RND) { FakeLoc.cadenceWobbleRnd = it }
+        take(Key.ORIENTATION_WOB_AMP) { FakeLoc.orientationWobbleAmp = it }
+        take(Key.ORIENTATION_WOB_RND) { FakeLoc.orientationWobbleRnd = it }
+        if (!any) return
+        if (BinderSensorMock.isNativeReady) {
+            pushToNative("波动参数下发") {
+                FakeLoc.applyGroupWobble { group, amp, rnd ->
+                    BinderSensorNative.setGroupWobble(group, amp, rnd)
+                }
+            }
+        }
+        Logger.info("Binder 外周传感器模拟：波动=${FakeLoc.wobbleLine()}")
     }
 
     /**

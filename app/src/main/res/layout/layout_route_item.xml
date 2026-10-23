@@ -24,20 +24,30 @@
 
     </com.google.android.material.card.MaterialCardView>
 
+    <!--
+        ⚠️ 横向容器里的弹性子项必须是 0dp + weight=1，不能写 match_parent：
+        match_parent 在横向 LinearLayout 里是"和父容器一样宽"，于是这一列 = 图标宽 + 父宽，
+        整行超出视口；里面的 desc（路线坐标串，可以很长）跟着把文本推到卡片边缘、
+        把卡片的内边距吃掉 —— 就是"路线条目太长会把卡片右边缘挤到屏幕边"那个现象。
+    -->
     <LinearLayout
         android:padding="8dp"
         android:layout_marginTop="12dp"
         android:layout_marginBottom="12dp"
-        android:layout_width="match_parent"
+        android:layout_marginEnd="12dp"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:layout_weight="1"
         android:orientation="vertical"
         android:layout_gravity="center_vertical">
 
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/name"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
             android:text="name"
             android:textAppearance="@style/TextAppearance.AppCompat.Subhead"
             android:textColor="?attr/colorOnSurface"

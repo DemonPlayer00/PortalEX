@@ -23,6 +23,17 @@ void vw_rng_seed_process(void) {
     g_rng ^= (uint64_t) ts.tv_nsec * 0x2545F4914F6CDD1DULL ^ (uint64_t) getpid();
 }
 
+/*
+ * **仅测试用**：把随机流钉到确定状态。
+ *
+ * 存在理由：host 测试要证明"参数为 0 的波动不消耗随机数"这类**流位置**性质 ——
+ * 而生产种子按设计是不可复现的（时间 ⊕ pid），没有这个钩子就只能写统计断言，
+ * 断言不出"某一个随机数有没有被悄悄抽走"。生产路径**不会调用**它。
+ */
+void vw_rng_seed_fixed(uint64_t seed) {
+    g_rng = seed ? seed : 0x9E3779B97F4A7C15ULL;
+}
+
 uint64_t vw_rng_next(void) {
     uint64_t x = g_rng;
     x ^= x << 13;

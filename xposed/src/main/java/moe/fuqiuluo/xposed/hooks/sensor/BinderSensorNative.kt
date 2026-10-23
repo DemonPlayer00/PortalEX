@@ -152,6 +152,38 @@ internal object BinderSensorNative {
     external fun setStepsViaPoll(on: Boolean)
 
     /**
+     * **按类开关**：外周传感器模拟拆成两侧后，把两侧状态一次灌进原生层。
+     *
+     * 门控落在原生层的 `vw_owns_type()` —— 关掉的那一侧判"不归我们管"，
+     * 真实事件原样放行 ⇒ 那一侧一个事件都不会被注入（拆分的验收判据）。
+     */
+    external fun setSensorClasses(cadence: Boolean, orientation: Boolean)
+
+    /** 按类压制计数（诊断）：`"cadence=N orientation=M"` —— 关掉的一侧不再增长 */
+    external fun suppressedCounts(): String
+
+    /**
+     * **按组波动**：两组各两条参数（页面可编辑的文本输入）。
+     *
+     * @param group [GROUP_CADENCE] = 步频侧 / [GROUP_ORIENTATION] = 角度与指南针侧
+     * @param ampPercent 波动强度（百分比，慢漂半幅）：`15f` = 参考量的 15%
+     * @param rndPercent 随机区间（百分比，逐条事件均匀随机半宽）：`15f` = ±15%
+     *
+     * 两条都为 0 是**逐位兼容**值：原生层不碰随机数、不做算术，输出与没有这个功能时完全一致。
+     */
+    external fun setGroupWobble(group: Int, ampPercent: Float, rndPercent: Float)
+
+    /** 波动的两组（与原生 `VW_WOB_GROUP_*` 同值） */
+    const val GROUP_CADENCE = 0
+    const val GROUP_ORIENTATION = 1
+
+    /** 两条参数的默认值（%）：用户口径 = 15% */
+    const val WOBBLE_DEFAULT_PERCENT = 15f
+
+    /** 上限（%）：慢漂半幅不可能超过参考量本身 */
+    const val WOBBLE_MAX_PERCENT = 100f
+
+    /**
      * 取一帧"截至 [nowNanos] 应发出的事件"（运行时通道专用）。
      *
      * [meta] 每事件 4 个 long：`handle / type / timestamp / values 个数`；
@@ -220,12 +252,12 @@ internal object BinderSensorNative {
     external fun setChannelHint(type: Int, periodNs: Long, batchNs: Long, active: Boolean)
 
     /**
-     * 固定注入栅格（Hz；0 = 自动跟随框架采用值）。栅格只决定"能表现出来的最快速率"，
-     * 调细不改变各传感器自己的采用速率。原生层会把 1e9/Hz 钳进 2.5~50ms。
+     * 下一个"该出事件的时刻"（纳秒；0 = 当前没有到点的源）。
+     * 泵睡到这一刻再醒来取事件 —— 投递由**事件驱动**，不再有固定 5ms 节拍。
      */
-    external fun setGridHz(hz: Int)
+    external fun nextDueNs(nowNanos: Long): Long
 
-    /** 先把所有栅格通道标成不活跃，随后按 dump 灌活跃者（缺席即静默） */
+    /** 先把所有周期通道标成不活跃，随后按 dump 灌活跃者（缺席即静默） */
     external fun clearChannelHints()
 
     /**

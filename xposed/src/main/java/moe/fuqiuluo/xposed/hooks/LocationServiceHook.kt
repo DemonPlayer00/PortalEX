@@ -11,9 +11,10 @@ import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
 import android.os.SystemClock
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
+import moe.fuqiuluo.xposed.utils.MethodHook
+import moe.fuqiuluo.xposed.utils.MethodHookParam
+import moe.fuqiuluo.xposed.utils.Hooks
+import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.RemoteCommandHandler
 import moe.fuqiuluo.xposed.hooks.gnss.GnssHook
@@ -233,37 +234,99 @@ internal object LocationServiceHook: BaseLocationHook() {
     /** 无位置底子时的提示只打一次，别刷日志（会话刚开始、还没设点时会走到） */
     private val noOriginWarned = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /**
+     * **`onLocationChanged` 的方法解析缓存**（按监听器类）。
+     *
+     * 为什么这么做：`findMethodBestMatch` 是**反射查找**（沿类层次比对参数类型），
+     * 而交付是"每帧 × 每个监听器"各来一次；旧 AIDL 监听器还要每帧先失败一次
+     * （抛异常再退到单帧版）。缓存后每类只解析一次，并**记住哪个重载可用**。
+     *
+     * ⚠️ **别高估它的收益**：我当初判它是"移动时 9% 单核的主因"，加缓存后实测只到 8.1%
+     * （−13%，见 `docs/perf-audit.md` 第 6 节）。它是对的做法，但不是那个热点。
+     * 教训：凭"看起来贵"断定热点，是这一轮最贵的一次误判 —— 先量再改。
+     */
+    private val onChangeMethodCache =
+        java.util.concurrent.ConcurrentHashMap<Class<*>, java.lang.reflect.Method>()
+
+    /**
+     * 解析一次性取位回调的 `onLocation`（按类缓存；负结果也缓存，避免每帧抛异常）。
+     * @return null = 该类没有这个方法（已缓存，不再重试）
+     */
+    private fun resolveOnLocationMethod(callback: IInterface): java.lang.reflect.Method? {
+        val cls = callback.javaClass
+        val cached = onLocationMethodCache[cls]
+        if (cached === null) {
+            val found = runCatching {
+                XposedHelpers.findMethodBestMatch(cls, "onLocation")
+            }.getOrNull()
+            onLocationMethodCache[cls] = found ?: NULL_METHOD
+            return found
+        }
+        @Suppress("UNCHECKED_CAST")
+        return if (cached === NULL_METHOD) null else cached as java.lang.reflect.Method
+    }
+
+    /** 负结果哨兵：该类没有 onLocation（别每帧再找一次） */
+    private val NULL_METHOD = Any()
+
     /** 向单个监听器投一帧；返回是否成功 */
     private fun deliverFrame(listener: IInterface, frame: Location): Boolean {
+        onChangeMethodCache[listener.javaClass]?.let { cached ->
+            return try {
+                invokeDelivery(cached, listener, frame)
+                true
+            } catch (t: Throwable) {
+                if (t.isDeadObject()) return false
+                logDeliverFailure(t, listener)
+                false
+            }
+        }
+
         var error: Throwable? = null
         kotlin.runCatching {
             val locations = listOf(frame)
             val mOnLocationChanged =
                 XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", locations, null)
-            XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
+            Hooks.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(locations, null))
+            onChangeMethodCache[listener.javaClass] = mOnLocationChanged
             return true
         }.onFailure {
-            if (it is InvocationTargetException && it.targetException is DeadObjectException) {
-                return false
-            }
+            if (it.isDeadObject()) return false
             error = it
         }
 
         kotlin.runCatching {
             val mOnLocationChanged =
                 XposedHelpers.findMethodBestMatch(listener.javaClass, "onLocationChanged", frame)
-            XposedBridge.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(frame))
+            Hooks.invokeOriginalMethod(mOnLocationChanged, listener, arrayOf(frame))
+            onChangeMethodCache[listener.javaClass] = mOnLocationChanged
             return true
         }.onFailure {
-            if (it is InvocationTargetException && it.targetException is DeadObjectException) {
-                return false
-            }
+            if (it.isDeadObject()) return false
             error = it
         }
 
         Logger.error("deliverFrame failed: " + error?.stackTraceToString())
         Logger.error("The listener all methods: " + listener.javaClass.declaredMethods.joinToString { it.name })
         return false
+    }
+
+    /** 按解析到的方法签名决定实参形态（新 AIDL 是 `onLocationChanged(List, Bundle)`） */
+    private fun invokeDelivery(m: java.lang.reflect.Method, listener: IInterface, frame: Location) {
+        val args: Array<Any?> = if (m.parameterTypes.isNotEmpty() && m.parameterTypes[0] == List::class.java) {
+            arrayOf<Any?>(listOf(frame), null)
+        } else {
+            arrayOf<Any?>(frame)
+        }
+        Hooks.invokeOriginalMethod(m, listener, args)
+    }
+
+    private fun Throwable.isDeadObject(): Boolean =
+        this is InvocationTargetException && targetException is DeadObjectException
+
+    private fun logDeliverFailure(t: Throwable, listener: IInterface) {
+        Logger.error("deliverFrame(cached) failed: ${t.stackTraceToString()}")
+        onChangeMethodCache.remove(listener.javaClass)
     }
 
     // A random command is generated to prevent some apps from detecting Portal
@@ -350,7 +413,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         if (FakeLoc.enableDebugLog)
             Logger.debug("will hook ILocationListener: ${classListener.name}")
 
-        if(XposedBridge.hookAllMethods(classListener, "onLocationChanged", object: XC_MethodHook() {
+        if(Hooks.hookAllMethods(classListener, "onLocationChanged", object: MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     // 框架投递到达（无论是否开模拟）：刷新「最近收到位置」时刻
                     markFrameworkDelivery(param.thisObject)
@@ -405,6 +468,52 @@ internal object LocationServiceHook: BaseLocationHook() {
         locationListeners.removeIf { it.listener.asBinder() == binder }
     }
 
+    // ------------------------------------------------------------------
+    // 交付分段计时（先量再改）
+    //
+    // 实测：会话开 + 持续移动时，推进时钟的单拍成本 **95% 在 `callOnLocationChanged`**
+    // （平均 ~6ms/帧，10Hz）。这个函数里有三件可能贵的事：造帧（buildFrame →
+    // injectLocation：抖动/GNSS extras/方法解析）、监听器循环（每个一次 binder 调用）、
+    // 一次性取位回调。计时就是用来分辨它们的 —— 我不再靠"看起来贵"下判断。
+    // ------------------------------------------------------------------
+    private var dBuild = 0L
+    private var dListeners = 0L
+    private var dOneShot = 0L
+    private var dTail = 0L
+    private var dFrames = 0L
+    /** 同一批分段的 **CPU 时间**（`Debug.threadCpuTimeNanos`）：与墙钟一起看才不会被阻塞骗到 */
+    private var dBuildCpu = 0L
+    private var dListenersCpu = 0L
+    /** 慢帧分布：墙钟超过阈值的帧数（排查"是不是某个客户端把这一拍拖住了"） */
+    private var dSlow5 = 0
+    private var dSlow20 = 0
+    private var dWallMax = 0L
+    private var lastSlowFrameLogNanos = 0L
+
+    /**
+     * 交付分段计时汇总（Test 页的 motion 行会带上它）。
+     * ⚠️ **读取即清零**：窗口口径（自上次读取以来），避免累计被暖机成本污染。
+     */
+    fun deliveryTimingLine(): String {
+        val n = dFrames.coerceAtLeast(1)
+        val line = ("交付分段(µs 平均, 窗口=%d帧, 墙钟/CPU): 造帧=%.0f/%.0f 监听器=%.0f/%.0f " +
+                "一次性=%.0f 收尾=%.0f | 慢帧: max=%.0fms >5ms=%d >20ms=%d").format(
+            dFrames,
+            dBuild / 1000.0 / n, dBuildCpu / 1000.0 / n,
+            dListeners / 1000.0 / n, dListenersCpu / 1000.0 / n,
+            dOneShot / 1000.0 / n, dTail / 1000.0 / n,
+            dWallMax / 1e6, dSlow5, dSlow20,
+        )
+        dBuild = 0; dListeners = 0; dOneShot = 0; dTail = 0; dFrames = 0
+        dBuildCpu = 0; dListenersCpu = 0
+        dSlow5 = 0; dSlow20 = 0; dWallMax = 0L
+        return line
+    }
+
+    /** 一次性取位回调的方法解析缓存（同 [onChangeMethodCache] 的理由：别每帧解析一遍） */
+    private val onLocationMethodCache =
+        java.util.concurrent.ConcurrentHashMap<Class<*>, Any>()
+
     /**
      * 心跳投递：位置变更（move / update_location）、显式广播（broadcast_location）、
      * 启动拉回各自在「坐标已改好」后调用。
@@ -427,6 +536,19 @@ internal object LocationServiceHook: BaseLocationHook() {
             Logger.debug("==> callOnLocationChanged: ${locationListeners.size}, force=$force")
         }
 
+        // **没有消费者就什么都不做**：造一帧要 ~0.9ms（对象/Bundle/GNSS extras），
+        // 而没人订阅时它注定被丢掉。10Hz 投递下这是白烧 ~1% 单核。
+        // 语义不变：注册表为空 ⇒ 本来也没有任何投递动作。
+        if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) {
+            if (FakeLoc.enableDebugLog) Logger.debug("==> callOnLocationChanged: 无消费者，跳过造帧")
+            return
+        }
+
+        val timing = FakeLoc.enableDebugLog
+        val cpu0 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
+        val f0 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
+        if (timing) dFrames++
+
         // 同一 tick（一次广播）= 同一帧：持续注册的监听器与一次性取位回调共用同一份注入对象。
         // 时间戳按当前时刻打：本函数产出的是模块自己生成的新帧。
         val frame = buildFrame() ?: run {
@@ -436,6 +558,8 @@ internal object LocationServiceHook: BaseLocationHook() {
             return
         }
         val nowNanos = SystemClock.elapsedRealtimeNanos()
+        val f1 = if (timing) nowNanos else 0L
+        val cpu1 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
 
         var delivered = 0
         locationListeners.forEach { reg ->
@@ -448,6 +572,9 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         }
 
+        val f2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
+        val cpu2 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
+
         var oneShotDelivered = 0
         oneShotCallbacks.forEach { oneShot ->
             // 饥饿判定：登记后 FRAME_STARVATION_NANOS 内框架可能仍在投递，先等——避免与框架重复
@@ -456,8 +583,10 @@ internal object LocationServiceHook: BaseLocationHook() {
             var called = false
             var error: Throwable? = null
             kotlin.runCatching {
-                val mOnLocation = XposedHelpers.findMethodBestMatch(oneShot.callback.javaClass, "onLocation", frame)
-                XposedBridge.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
+                val mOnLocation = resolveOnLocationMethod(oneShot.callback)
+                if (mOnLocation != null) {
+                    Hooks.invokeOriginalMethod(mOnLocation, oneShot.callback, arrayOf(frame))
+                }
                 called = true
             }.onFailure {
                 if (it is InvocationTargetException && it.targetException is DeadObjectException) {
@@ -471,6 +600,30 @@ internal object LocationServiceHook: BaseLocationHook() {
                 oneShotDelivered++
             } else {
                 Logger.error("callOnLocationChanged(one-shot) failed: " + error?.stackTraceToString())
+            }
+        }
+
+        if (timing) {
+            val f3 = SystemClock.elapsedRealtimeNanos()
+            val cpu3 = android.os.Debug.threadCpuTimeNanos()
+            dBuild += f1 - f0
+            dListeners += f2 - f1
+            dOneShot += f3 - f2
+            dTail += 0L
+            dBuildCpu += cpu1 - cpu0
+            dListenersCpu += cpu2 - cpu1
+            val wall = f3 - f0
+            if (wall > dWallMax) dWallMax = wall
+            if (wall > 5_000_000L) dSlow5++
+            if (wall > 20_000_000L) dSlow20++
+            // 慢帧也留一条带时间戳的记录（与"拍迟到"对时，分辨是不是客户端把这一拍拖住了）
+            if (wall > 20_000_000L && f3 - lastSlowFrameLogNanos > 1_000_000_000L) {
+                lastSlowFrameLogNanos = f3
+                Logger.warn(
+                    "deliverFrame: 慢帧 %.0fms（监听器 %d 个，CPU %.0fms）".format(
+                        wall / 1e6, locationListeners.size, (cpu3 - cpu0) / 1e6
+                    )
+                )
             }
         }
 
@@ -610,7 +763,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                         m.parameterTypes[0].name == "android.location.GnssStatus"
                 } ?: listener.javaClass.methods.firstOrNull { it.name == "onSvStatusChanged" }
                     ?: return@runCatching
-                XposedBridge.invokeOriginalMethod(method, listener, arrayOf(status))
+                Hooks.invokeOriginalMethod(method, listener, arrayOf(status))
             }.onFailure { e ->
                 if (e is InvocationTargetException && e.targetException is DeadObjectException) return@forEach
                 Logger.error("pushGnssStatus failed for ${listener.javaClass.name}", e)
@@ -693,7 +846,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                             Logger.error("onSvStatusChanged: unsupported version: ${method}, constructor not found")
                         }
                     }.onFailure {
-                        XposedBridge.log(it)
+                        Hooks.log(it)
                     }
                     return@beforeHook
                 }
@@ -717,7 +870,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         }.onSuccess {
             fun hookOnTransactForServiceInstance(m: Method) {
                 val isHooked = AtomicBoolean(false)
-                XposedBridge.hookMethod(m, object : XC_MethodHook() {
+                Hooks.hookMethod(m, object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param?.thisObject == null || param.args.size < 4) return
 
@@ -764,11 +917,11 @@ internal object LocationServiceHook: BaseLocationHook() {
 //            XposedHelpers.findClass("android.location.ILocationManager\$Stub\$Proxy", cLocationManager.classLoader)
 //        }.onSuccess {
 //            it.declaredMethods.forEach {
-//                XposedBridge.hookMethod(it, object : XC_MethodHook() {
+//                Hooks.hookMethod(it, object : MethodHook() {
 //                    override fun beforeHookedMethod(param: MethodHookParam?) {
 //                        if (param == null) return
 //
-//                        XposedBridge.log("[Portal] ILocationManager.Stub.Proxy: c = ${param.thisObject?.javaClass}, m = ${param.method}")
+//                        Hooks.log("[Portal] ILocationManager.Stub.Proxy: c = ${param.thisObject?.javaClass}, m = ${param.method}")
 //                    }
 //                })
 //            }
@@ -930,10 +1083,10 @@ internal object LocationServiceHook: BaseLocationHook() {
     private fun hookProviderEnabled(cILocationManager: Class<*>) {
         if(
         // boolean isProviderEnabledForUser(String provider, int userId); from android 9.0.0
-            XposedBridge.hookAllMethods(
+            Hooks.hookAllMethods(
                 cILocationManager,
                 "isProviderEnabledForUser",
-                object : XC_MethodHook() {
+                object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param == null || param.args.size < 2 || param.args[0] == null) return
                         val provider = param.args[0] as String
@@ -957,10 +1110,10 @@ internal object LocationServiceHook: BaseLocationHook() {
                 }).isEmpty()
         ) {
             // boolean isProviderEnabled(String provider);
-            XposedBridge.hookAllMethods(
+            Hooks.hookAllMethods(
                 cILocationManager,
                 "isProviderEnabled",
-                object : XC_MethodHook() {
+                object : MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam?) {
                         if (param == null || param.args.isEmpty() || param.args[0] == null) return
                         val provider = param.args[0] as String
@@ -989,7 +1142,7 @@ internal object LocationServiceHook: BaseLocationHook() {
      */
     private fun hookVendorControllerPackage(cILocationManager: Class<*>) {
         // F**k You! AMAP Service!
-        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cILocationManager, "setExtraLocationControllerPackageEnabled", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if (FakeLoc.enable) {
                     param.args[0] = false
@@ -997,7 +1150,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
         })
 
-        XposedBridge.hookAllMethods(cILocationManager, "setExtraLocationControllerPackage", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cILocationManager, "setExtraLocationControllerPackage", object: MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 if (FakeLoc.enable) {
                     param.result = null
@@ -1302,7 +1455,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         // 3) 模拟开启时立即主动推送一次。
         // 主动推送由 GnssStatusPusher 守护线程驱动：即使室内 GNSS 引擎闲置、系统从不回调，
         // 雷达也能持续收到模拟卫星数据（与 callOnLocationChanged 同机制）。
-        XposedBridge.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: XC_MethodHook() {
+        Hooks.hookAllMethods(cILocationManager, "registerGnssStatusCallback", object: MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam?) {
                     if(param == null || param.args.isEmpty() || param.args[0] == null) return
 
