@@ -239,6 +239,7 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
+            android:minHeight="160dp"
             android:layout_margin="8dp"
             app:cardCornerRadius="12dp"
             app:cardPreventCornerOverlap="false"
