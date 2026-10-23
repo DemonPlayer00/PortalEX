@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import org.json.JSONObject
+import moe.fuqiuluo.portalex.ext.suPath
 import java.io.File
 import java.util.zip.ZipInputStream
 
@@ -110,7 +111,7 @@ object CammockManager {
         val dir = currentDir(context).absolutePath
         val installer = File(currentDir(context), "install.sh")
         if (installer.isFile) {
-            val p = ProcessBuilder("su", "-c", "cd '$dir' && sh '$dir/install.sh'")
+            val p = ProcessBuilder(context.suPath, "-c", "cd '$dir' && sh '$dir/install.sh'")
                 .redirectErrorStream(true).start()
             val out = p.inputStream.bufferedReader().use { it.readText() }
             if (!p.waitFor(45, java.util.concurrent.TimeUnit.SECONDS)) {
@@ -127,7 +128,7 @@ object CammockManager {
             (if (File(currentDir(context), "meta.bin").exists()) "cp -f '$dir/meta.bin' $META; " else "") +
             (if (File(currentDir(context), "tags.bin").exists()) "cp -f '$dir/tags.bin' $TAGS; " else "") +
             "chmod 755 $PROVIDER"
-        val p = ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start()
+        val p = ProcessBuilder(context.suPath, "-c", cmd).redirectErrorStream(true).start()
         val out = p.inputStream.bufferedReader().use { it.readText() }
         if (!p.waitFor(12, java.util.concurrent.TimeUnit.SECONDS)) {
             p.destroyForcibly(); error("释放实现超时")
@@ -142,7 +143,7 @@ object CammockManager {
         val dir = currentDir(context)
         val uninstaller = File(dir, "uninstall.sh")
         if (uninstaller.isFile) {
-            val p = ProcessBuilder("su", "-c", "cd '${dir.absolutePath}' && sh '${uninstaller.absolutePath}'")
+            val p = ProcessBuilder(context.suPath, "-c", "cd '${dir.absolutePath}' && sh '${uninstaller.absolutePath}'")
                 .redirectErrorStream(true).start()
             val out = p.inputStream.bufferedReader().use { it.readText() }
             p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
@@ -151,7 +152,7 @@ object CammockManager {
         currentDir(context).deleteRecursively()
         installDir(context).deleteRecursively()
         runCatching {
-            ProcessBuilder("su", "-c", "rm -rf $RUNTIME").start()
+            ProcessBuilder(context.suPath, "-c", "rm -rf $RUNTIME").start()
                 .waitFor(8, java.util.concurrent.TimeUnit.SECONDS)
         }
         "摄像头实现已卸载"
