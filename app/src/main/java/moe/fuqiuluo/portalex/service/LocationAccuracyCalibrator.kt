@@ -47,6 +47,8 @@ object LocationAccuracyCalibrator {
         val detail: String = "",
         /** GPS 卫星数的标准差；用于生成卫星数量波动。 */
         val satellitesJitter: Float? = null,
+        /** fused provider 是否成功注册；false = 设备不支持/不可用。 */
+        val fusedRegistered: Boolean = false,
     )
 
     private const val TAG = "PortalLocationCalib"
@@ -143,12 +145,17 @@ object LocationAccuracyCalibrator {
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         }
 
-        val registered = runCatching {
+        // GPS 与 fused 必须分别注册：MI6 等机型没有 fused，旧实现让 fused 的异常
+        // 把 GPS 注册一起判成失败，导致连 GPS 精度/卫星/噪声都不再采集。
+        val gpsRegistered = runCatching {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener, Looper.getMainLooper())
+        }.onFailure { Log.w(TAG, "GPS register failed: ${it.message}") }.isSuccess
+        val fusedRegistered = runCatching {
             lm.requestLocationUpdates("fused", 1000L, 0f, listener, Looper.getMainLooper())
-        }.onFailure { Log.w(TAG, "register failed: ${it.message}") }.isSuccess
-        if (!registered) {
-            return Result(null, null, null, null, null, null, null, 0, 0, false, "定位监听注册失败")
+        }.onFailure { Log.w(TAG, "fused register failed: ${it.message}") }.isSuccess
+        if (!gpsRegistered) {
+            return Result(null, null, null, null, null, null, null, 0, 0, false, "GPS 监听注册失败",
+                fusedRegistered = fusedRegistered)
         }
 
         return try {
@@ -193,8 +200,11 @@ object LocationAccuracyCalibrator {
                     message = buildString {
                         append("GPS ${gpsValues.size} 次")
                         if (fusedValues.isNotEmpty()) append(" / fused 配对 ${fusedValues.size} 次")
+                        else if (!fusedRegistered) append(" / 本机无 fused，仅采集 GPS")
+                        else append(" / fused 未返回数据")
                         if (satelliteValues.isNotEmpty()) append(" / 卫星 ${satelliteValues.size} 次")
                     },
+                    fusedRegistered = fusedRegistered,
                     satellitesJitter = satJitter,
                     detail = buildString {
                         append("GPS accuracy median=%.2fm".format(gpsMedian))
