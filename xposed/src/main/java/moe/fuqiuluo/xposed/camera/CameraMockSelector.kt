@@ -1,6 +1,5 @@
 package moe.fuqiuluo.xposed.camera
 
-import moe.fuqiuluo.xposed.utils.WorldMath
 import kotlin.random.Random
 
 /**
@@ -22,13 +21,8 @@ object CameraMockSelector {
      * 标签匹配：**全含**语义 —— 筛选里的每个标签都必须出现在视频标签里。
      * 空筛选 = 全部命中（不筛选）；视频无标签时只在空筛选下命中。
      */
-    fun matches(videoTags: List<String>, filter: List<String>): Boolean {
-        // 空筛选 = 全部命中；非空筛选下，无标签视频也必须被视为不匹配。
-        // 旧实现把“无标签”当成永远命中，导致筛选“白天”时仍可能选中无标签素材。
-        if (filter.isEmpty()) return true
-        if (videoTags.isEmpty()) return false
-        return filter.all { want -> videoTags.any { it.equals(want, ignoreCase = true) } }
-    }
+    fun matches(videoTags: List<String>, filter: List<String>): Boolean =
+        CameraMockSelectionEngine.matches(videoTags, filter)
 
     /**
      * 选片。
@@ -43,55 +37,15 @@ object CameraMockSelector {
         lat: Double?,
         lon: Double?,
         random: Random = Random.Default
-    ): CameraMockSelection? {
-        val hits = manifest.points.mapNotNull { point ->
-            val videos = point.videos.filter { matches(it.tags, manifest.tagFilter) }
-            if (videos.isEmpty()) null else point to videos
-        }
-        if (hits.isEmpty()) return null
-
-        val chosen: Pair<CameraVideoPoint, CameraVideo> = if (lat == null || lon == null) {
-            // 位置未知：在全部命中视频里等概率取一个（先摊平，避免"视频多的点更容易中"）
-            val flat = hits.flatMap { (point, videos) -> videos.map { point to it } }
-            flat[random.nextInt(flat.size)]
-        } else {
-            // 最近的点（距离相同则按 id 定序，保证同一份清单下结果可复现），点内再随机
-            val nearest = hits.minWithOrNull(
-                compareBy(
-                    { WorldMath.haversine(lat, lon, it.first.lat, it.first.lon) },
-                    { it.first.id }
-                )
-            )!!
-            val videos = nearest.second
-            nearest.first to videos[random.nextInt(videos.size)]
-        }
-
-        val (point, video) = chosen
-        val distance = if (lat == null || lon == null) -1.0
-        else WorldMath.haversine(lat, lon, point.lat, point.lon)
-
-        return CameraMockSelection(
-            pointId = point.id,
-            pointName = point.name,
-            videoId = video.id,
-            videoName = video.name,
-            fileName = video.file,
-            durationMs = video.durationMs,
-            startMs = randomStartMs(video.durationMs, random),
-            distanceM = distance
-        )
-    }
+    ): CameraMockSelection? = CameraMockSelectionEngine.selectManifest(manifest, lat, lon, random)
 
     /**
      * 随机起播偏移：`[0, 时长)` 内的随机**整秒**。
      * 时长未知（0）或不足 1 秒时返回 0 —— 此时"随机起播"没有可分辨的取值，
      * 由解码器播到 EOS 再回绕即可。
      */
-    fun randomStartMs(durationMs: Long, random: Random = Random.Default): Long {
-        val seconds = durationMs / 1000L
-        if (seconds <= 0L) return 0L
-        return random.nextLong(seconds) * 1000L
-    }
+    fun randomStartMs(durationMs: Long, random: Random = Random.Default): Long =
+        CameraMockSelectionEngine.randomStartMs(durationMs, random)
 
     /** 播放时间轴：把"从 [startMs] 起播、播完回绕"的循环映射成文件内时间（毫秒）。
      *  纯函数，供播放器与单测共用：`elapsedSinceStart` 为从起播算起的累计播放时间。 */
