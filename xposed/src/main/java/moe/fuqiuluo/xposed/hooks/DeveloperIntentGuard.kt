@@ -2,6 +2,8 @@ package moe.fuqiuluo.xposed.hooks
 
 import android.content.Intent
 import android.provider.Settings
+import android.database.MatrixCursor
+import android.net.Uri
 import android.os.Binder
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Hooks
@@ -9,6 +11,7 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.ModuleRuntime
 import moe.fuqiuluo.xposed.utils.PortalProtocol
 import moe.fuqiuluo.xposed.utils.XposedHelpers
+import moe.fuqiuluo.xposed.utils.afterHook
 import moe.fuqiuluo.xposed.utils.beforeHook
 
 /**
@@ -147,6 +150,29 @@ object DeveloperIntentGuard {
                     if (intent != null && checkAndBlock(req, intent)) result = 0
                 }).size
             }
+        }
+        val settingsProvider = XposedHelpers.findClassIfExists(
+            "com.android.providers.settings.SettingsProvider", classLoader
+        )
+        if (settingsProvider != null) {
+            Hooks.hookAllMethods(settingsProvider, "query", afterHook {
+                if (!enabled) return@afterHook
+                val uri = args.getOrNull(0) as? Uri ?: return@afterHook
+                if (uri.pathSegments.size < 2 ||
+                    uri.pathSegments[0] != "global" ||
+                    uri.pathSegments[1] != "development_settings_enabled"
+                ) return@afterHook
+                val pkg = BinderUtils.getUidPackageNames(uid = Binder.getCallingUid())
+                    ?.firstOrNull() ?: return@afterHook
+                if (pkg !in packages) return@afterHook
+                val projection = (args.getOrNull(1) as? Array<*>)?.map { it?.toString() ?: "" }
+                    ?: listOf("value")
+                val cursor = MatrixCursor(projection.toTypedArray(), 1)
+                cursor.addRow(projection.map { if (it == "value") 0 else null }.toTypedArray())
+                result = cursor
+                Logger.info("DeveloperIntentGuard: spoof development_settings_enabled=0 for $pkg")
+            })
+            hooks++
         }
         if (hooks > 0) installed = true
         Logger.info("DeveloperIntentGuard: installed hooks=$hooks installed=$installed")
