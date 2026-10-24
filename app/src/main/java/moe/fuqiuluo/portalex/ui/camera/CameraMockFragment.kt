@@ -102,7 +102,13 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val ctx = requireContext()
         setFabLoading(true)
         Executors.newSingleThreadExecutor().execute {
-            val result = CammockManager.importArchive(ctx, uri)
+            val result = runCatching { CammockManager.importArchive(ctx, uri) }
+                .getOrElse {
+                    CammockManager.Install(
+                        supported = false, models = emptyList(),
+                        message = "导入失败：${it.message}",
+                    )
+                }
             main.post {
                 setFabLoading(false)
                 if (!uiAlive()) return@post
@@ -132,12 +138,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .getOrElse { CameraMockArchive.ImportResult(false, message = "导入失败：${it.message}") }
             main.post {
                 setFabLoading(false)
+                if (result.ok) autoUploadLibrary(ctx)
                 if (!uiAlive()) return@post
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
-                if (result.ok) {
-                    refresh()
-                    autoUploadLibrary()
-                }
+                if (result.ok) refresh()
             }
         }
     }
@@ -207,8 +211,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         autoUploadLibrary()
     }
 
-    private fun autoUploadLibrary() {
-        val ctx = requireContext()
+    private fun autoUploadLibrary(context: android.content.Context? = null) {
+        val ctx = context ?: if (uiAlive()) requireContext() else return
         val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
         Executors.newSingleThreadExecutor().execute {
             val result = CammockManager.upload(ctx)
@@ -311,8 +315,13 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      */
     private fun uiAlive(): Boolean = isAdded && _binding != null
 
+    private var importFabBar: FabBarView? = null
+
     private fun setFabLoading(value: Boolean) {
-        (activity as? MainActivity)?.fabBar?.setLoading(value)
+        if (value) importFabBar = (activity as? MainActivity)?.fabBar
+        val bar = importFabBar ?: (activity as? MainActivity)?.fabBar
+        bar?.setLoading(value)
+        if (!value) importFabBar = null
     }
 
     private fun zipPickerIntent(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
