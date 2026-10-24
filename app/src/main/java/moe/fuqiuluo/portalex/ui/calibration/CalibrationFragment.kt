@@ -229,7 +229,7 @@ class CalibrationFragment : Fragment() {
         result.satellites?.let {
             ctx.satellitesMeasured = it
             // 卫星数中位数 -> GNSS 生成器最小卫星数
-            ctx.minSatelliteCount = it.toInt().coerceAtLeast(0)
+            ctx.minSatelliteCount = it.toInt().coerceIn(0, 35)
         }
         result.maxCn0?.let { ctx.maxCn0Measured = it }
         result.meanCn0?.let { ctx.meanCn0Measured = it }
