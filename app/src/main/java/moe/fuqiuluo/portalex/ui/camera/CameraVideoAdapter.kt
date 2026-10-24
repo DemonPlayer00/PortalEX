@@ -18,7 +18,8 @@ class CameraVideoAdapter(
     private val dataSet: MutableList<CameraVideo>,
     private val onEdit: (CameraVideo) -> Unit,
     private val onDelete: (CameraVideo) -> Unit,
-    private val onExport: (CameraVideo) -> Unit
+    private val onExport: (CameraVideo) -> Unit,
+    private val onRetry: (CameraVideo) -> Unit
 ) : RecyclerView.Adapter<CameraVideoAdapter.ViewHolder>() {
     private var filterTags: Set<String> = emptySet()
 
@@ -36,6 +37,7 @@ class CameraVideoAdapter(
         val meta: MaterialTextView = root.findViewById(R.id.video_meta)
         val exportButton: MaterialButton = root.findViewById(R.id.video_export_button)
         val deleteButton: MaterialButton = root.findViewById(R.id.video_delete_button)
+        val retryButton: MaterialButton = root.findViewById(R.id.video_retry_button)
     }
 
     fun replaceAll(items: List<CameraVideo>) {
@@ -68,5 +70,8 @@ class CameraVideoAdapter(
         holder.itemView.setOnClickListener { onEdit(video) }
         holder.exportButton.setOnClickListener { onExport(video) }
         holder.deleteButton.setOnClickListener { onDelete(video) }
+        holder.retryButton.visibility =
+            if (CameraMockUploadState.needsRetry(holder.itemView.context, video.id)) View.VISIBLE else View.GONE
+        holder.retryButton.setOnClickListener { onRetry(video) }
     }
 }

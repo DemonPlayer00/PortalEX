@@ -84,7 +84,21 @@ object LocationAccuracyCalibrator {
         var lastFused: Location? = null
         var lastGpsAtNanos = 0L
         var lastFusedAtNanos = 0L
+        var lastPairedGpsAt = 0L
+        var lastPairedFusedAt = 0L
         val firstGps = CountDownLatch(1)
+
+        fun pair(gps: Location?, fused: Location?) {
+            if (gps == null || fused == null) return
+            if (gps.elapsedRealtimeNanos == lastPairedGpsAt &&
+                fused.elapsedRealtimeNanos == lastPairedFusedAt
+            ) return
+            fusedValues += distanceMeters(gps, fused)
+            val dt = abs(fused.time - gps.time).toFloat()
+            if (dt in 0f..10_000f) fusedDelayValues += dt
+            lastPairedGpsAt = gps.elapsedRealtimeNanos
+            lastPairedFusedAt = fused.elapsedRealtimeNanos
+        }
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
@@ -107,17 +121,17 @@ object LocationAccuracyCalibrator {
                         meanCn0Values += meanCn0
                     }
                     firstGps.countDown()
-                    val fused = lastFused
-                    if (fused != null && lastFusedAtNanos > 0L &&
-                        now - lastFusedAtNanos <= PAIR_WINDOW_NANOS
-                    ) {
-                        fusedValues += distanceMeters(location, fused)
-                        val dt = abs(fused.time - location.time).toFloat()
-                        if (dt in 0f..10_000f) fusedDelayValues += dt
+                    if (lastFusedAtNanos > 0L && now - lastFusedAtNanos <= PAIR_WINDOW_NANOS) {
+                        pair(location, lastFused)
                     }
                 } else if (location.provider == "fused") {
+                    val now = android.os.SystemClock.elapsedRealtimeNanos()
                     lastFused = location
-                    lastFusedAtNanos = android.os.SystemClock.elapsedRealtimeNanos()
+                    lastFusedAtNanos = now
+                    // GPS 可能先到、fused 后到：两个方向都配对，避免它只在 GPS 回调时采不到。
+                    if (lastGpsAtNanos > 0L && now - lastGpsAtNanos <= PAIR_WINDOW_NANOS) {
+                        pair(lastGps, location)
+                    }
                 }
             }
 
