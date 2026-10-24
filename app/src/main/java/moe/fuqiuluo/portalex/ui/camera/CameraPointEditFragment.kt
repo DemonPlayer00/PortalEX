@@ -139,6 +139,10 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                         val track = JSONObject().apply {
                             put("videoId", video.id)
                             put("videoName", video.name)
+                            put("pointId", working?.id ?: "")
+                            put("pointName", working?.name ?: "")
+                            put("pointLat", working?.lat ?: video.track.firstOrNull()?.lat ?: 0.0)
+                            put("pointLon", working?.lon ?: video.track.firstOrNull()?.lon ?: 0.0)
                             put("file", video.file)
                             put("durationMs", video.durationMs)
                             put("recordedAt", video.recordedAt)

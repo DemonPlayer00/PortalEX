@@ -115,6 +115,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
     }
 
+    private val videoArchiveLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val ctx = requireContext()
+        Executors.newSingleThreadExecutor().execute {
+            val result = runCatching { CameraMockArchive.importZip(ctx, uri) }
+                .getOrElse { CameraMockArchive.ImportResult(false, message = "导入失败：${it.message}") }
+            main.post {
+                Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
+                if (result.ok) {
+                    refresh()
+                    autoUploadLibrary()
+                }
+            }
+        }
+    }
+
     private val recordLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -304,7 +322,15 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 FabBarView.Action(
                     R.drawable.baseline_control_camera_24,
                     getString(R.string.camera_record)
-                ) { startRecordingFromMap() }
+                ) { startRecordingFromMap() },
+                FabBarView.Action(
+                    R.drawable.baseline_file_download_24,
+                    getString(R.string.camera_import_archive)
+                ) {
+                    videoArchiveLauncher.launch(
+                        arrayOf("application/zip", "application/octet-stream", "*/*")
+                    )
+                }
             )
         )
     }
