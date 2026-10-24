@@ -27,6 +27,7 @@ import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
+import moe.fuqiuluo.portalex.ext.satelliteJitter
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.sensorNoise
@@ -95,6 +96,7 @@ object ConfigSync {
         FakeLoc.gnssMeanCn0 = context.meanCn0Measured.toDouble()
         FakeLoc.needDowngradeToCdma = context.needDowngradeToCdma
         FakeLoc.minSatellites = context.minSatelliteCount
+        FakeLoc.satelliteJitter = context.satelliteJitter.toDouble()
         FakeLoc.enableAGPS = context.enableAGPS
         FakeLoc.enableNMEA = context.enableNMEA
         FakeLoc.disableRequestGeofence = !context.enableRequestGeofence
@@ -135,6 +137,7 @@ object ConfigSync {
         )
         rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
         rely.putInt(Key.MIN_SATELLITES, FakeLoc.minSatellites)
+        rely.putDouble(Key.SATELLITE_JITTER, FakeLoc.satelliteJitter)
         rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, context.loopBroadcastlocation)
         rely.putBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
         rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)

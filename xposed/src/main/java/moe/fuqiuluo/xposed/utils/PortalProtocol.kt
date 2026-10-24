@@ -69,6 +69,7 @@ object PortalProtocol {
         const val ALTITUDE_JITTER           = "altitude_jitter"
         const val FUSED_ACCURACY            = "fused_accuracy"
         const val FUSED_DELAY_MS            = "fused_delay_ms"
+        const val SATELLITE_JITTER           = "satellite_jitter"
         const val GNSS_MAX_CN0              = "gnss_max_cn0"
         const val GNSS_MEAN_CN0             = "gnss_mean_cn0"
         const val BEARING                   = "bearing"
