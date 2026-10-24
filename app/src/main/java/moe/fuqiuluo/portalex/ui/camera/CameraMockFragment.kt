@@ -1,6 +1,7 @@
 package moe.fuqiuluo.portalex.ui.camera
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -314,6 +315,21 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         putExtra(Intent.EXTRA_LOCAL_ONLY, true)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+
+        // OnePlus/ColorOS 的 PickerActivity 会对 zip 做“智能解压/识别安装包”，
+        // 选中后直接进入它自己的解压或安装流程，不返回 URI。
+        // 优先强制使用 AOSP DocumentsUI 的原生文件选择器；不存在时再回退系统默认。
+        val native = ComponentName(
+            "com.android.documentsui",
+            "com.android.documentsui.picker.PickActivity",
+        )
+        val available = try {
+            requireContext().packageManager.getActivityInfo(native, 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (available) component = native
     }
 
     override fun onResume() {
