@@ -63,6 +63,7 @@ object CameraMockServerStore {
 
     /** 同一摄像头会话上次选中的视频：其所有轨迹点距离按 x0.5 加权。 */
     private val sessionLastVideo = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val sessionLastRoute = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /**
      * 最近坐标选片。
@@ -81,6 +82,7 @@ object CameraMockServerStore {
         val routes = load()
         if (routes.isEmpty()) return null
         val lastVideo = if (session.isNotBlank()) sessionLastVideo[session] else null
+        val lastRoute = if (session.isNotBlank()) sessionLastRoute[session] else null
         val selected = CameraMockSelectionEngine.selectRoutes(
             routes = routes,
             lat = lat,
@@ -88,12 +90,15 @@ object CameraMockServerStore {
             tagFilter = tagFilter,
             session = session,
             lastVideoId = lastVideo,
+            lastRouteId = lastRoute,
             random = random,
             nowMs = nowMs,
         ) ?: return null
         if (session.isNotBlank()) {
             if (sessionLastVideo.size > 64) sessionLastVideo.clear()
+            if (sessionLastRoute.size > 64) sessionLastRoute.clear()
             sessionLastVideo[session] = selected.videoId
+            sessionLastRoute[session] = selected.pointId
         }
         return selected
     }
