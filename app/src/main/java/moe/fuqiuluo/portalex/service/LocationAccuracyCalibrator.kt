@@ -66,7 +66,11 @@ object LocationAccuracyCalibrator {
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return Result(null, null, null, null, null, null, null, 0, 0, false, "定位服务不可用")
         if (!runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) {
-            return Result(null, null, null, null, null, null, null, 0, 0, false, "GPS provider 未启用")
+            // 没有 GPS 不应阻断其它自动校准：只跳过 GPS/fused 两项。
+            return Result(
+                null, null, null, null, null, null, null, 0, 0, true,
+                "GPS 未启用，已跳过 GPS/fused 校准",
+            )
         }
 
         val gpsValues = ArrayList<Float>()
@@ -134,8 +138,11 @@ object LocationAccuracyCalibrator {
         return try {
             // 没有 GPS 就不要假装在采集：最多等到超时，明确报错。
             if (!firstGps.await(NO_GPS_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                return Result(null, null, null, null, null, null, null, 0, 0, false,
-                    "未收到 GPS 信号，无法采集")
+                // 无 GPS 时视为“跳过”而不是失败；传感器噪声档等自动校准仍可继续。
+                return Result(
+                    null, null, null, null, null, null, null, 0, 0, true,
+                    "未收到 GPS，已跳过 GPS/fused 校准",
+                )
             }
             val started = System.currentTimeMillis()
             while (System.currentTimeMillis() - started < DURATION_MS) {
