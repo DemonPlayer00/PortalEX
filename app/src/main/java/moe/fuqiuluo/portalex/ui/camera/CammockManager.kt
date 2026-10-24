@@ -120,7 +120,7 @@ object CammockManager {
         val box = File(currentDir(context), "io/export")
         box.deleteRecursively(); box.mkdirs()
         File(box, "request.txt").writeText(videoId)
-        runScript(context, "export.sh").getOrThrow()
+        runScript(context, "export.sh", timeoutMs = 120_000L).getOrThrow()
         val file = File(box, "$videoId.mp4")
         if (!file.isFile) error("实现未生成导出视频：$videoId")
         file
@@ -141,7 +141,7 @@ object CammockManager {
                 if (src.isFile) src.copyTo(File(box, video.file), overwrite = true)
             }
         }
-        runScript(context, "upload.sh").getOrThrow()
+        runScript(context, "upload.sh", timeoutMs = 300_000L).getOrThrow()
         routes.sumOf { it.videos.size }
     }
 
@@ -150,7 +150,7 @@ object CammockManager {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
         val box = File(currentDir(context), "io/download")
         box.deleteRecursively(); box.mkdirs()
-        runScript(context, "download.sh").getOrThrow()
+        runScript(context, "download.sh", timeoutMs = 300_000L).getOrThrow()
         val json = File(box, "routes.json")
         if (!json.isFile) error("实现未生成 io/download/routes.json")
         val routes = moe.fuqiuluo.xposed.camera.CameraMockCodec.decodeRoutes(json.readText())
@@ -172,7 +172,7 @@ object CammockManager {
     /** 停止也由实现自己的 stop.sh 负责。 */
     fun stop(context: Context): Result<String> = runScript(context, "stop.sh")
 
-    private fun runScript(context: Context, name: String): Result<String> = runCatching {
+    private fun runScript(context: Context, name: String, timeoutMs: Long = 30_000L): Result<String> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
         val dir = currentDir(context)
         val script = File(dir, name)
@@ -193,14 +193,33 @@ object CammockManager {
         val cmd = "cd '${dir.absolutePath}' && " +
             "PORTALEX_CAMMOCK_TOKEN='$token' PORTALEX_CAMMOCK_NONCE='$nonce' " +
             "sh '${script.absolutePath}'"
+        val startedAt = System.currentTimeMillis()
         val p = ProcessBuilder(context.suPath, "-c", cmd)
             .redirectErrorStream(true).start()
-        val out = p.inputStream.bufferedReader().use { it.readText() }
-        if (!p.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
-            p.destroyForcibly(); error("$name 执行超时")
+        val out = StringBuilder()
+        val reader = Thread {
+            runCatching {
+                p.inputStream.bufferedReader().use { r ->
+                    val buf = CharArray(8192)
+                    while (true) {
+                        val n = r.read(buf)
+                        if (n < 0) break
+                        synchronized(out) { out.append(buf, 0, n) }
+                    }
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        if (!p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            p.destroyForcibly()
+            reader.join(2_000)
+            error("$name 执行超时（${timeoutMs / 1000}s，长视频上传请重试）")
         }
-        if (p.exitValue() != 0) error("$name 失败：${out.trim()}")
-        out.trim().ifBlank { "$name 执行完成" }
+        reader.join(5_000)
+        val elapsed = System.currentTimeMillis() - startedAt
+        android.util.Log.i("CammockManager", "$name finished in ${elapsed}ms exit=${p.exitValue()}")
+        val text = synchronized(out) { out.toString() }
+        if (p.exitValue() != 0) error("$name 失败：${text.trim()}")
+        text.trim().ifBlank { "$name 执行完成" }
     }
 
     /** 卸载私有实现；实现自己的 uninstall.sh 负责 root 模块清理。 */

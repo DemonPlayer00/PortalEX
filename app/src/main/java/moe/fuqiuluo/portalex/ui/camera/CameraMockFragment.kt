@@ -182,13 +182,16 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     private fun autoUploadLibrary() {
         val ctx = requireContext()
+        val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
         Executors.newSingleThreadExecutor().execute {
             val result = CammockManager.upload(ctx)
             main.post {
                 result.onSuccess { n ->
+                    CameraMockUploadState.markUploaded(ctx, ids)
                     Toast.makeText(ctx, "已通过 cammock 上传 $n 段视频", Toast.LENGTH_SHORT).show()
                 }.onFailure {
-                    Toast.makeText(ctx, "自动上传失败：${it.message}", Toast.LENGTH_LONG).show()
+                    CameraMockUploadState.markFailed(ctx, ids)
+                    Toast.makeText(ctx, "自动上传失败，可在视频点内重试：${it.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
