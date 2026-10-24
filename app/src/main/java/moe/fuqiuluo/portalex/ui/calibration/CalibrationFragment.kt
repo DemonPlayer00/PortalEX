@@ -14,6 +14,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
@@ -86,7 +87,6 @@ class CalibrationFragment : Fragment() {
         binding.calibStatus.text = requireContext().sensorNoiseReport
         binding.calibRun.setOnClickListener { runCalibration() }
         binding.calibReset.setOnClickListener { confirmReset() }
-        binding.calibLocationRun.setOnClickListener { runLocationAccuracy() }
         refreshEcho()
         return binding.root
     }
@@ -206,38 +206,21 @@ class CalibrationFragment : Fragment() {
         }
     }
 
-    private fun runLocationAccuracy() {
-        val ctx = requireContext()
-        binding.calibLocationRun.isEnabled = false
-        showToast("开始采集：请保持 GPS 有信号，约 10 秒")
-        viewLifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { LocationAccuracyCalibrator.collect(ctx) }
-                    .getOrElse {
-                        LocationAccuracyCalibrator.Result(
-                            gpsAccuracyMeters = null, fusedAccuracyMeters = null,
-                            fusedDelayMs = null, gpsIntervalMs = null,
-                            satellites = null, maxCn0 = null, meanCn0 = null,
-                            gpsSamples = 0, fusedSamples = 0, ok = false,
-                            message = "采集异常：${it.message}",
-                        )
-                    }
-            }
-            _binding?.calibLocationRun?.isEnabled = true
-            if (!result.ok) {
-                showToast(result.message)
-                return@launch
-            }
-            result.gpsAccuracyMeters?.let { ctx.gpsAccuracyMeasured = it }
-            result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
-            result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }
-            result.gpsIntervalMs?.let { ctx.gpsIntervalMeasured = it }
-            result.satellites?.let { ctx.satellitesMeasured = it }
-            result.maxCn0?.let { ctx.maxCn0Measured = it }
-            result.meanCn0?.let { ctx.meanCn0Measured = it }
-            renderFluctuation()
+    private fun applyLocationAccuracy(ctx: android.content.Context, result: LocationAccuracyCalibrator.Result) {
+        if (!result.ok) {
+            // GPS/fused 项失败不应回滚已完成的噪声档校准；只提示。
             showToast(result.message)
+            return
         }
+        result.gpsAccuracyMeters?.let { ctx.gpsAccuracyMeasured = it }
+        result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
+        result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }
+        result.gpsIntervalMs?.let { ctx.gpsIntervalMeasured = it }
+        result.satellites?.let { ctx.satellitesMeasured = it }
+        result.maxCn0?.let { ctx.maxCn0Measured = it }
+        result.meanCn0?.let { ctx.meanCn0Measured = it }
+        renderFluctuation()
+        showToast(result.message)
     }
 
     private fun editScalar(title: String, current: Double, min: Double, max: Double, save: (Double) -> Unit) {
@@ -332,6 +315,18 @@ class CalibrationFragment : Fragment() {
 
         val base = ctx.sensorNoise
         viewLifecycleOwner.lifecycleScope.launch {
+            val locationDeferred = async(Dispatchers.IO) {
+                runCatching { LocationAccuracyCalibrator.collect(ctx) }
+                    .getOrElse {
+                        LocationAccuracyCalibrator.Result(
+                            gpsAccuracyMeters = null, fusedAccuracyMeters = null,
+                            fusedDelayMs = null, gpsIntervalMs = null,
+                            satellites = null, maxCn0 = null, meanCn0 = null,
+                            gpsSamples = 0, fusedSamples = 0, ok = false,
+                            message = "GPS/fused 采集异常：${it.message}",
+                        )
+                    }
+            }
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     SensorNoiseCalibrator.collect(
@@ -367,6 +362,7 @@ class CalibrationFragment : Fragment() {
             _binding?.calibStatus?.text = result.report
             showToast(result.message)
             pushConfig()
+            applyLocationAccuracy(ctx, locationDeferred.await())
         }
     }
 
