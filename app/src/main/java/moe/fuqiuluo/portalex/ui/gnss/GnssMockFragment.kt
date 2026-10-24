@@ -305,7 +305,8 @@ class GnssMockFragment : Fragment() {
                 binding.glonassCount.text = "GNS: $glonassCount"
                 binding.beidouCount.text = "BD: $beidouCount"
 
-                binding.satelliteRadaView.setSatellites(satellites)
+                // 雷达只绘制前 40 颗；总数/使用数仍按完整 GnssStatus 统计。
+                binding.satelliteRadaView.setSatellites(satellites.take(40))
             }
         }
 
