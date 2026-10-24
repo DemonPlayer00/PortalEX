@@ -6,6 +6,8 @@ import android.os.Binder
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Hooks
 import moe.fuqiuluo.xposed.utils.Logger
+import moe.fuqiuluo.xposed.utils.ModuleRuntime
+import moe.fuqiuluo.xposed.utils.PortalProtocol
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.beforeHook
 
@@ -27,7 +29,7 @@ object DeveloperIntentGuard {
         this.packages = packages.toSet()
         Logger.info("DeveloperIntentGuard: enabled=$enabled packages=${this.packages.size}")
         // 配置到达时兜底安装：系统启动阶段若类加载顺序不满足，仍能在真正使用时装上。
-        install(ClassLoader.getSystemClassLoader())
+        if (!installed) install(ClassLoader.getSystemClassLoader())
     }
 
     private fun isDeveloperIntent(intent: Intent): Boolean {
@@ -66,6 +68,19 @@ object DeveloperIntentGuard {
 
     fun install(classLoader: ClassLoader) {
         Logger.info("DeveloperIntentGuard: install called (installed=$installed)")
+        // system_server 重启后内存状态会丢：从 App 写入的同一份偏好恢复。
+        runCatching {
+            val prefs = ModuleRuntime.remotePreferences(PortalProtocol.PREFS_NAME)
+            if (prefs != null) {
+                enabled = prefs.getBoolean(
+                    PortalProtocol.Key.DEV_INTENT_GUARD_ENABLED, enabled
+                )
+                packages = prefs.getStringSet(
+                    PortalProtocol.Key.DEV_INTENT_GUARD_PACKAGES, packages
+                ) ?: packages
+                Logger.info("DeveloperIntentGuard: restored enabled=$enabled packages=${packages.size}")
+            }
+        }
         val cls = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityTaskManagerService", classLoader
         ) ?: run {
@@ -91,6 +106,31 @@ object DeveloperIntentGuard {
                     }.getOrNull()
                 } else 0
             }).size
+        }
+        val ams = XposedHelpers.findClassIfExists(
+            "com.android.server.am.ActivityManagerService", classLoader
+        )
+        if (ams != null) {
+            for (name in listOf(
+                "startActivity", "startActivityAndWait",
+                "startActivityAsUser", "startActivityWithFeature"
+            )) {
+                hooks += Hooks.hookAllMethods(ams, name, beforeHook {
+                    if (!enabled) return@beforeHook
+                    val intent = args.filterIsInstance<Intent>().firstOrNull()
+                        ?: return@beforeHook
+                    if (!isDeveloperIntent(intent)) return@beforeHook
+                    val pkg = callingPackage(args) ?: return@beforeHook
+                    Logger.info("DeveloperIntentGuard: candidate pkg=$pkg selected=${pkg in packages}")
+                    if (pkg !in packages) return@beforeHook
+                    Logger.info("DeveloperIntentGuard: blocked $pkg -> ${intent.action ?: intent.component}")
+                    result = if (method.name.contains("AndWait")) {
+                        runCatching {
+                            Class.forName("android.app.WaitResult").getDeclaredConstructor().newInstance()
+                        }.getOrNull()
+                    } else 0
+                }).size
+            }
         }
         val starter = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityStarter", classLoader
