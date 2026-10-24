@@ -440,7 +440,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (show) {
             /* 从 GONE 变 VISIBLE 后要让它重新走一遍恢复流程，否则纹理可能是白的 */
             runCatching { binding.cameraMockMap.onResume() }
-            drawPoints(CameraMockStore.points(requireContext()).sortedBy { it.name })
+            drawPoints(sortedPoints(CameraMockStore.points(requireContext())))
         } else {
             runCatching { binding.cameraMockMap.onPause() }
         }
@@ -511,15 +511,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
     }
 
+    /** 最新变更的路线/视频点排在上面；同一时间按名称稳定排序。 */
+    private fun sortedPoints(points: List<CameraVideoPoint>): List<CameraVideoPoint> =
+        points.sortedWith(
+            compareByDescending<CameraVideoPoint> {
+                it.videos.maxOfOrNull { v -> maxOf(v.addedAt, v.recordedAt) } ?: 0L
+            }.thenBy { it.name }
+        )
+
     private fun refresh() {
         val context = requireContext()
         val filter = context.cameraMockTagFilter
         fun matches(point: CameraVideoPoint): Boolean =
             point.videos.any { v ->
-                v.tags.isEmpty() || filter.all { t -> v.tags.any { it.equals(t, true) } }
+                if (filter.isEmpty()) true
+                else v.tags.isNotEmpty() && filter.all { t -> v.tags.any { it.equals(t, true) } }
             }
-        val points = CameraMockStore.points(context)
-            .sortedWith(compareByDescending<CameraVideoPoint> { matches(it) }.thenBy { it.name })
+        val points = sortedPoints(CameraMockStore.points(context))
+            .sortedWith(compareByDescending<CameraVideoPoint> { matches(it) })
         adapter.setFilterTags(filter)
         adapter.replaceAll(points)
         drawPoints(points)

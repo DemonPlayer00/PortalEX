@@ -437,9 +437,13 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     private fun refreshVideos() {
         val filter = requireContext().cameraMockTagFilter
         fun matches(v: CameraVideo): Boolean =
-            v.tags.isEmpty() || filter.all { t -> v.tags.any { it.equals(t, true) } }
+            if (filter.isEmpty()) true
+            else v.tags.isNotEmpty() && filter.all { t -> v.tags.any { it.equals(t, true) } }
         val videos = working?.videos.orEmpty()
-            .sortedWith(compareByDescending<CameraVideo> { matches(it) }.thenBy { it.recordedAt })
+            .sortedWith(
+                compareByDescending<CameraVideo> { matches(it) }
+                    .thenByDescending { maxOf(it.addedAt, it.recordedAt) }
+            )
         videoAdapter.setFilterTags(filter)
         videoAdapter.replaceAll(videos)
         binding.cameraVideoLabel.text = getString(R.string.camera_video_list) + "（${videos.size}）"
