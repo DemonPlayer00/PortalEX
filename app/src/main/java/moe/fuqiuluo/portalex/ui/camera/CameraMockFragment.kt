@@ -100,9 +100,11 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (result.resultCode != android.app.Activity.RESULT_OK) return@registerForActivityResult
         val uri = result.data?.data ?: return@registerForActivityResult
         val ctx = requireContext()
+        setFabLoading(true)
         Executors.newSingleThreadExecutor().execute {
             val result = CammockManager.importArchive(ctx, uri)
             main.post {
+                setFabLoading(false)
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
                 if (!result.supported) {
                     MaterialAlertDialogBuilder(ctx)
@@ -123,10 +125,12 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (result.resultCode != android.app.Activity.RESULT_OK) return@registerForActivityResult
         val uri = result.data?.data ?: return@registerForActivityResult
         val ctx = requireContext()
+        setFabLoading(true)
         Executors.newSingleThreadExecutor().execute {
             val result = runCatching { CameraMockArchive.importZip(ctx, uri) }
                 .getOrElse { CameraMockArchive.ImportResult(false, message = "导入失败：${it.message}") }
             main.post {
+                setFabLoading(false)
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
                 if (result.ok) {
                     refresh()
@@ -301,6 +305,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      * 点击 zip 直接交给解压/归档应用，导致 PortalEX 收不到 RESULT。
      * 这里强制 ACTION_OPEN_DOCUMENT + zip MIME，只允许“选择并返回 URI”。
      */
+    private fun setFabLoading(value: Boolean) {
+        (activity as? MainActivity)?.fabBar?.setLoading(value)
+    }
+
     private fun zipPickerIntent(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
         addCategory(Intent.CATEGORY_OPENABLE)
         type = "application/zip"
