@@ -142,43 +142,79 @@ class CalibrationFragment : Fragment() {
             list.addView(row)
         }
 
-        fun measurementRow(title: String, desc: String): TextView {
+        fun measurementRow(title: String, desc: String, action: (() -> Unit)? = null): TextView {
             val row = inflater.inflate(R.layout.layout_noise_row, list, false)
             row.findViewById<TextView>(R.id.noise_title).text = title
             row.findViewById<TextView>(R.id.noise_desc).text = desc
             val value = row.findViewById<TextView>(R.id.noise_value)
             value.text = "未采集"
+            if (action != null) {
+                row.isClickable = true
+                row.isFocusable = true
+                row.setOnClickListener { action() }
+            } else {
+                row.isClickable = false
+                row.isFocusable = false
+            }
             list.addView(row)
             return value
         }
         gpsAccuracyValue = measurementRow(
             getString(R.string.calibration_gps_accuracy),
             getString(R.string.calibration_gps_accuracy_desc),
-        )
+        ) {
+            editScalar("GPS 定位精度", ctx.gpsAccuracyMeasured.toDouble(), 0.0, 1000.0) { v ->
+                ctx.gpsAccuracyMeasured = v.toFloat()
+                ctx.accuracy = v.toFloat()
+            }
+        }
         fusedAccuracyValue = measurementRow(
             getString(R.string.calibration_fused_accuracy),
             getString(R.string.calibration_fused_accuracy_desc),
-        )
+        ) {
+            editScalar("fused 定位精度", ctx.fusedAccuracyMeasured.toDouble(), 0.0, 1000.0) { v ->
+                ctx.fusedAccuracyMeasured = v.toFloat()
+            }
+        }
         fusedDelayValue = measurementRow(
             getString(R.string.calibration_fused_delay),
             getString(R.string.calibration_fused_delay_desc),
-        )
+        ) {
+            editScalar("fused 时间差", ctx.fusedDelayMeasured.toDouble(), 0.0, 10_000.0) { v ->
+                ctx.fusedDelayMeasured = v.toFloat()
+            }
+        }
         gpsIntervalValue = measurementRow(
             getString(R.string.calibration_gps_interval),
             getString(R.string.calibration_gps_interval_desc),
-        )
+        ) {
+            editScalar("GPS 上报间隔", ctx.gpsIntervalMeasured.toDouble(), 200.0, 2_000.0) { v ->
+                ctx.gpsIntervalMeasured = v.toFloat()
+                ctx.reportDuration = v.toInt()
+            }
+        }
         satellitesValue = measurementRow(
             getString(R.string.calibration_satellite_count),
             getString(R.string.calibration_satellite_count_desc),
-        )
+        ) {
+            editSatellite(ctx)
+        }
         maxCn0Value = measurementRow(
             getString(R.string.calibration_max_cn0),
             getString(R.string.calibration_max_cn0_desc),
-        )
+        ) {
+            editScalar("最大 C/N0", ctx.maxCn0Measured.toDouble(), 0.0, 100.0) { v ->
+                ctx.maxCn0Measured = v.toFloat()
+            }
+        }
         meanCn0Value = measurementRow(
             getString(R.string.calibration_mean_cn0),
             getString(R.string.calibration_mean_cn0_desc),
-        )
+        ) {
+            editScalar("平均 C/N0", ctx.meanCn0Measured.toDouble(), 0.0, 100.0) { v ->
+                ctx.meanCn0Measured = v.toFloat()
+            }
+        }
     }
 
     private fun renderFluctuation() {
@@ -240,6 +276,29 @@ class CalibrationFragment : Fragment() {
         renderFluctuation()
         pushConfig()
         showToast(result.message)
+    }
+
+    private fun editSatellite(ctx: android.content.Context) {
+        val currentCount = ctx.satellitesMeasured.takeIf { it > 0f } ?: ctx.minSatelliteCount.toFloat()
+        showInputDialog("模拟卫星数", "%.0f".format(currentCount)) { countText ->
+            val count = countText.toIntOrNull()
+            if (count == null || count < 0 || count > FakeLoc.MAX_SATELLITES) {
+                showToast("请输入 0 ~ ${FakeLoc.MAX_SATELLITES} 之间的卫星数")
+                return@showInputDialog
+            }
+            showInputDialog("卫星数波动", "%.1f".format(ctx.satelliteJitter)) { jitterText ->
+                val jitter = jitterText.toDoubleOrNull()
+                if (jitter == null || jitter < 0.0 || jitter > FakeLoc.MAX_SATELLITES.toDouble()) {
+                    showToast("请输入 0 ~ ${FakeLoc.MAX_SATELLITES} 之间的波动值")
+                    return@showInputDialog
+                }
+                ctx.satellitesMeasured = count.toFloat()
+                ctx.minSatelliteCount = count
+                ctx.satelliteJitter = jitter.toFloat()
+                renderFluctuation()
+                pushConfig()
+            }
+        }
     }
 
     private fun editScalar(title: String, current: Double, min: Double, max: Double, save: (Double) -> Unit) {
