@@ -160,10 +160,12 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 } ?: error("无法写入导出文件")
             }.onFailure { exception ->
                 activity?.runOnUiThread {
+                    if (!uiAlive()) return@runOnUiThread
                     Toast.makeText(ctx, "导出失败：${exception.message}", Toast.LENGTH_LONG).show()
                 }
             }
             if (ok.isSuccess) activity?.runOnUiThread {
+                if (!uiAlive()) return@runOnUiThread
                 Toast.makeText(ctx, "已导出视频与路径时间轴", Toast.LENGTH_SHORT).show()
             }
         }
@@ -438,7 +440,10 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         }
     }
 
+    private fun uiAlive(): Boolean = isAdded && _binding != null
+
     private fun refreshVideos() {
+        if (!uiAlive()) return
         val filter = requireContext().cameraMockTagFilter
         fun matches(v: CameraVideo): Boolean =
             if (filter.isEmpty()) true
@@ -474,6 +479,9 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                     CameraMockUploadState.markUploaded(ctx, ids)
                 } else {
                     CameraMockUploadState.markFailed(ctx, ids)
+                }
+                if (!uiAlive()) return@runOnUiThread
+                if (result.isFailure) {
                     Toast.makeText(
                         ctx,
                         "上传失败，长视频可重试：${result.exceptionOrNull()?.message}",
@@ -494,9 +502,13 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             activity?.runOnUiThread {
                 if (result.isSuccess) {
                     CameraMockUploadState.markUploaded(ctx, ids)
-                    Toast.makeText(ctx, "重试上传成功", Toast.LENGTH_SHORT).show()
                 } else {
                     CameraMockUploadState.markFailed(ctx, ids)
+                }
+                if (!uiAlive()) return@runOnUiThread
+                if (result.isSuccess) {
+                    Toast.makeText(ctx, "重试上传成功", Toast.LENGTH_SHORT).show()
+                } else {
                     Toast.makeText(
                         ctx,
                         "重试仍失败：${result.exceptionOrNull()?.message}",

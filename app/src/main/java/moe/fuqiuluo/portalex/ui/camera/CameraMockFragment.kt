@@ -102,9 +102,16 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val ctx = requireContext()
         setFabLoading(true)
         Executors.newSingleThreadExecutor().execute {
-            val result = CammockManager.importArchive(ctx, uri)
+            val result = runCatching { CammockManager.importArchive(ctx, uri) }
+                .getOrElse {
+                    CammockManager.Install(
+                        supported = false, models = emptyList(),
+                        message = "导入失败：${it.message}",
+                    )
+                }
             main.post {
                 setFabLoading(false)
+                if (!uiAlive()) return@post
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
                 if (!result.supported) {
                     MaterialAlertDialogBuilder(ctx)
@@ -131,11 +138,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .getOrElse { CameraMockArchive.ImportResult(false, message = "导入失败：${it.message}") }
             main.post {
                 setFabLoading(false)
+                if (result.ok) autoUploadLibrary(ctx)
+                if (!uiAlive()) return@post
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
-                if (result.ok) {
-                    refresh()
-                    autoUploadLibrary()
-                }
+                if (result.ok) refresh()
             }
         }
     }
@@ -205,17 +211,19 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         autoUploadLibrary()
     }
 
-    private fun autoUploadLibrary() {
-        val ctx = requireContext()
+    private fun autoUploadLibrary(context: android.content.Context? = null) {
+        val ctx = context ?: if (uiAlive()) requireContext() else return
         val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
         Executors.newSingleThreadExecutor().execute {
             val result = CammockManager.upload(ctx)
             main.post {
                 result.onSuccess { n ->
                     CameraMockUploadState.markUploaded(ctx, ids)
+                    if (!uiAlive()) return@onSuccess
                     Toast.makeText(ctx, "已通过 cammock 上传 $n 段视频", Toast.LENGTH_SHORT).show()
                 }.onFailure {
                     CameraMockUploadState.markFailed(ctx, ids)
+                    if (!uiAlive()) return@onFailure
                     Toast.makeText(ctx, "自动上传失败，可在视频点内重试：${it.message}", Toast.LENGTH_LONG).show()
                 }
             }
@@ -305,8 +313,15 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      * 点击 zip 直接交给解压/归档应用，导致 PortalEX 收不到 RESULT。
      * 这里强制 ACTION_OPEN_DOCUMENT + zip MIME，只允许“选择并返回 URI”。
      */
+    private fun uiAlive(): Boolean = isAdded && _binding != null
+
+    private var importFabBar: FabBarView? = null
+
     private fun setFabLoading(value: Boolean) {
-        (activity as? MainActivity)?.fabBar?.setLoading(value)
+        if (value) importFabBar = (activity as? MainActivity)?.fabBar
+        val bar = importFabBar ?: (activity as? MainActivity)?.fabBar
+        bar?.setLoading(value)
+        if (!value) importFabBar = null
     }
 
     private fun zipPickerIntent(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -591,6 +606,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         )
 
     private fun refresh() {
+        if (!uiAlive()) return
         val context = requireContext()
         val filter = context.cameraMockTagFilter
         fun matches(point: CameraVideoPoint): Boolean =
@@ -655,8 +671,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 Executors.newSingleThreadExecutor().execute {
                     val result = CammockManager.uninstall(context)
                     main.post {
-                        binding.cameraMockUninstallImpl.isEnabled = true
                         context.cameraMockEnabled = false
+                        if (!uiAlive()) return@post
+                        binding.cameraMockUninstallImpl.isEnabled = true
                         updateSwitch()
                         updateImplementationUi()
                         Toast.makeText(context, result.getOrElse { "卸载失败" }, Toast.LENGTH_LONG).show()
@@ -738,7 +755,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     }
 
     private fun updateImplementationUi() {
-        if (_binding == null) return
+        if (!uiAlive()) return
         val ctx = requireContext()
         val installed = CammockManager.isInstalled(ctx)
         binding.cameraMockImplStatus.text = if (installed) {
@@ -817,9 +834,14 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             val result = if (next) CammockManager.start(context) else CammockManager.stop(context)
             android.util.Log.i("CameraMockFragment", "cammock result success=${result.isSuccess} value=${result.getOrNull()} error=${result.exceptionOrNull()?.message}")
             main.post {
-                binding.switchCameraMock.isEnabled = true
                 if (result.isSuccess) {
                     context.cameraMockEnabled = next
+                } else {
+                    context.cameraMockEnabled = !next
+                }
+                if (!uiAlive()) return@post
+                binding.switchCameraMock.isEnabled = true
+                if (result.isSuccess) {
                     updateSwitch()
                     updateStatus(CameraMockStore.points(context))
                     Toast.makeText(
@@ -828,7 +850,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
-                    context.cameraMockEnabled = !next
                     updateSwitch()
                     Toast.makeText(context, "cammock 执行失败：${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
                 }
