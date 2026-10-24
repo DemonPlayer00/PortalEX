@@ -151,4 +151,44 @@ class CameraMockSelectorTest {
         assertEquals("time-a", picked.videoId)
         assertEquals(60_000L, CameraMockSelectionEngine.timeOfDayDistanceMs(a.recordedAt, now))
     }
+
+    @Test
+    fun `距离优先于远处路线的更近时刻`() {
+        val day = 24L * 60L * 60L * 1000L
+        val hour = 60L * 60L * 1000L
+        val now = 200L * day + 12L * hour
+        fun route(id: String, lat: Double, recordedAt: Long) = CameraRoute(
+            id, id, lat, 116.3975, 0L,
+            listOf(CameraVideo(id + "-v", id, "$id.mp4", 10_000, emptyList(),
+                addedAt = 0L, recordedAt = recordedAt))
+        )
+        val near = route("near", 39.9087, 100L * day + 8L * hour)
+        val far = route("far", 39.9500, 100L * day + 12L * hour) // 时刻更近但地点远
+        val sel = CameraMockSelectionEngine.selectRoutes(
+            listOf(near, far), 39.9087, 116.3975, emptyList(),
+            nowMs = now, random = Random(1)
+        )!!
+        assertEquals("near-v", sel.videoId)
+    }
+
+    @Test
+    fun `同一地点按时刻选择且会话内视频有迟滞`() {
+        val day = 24L * 60L * 60L * 1000L
+        val hour = 60L * 60L * 1000L
+        val now = 200L * day + 12L * hour
+        val a = CameraVideo("a", "a", "a.mp4", 10_000, emptyList(),
+            addedAt = 0L, recordedAt = 100L * day + 11L * hour + 58L * 60_000L)
+        val b = CameraVideo("b", "b", "b.mp4", 10_000, emptyList(),
+            addedAt = 0L, recordedAt = 100L * day + 12L * hour)
+        val route = CameraRoute("r", "r", 39.9087, 116.3975, 0L, listOf(a, b))
+        val picked = CameraMockSelectionEngine.selectRoutes(
+            listOf(route), 39.9087, 116.3975, emptyList(), nowMs = now, random = Random(1)
+        )!!
+        assertEquals("b", picked.videoId)
+        val sticky = CameraMockSelectionEngine.selectRoutes(
+            listOf(route), 39.9087, 116.3975, emptyList(),
+            lastVideoId = "a", lastRouteId = "r", nowMs = now, random = Random(1)
+        )!!
+        assertEquals("a", sticky.videoId)
+    }
 }
