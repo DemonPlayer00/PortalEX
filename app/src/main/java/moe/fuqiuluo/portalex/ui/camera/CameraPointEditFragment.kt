@@ -242,7 +242,8 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             mutableListOf(),
             onEdit = { video -> editVideo(video) },
             onDelete = { video -> confirmDelete(video) },
-            onExport = { video -> exportVideo(video) }
+            onExport = { video -> exportVideo(video) },
+            onRetry = { _ -> retryUpload() }
         )
         binding.cameraVideoList.layoutManager = LinearLayoutManager(requireContext())
         binding.cameraVideoList.adapter = videoAdapter
@@ -457,8 +458,45 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     private fun autoUploadLibrary() {
         val ctx = requireContext()
+        val ids = working?.videos.orEmpty().map { it.id }
         Executors.newSingleThreadExecutor().execute {
-            CammockManager.upload(ctx)
+            val result = CammockManager.upload(ctx)
+            activity?.runOnUiThread {
+                if (result.isSuccess) {
+                    CameraMockUploadState.markUploaded(ctx, ids)
+                } else {
+                    CameraMockUploadState.markFailed(ctx, ids)
+                    Toast.makeText(
+                        ctx,
+                        "上传失败，长视频可重试：${result.exceptionOrNull()?.message}",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+                refreshVideos()
+            }
+        }
+    }
+
+    private fun retryUpload() {
+        val ctx = requireContext()
+        val ids = working?.videos.orEmpty().map { it.id }
+        Toast.makeText(ctx, "正在重试上传…", Toast.LENGTH_SHORT).show()
+        Executors.newSingleThreadExecutor().execute {
+            val result = CammockManager.upload(ctx)
+            activity?.runOnUiThread {
+                if (result.isSuccess) {
+                    CameraMockUploadState.markUploaded(ctx, ids)
+                    Toast.makeText(ctx, "重试上传成功", Toast.LENGTH_SHORT).show()
+                } else {
+                    CameraMockUploadState.markFailed(ctx, ids)
+                    Toast.makeText(
+                        ctx,
+                        "重试仍失败：${result.exceptionOrNull()?.message}",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+                refreshVideos()
+            }
         }
     }
 
