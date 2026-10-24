@@ -173,6 +173,9 @@ object FakeLoc {
     var gnssMaxCn0: Double
         get() = LocConfig.gnssMaxCn0
         set(value) { LocConfig.gnssMaxCn0 = value }
+    var satelliteJitter: Double
+        get() = LocConfig.satelliteJitter
+        set(value) { LocConfig.satelliteJitter = value }
     var gnssMeanCn0: Double
         get() = LocConfig.gnssMeanCn0
         set(value) { LocConfig.gnssMeanCn0 = value }
@@ -291,11 +294,16 @@ object FakeLoc {
      * 各家 NLP SDK 进程），快照对象无法跨进程共享；把生成做成「时间桶 → 固定随机序列」的
      * 纯函数后，**任何进程在同一秒内都得到同一份卫星数据**，与真机 1Hz 上报的物理事实一致。
      */
-    fun gnssSnapshotForBucket(bucketSec: Long): GnssSnapshot =
-        WorldMath.gnssSnapshotForBucket(
-            bucketSec, minSatellites, MAX_SATELLITES,
+    fun gnssSnapshotForBucket(bucketSec: Long): GnssSnapshot {
+        val base = minSatellites.coerceIn(0, MAX_SATELLITES)
+        val jitter = satelliteJitter.coerceAtLeast(0.0)
+        val lower = (base - jitter).toInt().coerceIn(0, MAX_SATELLITES)
+        val upper = (base + jitter).toInt().coerceIn(lower, MAX_SATELLITES)
+        return WorldMath.gnssSnapshotForBucket(
+            bucketSec, lower, upper,
             maxCn0Target = gnssMaxCn0, meanCn0Target = gnssMeanCn0,
         )
+    }
 
     /** 当前时间桶的卫星快照（桶 = 1 秒，与真机 GNSS 上报周期一致） */
     fun currentGnssSnapshot(): GnssSnapshot =

@@ -45,6 +45,8 @@ object LocationAccuracyCalibrator {
         val ok: Boolean,
         val message: String,
         val detail: String = "",
+        /** GPS 卫星数的标准差；用于生成卫星数量波动。 */
+        val satellitesJitter: Float? = null,
     )
 
     private const val TAG = "PortalLocationCalib"
@@ -170,6 +172,11 @@ object LocationAccuracyCalibrator {
                 val delayMedian = medianOrNull(fusedDelayValues)
                 val intervalMedian = medianOrNull(gpsIntervalValues)
                 val satMedian = medianOrNull(satelliteValues)
+                val satJitter = if (satelliteValues.size >= 2) {
+                    val mean = satelliteValues.average()
+                    kotlin.math.sqrt(satelliteValues.sumOf { (it - mean) * (it - mean) } / satelliteValues.size)
+                        .toFloat()
+                } else 0f
                 val maxCn0Median = medianOrNull(maxCn0Values)
                 val meanCn0Median = medianOrNull(meanCn0Values)
                 Result(
@@ -188,6 +195,7 @@ object LocationAccuracyCalibrator {
                         if (fusedValues.isNotEmpty()) append(" / fused 配对 ${fusedValues.size} 次")
                         if (satelliteValues.isNotEmpty()) append(" / 卫星 ${satelliteValues.size} 次")
                     },
+                    satellitesJitter = satJitter,
                     detail = buildString {
                         append("GPS accuracy median=%.2fm".format(gpsMedian))
                         fusedMedian?.let { append("；GPS-fused 水平差 median=%.2fm".format(it)) }

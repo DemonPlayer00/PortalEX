@@ -685,6 +685,7 @@ internal object LocationServiceHook: BaseLocationHook() {
     private data class MockGnssCacheKey(
         val bucketSec: Long,
         val minSatellites: Int,
+        val satelliteJitter: Double,
         val maxCn0: Double,
         val meanCn0: Double,
     )
@@ -697,7 +698,10 @@ internal object LocationServiceHook: BaseLocationHook() {
 
     private fun buildMockGnssData(): MockGnssData {
         val bucket = SystemClock.elapsedRealtimeNanos() / 1_000_000_000L
-        val key = MockGnssCacheKey(bucket, FakeLoc.minSatellites, FakeLoc.gnssMaxCn0, FakeLoc.gnssMeanCn0)
+        val key = MockGnssCacheKey(
+            bucket, FakeLoc.minSatellites, FakeLoc.satelliteJitter,
+            FakeLoc.gnssMaxCn0, FakeLoc.gnssMeanCn0,
+        )
         synchronized(mockGnssDataCache) { mockGnssDataCache[key]?.let { return it } }
 
         // 星数与每星 C/N0 取**当前卫星快照**（时间桶确定性）：与 Location.extras 的

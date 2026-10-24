@@ -141,7 +141,7 @@
     <string name="calibration_run">一键校准</string>
     <string name="calibration_reset">恢复默认</string>
     <string name="calibration_satellite_count">模拟卫星数</string>
-    <string name="calibration_satellite_count_desc">GNSS 生成器的最小卫星数，最高 1000 颗</string>
+    <string name="calibration_satellite_count_desc">采集 GPS 卫星数及波动，用于生成模拟卫星</string>
     <string name="calibration_gps_accuracy">GPS 定位精度</string>
     <string name="calibration_gps_accuracy_desc">有 GPS 信号时记录每次 fix 自带 accuracy 的中位数</string>
     <string name="calibration_fused_accuracy">fused 定位精度</string>
