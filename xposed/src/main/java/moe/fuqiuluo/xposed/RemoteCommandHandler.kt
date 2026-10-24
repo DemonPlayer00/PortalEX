@@ -411,6 +411,8 @@ object RemoteCommandHandler {
                 val fusedDelayMs = (rely.get(Key.FUSED_DELAY_MS) as? Number)?.toLong() ?: FakeLoc.fusedDelayMs
                 val gnssMaxCn0 = (rely.get(Key.GNSS_MAX_CN0) as? Number)?.toDouble() ?: FakeLoc.gnssMaxCn0
                 val gnssMeanCn0 = (rely.get(Key.GNSS_MEAN_CN0) as? Number)?.toDouble() ?: FakeLoc.gnssMeanCn0
+                val satelliteJitter = (rely.get(Key.SATELLITE_JITTER) as? Number)?.toDouble()
+                    ?: FakeLoc.satelliteJitter
                 val fusedMode = run {
                     val m = rely.getInt(Key.FUSED_MODE, -1)
                     if (m >= 0) FusedMode.sanitize(m)
@@ -458,6 +460,7 @@ object RemoteCommandHandler {
                 FakeLoc.fusedDelayMs = fusedDelayMs.coerceAtLeast(0L)
                 FakeLoc.gnssMaxCn0 = gnssMaxCn0.coerceAtLeast(0.0)
                 FakeLoc.gnssMeanCn0 = gnssMeanCn0.coerceAtLeast(0.0)
+                FakeLoc.satelliteJitter = satelliteJitter.coerceAtLeast(0.0)
                 FusedRewrite.overrides = FusedRewrite.overrides.copy(
                     accuracy = FakeLoc.fusedAccuracy,
                     locationAgeMs = FakeLoc.fusedDelayMs,
