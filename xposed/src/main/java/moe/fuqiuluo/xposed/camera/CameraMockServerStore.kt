@@ -89,6 +89,7 @@ object CameraMockServerStore {
             session = session,
             lastVideoId = lastVideo,
             random = random,
+            nowMs = nowMs,
         ) ?: return null
         if (session.isNotBlank()) {
             if (sessionLastVideo.size > 64) sessionLastVideo.clear()

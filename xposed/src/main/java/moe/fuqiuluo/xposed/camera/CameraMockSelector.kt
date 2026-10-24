@@ -36,8 +36,9 @@ object CameraMockSelector {
         manifest: CameraMockManifest,
         lat: Double?,
         lon: Double?,
-        random: Random = Random.Default
-    ): CameraMockSelection? = CameraMockSelectionEngine.selectManifest(manifest, lat, lon, random)
+        random: Random = Random.Default,
+        nowMs: Long? = null,
+    ): CameraMockSelection? = CameraMockSelectionEngine.selectManifest(manifest, lat, lon, random, nowMs)
 
     /**
      * 随机起播偏移：`[0, 时长)` 内的随机**整秒**。
