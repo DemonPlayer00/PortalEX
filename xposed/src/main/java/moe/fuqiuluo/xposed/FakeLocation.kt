@@ -76,6 +76,7 @@ class FakeLocation {
          * 因此除 appInfo 系统标志外，显式识别已知系统包/进程。
          */
         internal fun install(info: ProcessInfo) {
+            Logger.info("FakeLocation.install enter pkg=${info.packageName} process=${info.processName} systemApp=${info.isSystemApp} cl=${info.classLoader.javaClass.name}")
             val isSystemProcess = info.isSystemApp ||
                     info.packageName == "android" ||
                     info.processName == "system" ||
