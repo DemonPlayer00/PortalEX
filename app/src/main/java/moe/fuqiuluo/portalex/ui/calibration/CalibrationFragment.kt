@@ -28,6 +28,8 @@ import moe.fuqiuluo.portalex.ext.gpsAccuracyMeasured
 import moe.fuqiuluo.portalex.ext.gpsIntervalMeasured
 import moe.fuqiuluo.portalex.ext.maxCn0Measured
 import moe.fuqiuluo.portalex.ext.meanCn0Measured
+import moe.fuqiuluo.portalex.ext.minSatelliteCount
+import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.satellitesMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speedAmplitude
@@ -212,14 +214,27 @@ class CalibrationFragment : Fragment() {
             showToast(result.message)
             return
         }
-        result.gpsAccuracyMeters?.let { ctx.gpsAccuracyMeasured = it }
+        result.gpsAccuracyMeters?.let {
+            ctx.gpsAccuracyMeasured = it
+            // GPS 精度 -> 模拟水平抖动/上报精度参数
+            ctx.accuracy = it
+        }
         result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
         result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }
-        result.gpsIntervalMs?.let { ctx.gpsIntervalMeasured = it }
-        result.satellites?.let { ctx.satellitesMeasured = it }
+        result.gpsIntervalMs?.let {
+            ctx.gpsIntervalMeasured = it
+            // GPS 间隔 -> 模拟出帧间隔（钳到与运行时相同的合理范围）
+            ctx.reportDuration = it.toInt().coerceIn(200, 2000)
+        }
+        result.satellites?.let {
+            ctx.satellitesMeasured = it
+            // 卫星数中位数 -> GNSS 生成器最小卫星数
+            ctx.minSatelliteCount = it.toInt().coerceAtLeast(0)
+        }
         result.maxCn0?.let { ctx.maxCn0Measured = it }
         result.meanCn0?.let { ctx.meanCn0Measured = it }
         renderFluctuation()
+        pushConfig()
         showToast(result.message)
     }
 

@@ -15,6 +15,7 @@ import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.FusedMode
+import moe.fuqiuluo.xposed.utils.FusedRewrite
 import moe.fuqiuluo.xposed.utils.FusedStatus
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
@@ -406,6 +407,10 @@ object RemoteCommandHandler {
                 val speedAmplitude = rely.numberOr("speed_amplitude", FakeLoc.speedAmplitude).coerceAtLeast(0.0)
                 val enableDebugLog = rely.getBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
                 // 融合处置三态：新键优先；旧 App 只发布尔键 ⇒ 兜底映射（true=拒绝 / false=伪装）
+                val fusedAccuracy = (rely.get(Key.FUSED_ACCURACY) as? Number)?.toFloat() ?: FakeLoc.fusedAccuracy
+                val fusedDelayMs = (rely.get(Key.FUSED_DELAY_MS) as? Number)?.toLong() ?: FakeLoc.fusedDelayMs
+                val gnssMaxCn0 = (rely.get(Key.GNSS_MAX_CN0) as? Number)?.toDouble() ?: FakeLoc.gnssMaxCn0
+                val gnssMeanCn0 = (rely.get(Key.GNSS_MEAN_CN0) as? Number)?.toDouble() ?: FakeLoc.gnssMeanCn0
                 val fusedMode = run {
                     val m = rely.getInt(Key.FUSED_MODE, -1)
                     if (m >= 0) FusedMode.sanitize(m)
@@ -449,6 +454,14 @@ object RemoteCommandHandler {
                 FakeLoc.speedAmplitude = speedAmplitude
                 FakeLoc.enableDebugLog = enableDebugLog
                 FakeLoc.fusedMode = fusedMode
+                FakeLoc.fusedAccuracy = fusedAccuracy.coerceAtLeast(0f)
+                FakeLoc.fusedDelayMs = fusedDelayMs.coerceAtLeast(0L)
+                FakeLoc.gnssMaxCn0 = gnssMaxCn0.coerceAtLeast(0.0)
+                FakeLoc.gnssMeanCn0 = gnssMeanCn0.coerceAtLeast(0.0)
+                FusedRewrite.overrides = FusedRewrite.overrides.copy(
+                    accuracy = FakeLoc.fusedAccuracy,
+                    locationAgeMs = FakeLoc.fusedDelayMs,
+                )
                 // 调试模式打开时把融合 hook 状态打一条（用户点名要的那条日志）
                 FusedStatus.logIfDebug()
                 FakeLoc.needDowngradeToCdma = needDowngradeToCdma

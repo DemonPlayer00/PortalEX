@@ -40,8 +40,8 @@ class PortalProtocolTest {
     @Test
     fun keyCount_isPinned() {
         // 67：统一架构迁移 + 按组波动键；68：摄像头控制面的 camera_events；
-        // 69：定位海拔波动 altitude_jitter
-        assertEquals(69, key.size)
+        // 69：定位海拔波动 altitude_jitter；73：fused/CNO 标定字段
+        assertEquals(73, key.size)
     }
 
     @Test
@@ -81,5 +81,6 @@ class PortalProtocolTest {
         assertEquals("set_sensor_mock", PortalProtocol.Cmd.SET_SENSOR_MOCK)
         assertEquals("get_sensor_status", PortalProtocol.Cmd.GET_SENSOR_STATUS)
         assertEquals("altitude_jitter", PortalProtocol.Key.ALTITUDE_JITTER)
+        assertEquals("fused_accuracy", PortalProtocol.Key.FUSED_ACCURACY)
     }
 }

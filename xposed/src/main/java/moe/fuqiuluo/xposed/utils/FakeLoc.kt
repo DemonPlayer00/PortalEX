@@ -164,6 +164,19 @@ object FakeLoc {
         get() = LocConfig.altitudeJitter
         set(value) { LocConfig.altitudeJitter = value }
 
+    var fusedAccuracy: Float
+        get() = LocConfig.fusedAccuracy
+        set(value) { LocConfig.fusedAccuracy = value }
+    var fusedDelayMs: Long
+        get() = LocConfig.fusedDelayMs
+        set(value) { LocConfig.fusedDelayMs = value }
+    var gnssMaxCn0: Double
+        get() = LocConfig.gnssMaxCn0
+        set(value) { LocConfig.gnssMaxCn0 = value }
+    var gnssMeanCn0: Double
+        get() = LocConfig.gnssMeanCn0
+        set(value) { LocConfig.gnssMeanCn0 = value }
+
     // ===================== 世界状态门面（状态与生成器全在 [VirtualWorld]）=====================
     // 同样的约定：对外名字不变，这里只转发；状态、公式与完整文档都在 [VirtualWorld]。
 
@@ -279,7 +292,10 @@ object FakeLoc {
      * 纯函数后，**任何进程在同一秒内都得到同一份卫星数据**，与真机 1Hz 上报的物理事实一致。
      */
     fun gnssSnapshotForBucket(bucketSec: Long): GnssSnapshot =
-        WorldMath.gnssSnapshotForBucket(bucketSec, minSatellites, MAX_SATELLITES)
+        WorldMath.gnssSnapshotForBucket(
+            bucketSec, minSatellites, MAX_SATELLITES,
+            maxCn0Target = gnssMaxCn0, meanCn0Target = gnssMeanCn0,
+        )
 
     /** 当前时间桶的卫星快照（桶 = 1 秒，与真机 GNSS 上报周期一致） */
     fun currentGnssSnapshot(): GnssSnapshot =
