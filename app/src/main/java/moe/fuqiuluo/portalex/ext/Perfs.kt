@@ -13,6 +13,21 @@ import moe.fuqiuluo.xposed.utils.SensorNoise
 val Context.sharedPrefs
     get() = getSharedPreferences(PortalProtocol.PREFS_NAME, Context.MODE_PRIVATE)!!
 
+/** 开发者 Intent 拦截总开关。 */
+var Context.devIntentGuardEnabled: Boolean
+    get() = sharedPrefs.getBoolean(PortalProtocol.Key.DEV_INTENT_GUARD_ENABLED, false)
+    set(value) = sharedPrefs.edit {
+        putBoolean(PortalProtocol.Key.DEV_INTENT_GUARD_ENABLED, value)
+    }
+
+/** 被拦截的应用包名集合。 */
+var Context.devIntentGuardPackages: Set<String>
+    get() = sharedPrefs.getStringSet(PortalProtocol.Key.DEV_INTENT_GUARD_PACKAGES, emptySet())
+        ?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
+    set(value) = sharedPrefs.edit {
+        putStringSet(PortalProtocol.Key.DEV_INTENT_GUARD_PACKAGES, value)
+    }
+
 /** root shell 路径；部分设备把 su 移出 PATH，需要可配置。 */
 var Context.suPath: String
     get() = sharedPrefs.getString("suPath", "su")?.takeIf { it.isNotBlank() } ?: "su"

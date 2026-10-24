@@ -146,6 +146,10 @@ class SettingsFragment : Fragment() {
                 showToast("su 路径已更新")
             }
         }
+        binding.devIntentGuardLayout.setOnClickListener {
+            DevIntentGuardDialog.show(requireContext())
+        }
+
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
         binding.selinuxSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
             override fun onCheckedChanged(
