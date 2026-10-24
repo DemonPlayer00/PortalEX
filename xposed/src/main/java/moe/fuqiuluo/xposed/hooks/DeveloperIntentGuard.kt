@@ -4,6 +4,7 @@ import android.content.Intent
 import android.provider.Settings
 import android.database.MatrixCursor
 import android.net.Uri
+import dalvik.system.PathClassLoader
 import android.os.Binder
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Hooks
@@ -87,7 +88,11 @@ object DeveloperIntentGuard {
     }
 
     fun install(classLoader: ClassLoader) {
-        Logger.info("DeveloperIntentGuard: install called (installed=$installed)")
+        Logger.info("DeveloperIntentGuard: install called installed=$installed cl=${classLoader.javaClass.name}")
+        if (installed) {
+            Logger.info("DeveloperIntentGuard: already installed, skip")
+            return
+        }
         // system_server 重启后内存状态会丢：从 App 写入的同一份偏好恢复。
         runCatching {
             val prefs = ModuleRuntime.remotePreferences(PortalProtocol.PREFS_NAME)
@@ -104,9 +109,10 @@ object DeveloperIntentGuard {
         val cls = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityTaskManagerService", classLoader
         ) ?: run {
-            Logger.warn("DeveloperIntentGuard: ActivityTaskManagerService 不存在，跳过")
+            Logger.warn("DeveloperIntentGuard: ActivityTaskManagerService 不存在 cl=${classLoader.javaClass.name}，跳过")
             return
         }
+        Logger.info("DeveloperIntentGuard: ActivityTaskManagerService found")
         var hooks = 0
         for (name in listOf(
             "startActivity", "startActivityAsUser", "startActivityAndWait", "startActivityWithConfig"
@@ -126,11 +132,14 @@ object DeveloperIntentGuard {
                     }.getOrNull()
                 } else 0
             }).size
+            Logger.info("DeveloperIntentGuard: ATM hooks for $name total=$hooks")
         }
+        Logger.info("DeveloperIntentGuard: ATM stage hooks=$hooks")
         val ams = XposedHelpers.findClassIfExists(
             "com.android.server.am.ActivityManagerService", classLoader
         )
         if (ams != null) {
+            Logger.info("DeveloperIntentGuard: ActivityManagerService found")
             for (name in listOf(
                 "startActivity", "startActivityAndWait",
                 "startActivityAsUser", "startActivityWithFeature"
@@ -150,11 +159,16 @@ object DeveloperIntentGuard {
                         }.getOrNull()
                     } else 0
                 }).size
+                Logger.info("DeveloperIntentGuard: AMS hooks for $name total=$hooks")
             }
+        } else {
+            Logger.warn("DeveloperIntentGuard: ActivityManagerService 不存在")
         }
+        Logger.info("DeveloperIntentGuard: AMS stage hooks=$hooks")
         val starter = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityStarter", classLoader
         )
+        Logger.info("DeveloperIntentGuard: ActivityStarter found=${starter != null}")
         if (starter != null) {
             for (m in listOf("executeRequest", "execute")) {
                 hooks += Hooks.hookAllMethods(starter, m, beforeHook {
@@ -166,11 +180,34 @@ object DeveloperIntentGuard {
                         ?: field(req, "mIntent") as? Intent
                     if (intent != null && checkAndBlock(req, intent)) result = 0
                 }).size
+                Logger.info("DeveloperIntentGuard: Starter $m total=$hooks")
             }
         }
-        val settingsProvider = XposedHelpers.findClassIfExists(
-            "com.android.providers.settings.SettingsProvider", classLoader
-        )
+        Logger.info("DeveloperIntentGuard: Starter stage hooks=$hooks")
+        val providerLoaders = linkedSetOf<ClassLoader>()
+        providerLoaders += classLoader
+        Thread.currentThread().contextClassLoader?.let { providerLoaders += it }
+        runCatching {
+            providerLoaders += PathClassLoader(
+                "/system/priv-app/SettingsProvider/SettingsProvider.apk",
+                ClassLoader.getSystemClassLoader()
+            )
+        }
+        runCatching {
+            providerLoaders += PathClassLoader(
+                "/system/priv-app/SettingsProvider/SettingsProvider.apk",
+                null
+            )
+        }
+        providerLoaders += ClassLoader.getSystemClassLoader()
+        val settingsProvider = providerLoaders.asSequence().mapNotNull { loader ->
+            val cls = XposedHelpers.findClassIfExists(
+                "com.android.providers.settings.SettingsProvider", loader
+            )
+            Logger.info("DeveloperIntentGuard: SettingsProvider try loader=${loader.javaClass.name} found=${cls != null}")
+            cls
+        }.firstOrNull()
+        Logger.info("DeveloperIntentGuard: SettingsProvider found=${settingsProvider != null}")
         if (settingsProvider != null) {
             Hooks.hookAllMethods(settingsProvider, "query", afterHook {
                 if (!enabled) return@afterHook

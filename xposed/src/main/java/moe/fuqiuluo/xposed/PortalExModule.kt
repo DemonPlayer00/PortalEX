@@ -74,10 +74,13 @@ class PortalExModule : XposedModule() {
      * 不能靠它判定，[FakeLocation.install] 里另有显式的包名白名单兜底。
      */
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        Logger.info("PortalExModule: onSystemServerStarting cl=${param.classLoader.javaClass.name}")
         // 这里显式装一次：FakeLocation 的 step 在某些 OEM 的 system_server 分支里
         // 可能尚未走到，导致 UI 配置到了但 Hook 没装。
         DeveloperIntentGuard.install(param.classLoader)
+        Logger.info("PortalExModule: DeveloperIntentGuard entry call returned")
         install(packageName = "android", classLoader = param.classLoader, isSystemApp = true)
+        Logger.info("PortalExModule: FakeLocation.install returned")
     }
 
     /**
