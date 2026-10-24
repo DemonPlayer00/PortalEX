@@ -308,16 +308,16 @@ class SettingsFragment : Fragment() {
 
         // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
         binding.reportDurationLayout.setOnClickListener {
-            showDialog("设置上报间隔", binding.reportDurationValue.text.toString().let {
+            showDialog("设置最大位置上报间隔", binding.reportDurationValue.text.toString().let {
                 it.substring(0, it.length - 2)
             }) {
                 val value = it.toIntOrNull()
                 // 下限 1ms：0 会让摇杆/播放循环 delay(0) 空转并触发除零
                 if (value == null || value < 1) {
-                    Toast.makeText(context, "上报间隔不合法", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "最大位置上报间隔不合法", Toast.LENGTH_SHORT).show()
                     return@showDialog
                 } else if (value > 1000) {
-                    Toast.makeText(context, "上报间隔不能大于1s", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "最大位置上报间隔不能大于1s", Toast.LENGTH_SHORT).show()
                     return@showDialog
                 }
                 context.reportDuration = value
