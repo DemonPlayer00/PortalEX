@@ -1,6 +1,7 @@
 package moe.fuqiuluo.portalex.ui.camera
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -94,9 +95,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private val main = Handler(Looper.getMainLooper())
     private var pendingRecordAfterPermission = false
     private val cammockImportLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri == null) return@registerForActivityResult
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) return@registerForActivityResult
+        val uri = result.data?.data ?: return@registerForActivityResult
         val ctx = requireContext()
         Executors.newSingleThreadExecutor().execute {
             val result = CammockManager.importArchive(ctx, uri)
@@ -116,9 +118,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     }
 
     private val videoArchiveLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri == null) return@registerForActivityResult
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != android.app.Activity.RESULT_OK) return@registerForActivityResult
+        val uri = result.data?.data ?: return@registerForActivityResult
         val ctx = requireContext()
         Executors.newSingleThreadExecutor().execute {
             val result = runCatching { CameraMockArchive.importZip(ctx, uri) }
@@ -279,10 +282,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
         binding.switchCameraMock.setOnClickListener { toggleMock() }
         binding.cameraMockImportImpl.setOnClickListener {
-            cammockImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+            cammockImportLauncher.launch(zipPickerIntent())
         }
         binding.cameraMockUpdateImpl.setOnClickListener {
-            cammockImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+            cammockImportLauncher.launch(zipPickerIntent())
         }
         binding.cameraMockUninstallImpl.setOnClickListener { confirmUninstallCammock() }
         binding.cameraMockMapToggle.setOnClickListener { toggleMap() }
@@ -291,6 +294,42 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         binding.cameraMockCreateTag.setOnClickListener { showTagManager() }
 
         return binding.root
+    }
+
+    /**
+     * 不要用 OpenDocument 的任意 MIME：部分 OEM 文件管理器会把它当成“打开文件”，
+     * 点击 zip 直接交给解压/归档应用，导致 PortalEX 收不到 RESULT。
+     * 这里强制 ACTION_OPEN_DOCUMENT + zip MIME，只允许“选择并返回 URI”。
+     */
+    private fun zipPickerIntent(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        addCategory(Intent.CATEGORY_OPENABLE)
+        type = "application/zip"
+        putExtra(
+            Intent.EXTRA_MIME_TYPES,
+            arrayOf(
+                "application/zip",
+                "application/x-zip-compressed",
+                "application/octet-stream",
+            ),
+        )
+        putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+
+        // OnePlus/ColorOS 的 PickerActivity 会对 zip 做“智能解压/识别安装包”，
+        // 选中后直接进入它自己的解压或安装流程，不返回 URI。
+        // 优先强制使用 AOSP DocumentsUI 的原生文件选择器；不存在时再回退系统默认。
+        val native = ComponentName(
+            "com.android.documentsui",
+            "com.android.documentsui.picker.PickActivity",
+        )
+        val available = try {
+            requireContext().packageManager.getActivityInfo(native, 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (available) component = native
     }
 
     override fun onResume() {
@@ -327,9 +366,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                     R.drawable.baseline_file_download_24,
                     getString(R.string.camera_import_archive)
                 ) {
-                    videoArchiveLauncher.launch(
-                        arrayOf("application/zip", "application/octet-stream", "*/*")
-                    )
+                    videoArchiveLauncher.launch(zipPickerIntent())
                 }
             )
         )
@@ -750,7 +787,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .setMessage("摄像头 hook 实现按机型单独适配，需要先导入 cammock zip。")
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton("导入实现") { _, _ ->
-                    cammockImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                    cammockImportLauncher.launch(zipPickerIntent())
                 }
                 .show()
             return
