@@ -115,6 +115,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
     }
 
+    private val videoArchiveLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val ctx = requireContext()
+        Executors.newSingleThreadExecutor().execute {
+            val result = runCatching { CameraMockArchive.importZip(ctx, uri) }
+                .getOrElse { CameraMockArchive.ImportResult(false, message = "导入失败：${it.message}") }
+            main.post {
+                Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
+                if (result.ok) {
+                    refresh()
+                    autoUploadLibrary()
+                }
+            }
+        }
+    }
+
     private val recordLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -304,7 +322,15 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 FabBarView.Action(
                     R.drawable.baseline_control_camera_24,
                     getString(R.string.camera_record)
-                ) { startRecordingFromMap() }
+                ) { startRecordingFromMap() },
+                FabBarView.Action(
+                    R.drawable.baseline_file_download_24,
+                    getString(R.string.camera_import_archive)
+                ) {
+                    videoArchiveLauncher.launch(
+                        arrayOf("application/zip", "application/octet-stream", "*/*")
+                    )
+                }
             )
         )
     }
@@ -440,7 +466,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (show) {
             /* 从 GONE 变 VISIBLE 后要让它重新走一遍恢复流程，否则纹理可能是白的 */
             runCatching { binding.cameraMockMap.onResume() }
-            drawPoints(CameraMockStore.points(requireContext()).sortedBy { it.name })
+            drawPoints(sortedPoints(CameraMockStore.points(requireContext())))
         } else {
             runCatching { binding.cameraMockMap.onPause() }
         }
@@ -511,15 +537,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         }
     }
 
+    /** 最新变更的路线/视频点排在上面；同一时间按名称稳定排序。 */
+    private fun sortedPoints(points: List<CameraVideoPoint>): List<CameraVideoPoint> =
+        points.sortedWith(
+            compareByDescending<CameraVideoPoint> {
+                it.videos.maxOfOrNull { v -> maxOf(v.addedAt, v.recordedAt) } ?: 0L
+            }.thenBy { it.name }
+        )
+
     private fun refresh() {
         val context = requireContext()
         val filter = context.cameraMockTagFilter
         fun matches(point: CameraVideoPoint): Boolean =
             point.videos.any { v ->
-                v.tags.isEmpty() || filter.all { t -> v.tags.any { it.equals(t, true) } }
+                if (filter.isEmpty()) true
+                else v.tags.isNotEmpty() && filter.all { t -> v.tags.any { it.equals(t, true) } }
             }
-        val points = CameraMockStore.points(context)
-            .sortedWith(compareByDescending<CameraVideoPoint> { matches(it) }.thenBy { it.name })
+        val points = sortedPoints(CameraMockStore.points(context))
+            .sortedWith(compareByDescending<CameraVideoPoint> { matches(it) })
         adapter.setFilterTags(filter)
         adapter.replaceAll(points)
         drawPoints(points)

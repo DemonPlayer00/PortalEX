@@ -204,6 +204,7 @@
     <string name="camera_record">录制视频</string>
     <string name="camera_record_start">开始录制</string>
     <string name="camera_record_stop">停止并保存</string>
+    <string name="camera_import_archive">导入视频包</string>
     <string name="camera_import">导入视频</string>
     <string name="camera_tag_presets">预设标签</string>
     <string name="camera_tag_custom">自定义标签</string>

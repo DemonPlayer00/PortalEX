@@ -19,8 +19,12 @@ object CameraMockUploadState {
     fun failedIds(context: Context): Set<String> =
         context.sharedPrefs.getStringSet(KEY_FAILED, emptySet()) ?: emptySet()
 
+    /**
+     * 未上传的视频显示重试入口：包括失败记录，以及升级前没有上传状态的旧视频。
+     * 上传成功后 id 会进入 uploaded，按钮自动消失。
+     */
     fun needsRetry(context: Context, videoId: String): Boolean =
-        videoId in failedIds(context) && videoId !in uploadedIds(context)
+        videoId !in uploadedIds(context)
 
     fun markUploaded(context: Context, videoIds: Collection<String>) {
         val uploaded = uploadedIds(context).toMutableSet().apply { addAll(videoIds) }

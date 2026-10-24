@@ -29,7 +29,8 @@ class CameraVideoAdapter(
     }
 
     private fun matches(video: CameraVideo): Boolean =
-        video.tags.isEmpty() || filterTags.all { t -> video.tags.any { it.equals(t, true) } }
+        if (filterTags.isEmpty()) true
+        else video.tags.isNotEmpty() && filterTags.all { t -> video.tags.any { it.equals(t, true) } }
 
 
     class ViewHolder(root: View) : RecyclerView.ViewHolder(root) {
