@@ -14,8 +14,8 @@ import kotlin.random.Random
  */
 class CameraMockSelectorTest {
 
-    private fun v(id: String, tags: List<String>, durationMs: Long = 10_000) =
-        CameraVideo(id, "vid-$id", "$id.mp4", durationMs, tags, 0L)
+    private fun v(id: String, tags: List<String>, durationMs: Long = 10_000, recordedAt: Long = 0L) =
+        CameraVideo(id, "vid-$id", "$id.mp4", durationMs, tags, addedAt = 0L, recordedAt = recordedAt)
 
     /** 天安门 / 王府井 / 三里屯，间距依次 ~1.6km、~5km，便于构造"最近点" */
     private val pTiananmen = CameraVideoPoint(
@@ -135,5 +135,20 @@ class CameraMockSelectorTest {
             CameraMockSelector.select(m, 5.0, 0.0, Random(it.toLong()))!!.pointId
         }.toSet()
         assertEquals(setOf("p-a"), picked)
+    }
+
+    @Test
+    fun `按一天中的时刻选择最近的视频且忽略日期`() {
+        val day = 24L * 60L * 60L * 1000L
+        val hour = 60L * 60L * 1000L
+        // 当前 12:00；A=11:59（差 1 分钟），B=次日 13:01（差 61 分钟）
+        val now = 200L * day + 12L * hour
+        val a = v("time-a", emptyList(), recordedAt = 100L * day + 11L * hour + 59L * 60_000L)
+        val b = v("time-b", emptyList(), recordedAt = 300L * day + 13L * hour + 60_000L)
+        val point = CameraVideoPoint("p-time", "时刻", 39.9087, 116.3975, listOf(a, b))
+        val m = CameraMockManifest(true, emptyList(), listOf(point), emptyList(), 0L)
+        val picked = CameraMockSelector.select(m, 39.9087, 116.3975, Random(1), nowMs = now)!!
+        assertEquals("time-a", picked.videoId)
+        assertEquals(60_000L, CameraMockSelectionEngine.timeOfDayDistanceMs(a.recordedAt, now))
     }
 }
