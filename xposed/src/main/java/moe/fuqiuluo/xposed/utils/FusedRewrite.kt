@@ -87,7 +87,8 @@ object FusedRewrite {
         val cfg = overrides
 
         if (cfg.provider.isNotBlank()) location.provider = cfg.provider
-        if (cfg.accuracy > 0f) location.accuracy = cfg.accuracy
+        val accuracy = if (cfg.accuracy > 0f) cfg.accuracy else FakeLoc.fusedAccuracy
+        if (accuracy > 0f) location.accuracy = accuracy
         if (cfg.altitude.isFinite()) location.altitude = cfg.altitude
         if (cfg.speed.isFinite()) location.speed = cfg.speed.coerceAtLeast(0f)
         if (cfg.bearing.isFinite()) {
@@ -98,7 +99,11 @@ object FusedRewrite {
 
         // 融合结果的“现实时间”：默认不是 0 延迟，而是一次几十到一百多毫秒的融合/投递延迟；
         // time 与 elapsedRealtimeNanos 必须使用同一个年龄，并保证单调不回退。
-        val ageMs = if (cfg.locationAgeMs > 0L) cfg.locationAgeMs else realisticAgeMs()
+        val ageMs = when {
+            cfg.locationAgeMs > 0L -> cfg.locationAgeMs
+            FakeLoc.fusedDelayMs > 0L -> FakeLoc.fusedDelayMs
+            else -> realisticAgeMs()
+        }
         val nowMs = System.currentTimeMillis()
         val nowElapsed = SystemClock.elapsedRealtimeNanos()
         val ageNanos = ageMs * 1_000_000L

@@ -217,6 +217,16 @@ internal object LocConfig {
     @Volatile
     var altitudeJitter = 0.25
 
+    /** fused 输出精度（米）；0 = 沿用模拟精度。 */
+    @Volatile var fusedAccuracy = 0f
+
+    /** fused 延迟（毫秒）；0 = 使用 40~180ms 的现实随机延迟。 */
+    @Volatile var fusedDelayMs = 0L
+
+    /** GNSS C/N0 目标；0 = 使用内置 24~45 dB-Hz 随机模型。 */
+    @Volatile var gnssMaxCn0 = 0.0
+    @Volatile var gnssMeanCn0 = 0.0
+
     /**
      * 步频倍率（设置页「步频倍率」）：默认 1.0 = 逐位保持原公式；非 1 时按倍率微调
      * "步频 ↔ 速度"的关系（例如 1.1 = 同样速度下步频快 10%）。

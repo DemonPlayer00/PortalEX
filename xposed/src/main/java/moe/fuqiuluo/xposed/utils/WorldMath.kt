@@ -63,10 +63,23 @@ object WorldMath {
         bucketSec: Long,
         minSatellites: Int,
         maxSatellites: Int,
+        maxCn0Target: Double = 0.0,
+        meanCn0Target: Double = 0.0,
     ): FakeLoc.GnssSnapshot {
         val rng = Random(bucketSec * 1_000_003L + minSatellites * 7919L + 0x5DEECE66DL)
         val svCount = rng.nextInt(minSatellites, maxSatellites + 1)
-        val cn0s = DoubleArray(svCount) { 24.0 + rng.nextDouble() * 21.0 } // 24~45 dB-Hz（真机量级）
+        val cn0s = if (maxCn0Target > 0.0 && meanCn0Target > 0.0 && svCount > 0) {
+            // 用实测 max/mean 作为目标：保持 max 接近目标，其余围绕 mean 抖动。
+            val mean = meanCn0Target.coerceIn(0.0, 60.0)
+            val max = maxCn0Target.coerceIn(mean, 60.0)
+            DoubleArray(svCount) { i ->
+                if (i == 0) max
+                else (mean + rng.nextDouble() * (max - mean) * 0.8)
+                    .coerceIn(0.0, max)
+            }
+        } else {
+            DoubleArray(svCount) { 24.0 + rng.nextDouble() * 21.0 } // 24~45 dB-Hz（真机量级）
+        }
         return FakeLoc.GnssSnapshot(svCount, cn0s)
     }
 }
