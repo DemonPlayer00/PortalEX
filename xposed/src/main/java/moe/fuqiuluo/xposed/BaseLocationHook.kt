@@ -7,6 +7,7 @@ import android.os.SystemClock
 import moe.fuqiuluo.xposed.utils.Hooks
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.FusedRewrite
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.microbios.nmea.NMEA
 import moe.microbios.nmea.NmeaValue
@@ -162,6 +163,7 @@ abstract class BaseLocationHook: BaseDivineService() {
                 location.mslAltitudeAccuracyMeters = Random.nextDouble(1.0, 5.0).toFloat()
             }
         }
+        FusedRewrite.apply(location, originLocation)
         completeLocation(location)
 
         if (FakeLoc.enableDebugLog) {

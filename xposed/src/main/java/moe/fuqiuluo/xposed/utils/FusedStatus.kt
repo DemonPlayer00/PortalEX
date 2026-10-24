@@ -48,11 +48,12 @@ object FusedStatus {
         blindHooked.addAndGet(methods)
     }
 
-    /** 单行诊断，形如：`available=true in=system_server chooseBest=true child=true blindMethods=7 mode=伪装(2)` */
+    /** 单行诊断，形如：`available=true in=system_server chooseBest=true child=true blindMethods=7 rewrites=123 mode=伪装(2)` */
     fun statusLine(): String =
         "available=$available in=${installedIn.ifEmpty { "-" }} " +
                 "chooseBest=$chooseBestHookInstalled child=$childListenerHookInstalled " +
-                "blindMethods=${blindHooked.get()} mode=${FusedMode.label(FakeLoc.fusedMode)}(${FakeLoc.fusedMode})"
+                "blindMethods=${blindHooked.get()} rewrites=${FusedRewrite.rewritten} " +
+                "mode=${FusedMode.label(FakeLoc.fusedMode)}(${FakeLoc.fusedMode})"
 
     /** 调试模式打开时打一条（用户点名要的那条日志）；关闭时完全安静 */
     fun logIfDebug(tag: String = "融合定位 hook 状态") {
