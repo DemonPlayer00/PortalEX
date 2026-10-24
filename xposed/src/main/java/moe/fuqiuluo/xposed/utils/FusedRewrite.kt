@@ -39,8 +39,12 @@ data class FusedOverrides(
      * >0 = time/elapsedRealtimeNanos 回拨，模拟一份稍旧的融合 fix。
      */
     var locationAgeMs: Long = 0L,
-    /** 是否保留 fused 原始 extras；false 时清空，避免真实环境字段与虚拟坐标冲突。 */
-    var keepExtras: Boolean = true,
+    /**
+     * 是否保留 fused 原始 extras；默认 false。
+     * false 时只保留系统标准 GNSS 字段（satellites/maxCn0/meanCn0），删除所有真实
+     * Wi-Fi/基站/厂商私有键，避免真实环境与虚拟坐标冲突。
+     */
+    var keepExtras: Boolean = false,
 )
 
 object FusedRewrite {
@@ -53,6 +57,10 @@ object FusedRewrite {
     var overrides: FusedOverrides = FusedOverrides()
 
     private val rewriteCount = AtomicLong()
+
+    /** 上一帧时间，保证改写后的 time/elapsedRealtimeNanos 单调，不出现时间倒流。 */
+    private var lastTimeMs = 0L
+    private var lastElapsedNanos = 0L
 
     /** 本次进程内已改写的 fused 帧数（诊断用）。 */
     val rewritten: Long get() = rewriteCount.get()
@@ -88,11 +96,19 @@ object FusedRewrite {
             location.bearing = b
         }
 
-        if (cfg.locationAgeMs > 0L) {
-            val ageNanos = cfg.locationAgeMs * 1_000_000L
-            location.time = System.currentTimeMillis() - cfg.locationAgeMs
-            location.elapsedRealtimeNanos =
-                (SystemClock.elapsedRealtimeNanos() - ageNanos).coerceAtLeast(0L)
+        // 融合结果的“现实时间”：默认不是 0 延迟，而是一次几十到一百多毫秒的融合/投递延迟；
+        // time 与 elapsedRealtimeNanos 必须使用同一个年龄，并保证单调不回退。
+        val ageMs = if (cfg.locationAgeMs > 0L) cfg.locationAgeMs else realisticAgeMs()
+        val nowMs = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtimeNanos()
+        val ageNanos = ageMs * 1_000_000L
+        synchronized(this) {
+            val t = (nowMs - ageMs).coerceAtLeast(lastTimeMs + 1L)
+            val e = (nowElapsed - ageNanos).coerceAtLeast(lastElapsedNanos + 1_000_000L)
+            location.time = t
+            location.elapsedRealtimeNanos = e
+            lastTimeMs = t
+            lastElapsedNanos = e
         }
 
         // 精度字段必须与当前 API 支持情况一致；低版本没有这些 setter。
@@ -105,10 +121,15 @@ object FusedRewrite {
         if (cfg.verticalAccuracy > 0f && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             location.verticalAccuracyMeters = cfg.verticalAccuracy
         }
-        if (!cfg.keepExtras) {
-            location.extras = android.os.Bundle()
+        // fused 永远不携带真实环境的 extras：默认只保留系统标准卫星三键。
+        // 真实 Wi-Fi/基站/厂商私有键全部删除，避免和虚拟坐标形成交叉指纹。
+        location.extras = if (cfg.keepExtras) {
+            FakeLoc.sanitizeGnssExtras(location.extras)
+        } else {
+            FakeLoc.sanitizeGnssExtras(android.os.Bundle())
         }
 
+        forceNotMock(location)
         rewriteCount.incrementAndGet()
         return location
     }
@@ -116,4 +137,23 @@ object FusedRewrite {
     fun resetCounters() {
         rewriteCount.set(0L)
     }
+
+    /**
+     * 模拟帧必须是“非 mock”。新建的 [Location] 本就为 false；这里再兜底一次，
+     * 防止某些 ROM 的 Location 子类/复用路径带来 true。
+     */
+    private fun forceNotMock(location: Location) {
+        if (!runCatching { location.isMock }.getOrDefault(false)) return
+        runCatching {
+            val setter = location.javaClass.methods.firstOrNull {
+                it.name == "setMock" && it.parameterTypes.size == 1 &&
+                    it.parameterTypes[0] == java.lang.Boolean.TYPE
+            }
+            setter?.isAccessible = true
+            setter?.invoke(location, false)
+        }
+    }
+
+    /** 真实融合/投递延迟的近似范围（毫秒）；每次取样，避免固定 age 成为指纹。 */
+    private fun realisticAgeMs(): Long = kotlin.random.Random.nextLong(40L, 181L)
 }

@@ -66,6 +66,7 @@ object PortalProtocol {
     object Key {
         const val ACCURACY                  = "accuracy"
         const val ALTITUDE                  = "altitude"
+        const val ALTITUDE_JITTER           = "altitude_jitter"
         const val BEARING                   = "bearing"
         /** 步频侧外周传感器模拟：接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
         const val CADENCE_MOCK              = "cadence_mock"

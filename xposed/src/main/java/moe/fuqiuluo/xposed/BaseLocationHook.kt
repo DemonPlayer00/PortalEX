@@ -139,13 +139,10 @@ abstract class BaseLocationHook: BaseDivineService() {
             location.elapsedRealtimeUncertaintyNanos = originLocation.elapsedRealtimeUncertaintyNanos
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // 垂直精度：原始位置未提供时（0）补合理随机值，避免恒为 0 的异常值
-            location.verticalAccuracyMeters =
-                if (originLocation.hasVerticalAccuracy() && originLocation.verticalAccuracyMeters > 0f) {
-                    originLocation.verticalAccuracyMeters
-                } else {
-                    Random.nextDouble(5.0, 15.0).toFloat()
-                }
+            // 垂直精度以**模拟高度波动**为数据源：海拔抖动范围就是当前帧的垂直不确定度。
+            // 不再沿用真实 fused/GPS 的垂直精度（那会把真实环境量级带进来，与虚拟海拔矛盾）。
+            location.verticalAccuracyMeters = FakeLoc.altitudeJitter
+                .toFloat().coerceAtLeast(0.01f)
         }
         // extras 只透传原始数据，不写任何模块自有键：extras 随 Parcel 到达每个拿到该
         // Location 的应用，键名再中性也是指纹（真实 Location 的 extras 不会长这样）。
@@ -159,8 +156,9 @@ abstract class BaseLocationHook: BaseDivineService() {
                 location.mslAltitudeMeters = frameAltitude
             }
             if (originLocation.hasMslAltitudeAccuracy()) {
-                // 高度精度：真实设备量级 1~5 米。原实现写入高度值本身（80.0），异常。
-                location.mslAltitudeAccuracyMeters = Random.nextDouble(1.0, 5.0).toFloat()
+                // MSL 高度精度与椭球高精度同源（模拟海拔波动），避免两套垂直精度互相矛盾。
+                location.mslAltitudeAccuracyMeters = FakeLoc.altitudeJitter
+                    .toFloat().coerceAtLeast(0.01f)
             }
         }
         FusedRewrite.apply(location, originLocation)

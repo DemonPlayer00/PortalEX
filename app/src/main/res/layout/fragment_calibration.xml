@@ -69,6 +69,19 @@
             android:layout_marginBottom="4dp"
             android:background="?attr/colorOutline" />
 
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/calibration_fluctuation"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/calib_fluctuation_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
         <!-- 噪声档列表：行由 CalibrationFragment 按 SensorNoise.ITEMS 动态填充 -->
         <LinearLayout
             android:id="@+id/calib_list"

@@ -130,6 +130,20 @@ var Context.accuracy: Float
         putFloat("accuracy", value)
     }
 
+/** 海拔波动幅度（米）：同时作为垂直精度来源。 */
+var Context.altitudeJitter: Double
+    get() = sharedPrefs.getFloat("altitudeJitter", FakeLoc.altitudeJitter.toFloat()).toDouble()
+    set(value) = sharedPrefs.edit {
+        putFloat("altitudeJitter", value.toFloat())
+    }
+
+/** 速度随机波动幅度（m/s）。 */
+var Context.speedAmplitude: Double
+    get() = sharedPrefs.getFloat("speedAmplitude", FakeLoc.speedAmplitude.toFloat()).toDouble()
+    set(value) = sharedPrefs.edit {
+        putFloat("speedAmplitude", value.toFloat())
+    }
+
 var Context.needOpenSELinux: Boolean
     get() = sharedPrefs.getBoolean("needOpenSELinux", false)
     set(value) = sharedPrefs.edit {
