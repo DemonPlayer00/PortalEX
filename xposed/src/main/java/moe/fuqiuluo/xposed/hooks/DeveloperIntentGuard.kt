@@ -25,7 +25,7 @@ object DeveloperIntentGuard {
         this.packages = packages.toSet()
         Logger.info("DeveloperIntentGuard: enabled=$enabled packages=${this.packages.size}")
         // 配置到达时兜底安装：系统启动阶段若类加载顺序不满足，仍能在真正使用时装上。
-        if (!installed) install(ClassLoader.getSystemClassLoader())
+        install(ClassLoader.getSystemClassLoader())
     }
 
     private fun isDeveloperIntent(intent: Intent): Boolean {
@@ -40,8 +40,7 @@ object DeveloperIntentGuard {
             .firstOrNull { it.contains('.') && !it.startsWith("android.") }
 
     fun install(classLoader: ClassLoader) {
-        if (installed) return
-        Logger.info("DeveloperIntentGuard: install called")
+        Logger.info("DeveloperIntentGuard: install called (installed=$installed)")
         val cls = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityTaskManagerService", classLoader
         ) ?: run {
@@ -56,6 +55,7 @@ object DeveloperIntentGuard {
                     ?: return@beforeHook
                 if (!isDeveloperIntent(intent)) return@beforeHook
                 val pkg = callingPackage(args) ?: return@beforeHook
+                Logger.info("DeveloperIntentGuard: candidate pkg=$pkg selected=${pkg in packages}")
                 if (pkg !in packages) return@beforeHook
                 Logger.info("DeveloperIntentGuard: blocked $pkg -> ${intent.action ?: intent.component}")
                 result = 0
