@@ -23,8 +23,10 @@ object CameraMockSelector {
      * 空筛选 = 全部命中（不筛选）；视频无标签时只在空筛选下命中。
      */
     fun matches(videoTags: List<String>, filter: List<String>): Boolean {
-        // 无标签样本永远匹配；有标签时必须包含全部筛选标签（任意一个不满足即失败）。
-        if (videoTags.isEmpty() || filter.isEmpty()) return true
+        // 空筛选 = 全部命中；非空筛选下，无标签视频也必须被视为不匹配。
+        // 旧实现把“无标签”当成永远命中，导致筛选“白天”时仍可能选中无标签素材。
+        if (filter.isEmpty()) return true
+        if (videoTags.isEmpty()) return false
         return filter.all { want -> videoTags.any { it.equals(want, ignoreCase = true) } }
     }
 
