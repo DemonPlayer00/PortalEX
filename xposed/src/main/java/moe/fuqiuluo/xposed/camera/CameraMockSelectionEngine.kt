@@ -132,6 +132,7 @@ object CameraMockSelectionEngine {
             val pool = if (timed.isNotEmpty()) {
                 val minTime = timed.minOf { timeOfDayDistanceMs(it.second.recordedAt, now) }
                 timed.filter { timeOfDayDistanceMs(it.second.recordedAt, now) <= minTime + 60_000L }
+                    .ifEmpty { timed }
             } else flat
             pool[random.nextInt(pool.size)]
         } else {
@@ -146,6 +147,7 @@ object CameraMockSelectionEngine {
             val pool = if (timed.isNotEmpty()) {
                 val minTime = timed.minOf { timeOfDayDistanceMs(it.recordedAt, now) }
                 timed.filter { timeOfDayDistanceMs(it.recordedAt, now) <= minTime + 60_000L }
+                    .ifEmpty { timed }
             } else videos
             nearest.first to pool[random.nextInt(pool.size)]
         }
@@ -269,7 +271,8 @@ object CameraMockSelectionEngine {
                 val near = timedVideos.filter {
                     timeOfDayDistanceMs(it.recordedAt, now) <= minTime + 60_000L
                 }
-                near[random.nextInt(near.size)]
+                val pool = near.ifEmpty { timedVideos }
+                pool[random.nextInt(pool.size)]
             }
         }
 
