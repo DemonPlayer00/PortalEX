@@ -144,6 +144,16 @@
     <string name="calibration_gps_accuracy_desc">有 GPS 信号时记录每次 fix 自带 accuracy 的中位数</string>
     <string name="calibration_fused_accuracy">fused 定位精度</string>
     <string name="calibration_fused_accuracy_desc">有 GPS 信号时记录 GPS 与 fused 水平距离的中位数</string>
+    <string name="calibration_fused_delay">fused 时间差</string>
+    <string name="calibration_fused_delay_desc">GPS 与 fused 配对帧的时间戳差</string>
+    <string name="calibration_gps_interval">GPS 间隔</string>
+    <string name="calibration_gps_interval_desc">相邻 GPS fix 的间隔</string>
+    <string name="calibration_satellites">GPS 卫星数</string>
+    <string name="calibration_satellites_desc">GPS extras 中的 satellites</string>
+    <string name="calibration_max_cn0">最大 C/N0</string>
+    <string name="calibration_max_cn0_desc">GPS extras 中的 maxCn0</string>
+    <string name="calibration_mean_cn0">平均 C/N0</string>
+    <string name="calibration_mean_cn0_desc">GPS extras 中的 meanCn0</string>
     <string name="calibration_location_run">采集 GPS / fused 精度</string>
     <string name="calibration_fluctuation">定位波动</string>
     <string name="calibration_accuracy_desc">融合/模拟定位在目标点附近随机抖动的半径</string>

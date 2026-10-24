@@ -140,6 +140,26 @@ var Context.fusedAccuracyMeasured: Float
     get() = sharedPrefs.getFloat("fusedAccuracyMeasured", 0f)
     set(value) = sharedPrefs.edit { putFloat("fusedAccuracyMeasured", value) }
 
+var Context.fusedDelayMeasured: Float
+    get() = sharedPrefs.getFloat("fusedDelayMeasured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("fusedDelayMeasured", value) }
+
+var Context.gpsIntervalMeasured: Float
+    get() = sharedPrefs.getFloat("gpsIntervalMeasured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("gpsIntervalMeasured", value) }
+
+var Context.satellitesMeasured: Float
+    get() = sharedPrefs.getFloat("satellitesMeasured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("satellitesMeasured", value) }
+
+var Context.maxCn0Measured: Float
+    get() = sharedPrefs.getFloat("maxCn0Measured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("maxCn0Measured", value) }
+
+var Context.meanCn0Measured: Float
+    get() = sharedPrefs.getFloat("meanCn0Measured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("meanCn0Measured", value) }
+
 /** 海拔波动幅度（米）：同时作为垂直精度来源。 */
 var Context.altitudeJitter: Double
     get() = sharedPrefs.getFloat("altitudeJitter", FakeLoc.altitudeJitter.toFloat()).toDouble()

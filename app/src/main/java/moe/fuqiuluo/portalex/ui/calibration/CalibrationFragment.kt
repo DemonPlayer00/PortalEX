@@ -22,7 +22,12 @@ import moe.fuqiuluo.portalex.databinding.FragmentCalibrationBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.altitudeJitter
 import moe.fuqiuluo.portalex.ext.fusedAccuracyMeasured
+import moe.fuqiuluo.portalex.ext.fusedDelayMeasured
 import moe.fuqiuluo.portalex.ext.gpsAccuracyMeasured
+import moe.fuqiuluo.portalex.ext.gpsIntervalMeasured
+import moe.fuqiuluo.portalex.ext.maxCn0Measured
+import moe.fuqiuluo.portalex.ext.meanCn0Measured
+import moe.fuqiuluo.portalex.ext.satellitesMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
@@ -59,6 +64,11 @@ class CalibrationFragment : Fragment() {
     private val fluctuationValues = mutableListOf<TextView>()
     private var gpsAccuracyValue: TextView? = null
     private var fusedAccuracyValue: TextView? = null
+    private var fusedDelayValue: TextView? = null
+    private var gpsIntervalValue: TextView? = null
+    private var satellitesValue: TextView? = null
+    private var maxCn0Value: TextView? = null
+    private var meanCn0Value: TextView? = null
 
     /** 一次校准的令牌：作废的采集（用户取消/页面销毁）不许回写 */
     private var runToken = 0
@@ -146,6 +156,26 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_fused_accuracy),
             getString(R.string.calibration_fused_accuracy_desc),
         )
+        fusedDelayValue = measurementRow(
+            getString(R.string.calibration_fused_delay),
+            getString(R.string.calibration_fused_delay_desc),
+        )
+        gpsIntervalValue = measurementRow(
+            getString(R.string.calibration_gps_interval),
+            getString(R.string.calibration_gps_interval_desc),
+        )
+        satellitesValue = measurementRow(
+            getString(R.string.calibration_satellites),
+            getString(R.string.calibration_satellites_desc),
+        )
+        maxCn0Value = measurementRow(
+            getString(R.string.calibration_max_cn0),
+            getString(R.string.calibration_max_cn0_desc),
+        )
+        meanCn0Value = measurementRow(
+            getString(R.string.calibration_mean_cn0),
+            getString(R.string.calibration_mean_cn0_desc),
+        )
     }
 
     private fun renderFluctuation() {
@@ -159,6 +189,21 @@ class CalibrationFragment : Fragment() {
         fusedAccuracyValue?.text = ctx.fusedAccuracyMeasured.let {
             if (it > 0f) "%.2f米".format(it) else "未采集"
         }
+        fusedDelayValue?.text = ctx.fusedDelayMeasured.let {
+            if (it > 0f) "%.0fms".format(it) else "未采集"
+        }
+        gpsIntervalValue?.text = ctx.gpsIntervalMeasured.let {
+            if (it > 0f) "%.0fms".format(it) else "未采集"
+        }
+        satellitesValue?.text = ctx.satellitesMeasured.let {
+            if (it > 0f) "%.0f颗".format(it) else "未采集"
+        }
+        maxCn0Value?.text = ctx.maxCn0Measured.let {
+            if (it > 0f) "%.1fdB-Hz".format(it) else "未采集"
+        }
+        meanCn0Value?.text = ctx.meanCn0Measured.let {
+            if (it > 0f) "%.1fdB-Hz".format(it) else "未采集"
+        }
     }
 
     private fun runLocationAccuracy() {
@@ -168,7 +213,15 @@ class CalibrationFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { LocationAccuracyCalibrator.collect(ctx) }
-                    .getOrElse { LocationAccuracyCalibrator.Result(null, null, 0, 0, false, "采集异常：${it.message}") }
+                    .getOrElse {
+                        LocationAccuracyCalibrator.Result(
+                            gpsAccuracyMeters = null, fusedAccuracyMeters = null,
+                            fusedDelayMs = null, gpsIntervalMs = null,
+                            satellites = null, maxCn0 = null, meanCn0 = null,
+                            gpsSamples = 0, fusedSamples = 0, ok = false,
+                            message = "采集异常：${it.message}",
+                        )
+                    }
             }
             _binding?.calibLocationRun?.isEnabled = true
             if (!result.ok) {
@@ -177,6 +230,11 @@ class CalibrationFragment : Fragment() {
             }
             result.gpsAccuracyMeters?.let { ctx.gpsAccuracyMeasured = it }
             result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
+            result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }
+            result.gpsIntervalMs?.let { ctx.gpsIntervalMeasured = it }
+            result.satellites?.let { ctx.satellitesMeasured = it }
+            result.maxCn0?.let { ctx.maxCn0Measured = it }
+            result.meanCn0?.let { ctx.meanCn0Measured = it }
             renderFluctuation()
             showToast(result.message)
         }
@@ -453,6 +511,11 @@ class CalibrationFragment : Fragment() {
         fluctuationValues.clear()
         gpsAccuracyValue = null
         fusedAccuracyValue = null
+        fusedDelayValue = null
+        gpsIntervalValue = null
+        satellitesValue = null
+        maxCn0Value = null
+        meanCn0Value = null
         _binding = null
     }
 }
