@@ -183,7 +183,9 @@ internal object CameraMockSelectionServer {
         val reqLat = parts.getOrNull(2)?.toDoubleOrNull()
         val reqLon = parts.getOrNull(3)?.toDoubleOrNull()
         val now = parts.getOrNull(4)?.toLongOrNull() ?: System.currentTimeMillis()
-        val tags = parts.getOrNull(5)?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
+        val wireTags = parts.getOrNull(5)?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
+        // native provider 目前发送空标签；为空时回源 app 的当前标签筛选。
+        val tags = if (wireTags.isEmpty()) CameraMockServerContext.appTagFilter() else wireTags
         val session = parts.getOrNull(6).orEmpty()
         // 只在位置模拟运行时提供虚拟相机；没有模拟就用真实相机。
         if (!FakeLoc.enable) {
