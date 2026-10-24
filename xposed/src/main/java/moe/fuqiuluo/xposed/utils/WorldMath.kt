@@ -6,6 +6,7 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import java.util.LinkedHashMap
 import kotlin.random.Random
 
 /**
@@ -59,6 +60,20 @@ object WorldMath {
      * 各家 NLP SDK 进程），快照对象无法跨进程共享；做成「时间桶 → 固定随机序列」的纯函数后，
      * **任何进程在同一秒内都得到同一份卫星数据**，与真机 1Hz 上报的物理事实一致。
      */
+    private data class GnssCacheKey(
+        val bucketSec: Long,
+        val minSatellites: Int,
+        val maxSatellites: Int,
+        val maxCn0Target: Double,
+        val meanCn0Target: Double,
+    )
+
+    /** 小容量 LRU：同一时间桶/配置只生成一次，避免 extras 与 GnssStatus 两路重复分配。 */
+    private val gnssCache = object : LinkedHashMap<GnssCacheKey, FakeLoc.GnssSnapshot>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<GnssCacheKey, FakeLoc.GnssSnapshot>?): Boolean =
+            size > 8
+    }
+
     fun gnssSnapshotForBucket(
         bucketSec: Long,
         minSatellites: Int,
@@ -66,6 +81,8 @@ object WorldMath {
         maxCn0Target: Double = 0.0,
         meanCn0Target: Double = 0.0,
     ): FakeLoc.GnssSnapshot {
+        val key = GnssCacheKey(bucketSec, minSatellites, maxSatellites, maxCn0Target, meanCn0Target)
+        synchronized(gnssCache) { gnssCache[key]?.let { return it } }
         // 防脏配置：min > max 会让 nextInt 抛 IllegalArgumentException，
         // 而调用链在 system_server（InitialPullback/GNSS extras），会直接把系统进程打崩。
         val upper = maxSatellites.coerceAtLeast(0)
@@ -84,6 +101,8 @@ object WorldMath {
         } else {
             DoubleArray(svCount) { 24.0 + rng.nextDouble() * 21.0 } // 24~45 dB-Hz（真机量级）
         }
-        return FakeLoc.GnssSnapshot(svCount, cn0s)
+        val result = FakeLoc.GnssSnapshot(svCount, cn0s)
+        synchronized(gnssCache) { gnssCache[key] = result }
+        return result
     }
 }

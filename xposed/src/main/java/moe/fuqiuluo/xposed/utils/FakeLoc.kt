@@ -15,7 +15,7 @@ import kotlin.random.Random
 object FakeLoc {
     /** 可见卫星数上限（GnssStatus 推送与 Location.extras 卫星字段**共用同一上限**：
      *  两处各自随机且上限不同时，同一时刻雷达显示与 extras 会互相矛盾，构成交叉检测面）。 */
-    const val MAX_SATELLITES = 35
+    const val MAX_SATELLITES = 1000
 
     // ===================== 配置门面（状态全在 [LocConfig]）=====================
     // 对外名字不变（调用点仍写 `FakeLoc.xxx`），实际状态与语义文档见 [LocConfig]。
