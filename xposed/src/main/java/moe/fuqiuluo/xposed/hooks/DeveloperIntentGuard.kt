@@ -4,6 +4,7 @@ import android.content.Intent
 import android.provider.Settings
 import android.database.MatrixCursor
 import android.net.Uri
+import dalvik.system.PathClassLoader
 import android.os.Binder
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Hooks
@@ -185,7 +186,16 @@ object DeveloperIntentGuard {
         Logger.info("DeveloperIntentGuard: Starter stage hooks=$hooks")
         val settingsProvider = XposedHelpers.findClassIfExists(
             "com.android.providers.settings.SettingsProvider", classLoader
-        )
+        ) ?: runCatching {
+            // SettingsProvider 在自己的 APK 里，system_server 默认 classloader 看不到。
+            val apkLoader = PathClassLoader(
+                "/system/priv-app/SettingsProvider/SettingsProvider.apk",
+                classLoader
+            )
+            XposedHelpers.findClassIfExists(
+                "com.android.providers.settings.SettingsProvider", apkLoader
+            )
+        }.getOrNull()
         Logger.info("DeveloperIntentGuard: SettingsProvider found=${settingsProvider != null}")
         if (settingsProvider != null) {
             Hooks.hookAllMethods(settingsProvider, "query", afterHook {
