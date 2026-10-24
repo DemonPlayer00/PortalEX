@@ -147,7 +147,7 @@ class SettingsFragment : Fragment() {
             }
         }
         binding.devIntentGuardLayout.setOnClickListener {
-            startActivity(android.content.Intent(requireContext(), DevIntentGuardActivity::class.java))
+            DevIntentGuardDialog.show(requireContext())
         }
 
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
