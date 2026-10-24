@@ -154,7 +154,6 @@
     <string name="calibration_max_cn0_desc">GPS extras 中的 maxCn0</string>
     <string name="calibration_mean_cn0">平均 C/N0</string>
     <string name="calibration_mean_cn0_desc">GPS extras 中的 meanCn0</string>
-    <string name="calibration_location_run">采集 GPS / fused 精度</string>
     <string name="calibration_fluctuation">定位波动</string>
     <string name="calibration_accuracy_desc">融合/模拟定位在目标点附近随机抖动的半径</string>
     <string name="calibration_altitude_jitter">海拔波动</string>
