@@ -20,7 +20,6 @@ import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
-import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
@@ -161,7 +160,6 @@ class SettingsFragment : Fragment() {
 
         binding.altitudeValue.text = "%.2f米".format(context.altitude)
         binding.speedValue.text = "%.2f米/秒".format(context.speed)
-        binding.accuracyValue.text = "%.2f米".format(context.accuracy)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
         binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
 
@@ -192,21 +190,6 @@ class SettingsFragment : Fragment() {
                 }
                 context.speed = value
                 binding.speedValue.text = "%.2f米/秒".format(value)
-            }
-        }
-
-        binding.accuracyLayout.setOnClickListener {
-            showDialog("设置精度", binding.accuracyValue.text.toString().let { it.substring(0, it.length - 1) }) {
-                val value = it.toFloatOrNull()
-                if (value == null || value < 0.0) {
-                    Toast.makeText(context, "精度不合法", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                } else if (value > 1000) {
-                    Toast.makeText(context, "精度不能超过1000米", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                }
-                context.accuracy = value
-                binding.accuracyValue.text = "%.2f米".format(value)
             }
         }
 

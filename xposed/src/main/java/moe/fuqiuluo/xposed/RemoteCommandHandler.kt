@@ -401,7 +401,9 @@ object RemoteCommandHandler {
                 val enable = rely.getBoolean(Key.ENABLE, FakeLoc.enable)
                 val speed = rely.numberOr("speed", FakeLoc.speed)
                 val altitude = rely.numberOr("altitude", FakeLoc.altitude)
+                val altitudeJitter = rely.numberOr("altitude_jitter", FakeLoc.altitudeJitter).coerceAtLeast(0.0)
                 val accuracy = rely.numberOr("accuracy", FakeLoc.accuracy.toDouble()).toFloat()
+                val speedAmplitude = rely.numberOr("speed_amplitude", FakeLoc.speedAmplitude).coerceAtLeast(0.0)
                 val enableDebugLog = rely.getBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
                 // 融合处置三态：新键优先；旧 App 只发布尔键 ⇒ 兜底映射（true=拒绝 / false=伪装）
                 val fusedMode = run {
@@ -442,7 +444,9 @@ object RemoteCommandHandler {
                 }
                 FakeLoc.speed = speed
                 FakeLoc.altitude = altitude
+                FakeLoc.altitudeJitter = altitudeJitter
                 FakeLoc.accuracy = accuracy
+                FakeLoc.speedAmplitude = speedAmplitude
                 FakeLoc.enableDebugLog = enableDebugLog
                 FakeLoc.fusedMode = fusedMode
                 // 调试模式打开时把融合 hook 状态打一条（用户点名要的那条日志）
