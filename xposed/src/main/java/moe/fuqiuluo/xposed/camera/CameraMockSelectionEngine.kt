@@ -14,6 +14,8 @@ import kotlin.random.Random
 object CameraMockSelectionEngine {
     /** 同一地点判定：距最近路线 50m 内的其它路线才参与时刻比较。 */
     const val SAME_PLACE_RADIUS_M = 50.0
+    /** 距离代价的软拐点：超过 20m 后按二次方加速。 */
+    const val DISTANCE_SOFT_LIMIT_M = 20.0
     /** 同一会话保留上次视频的时刻迟滞：避免每 3 秒刷新就换片。 */
     const val VIDEO_STICKY_TIME_MS = 120_000L
 
@@ -163,6 +165,19 @@ object CameraMockSelectionEngine {
     }
 
     /**
+     * 路线代价：20m 以内按线性、超过 20m 按二次方加速；时间用“分钟”作为同量级
+     * 的轻量代价，因此近处可由时刻决定，远处即使时刻更近也会被距离压过去。
+     */
+    private fun routeCost(distanceM: Double, timeMs: Long): Double {
+        val d = distanceM.coerceAtLeast(0.0)
+        val distanceCost = if (d <= DISTANCE_SOFT_LIMIT_M) d
+        else DISTANCE_SOFT_LIMIT_M +
+            (d - DISTANCE_SOFT_LIMIT_M) * (d - DISTANCE_SOFT_LIMIT_M) / 10.0
+        val timeMinutes = if (timeMs == Long.MAX_VALUE) 0.0 else timeMs / 60_000.0
+        return distanceCost + timeMinutes
+    }
+
+    /**
      * system_server / native cammock 选片。
      *
      * 代价顺序（不是把时间和距离硬加权）：
@@ -229,14 +244,11 @@ object CameraMockSelectionEngine {
             if (stickyRoute != null) {
                 stickyRoute
             } else {
-                // 同一地点内优先时刻最近；地点范围外绝不因时间近而越过距离。
-                val minTime = samePlace.minOf { it.timeMs }
-                val timeNear = samePlace.filter {
-                    it.timeMs == Long.MAX_VALUE || it.timeMs <= minTime + 60_000L
-                }
-                timeNear.minWithOrNull(
-                    compareBy<Bucket> { it.distanceM }.thenBy { it.route.id }
-                ) ?: samePlace.minWithOrNull(compareBy<Bucket> { it.distanceM }.thenBy { it.route.id })!!
+                // 距离代价在 20m 后二次加速；时间只作为同量级轻量项。
+                buckets.minWithOrNull(
+                    compareBy<Bucket> { routeCost(it.distanceM, it.timeMs) }
+                        .thenBy { it.route.id }
+                )!!
             }
         }
 
