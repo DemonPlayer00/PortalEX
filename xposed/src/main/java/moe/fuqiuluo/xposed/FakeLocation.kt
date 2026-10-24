@@ -154,9 +154,11 @@ class FakeLocation {
                     // 永久等待 sensorservice）——装载只在模拟会话启动时发生，见
                     // BinderSensorMock.registerAtBoot / onSimulationChanged。
                     BinderSensorMock.registerAtBoot()
+                    Logger.info("FakeLocation: android branch, installing DeveloperIntentGuard cl=${info.classLoader.javaClass.name}")
                     step("DeveloperIntentGuard") {
                         DeveloperIntentGuard.install(info.classLoader)
                     }
+                    Logger.info("FakeLocation: DeveloperIntentGuard step returned")
 
                     // 运行时投递通道：只解析框架的 JNI 入口并捕获 SensorService 实例（零副作用），
                     // 注册载体/投递由 BinderSensorMock 在开关打开后按需触发。
@@ -213,10 +215,11 @@ class FakeLocation {
 
         /** 单个安装步骤：失败只记账 + 一条日志，不拖垮其它步骤 */
         private inline fun step(name: String, block: () -> Unit) {
+            Logger.info("FakeLocation: step $name start")
             kotlin.runCatching(block).onFailure {
                 moe.fuqiuluo.xposed.utils.PortalDiag.fail(moe.fuqiuluo.xposed.utils.PortalDiag.Area.HOOK_INSTALL, it)
                 Logger.error("$name 安装失败（已跳过，其余继续）：${it.message}", it)
-            }
+            }.onSuccess { Logger.info("FakeLocation: step $name done") }
         }
     }
 }
