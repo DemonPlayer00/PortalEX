@@ -58,8 +58,8 @@
   <string name="cdma">ネットワークを劣化させる</string>
   <string name="cdma_desc">ネットワークを CDMA にダウングレードします</string>
   <string name="show_route">ルートを表示</string>
-  <string name="item_report_duration_title">位置報告の間隔</string>
-  <string name="item_report_duration_desc">位置を報告する頻度 (ミリ秒単位)</string>
+  <string name="item_report_duration_title">最大位置報告間隔</string>
+  <string name="item_report_duration_desc">位置は必要時に送信されます。これは変化がない場合の最大送信間隔です (ミリ秒単位)</string>
   <string name="item_report_duration_value">100 ミリ秒</string>
   <string name="gnss_mock">GNSS モック</string>
   <string name="satellites_info">衛星の情報</string>

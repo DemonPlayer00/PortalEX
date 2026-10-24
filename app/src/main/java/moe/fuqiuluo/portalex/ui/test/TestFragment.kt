@@ -101,7 +101,7 @@ class TestFragment : Fragment() {
             appendLine("外周模拟(步频)  ${if (ctx.cadenceMock) "开" else "关"}")
             appendLine("外周模拟(朝向)  ${if (ctx.orientationMock) "开" else "关"}")
             appendLine("设定速度       ${"%.2f".format(ctx.speed)} m/s")
-            appendLine("上报间隔       ${ctx.reportDuration} ms")
+            appendLine("最大上报间隔   ${ctx.reportDuration} ms")
             appendLine("模拟精度/星数  ${"%.1f".format(ctx.accuracy)} m / ${ctx.minSatelliteCount}")
             appendLine("允许横屏       ${ctx.allowLandscape}")
             appendLine("服务已握手     ${MockServiceHelper.isServiceInit()}")
