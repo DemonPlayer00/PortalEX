@@ -294,6 +294,11 @@ var Context.cameraMockHiddenTags: Set<String>
     get() = sharedPrefs.getStringSet("cameraMockHiddenTags", emptySet()) ?: emptySet()
     set(value) = sharedPrefs.edit { putStringSet("cameraMockHiddenTags", value) }
 
+/** 上次启动摄像头模拟时检查昼夜标签的时间（毫秒）。 */
+var Context.cameraMockTimeCheckAt: Long
+    get() = sharedPrefs.getLong("cameraMockTimeCheckAt", 0L)
+    set(value) = sharedPrefs.edit { putLong("cameraMockTimeCheckAt", value) }
+
 /** 标签筛选（全含语义，见 CameraMockSelector.matches） */
 var Context.cameraMockTagFilter: Set<String>
     get() = sharedPrefs.getStringSet(CameraMockProtocol.Pref.TAG_FILTER, emptySet()) ?: emptySet()
