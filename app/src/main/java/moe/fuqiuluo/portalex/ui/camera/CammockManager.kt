@@ -117,7 +117,7 @@ object CammockManager {
     /** 标准视频导出：实现写入 io/export/<videoId>.mp4。 */
     fun exportVideo(context: Context, videoId: String): Result<File> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
-        val box = File(currentDir(context), "io/export")
+        val box = prepareIoBox(context, "export")
         box.deleteRecursively(); box.mkdirs()
         File(box, "request.txt").writeText(videoId)
         runScript(context, "export.sh", timeoutMs = 120_000L).getOrThrow()
@@ -129,8 +129,7 @@ object CammockManager {
     /** 标准上传：app 生成 io/upload 快照，由实现自己的 upload.sh 接收。 */
     fun upload(context: Context): Result<Int> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
-        val box = File(currentDir(context), "io/upload")
-        box.deleteRecursively(); box.mkdirs()
+        val box = prepareIoBox(context, "upload")
         val routes = CameraMockStore.routes(context)
         File(box, "routes.json").writeText(
             moe.fuqiuluo.xposed.camera.CameraMockCodec.encodeRoutes(routes)
@@ -148,8 +147,7 @@ object CammockManager {
     /** 标准下载：实现写入 io/download，app 再把它导入本地库。 */
     fun download(context: Context): Result<Int> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
-        val box = File(currentDir(context), "io/download")
-        box.deleteRecursively(); box.mkdirs()
+        val box = prepareIoBox(context, "download")
         runScript(context, "download.sh", timeoutMs = 300_000L).getOrThrow()
         val json = File(box, "routes.json")
         if (!json.isFile) error("实现未生成 io/download/routes.json")
@@ -164,6 +162,35 @@ object CammockManager {
         }
         CameraMockStore.setRoutes(context, routes)
         routes.sumOf { it.videos.size }
+    }
+
+    /**
+     * 准备 io/<name> 目录。
+     *
+     * 旧实现/旧 root 脚本创建的 io 目录可能属于 root:root，app 随后 delete/mkdir/write
+     * 会直接 EACCES（长视频重试看起来“点了一直失败”，日志里却连 upload.sh 都没进）。
+     * 这里先用 root 修复属主，再由 app 正常写入。
+     */
+    private fun prepareIoBox(context: Context, name: String): File {
+        val io = File(currentDir(context), "io")
+        val box = File(io, name)
+        runCatching { io.mkdirs(); box.deleteRecursively(); box.mkdirs() }
+        if (!box.isDirectory || !box.canWrite()) {
+            val uid = context.applicationInfo.uid
+            runCatching {
+                ProcessBuilder(
+                    context.suPath, "-c",
+                    "rm -rf '${box.absolutePath}'; mkdir -p '${io.absolutePath}' '${box.absolutePath}'; " +
+                        "chown $uid:$uid '${io.absolutePath}' '${box.absolutePath}'; " +
+                        "chmod 700 '${io.absolutePath}' '${box.absolutePath}'"
+                ).start().waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            box.mkdirs()
+        }
+        if (!box.isDirectory || !box.canWrite()) {
+            error("无法创建 ${box.absolutePath}（权限不足）")
+        }
+        return box
     }
 
     /** PortalEX 只调用实现自己的 start.sh；provider/HAL 细节由实现负责。 */
