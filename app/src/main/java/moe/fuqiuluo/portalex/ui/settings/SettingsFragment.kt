@@ -2,6 +2,7 @@ package moe.fuqiuluo.portalex.ui.settings
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -104,6 +105,51 @@ class SettingsFragment : Fragment() {
         b.dfusedDesc.text = desc ?: getString(R.string.dfused_desc)
     }
 
+    private fun applyDevModeOverride(disableDeveloperMode: Boolean) {
+        val ctx = context ?: return
+        val resolver = ctx.contentResolver
+        val adbEnabled = runCatching {
+            Settings.Global.getInt(resolver, Settings.Global.ADB_ENABLED, 1)
+        }.getOrDefault(1)
+        // 只改开发者模式总开关，不重置开发者选项里的其它设置；
+        // 关闭后再把 adb_enabled 写回，尽量保住 MI6 的 USB 调试。
+        val cmd = if (disableDeveloperMode) {
+            "settings put global development_settings_enabled 0; " +
+                "settings put global adb_enabled $adbEnabled"
+        } else {
+            "settings put global development_settings_enabled 1"
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    ProcessBuilder(ctx.suPath, "-c", cmd).start().waitFor() == 0
+                }.getOrDefault(false)
+            }
+            if (_binding == null) return@launch
+            if (ok) {
+                showToast(
+                    if (disableDeveloperMode) "开发者模式入口已关闭"
+                    else "开发者模式入口已恢复"
+                )
+            } else {
+                // 命令失败就回到真实值，不制造假成功
+                val actual = runCatching {
+                    Settings.Global.getInt(
+                        resolver,
+                        Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+                        1
+                    ) == 0
+                }.getOrDefault(false)
+                binding.devOverrideSwitch.setOnCheckedChangeListener(null)
+                binding.devOverrideSwitch.isChecked = actual
+                binding.devOverrideSwitch.setOnCheckedChangeListener { _, checked ->
+                    applyDevModeOverride(checked)
+                }
+                showToast("修改失败：su 不可用或系统拒绝")
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         if (_binding != null) {
@@ -146,8 +192,17 @@ class SettingsFragment : Fragment() {
                 showToast("su 路径已更新")
             }
         }
-        binding.devIntentGuardLayout.setOnClickListener {
-            DevIntentGuardDialog.show(requireContext())
+        // 只有一个开发者模式覆写开关：直接改全局值，不按应用拦截。
+        val devOverride = runCatching {
+            Settings.Global.getInt(
+                requireContext().contentResolver,
+                Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+                1
+            ) == 0
+        }.getOrDefault(false)
+        binding.devOverrideSwitch.isChecked = devOverride
+        binding.devOverrideSwitch.setOnCheckedChangeListener { _, checked ->
+            applyDevModeOverride(checked)
         }
 
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
