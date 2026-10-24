@@ -130,6 +130,16 @@ var Context.accuracy: Float
         putFloat("accuracy", value)
     }
 
+/** 最近一次 GPS 精度采集结果（米）；0 = 未采集。 */
+var Context.gpsAccuracyMeasured: Float
+    get() = sharedPrefs.getFloat("gpsAccuracyMeasured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("gpsAccuracyMeasured", value) }
+
+/** 最近一次 GPS-fused 水平差（米）；0 = 未采集。 */
+var Context.fusedAccuracyMeasured: Float
+    get() = sharedPrefs.getFloat("fusedAccuracyMeasured", 0f)
+    set(value) = sharedPrefs.edit { putFloat("fusedAccuracyMeasured", value) }
+
 /** 海拔波动幅度（米）：同时作为垂直精度来源。 */
 var Context.altitudeJitter: Double
     get() = sharedPrefs.getFloat("altitudeJitter", FakeLoc.altitudeJitter.toFloat()).toDouble()

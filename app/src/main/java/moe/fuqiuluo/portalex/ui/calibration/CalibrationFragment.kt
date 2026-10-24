@@ -21,11 +21,14 @@ import moe.fuqiuluo.portalex.android.widget.SensorTraceChart
 import moe.fuqiuluo.portalex.databinding.FragmentCalibrationBinding
 import moe.fuqiuluo.portalex.ext.accuracy
 import moe.fuqiuluo.portalex.ext.altitudeJitter
+import moe.fuqiuluo.portalex.ext.fusedAccuracyMeasured
+import moe.fuqiuluo.portalex.ext.gpsAccuracyMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.service.LocationAccuracyCalibrator
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.SensorNoiseCalibrator
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -54,6 +57,8 @@ class CalibrationFragment : Fragment() {
 
     /** 定位波动三项的数值显示（顺序：精度 / 海拔 / 速度）。 */
     private val fluctuationValues = mutableListOf<TextView>()
+    private var gpsAccuracyValue: TextView? = null
+    private var fusedAccuracyValue: TextView? = null
 
     /** 一次校准的令牌：作废的采集（用户取消/页面销毁）不许回写 */
     private var runToken = 0
@@ -71,6 +76,7 @@ class CalibrationFragment : Fragment() {
         binding.calibStatus.text = requireContext().sensorNoiseReport
         binding.calibRun.setOnClickListener { runCalibration() }
         binding.calibReset.setOnClickListener { confirmReset() }
+        binding.calibLocationRun.setOnClickListener { runLocationAccuracy() }
         refreshEcho()
         return binding.root
     }
@@ -122,6 +128,24 @@ class CalibrationFragment : Fragment() {
             row.setOnClickListener { item.action() }
             list.addView(row)
         }
+
+        fun measurementRow(title: String, desc: String): TextView {
+            val row = inflater.inflate(R.layout.layout_noise_row, list, false)
+            row.findViewById<TextView>(R.id.noise_title).text = title
+            row.findViewById<TextView>(R.id.noise_desc).text = desc
+            val value = row.findViewById<TextView>(R.id.noise_value)
+            value.text = "未采集"
+            list.addView(row)
+            return value
+        }
+        gpsAccuracyValue = measurementRow(
+            getString(R.string.calibration_gps_accuracy),
+            getString(R.string.calibration_gps_accuracy_desc),
+        )
+        fusedAccuracyValue = measurementRow(
+            getString(R.string.calibration_fused_accuracy),
+            getString(R.string.calibration_fused_accuracy_desc),
+        )
     }
 
     private fun renderFluctuation() {
@@ -129,6 +153,33 @@ class CalibrationFragment : Fragment() {
         fluctuationValues.getOrNull(0)?.text = "%.2f米".format(ctx.accuracy)
         fluctuationValues.getOrNull(1)?.text = "%.2f米".format(ctx.altitudeJitter)
         fluctuationValues.getOrNull(2)?.text = "%.2f米/秒".format(ctx.speedAmplitude)
+        gpsAccuracyValue?.text = ctx.gpsAccuracyMeasured.let {
+            if (it > 0f) "%.2f米".format(it) else "未采集"
+        }
+        fusedAccuracyValue?.text = ctx.fusedAccuracyMeasured.let {
+            if (it > 0f) "%.2f米".format(it) else "未采集"
+        }
+    }
+
+    private fun runLocationAccuracy() {
+        val ctx = requireContext()
+        binding.calibLocationRun.isEnabled = false
+        showToast("开始采集：请保持 GPS 有信号，约 10 秒")
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { LocationAccuracyCalibrator.collect(ctx) }
+                    .getOrElse { LocationAccuracyCalibrator.Result(null, null, 0, 0, false, "采集异常：${it.message}") }
+            }
+            _binding?.calibLocationRun?.isEnabled = true
+            if (!result.ok) {
+                showToast(result.message)
+                return@launch
+            }
+            result.gpsAccuracyMeters?.let { ctx.gpsAccuracyMeasured = it }
+            result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
+            renderFluctuation()
+            showToast(result.message)
+        }
     }
 
     private fun editScalar(title: String, current: Double, min: Double, max: Double, save: (Double) -> Unit) {
@@ -400,6 +451,8 @@ class CalibrationFragment : Fragment() {
         runToken++
         rowValues.clear()
         fluctuationValues.clear()
+        gpsAccuracyValue = null
+        fusedAccuracyValue = null
         _binding = null
     }
 }
