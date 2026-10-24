@@ -1,6 +1,5 @@
 package moe.fuqiuluo.xposed.camera
 
-import moe.fuqiuluo.xposed.utils.WorldMath
 import java.io.File
 import kotlin.random.Random
 
@@ -68,10 +67,8 @@ object CameraMockServerStore {
     /**
      * 最近坐标选片。
      *
-     * - 有轨迹：逐点计算距离，取最近的轨迹点，startMs = 该点 tMs；
-     * - 无轨迹：用路线锚点，startMs = 0；
-     * - 距离相差 ≤ 0.5m 的候选（同坐标/同位置多段视频）随机取一个；
-     * - 标签：显式筛选全含；再叠加时间标签（白天/黑夜）。
+     * 算法已收口到 [CameraMockSelectionEngine]：这里只负责加载库、会话去重状态，
+     * 以及把候选交给共享引擎。native cammock 只消费返回值，不再复制选片规则。
      */
     fun select(
         lat: Double?,
@@ -83,71 +80,21 @@ object CameraMockServerStore {
     ): CameraMockSelection? {
         val routes = load()
         if (routes.isEmpty()) return null
-        val timeTag = if (isDay(nowMs)) CameraTags.DAY else CameraTags.NIGHT
         val lastVideo = if (session.isNotBlank()) sessionLastVideo[session] else null
-        val candidates = ArrayList<Candidate>()
-
-        routes.forEach { route ->
-            route.videos.forEach { video ->
-                // 显式标签全含；时间标签只作为“优先”，不能让未打标签的视频全部落选。
-                if (!CameraMockSelector.matches(video.tags, tagFilter)) return@forEach
-                val timeMatch = video.tags.any { it.equals(timeTag, ignoreCase = true) }
-                // 无标签视频也始终进入候选；时间标签不再做硬性优先过滤。
-                val bias = if (lastVideo != null && video.id == lastVideo) 0.5 else 1.0
-                if (video.track.isEmpty()) {
-                    val distance = if (lat == null || lon == null) -1.0
-                    else WorldMath.haversine(lat, lon, route.lat, route.lon) * bias
-                    candidates += Candidate(route, video, 0L, distance, timeMatch)
-                } else {
-                    video.track.forEach { point ->
-                        val distance = if (lat == null || lon == null) -1.0
-                        else WorldMath.haversine(lat, lon, point.lat, point.lon) * bias
-                        candidates += Candidate(route, video, point.tMs, distance, timeMatch)
-                    }
-                }
-            }
-        }
-        if (candidates.isEmpty()) return null
-
-        val chosen = if (lat == null || lon == null) {
-            // 无位置时所有样本等概率；不再让时间标签把无标签视频挤掉。
-            candidates[random.nextInt(candidates.size)]
-        } else {
-            val minDistance = candidates.minOf { it.distanceM }
-            val near = candidates.filter { it.distanceM <= minDistance + 0.5 }
-            near[random.nextInt(near.size)]
-        }
-        val video = chosen.video
+        val selected = CameraMockSelectionEngine.selectRoutes(
+            routes = routes,
+            lat = lat,
+            lon = lon,
+            tagFilter = tagFilter,
+            session = session,
+            lastVideoId = lastVideo,
+            random = random,
+        ) ?: return null
         if (session.isNotBlank()) {
             if (sessionLastVideo.size > 64) sessionLastVideo.clear()
-            sessionLastVideo[session] = video.id
+            sessionLastVideo[session] = selected.videoId
         }
-        val start = if (video.durationMs > 0) {
-            chosen.startMs.coerceIn(0L, video.durationMs - 1)
-        } else chosen.startMs.coerceAtLeast(0L)
-        return CameraMockSelection(
-            pointId = chosen.route.id,
-            pointName = chosen.route.name,
-            videoId = video.id,
-            videoName = video.name,
-            fileName = video.file,
-            durationMs = video.durationMs,
-            startMs = start,
-            distanceM = chosen.distanceM
-        )
+        return selected
     }
 
-    private fun isDay(nowMs: Long): Boolean {
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }
-        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-        return hour in 6..18
-    }
-
-    private data class Candidate(
-        val route: CameraRoute,
-        val video: CameraVideo,
-        val startMs: Long,
-        val distanceM: Double,
-        val timeMatch: Boolean
-    )
 }
