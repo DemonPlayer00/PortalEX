@@ -699,14 +699,27 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val now = java.util.Calendar.getInstance()
         val hour = now.get(java.util.Calendar.HOUR_OF_DAY)
         val tag = if (hour in 6..17) CameraTags.DAY else CameraTags.NIGHT
-        context.cameraMockTagFilter = setOf(tag)
-        if (!uiAlive()) return
+        val last = context.cameraMockTimeCheckAt
+        val crossed = last <= 0L || dayNightPeriod(last) != dayNightPeriod(now.timeInMillis)
+        // 每次启动都记录检查点；只有跨过 06:00 或 18:00 才提示。
+        context.cameraMockTimeCheckAt = now.timeInMillis
+        if (!crossed || !uiAlive()) return
         val hhmm = "%02d:%02d".format(hour, now.get(java.util.Calendar.MINUTE))
         MaterialAlertDialogBuilder(context)
-            .setTitle("自动选择标签")
-            .setMessage("当前时间 $hhmm，以 06:00 / 18:00 为界，已自动选择「$tag」标签。")
-            .setPositiveButton(android.R.string.ok, null)
+            .setTitle("时间标签已跨越")
+            .setMessage("当前时间 $hhmm，已跨越 06:00 / 18:00 分界，建议切换为「$tag」。")
+            .setPositiveButton("切换") { _, _ ->
+                context.cameraMockTagFilter = setOf(tag)
+                refresh()
+            }
+            .setNegativeButton("保持当前", null)
             .show()
+    }
+
+    /** 0 = 黑夜，1 = 白天；只比较时刻，不比较日期。 */
+    private fun dayNightPeriod(ms: Long): Int {
+        val c = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+        return if (c.get(java.util.Calendar.HOUR_OF_DAY) in 6..17) 1 else 0
     }
 
     private fun updateSwitch() {
