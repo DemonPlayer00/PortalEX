@@ -699,13 +699,16 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val now = java.util.Calendar.getInstance()
         val hour = now.get(java.util.Calendar.HOUR_OF_DAY)
         val tag = if (hour in 6..17) CameraTags.DAY else CameraTags.NIGHT
-        context.cameraMockTagFilter = setOf(tag)
         if (!uiAlive()) return
         val hhmm = "%02d:%02d".format(hour, now.get(java.util.Calendar.MINUTE))
         MaterialAlertDialogBuilder(context)
-            .setTitle("自动选择标签")
-            .setMessage("当前时间 $hhmm，以 06:00 / 18:00 为界，已自动选择「$tag」标签。")
-            .setPositiveButton(android.R.string.ok, null)
+            .setTitle("是否切换标签？")
+            .setMessage("当前时间 $hhmm，以 06:00 / 18:00 为界，建议切换为「$tag」。")
+            .setPositiveButton("切换") { _, _ ->
+                context.cameraMockTagFilter = setOf(tag)
+                refresh()
+            }
+            .setNegativeButton("保持当前", null)
             .show()
     }
 
