@@ -61,13 +61,21 @@ object FusedRewrite {
         location?.provider == "fused"
 
     /**
+     * 融合改写只在**位置模拟会话**内生效。
+     *
+     * 未启动位置模拟时，框架的 fused 结果必须原样透传；否则会出现
+     * “没开模拟却改了融合定位”的幽灵行为，也会让关闭模拟后残留一次改写。
+     */
+    fun isActive(): Boolean = enabled && FakeLoc.enable
+
+    /**
      * 对已经生成的虚拟 fused Location 应用 fused 专属覆盖。
      *
      * 只应在 [BaseLocationHook.injectLocation] 完成通用字段生成后调用；
      * 传入 [origin] 仅用于判断来源和保留 extras。
      */
     fun apply(location: Location, origin: Location): Location {
-        if (!enabled || !isFused(origin)) return location
+        if (!isActive() || !isFused(origin)) return location
         val cfg = overrides
 
         if (cfg.provider.isNotBlank()) location.provider = cfg.provider
