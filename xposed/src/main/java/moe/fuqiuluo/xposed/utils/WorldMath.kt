@@ -66,8 +66,12 @@ object WorldMath {
         maxCn0Target: Double = 0.0,
         meanCn0Target: Double = 0.0,
     ): FakeLoc.GnssSnapshot {
-        val rng = Random(bucketSec * 1_000_003L + minSatellites * 7919L + 0x5DEECE66DL)
-        val svCount = rng.nextInt(minSatellites, maxSatellites + 1)
+        // 防脏配置：min > max 会让 nextInt 抛 IllegalArgumentException，
+        // 而调用链在 system_server（InitialPullback/GNSS extras），会直接把系统进程打崩。
+        val upper = maxSatellites.coerceAtLeast(0)
+        val lower = minSatellites.coerceIn(0, upper)
+        val rng = Random(bucketSec * 1_000_003L + lower * 7919L + 0x5DEECE66DL)
+        val svCount = rng.nextInt(lower, upper + 1)
         val cn0s = if (maxCn0Target > 0.0 && meanCn0Target > 0.0 && svCount > 0) {
             // 用实测 max/mean 作为目标：保持 max 接近目标，其余围绕 mean 抖动。
             val mean = meanCn0Target.coerceIn(0.0, 60.0)

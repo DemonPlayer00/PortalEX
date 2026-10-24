@@ -90,4 +90,10 @@ class WorldMathTest {
         assertEquals(12, s.svCount)
         assertNotEquals(0, s.cn0s.size)
     }
+
+    @Test
+    fun `gnss snapshot clamps inverted bounds instead of crashing system_server`() {
+        val s = WorldMath.gnssSnapshotForBucket(42L, 42, 35)
+        assertTrue(s.svCount in 0..35)
+    }
 }
