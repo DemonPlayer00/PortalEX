@@ -682,7 +682,24 @@ internal object LocationServiceHook: BaseLocationHook() {
     private val gnssStatusListeners = LinkedBlockingQueue<IInterface>()
     private val gnssPusherStarted = AtomicBoolean(false)
 
+    private data class MockGnssCacheKey(
+        val bucketSec: Long,
+        val minSatellites: Int,
+        val maxCn0: Double,
+        val meanCn0: Double,
+    )
+
+    /** 1000 星时每帧数组很大；按时间桶缓存，避免 extras/状态推送各自重建。 */
+    private val mockGnssDataCache = object : java.util.LinkedHashMap<MockGnssCacheKey, MockGnssData>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<MockGnssCacheKey, MockGnssData>?): Boolean =
+            size > 4
+    }
+
     private fun buildMockGnssData(): MockGnssData {
+        val bucket = SystemClock.elapsedRealtimeNanos() / 1_000_000_000L
+        val key = MockGnssCacheKey(bucket, FakeLoc.minSatellites, FakeLoc.gnssMaxCn0, FakeLoc.gnssMeanCn0)
+        synchronized(mockGnssDataCache) { mockGnssDataCache[key]?.let { return it } }
+
         // 星数与每星 C/N0 取**当前卫星快照**（时间桶确定性）：与 Location.extras 的
         // satellites/maxCn0/meanCn0 出自同一份数据——两个通道不可能再互相矛盾
         val snapshot = FakeLoc.currentGnssSnapshot()
@@ -695,7 +712,12 @@ internal object LocationServiceHook: BaseLocationHook() {
             azimuths = FloatArray(svCount),
             carrierFreqs = FloatArray(svCount)
         ).apply {
-            val selectedSatellites = satelliteList.shuffled().take(svCount)
+            // 卫星池只覆盖常规 BDS；大量卫星测试（最高 1000）必须补齐，
+            // 否则 take(svCount) 会给数组留下大量空项，GnssStatus 与 extras 数量不一致。
+            val selectedSatellites = List(svCount) { index ->
+                satelliteList.getOrNull(index)
+                    ?: BDSSatellite(prn = 1000 + index, type = OrbitType.MEO)
+            }
             selectedSatellites.forEachIndexed { index, sat ->
                 svidWithFlags[index] = 0
 
@@ -726,6 +748,8 @@ internal object LocationServiceHook: BaseLocationHook() {
                     else -> BDS_B3I_FREQ
                 }
             }
+        }.also { data ->
+            synchronized(mockGnssDataCache) { mockGnssDataCache[key] = data }
         }
     }
 

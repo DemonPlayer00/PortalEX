@@ -96,4 +96,12 @@ class WorldMathTest {
         val s = WorldMath.gnssSnapshotForBucket(42L, 42, 35)
         assertTrue(s.svCount in 0..35)
     }
+
+    @Test
+    fun `gnss snapshot supports large satellite counts and is cached`() {
+        val a = WorldMath.gnssSnapshotForBucket(77L, 1000, 1000)
+        val b = WorldMath.gnssSnapshotForBucket(77L, 1000, 1000)
+        assertEquals(1000, a.svCount)
+        assertTrue("同一时间桶应复用缓存对象", a === b)
+    }
 }
