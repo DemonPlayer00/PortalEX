@@ -6,6 +6,7 @@ import io.github.libxposed.api.XposedModuleInterface.HotReloadingParam
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
+import moe.fuqiuluo.xposed.hooks.DeveloperIntentGuard
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.ModuleRuntime
 
@@ -73,6 +74,9 @@ class PortalExModule : XposedModule() {
      * 不能靠它判定，[FakeLocation.install] 里另有显式的包名白名单兜底。
      */
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        // 这里显式装一次：FakeLocation 的 step 在某些 OEM 的 system_server 分支里
+        // 可能尚未走到，导致 UI 配置到了但 Hook 没装。
+        DeveloperIntentGuard.install(param.classLoader)
         install(packageName = "android", classLoader = param.classLoader, isSystemApp = true)
     }
 
