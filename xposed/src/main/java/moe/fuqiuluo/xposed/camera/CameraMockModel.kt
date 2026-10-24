@@ -119,8 +119,12 @@ object CameraTags {
     const val FOG = "雾"
     const val DAY = "白天"
     const val NIGHT = "黑夜"
+    const val INDOOR = "室内"
 
-    val PRESETS = listOf(SUNNY, CLOUDY, RAIN, SNOW, WIND, FOG, DAY, NIGHT)
+    /** 内置/设备预设：UI 不可删除。OnePlus 现有素材里的「室内」也纳入预设。 */
+    val PRESETS = listOf(SUNNY, CLOUDY, RAIN, SNOW, WIND, FOG, DAY, NIGHT, INDOOR)
+
+    fun isPreset(tag: String): Boolean = PRESETS.any { it.equals(tag, ignoreCase = true) }
 
     /** 单个标签的最大长度：防手滑粘贴整段文本把清单撑爆（跨进程 Bundle 有 1MB 上限） */
     const val MAX_LEN = 24

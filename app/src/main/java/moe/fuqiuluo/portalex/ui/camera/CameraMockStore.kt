@@ -225,11 +225,13 @@ object CameraMockStore {
         points(context).forEach { p -> p.videos.forEach { v -> v.tags.forEach { custom.add(it) } } }
         val hidden = context.cameraMockHiddenTags
         return (CameraTags.PRESETS + custom.filterNot { tag -> CameraTags.PRESETS.any { it.equals(tag, true) } })
-            .filterNot { tag -> hidden.any { it.equals(tag, true) } }
+            .filterNot { tag -> !CameraTags.isPreset(tag) && hidden.any { it.equals(tag, true) } }
     }
 
     fun removeTags(context: Context, tags: Collection<String>): Int {
-        val remove = tags.map { it.trim() }.filter { it.isNotEmpty() }
+        // 预设标签是设备随附的固定词表，删除请求直接忽略（UI 也会拒绝选中）。
+        val remove = tags.map { it.trim() }
+            .filter { it.isNotEmpty() && !CameraTags.isPreset(it) }
         if (remove.isEmpty()) return 0
         val hidden = context.cameraMockHiddenTags.toMutableSet().apply { addAll(remove) }
         context.cameraMockHiddenTags = hidden
