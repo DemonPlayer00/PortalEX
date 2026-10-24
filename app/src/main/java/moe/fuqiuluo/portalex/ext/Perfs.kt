@@ -94,6 +94,13 @@ var Context.minSatelliteCount: Int
         putInt("minSatelliteCount", value)
     }
 
+/** 卫星数波动（标准差，颗）。Calibration 采集后写入；0 = 固定为 minSatelliteCount。 */
+var Context.satelliteJitter: Float
+    get() = sharedPrefs.getFloat("satelliteJitter", 0f)
+    set(value) = sharedPrefs.edit {
+        putFloat("satelliteJitter", value)
+    }
+
 var Context.mapType: Int
     get() = sharedPrefs.getInt("mapType", BaiduMap.MAP_TYPE_NORMAL)
     set(value) = sharedPrefs.edit {

@@ -223,6 +223,9 @@ internal object LocConfig {
     /** fused 延迟（毫秒）；0 = 使用 40~180ms 的现实随机延迟。 */
     @Volatile var fusedDelayMs = 0L
 
+    /** 模拟卫星数波动（标准差/颗）；0 = 固定为 minSatellites。 */
+    @Volatile var satelliteJitter = 0.0
+
     /** GNSS C/N0 目标；0 = 使用内置 24~45 dB-Hz 随机模型。 */
     @Volatile var gnssMaxCn0 = 0.0
     @Volatile var gnssMeanCn0 = 0.0
