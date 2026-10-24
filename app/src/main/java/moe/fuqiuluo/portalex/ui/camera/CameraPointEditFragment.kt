@@ -81,6 +81,11 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     private var mapReady = false
     private var routeOverlay: Overlay? = null
     private var initialFitDone = false
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var routeExecutor = Executors.newSingleThreadExecutor()
+    private var loadToken = 0
+    private var routeDrawToken = 0
+    private var fitToken = 0
 
     /**
      * 摄像头权限用**经典 requestPermissions + onRequestPermissionsResult**，
@@ -196,6 +201,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        if (routeExecutor.isShutdown) routeExecutor = Executors.newSingleThreadExecutor()
         _binding = FragmentCameraPointEditBinding.inflate(inflater, container, false)
 
         with(baiduMapViewModel) {
@@ -275,9 +281,12 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 ) { startRecording() }
             )
         )
-        if (working == null) loadPoint()
-        refreshVideos()
-        fitRouteToMap()
+        if (working == null) {
+            loadPoint()
+        } else {
+            refreshVideos()
+            fitRouteToMap()
+        }
         updateCoordReadout()
     }
 
@@ -299,6 +308,10 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     }
 
     override fun onDestroyView() {
+        loadToken++
+        routeDrawToken++
+        fitToken++
+        routeExecutor.shutdownNow()
         super.onDestroyView()
         _binding?.bmapView?.onDestroy()
         _binding = null
@@ -328,65 +341,95 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         binding.cameraCoordReadout.text = "路线中心 ${CameraMockFormat.coord(coord.first, coord.second)}"
     }
 
+    /**
+     * 路线 JSON 解码放在后台；点位多时不要在点击瞬间阻塞主线程。
+     * 结果回到主线程后再设置编辑副本、刷新视频和地图。
+     */
     private fun loadPoint() {
-        val ctx = requireContext()
+        val ctx = requireContext().applicationContext
         val id = arguments?.getString(CameraMockFragment.ARG_POINT_ID)
-        val existing = id?.let { CameraMockStore.point(ctx, it) }
-        if (existing != null) {
-            working = existing
-            binding.cameraPointNameInput.setText(existing.name)
-            mapReady = true
-            drawRoute()
-            fitRouteToMap()
-        } else {
-            val center = crosshairWgs84() ?: Pair(39.908722, 116.397499)
-            working = CameraMockStore.newPoint("", center.first, center.second)
+        val token = ++loadToken
+        routeExecutor.execute {
+            val existing = id?.let { CameraMockStore.point(ctx, it) }
+            main.post {
+                if (token != loadToken || !uiAlive()) return@post
+                if (existing != null) {
+                    working = existing
+                    binding.cameraPointNameInput.setText(existing.name)
+                    mapReady = true
+                } else {
+                    val center = crosshairWgs84() ?: Pair(39.908722, 116.397499)
+                    working = CameraMockStore.newPoint("", center.first, center.second)
+                }
+                updateCoordReadout()
+                refreshVideos()
+                fitRouteToMap()
+            }
         }
-        updateCoordReadout()
     }
 
-    /** 路线预览：把当前点下所有视频的轨迹连成一条蓝色折线（不再画准星）。 */
-    private fun drawRoute() {
-        val map = runCatching { baiduMapViewModel.baiduMap }.getOrNull() ?: return
-        routeOverlay?.let { runCatching { it.remove() } }
-        routeOverlay = null
-        val raw = working?.videos.orEmpty()
+    private data class RoutePreview(
+        val single: Pair<Double, Double>?,
+        val points: List<LatLng>,
+    )
+
+    private fun buildRoutePreview(point: CameraVideoPoint): RoutePreview {
+        val raw = point.videos.orEmpty()
             .flatMap { it.track }
             .sortedBy { it.tMs }
-        // 室内静止时百度可能连续返回同一坐标：12 个点全相同。
-        // 去重后不足 2 个点就没有“路线形状”，只画一个蓝色定位点，避免零长折线。
+        // 室内静止时百度可能连续返回同一坐标：去重后再决定折线/单点。
         val distinct = raw.distinctBy { "%.6f,%.6f".format(it.lat, it.lon) }
         if (distinct.size < 2) {
-            val point = raw.firstOrNull() ?: working?.let {
-                CameraVideoTrackPoint(0L, it.lat, it.lon)
-            } ?: return
-            routeOverlay = runCatching {
-                map.addOverlay(
-                    MarkerOptions()
-                        .position((point.lat to point.lon).gcj02)
-                        .icon(BitmapDescriptorFactory.fromResource(R.drawable.icon_selected_location_16))
-                )
-            }.getOrNull()
-            return
+            val single = distinct.firstOrNull() ?: CameraVideoTrackPoint(0L, point.lat, point.lon)
+            return RoutePreview((single.lat to single.lon), emptyList())
         }
-        val points = distinct.map { (it.lat to it.lon).gcj02 }
-        val options = PolylineOptions()
-            .points(points)
-            .width(8)
-            .color(0xFF1E88E5.toInt())
-            .zIndex(2)
-        routeOverlay = runCatching { map.addOverlay(options) }.getOrNull()
+        return RoutePreview(null, distinct.map { (it.lat to it.lon).gcj02 })
     }
 
     /**
-     * 路线预览初始视角：按轨迹实际跨度自动选择缩放级别，让路线/单点都清晰可见。
-     *  - 单点或静止轨迹：19 级近景 + 点标记；
-     *  - 短距离室内路线：按跨度 19/18/17 级；
-     *  - 长路线：用 LatLngBounds 适配整条路线形状和总体位置。
+     * 折线/标记的数据准备在后台线程完成，主线程只负责 addOverlay/remove。
      */
-    private fun fitRouteToMap() {
-        val map = runCatching { baiduMapViewModel.baiduMap }.getOrNull() ?: return
+    private fun drawRoute() {
+        if (!uiAlive()) return
         val point = working ?: return
+        val map = runCatching { baiduMapViewModel.baiduMap }.getOrNull() ?: return
+        val token = ++routeDrawToken
+        val icon = BitmapDescriptorFactory.fromResource(R.drawable.icon_selected_location_16)
+        routeExecutor.execute {
+            val preview = runCatching { buildRoutePreview(point) }.getOrNull()
+            main.post {
+                if (token != routeDrawToken || !uiAlive()) return@post
+                routeOverlay?.let { runCatching { it.remove() } }
+                routeOverlay = null
+                val p = preview ?: return@post
+                routeOverlay = runCatching {
+                    if (p.single != null) {
+                        map.addOverlay(
+                            MarkerOptions()
+                                .position((p.single.first to p.single.second).gcj02)
+                                .icon(icon)
+                        )
+                    } else {
+                        map.addOverlay(
+                            PolylineOptions()
+                                .points(p.points)
+                                .width(8)
+                                .color(0xFF1E88E5.toInt())
+                                .zIndex(2)
+                        )
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+
+    private data class FitPlan(
+        val center: LatLng,
+        val zoom: Float?,
+        val bounds: LatLngBounds?,
+    )
+
+    private fun buildFitPlan(point: CameraVideoPoint): FitPlan? {
         val raw = point.videos.orEmpty()
             .flatMap { it.track }
             .sortedBy { it.tMs }
@@ -395,20 +438,13 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         val centerLat = (distinct.minOf { it.lat } + distinct.maxOf { it.lat }) / 2.0
         val centerLon = (distinct.minOf { it.lon } + distinct.maxOf { it.lon }) / 2.0
         val center = (centerLat to centerLon).gcj02
-
-        if (distinct.size < 2) {
-            runCatching {
-                map.setMapStatus(MapStatusUpdateFactory.newLatLngZoom(center, 19f))
-            }
-            initialFitDone = true
-            return
-        }
-
-        val span = distinct.maxOf { a ->
-            distinct.maxOf { b ->
-                WorldMath.haversine(a.lat, a.lon, b.lat, b.lon)
-            }
-        }
+        if (distinct.size < 2) return FitPlan(center, 19f, null)
+        // 用外接矩形对角线代替 O(n²) 全点对最大距离；大路线不再在 UI 线程做平方级计算。
+        val minLat = distinct.minOf { it.lat }
+        val maxLat = distinct.maxOf { it.lat }
+        val minLon = distinct.minOf { it.lon }
+        val maxLon = distinct.maxOf { it.lon }
+        val span = WorldMath.haversine(minLat, minLon, maxLat, maxLon)
         val zoom = when {
             span < 8 -> 19f
             span < 25 -> 18f
@@ -417,26 +453,35 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             span < 400 -> 15f
             else -> null
         }
-        if (zoom != null) {
-            runCatching {
-                map.setMapStatus(MapStatusUpdateFactory.newLatLngZoom(center, zoom))
-            }
-            initialFitDone = true
-            return
-        }
-
-        // 长路线：bounds 保证完整形状，视野由 SDK 按地图 View 尺寸计算。
-        val route = distinct.map { (it.lat to it.lon).gcj02 }
+        if (zoom != null) return FitPlan(center, zoom, null)
         val builder = LatLngBounds.Builder()
-        route.forEach { builder.include(it) }
-        val bounds = runCatching { builder.build() }.getOrNull()
-        if (bounds != null) {
-            val w = binding.bmapView.width.takeIf { it > 0 } ?: 1080
-            val h = binding.bmapView.height.takeIf { it > 0 } ?: 720
-            runCatching {
-                map.setMapStatus(MapStatusUpdateFactory.newLatLngBounds(bounds, w, h))
+        distinct.forEach { builder.include((it.lat to it.lon).gcj02) }
+        return FitPlan(center, null, runCatching { builder.build() }.getOrNull())
+    }
+
+    /**
+     * 路线预览初始视角：数据计算在后台，主线程只提交 MapStatus。
+     */
+    private fun fitRouteToMap() {
+        if (!uiAlive()) return
+        val map = runCatching { baiduMapViewModel.baiduMap }.getOrNull() ?: return
+        val point = working ?: return
+        val token = ++fitToken
+        val w = binding.bmapView.width.takeIf { it > 0 } ?: 1080
+        val h = binding.bmapView.height.takeIf { it > 0 } ?: 720
+        routeExecutor.execute {
+            val plan = runCatching { buildFitPlan(point) }.getOrNull()
+            main.post {
+                if (token != fitToken || !uiAlive() || plan == null) return@post
+                runCatching {
+                    if (plan.zoom != null) {
+                        map.setMapStatus(MapStatusUpdateFactory.newLatLngZoom(plan.center, plan.zoom))
+                    } else if (plan.bounds != null) {
+                        map.setMapStatus(MapStatusUpdateFactory.newLatLngBounds(plan.bounds, w, h))
+                    }
+                }
+                initialFitDone = true
             }
-            initialFitDone = true
         }
     }
 
