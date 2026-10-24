@@ -2,6 +2,8 @@ package moe.fuqiuluo.xposed.hooks
 
 import android.content.Intent
 import android.provider.Settings
+import android.os.Binder
+import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Hooks
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.XposedHelpers
@@ -39,6 +41,29 @@ object DeveloperIntentGuard {
         args.filterIsInstance<String>()
             .firstOrNull { it.contains('.') && !it.startsWith("android.") }
 
+    private fun field(obj: Any?, name: String): Any? = runCatching {
+        val f = obj!!.javaClass.getDeclaredField(name)
+        f.isAccessible = true
+        f.get(obj)
+    }.getOrNull()
+
+    private fun callerPackageFrom(obj: Any?, startIntent: Intent): String? {
+        val req = field(obj, "mRequest") ?: obj
+        var pkg = field(req, "callingPackage") as? String
+        if (pkg.isNullOrBlank()) pkg = field(req, "mCallingPackage") as? String
+        if (!pkg.isNullOrBlank()) return pkg
+        return BinderUtils.getUidPackageNames(uid = Binder.getCallingUid())?.firstOrNull()
+    }
+
+    private fun checkAndBlock(obj: Any?, intent: Intent): Boolean {
+        if (!enabled || !isDeveloperIntent(intent)) return false
+        val pkg = callerPackageFrom(obj, intent) ?: return false
+        Logger.info("DeveloperIntentGuard: candidate pkg=$pkg selected=${pkg in packages}")
+        if (pkg !in packages) return false
+        Logger.info("DeveloperIntentGuard: blocked $pkg -> ${intent.action ?: intent.component}")
+        return true
+    }
+
     fun install(classLoader: ClassLoader) {
         Logger.info("DeveloperIntentGuard: install called (installed=$installed)")
         val cls = XposedHelpers.findClassIfExists(
@@ -60,6 +85,18 @@ object DeveloperIntentGuard {
                 Logger.info("DeveloperIntentGuard: blocked $pkg -> ${intent.action ?: intent.component}")
                 result = 0
             }).size
+        }
+        val starter = XposedHelpers.findClassIfExists(
+            "com.android.server.wm.ActivityStarter", classLoader
+        )
+        if (starter != null) {
+            for (m in listOf("executeRequest", "execute")) {
+                hooks += Hooks.hookAllMethods(starter, m, beforeHook {
+                    val req = field(thisObject, "mRequest") ?: thisObject
+                    val intent = field(req, "intent") as? Intent
+                    if (intent != null && checkAndBlock(thisObject, intent)) result = 0
+                }).size
+            }
         }
         if (hooks > 0) installed = true
         Logger.info("DeveloperIntentGuard: installed hooks=$hooks installed=$installed")
