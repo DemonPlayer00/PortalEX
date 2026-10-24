@@ -73,7 +73,12 @@ object DevIntentGuardDialog {
             val q = search.text?.toString()?.trim()?.lowercase().orEmpty()
             list.removeAllViews()
             val on = switch.isChecked
-            for (app in all) {
+            // 已勾选的应用始终置顶；同一组内仍按名称排序，搜索只缩小候选集。
+            val ordered = all.sortedWith(
+                compareByDescending<AppEntry> { it.pkg in selected }
+                    .thenBy { it.label.lowercase() }
+            )
+            for (app in ordered) {
                 if (q.isNotEmpty() &&
                     !app.label.lowercase().contains(q) &&
                     !app.pkg.lowercase().contains(q)
@@ -87,6 +92,8 @@ object DevIntentGuardDialog {
                         if (checked) selected += app.pkg else selected -= app.pkg
                         context.devIntentGuardPackages = selected
                         push()
+                        // 勾选/取消后重新排序，让选中的应用置顶。
+                        render()
                     }
                 })
             }
