@@ -29,6 +29,7 @@ import moe.fuqiuluo.portalex.ext.gpsIntervalMeasured
 import moe.fuqiuluo.portalex.ext.maxCn0Measured
 import moe.fuqiuluo.portalex.ext.meanCn0Measured
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
+import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.satellitesMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
@@ -130,6 +131,11 @@ class CalibrationFragment : Fragment() {
                     ctx.speedAmplitude = v
                 }
             },
+            Item(getString(R.string.calibration_satellite_count), getString(R.string.calibration_satellite_count_desc)) {
+                editScalar("模拟卫星数", ctx.minSatelliteCount.toDouble(), 0.0, FakeLoc.MAX_SATELLITES.toDouble()) { v ->
+                    ctx.minSatelliteCount = v.toInt()
+                }
+            },
         )
         items.forEach { item ->
             val row = inflater.inflate(R.layout.layout_noise_row, list, false)
@@ -185,6 +191,7 @@ class CalibrationFragment : Fragment() {
         fluctuationValues.getOrNull(0)?.text = "%.2f米".format(ctx.accuracy)
         fluctuationValues.getOrNull(1)?.text = "%.2f米".format(ctx.altitudeJitter)
         fluctuationValues.getOrNull(2)?.text = "%.2f米/秒".format(ctx.speedAmplitude)
+        fluctuationValues.getOrNull(3)?.text = "%d颗".format(ctx.minSatelliteCount)
         gpsAccuracyValue?.text = ctx.gpsAccuracyMeasured.let {
             if (it > 0f) "%.2f米".format(it) else "未采集"
         }
@@ -229,7 +236,7 @@ class CalibrationFragment : Fragment() {
         result.satellites?.let {
             ctx.satellitesMeasured = it
             // 卫星数中位数 -> GNSS 生成器最小卫星数
-            ctx.minSatelliteCount = it.toInt().coerceIn(0, 35)
+            ctx.minSatelliteCount = it.toInt().coerceIn(0, FakeLoc.MAX_SATELLITES)
         }
         result.maxCn0?.let { ctx.maxCn0Measured = it }
         result.meanCn0?.let { ctx.meanCn0Measured = it }
