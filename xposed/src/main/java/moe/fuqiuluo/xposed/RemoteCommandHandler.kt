@@ -8,7 +8,6 @@ import android.os.Parcel
 import android.os.Process
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
-import moe.fuqiuluo.xposed.hooks.DeveloperIntentGuard
 import moe.fuqiuluo.xposed.hooks.MotionClock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
@@ -127,14 +126,6 @@ object RemoteCommandHandler {
         }
 
         when (commandId) {
-            Cmd.SET_DEV_INTENT_GUARD -> {
-                val list = rely.getStringArrayList(Key.DEV_INTENT_GUARD_PACKAGES) ?: arrayListOf()
-                DeveloperIntentGuard.update(
-                    rely.getBoolean(Key.DEV_INTENT_GUARD_ENABLED, false),
-                    list.filter { it.isNotBlank() }.toSet()
-                )
-                return true
-            }
             Cmd.SET_PROXY -> {
                 Logger.info("SubProxyBinder: ${rely.getBinder(Key.PROXY_BINDER)} from ${BinderUtils.getUidPackageNames()}!")
                 rely.getBinder(Key.PROXY_BINDER)?.let {
