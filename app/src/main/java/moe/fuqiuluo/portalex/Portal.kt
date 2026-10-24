@@ -5,7 +5,11 @@ import android.content.Context
 import com.baidu.location.LocationClient
 import com.baidu.mapapi.CoordType
 import com.baidu.mapapi.SDKInitializer
+import android.location.LocationManager
+import moe.fuqiuluo.portalex.ext.devIntentGuardEnabled
+import moe.fuqiuluo.portalex.ext.devIntentGuardPackages
 import moe.fuqiuluo.portalex.ext.frameRecord
+import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.PortalLocationClient
 
 class Portal: Application() {
@@ -26,6 +30,18 @@ class Portal: Application() {
         if (applicationContext.frameRecord) {
             PortalLocationClient.startDebugRecording(applicationContext)
         }
+
+        // system_server 的远程偏好是启动时快照，进程重启后不会拿到 App 后来写入的
+        // 开发者 Intent 配置。App 每次启动主动重放一次，保证重启后配置仍然生效。
+        Thread({
+            val lm = getSystemService(LocationManager::class.java) ?: return@Thread
+            MockServiceHelper.tryInitService(lm)
+            MockServiceHelper.setDevIntentGuard(
+                lm,
+                applicationContext.devIntentGuardEnabled,
+                applicationContext.devIntentGuardPackages,
+            )
+        }, "PortalDevIntentConfig").start()
     }
 
     companion object {
