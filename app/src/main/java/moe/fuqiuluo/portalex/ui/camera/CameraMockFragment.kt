@@ -672,7 +672,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val selected = context.cameraMockTagFilter
         rebuildingFilter = true
         group.removeAllViews()
-        CameraMockStore.allTags(context).forEach { tag ->
+        CameraMockStore.allTags(context, lastPoints).forEach { tag ->
             val chip = LayoutInflater.from(context)
                 .inflate(R.layout.item_camera_tag_chip, group, false) as Chip
             chip.text = tag
