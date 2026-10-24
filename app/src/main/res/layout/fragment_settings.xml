@@ -410,7 +410,7 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="持续强力回推位置，缓解被拉回；开启后可能发热\n重启模拟生效"
+                        android:text="按需强力回推位置，缓解被拉回；回推间隔受「最大位置上报间隔」限制。开启后可能发热\n重启模拟生效"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
