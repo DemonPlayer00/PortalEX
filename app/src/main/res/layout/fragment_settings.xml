@@ -57,7 +57,7 @@
             </androidx.constraintlayout.widget.ConstraintLayout>
 
             <LinearLayout
-                android:id="@+id/dev_override_layout"
+                android:id="@+id/developer_mode_layout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
@@ -71,16 +71,16 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="覆写开发者模式为否"
+                        android:text="开发者模式"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="关闭开发者选项入口；尽量保留 USB 调试等已有设置"
+                        android:text="显示当前状态；关闭入口时尽量保留 USB 调试等已有设置"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/dev_override_switch"
+                    android:id="@+id/developer_mode_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_vertical" />

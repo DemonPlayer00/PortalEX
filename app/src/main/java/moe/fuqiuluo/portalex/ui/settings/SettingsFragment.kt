@@ -105,19 +105,19 @@ class SettingsFragment : Fragment() {
         b.dfusedDesc.text = desc ?: getString(R.string.dfused_desc)
     }
 
-    private fun applyDevModeOverride(disableDeveloperMode: Boolean) {
+    private fun setDeveloperMode(enabled: Boolean) {
         val ctx = context ?: return
         val resolver = ctx.contentResolver
         val adbEnabled = runCatching {
             Settings.Global.getInt(resolver, Settings.Global.ADB_ENABLED, 1)
         }.getOrDefault(1)
-        // 只改开发者模式总开关，不重置开发者选项里的其它设置；
-        // 关闭后再把 adb_enabled 写回，尽量保住 MI6 的 USB 调试。
-        val cmd = if (disableDeveloperMode) {
+        // 开关语义就是系统开发者模式本身；关闭后再把 adb_enabled 写回，
+        // 尽量保住 MI6 的 USB 调试等已有设置。
+        val cmd = if (enabled) {
+            "settings put global development_settings_enabled 1"
+        } else {
             "settings put global development_settings_enabled 0; " +
                 "settings put global adb_enabled $adbEnabled"
-        } else {
-            "settings put global development_settings_enabled 1"
         }
         viewLifecycleOwner.lifecycleScope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -127,10 +127,7 @@ class SettingsFragment : Fragment() {
             }
             if (_binding == null) return@launch
             if (ok) {
-                showToast(
-                    if (disableDeveloperMode) "开发者模式入口已关闭"
-                    else "开发者模式入口已恢复"
-                )
+                showToast(if (enabled) "开发者模式已开启" else "开发者模式已关闭")
             } else {
                 // 命令失败就回到真实值，不制造假成功
                 val actual = runCatching {
@@ -138,12 +135,12 @@ class SettingsFragment : Fragment() {
                         resolver,
                         Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
                         1
-                    ) == 0
-                }.getOrDefault(false)
-                binding.devOverrideSwitch.setOnCheckedChangeListener(null)
-                binding.devOverrideSwitch.isChecked = actual
-                binding.devOverrideSwitch.setOnCheckedChangeListener { _, checked ->
-                    applyDevModeOverride(checked)
+                    ) != 0
+                }.getOrDefault(true)
+                binding.developerModeSwitch.setOnCheckedChangeListener(null)
+                binding.developerModeSwitch.isChecked = actual
+                binding.developerModeSwitch.setOnCheckedChangeListener { _, checked ->
+                    setDeveloperMode(checked)
                 }
                 showToast("修改失败：su 不可用或系统拒绝")
             }
@@ -192,17 +189,17 @@ class SettingsFragment : Fragment() {
                 showToast("su 路径已更新")
             }
         }
-        // 只有一个开发者模式覆写开关：直接改全局值，不按应用拦截。
-        val devOverride = runCatching {
+        // 只有一个开发者模式开关：开关状态直接反映系统当前值。
+        val developerModeEnabled = runCatching {
             Settings.Global.getInt(
                 requireContext().contentResolver,
                 Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
                 1
-            ) == 0
-        }.getOrDefault(false)
-        binding.devOverrideSwitch.isChecked = devOverride
-        binding.devOverrideSwitch.setOnCheckedChangeListener { _, checked ->
-            applyDevModeOverride(checked)
+            ) != 0
+        }.getOrDefault(true)
+        binding.developerModeSwitch.isChecked = developerModeEnabled
+        binding.developerModeSwitch.setOnCheckedChangeListener { _, checked ->
+            setDeveloperMode(checked)
         }
 
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
