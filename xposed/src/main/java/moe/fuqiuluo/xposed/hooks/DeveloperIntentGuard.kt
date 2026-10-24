@@ -184,18 +184,29 @@ object DeveloperIntentGuard {
             }
         }
         Logger.info("DeveloperIntentGuard: Starter stage hooks=$hooks")
-        val settingsProvider = XposedHelpers.findClassIfExists(
-            "com.android.providers.settings.SettingsProvider", classLoader
-        ) ?: runCatching {
-            // SettingsProvider 在自己的 APK 里，system_server 默认 classloader 看不到。
-            val apkLoader = PathClassLoader(
+        val providerLoaders = linkedSetOf<ClassLoader>()
+        providerLoaders += classLoader
+        Thread.currentThread().contextClassLoader?.let { providerLoaders += it }
+        runCatching {
+            providerLoaders += PathClassLoader(
                 "/system/priv-app/SettingsProvider/SettingsProvider.apk",
-                classLoader
+                ClassLoader.getSystemClassLoader()
             )
-            XposedHelpers.findClassIfExists(
-                "com.android.providers.settings.SettingsProvider", apkLoader
+        }
+        runCatching {
+            providerLoaders += PathClassLoader(
+                "/system/priv-app/SettingsProvider/SettingsProvider.apk",
+                null
             )
-        }.getOrNull()
+        }
+        providerLoaders += ClassLoader.getSystemClassLoader()
+        val settingsProvider = providerLoaders.asSequence().mapNotNull { loader ->
+            val cls = XposedHelpers.findClassIfExists(
+                "com.android.providers.settings.SettingsProvider", loader
+            )
+            Logger.info("DeveloperIntentGuard: SettingsProvider try loader=${loader.javaClass.name} found=${cls != null}")
+            cls
+        }.firstOrNull()
         Logger.info("DeveloperIntentGuard: SettingsProvider found=${settingsProvider != null}")
         if (settingsProvider != null) {
             Hooks.hookAllMethods(settingsProvider, "query", afterHook {
