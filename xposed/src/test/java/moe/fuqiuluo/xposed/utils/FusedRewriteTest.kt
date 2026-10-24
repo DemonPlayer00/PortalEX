@@ -21,6 +21,22 @@ class FusedRewriteTest {
     }
 
     @Test
+    fun rewriteRequiresAnActiveLocationSession() {
+        val oldEnable = FakeLoc.enable
+        val oldRewrite = FusedRewrite.enabled
+        try {
+            FusedRewrite.enabled = true
+            FakeLoc.enable = false
+            assertFalse(FusedRewrite.isActive())
+            FakeLoc.enable = true
+            assertTrue(FusedRewrite.isActive())
+        } finally {
+            FakeLoc.enable = oldEnable
+            FusedRewrite.enabled = oldRewrite
+        }
+    }
+
+    @Test
     fun fusedRewriteIsEnabledByDefaultAndCanBeDisabled() {
         val old = FusedRewrite.enabled
         try {
