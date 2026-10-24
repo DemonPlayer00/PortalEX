@@ -53,7 +53,16 @@ object DeveloperIntentGuard {
     }.getOrNull()
 
     private fun callerPackageFrom(obj: Any?, startIntent: Intent): String? {
+        // OnePlus/ColorOS 的 PendingIntent 路径：ActivityTaskManager 的 callingUid 是 1000，
+        // 但 Intent 内保存了原始创建者 uid（日志里的 mCallingUid=10468）。优先用它。
+        val intentUid = field(startIntent, "mCallingUid") as? Int
+        if (intentUid != null && intentUid >= 0) {
+            BinderUtils.getUidPackageNames(uid = intentUid)?.firstOrNull()?.let { return it }
+        }
         val req = field(obj, "mRequest") ?: obj
+        (field(req, "callingUid") as? Int)?.let { uid ->
+            BinderUtils.getUidPackageNames(uid = uid)?.firstOrNull()?.let { return it }
+        }
         var pkg = field(req, "callingPackage") as? String
         if (pkg.isNullOrBlank()) pkg = field(req, "mCallingPackage") as? String
         if (!pkg.isNullOrBlank()) return pkg
