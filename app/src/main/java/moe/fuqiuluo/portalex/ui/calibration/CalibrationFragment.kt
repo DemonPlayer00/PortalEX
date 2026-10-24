@@ -19,7 +19,10 @@ import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.android.widget.SensorTraceChart
 import moe.fuqiuluo.portalex.databinding.FragmentCalibrationBinding
+import moe.fuqiuluo.portalex.ext.accuracy
+import moe.fuqiuluo.portalex.ext.altitudeJitter
 import moe.fuqiuluo.portalex.ext.sensorNoise
+import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.service.ConfigSync
@@ -49,6 +52,9 @@ class CalibrationFragment : Fragment() {
     /** 行 → 该行数值显示控件（顺序与 [SensorNoise.ITEMS] 一致） */
     private val rowValues = mutableListOf<TextView>()
 
+    /** 定位波动三项的数值显示（顺序：精度 / 海拔 / 速度）。 */
+    private val fluctuationValues = mutableListOf<TextView>()
+
     /** 一次校准的令牌：作废的采集（用户取消/页面销毁）不许回写 */
     private var runToken = 0
 
@@ -59,7 +65,9 @@ class CalibrationFragment : Fragment() {
     ): View {
         _binding = FragmentCalibrationBinding.inflate(inflater, container, false)
         buildRows()
+        buildFluctuationRows()
         renderValues(requireContext().sensorNoise)
+        renderFluctuation()
         binding.calibStatus.text = requireContext().sensorNoiseReport
         binding.calibRun.setOnClickListener { runCalibration() }
         binding.calibReset.setOnClickListener { confirmReset() }
@@ -80,6 +88,59 @@ class CalibrationFragment : Fragment() {
             rowValues += value
             row.setOnClickListener { editRow(index) }
             list.addView(row)
+        }
+    }
+
+    private fun buildFluctuationRows() {
+        val ctx = requireContext()
+        val inflater = LayoutInflater.from(ctx)
+        val list: LinearLayout = binding.calibFluctuationList
+        data class Item(val title: String, val desc: String, val action: () -> Unit)
+        val items = listOf(
+            Item(getString(R.string.accuracy), getString(R.string.calibration_accuracy_desc)) {
+                editScalar("定位精度", ctx.accuracy.toDouble(), 0.0, 1000.0) { v ->
+                    ctx.accuracy = v.toFloat()
+                }
+            },
+            Item(getString(R.string.calibration_altitude_jitter), getString(R.string.calibration_altitude_jitter_desc)) {
+                editScalar("海拔波动", ctx.altitudeJitter, 0.0, 100.0) { v ->
+                    ctx.altitudeJitter = v
+                }
+            },
+            Item(getString(R.string.calibration_speed_amplitude), getString(R.string.calibration_speed_amplitude_desc)) {
+                editScalar("速度波动", ctx.speedAmplitude, 0.0, 100.0) { v ->
+                    ctx.speedAmplitude = v
+                }
+            },
+        )
+        items.forEach { item ->
+            val row = inflater.inflate(R.layout.layout_noise_row, list, false)
+            row.findViewById<TextView>(R.id.noise_title).text = item.title
+            row.findViewById<TextView>(R.id.noise_desc).text = item.desc
+            val value = row.findViewById<TextView>(R.id.noise_value)
+            fluctuationValues += value
+            row.setOnClickListener { item.action() }
+            list.addView(row)
+        }
+    }
+
+    private fun renderFluctuation() {
+        val ctx = requireContext()
+        fluctuationValues.getOrNull(0)?.text = "%.2f米".format(ctx.accuracy)
+        fluctuationValues.getOrNull(1)?.text = "%.2f米".format(ctx.altitudeJitter)
+        fluctuationValues.getOrNull(2)?.text = "%.2f米/秒".format(ctx.speedAmplitude)
+    }
+
+    private fun editScalar(title: String, current: Double, min: Double, max: Double, save: (Double) -> Unit) {
+        showInputDialog(title, "%.3f".format(current)) { text ->
+            val value = text.toDoubleOrNull()
+            if (value == null || value < min || value > max) {
+                showToast("请输入 $min ~ $max 之间的数值")
+                return@showInputDialog
+            }
+            save(value)
+            renderFluctuation()
+            pushConfig()
         }
     }
 
@@ -338,6 +399,7 @@ class CalibrationFragment : Fragment() {
         // 页面销毁即作废在飞的采集：回写会碰到已释放的 binding
         runToken++
         rowValues.clear()
+        fluctuationValues.clear()
         _binding = null
     }
 }

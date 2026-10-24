@@ -159,6 +159,11 @@ object FakeLoc {
         get() = LocConfig.accuracy
         set(value) { LocConfig.accuracy = value }
 
+    /** 海拔波动幅度（米）；同时作为垂直精度数据源。 */
+    var altitudeJitter: Double
+        get() = LocConfig.altitudeJitter
+        set(value) { LocConfig.altitudeJitter = value }
+
     // ===================== 世界状态门面（状态与生成器全在 [VirtualWorld]）=====================
     // 同样的约定：对外名字不变，这里只转发；状态、公式与完整文档都在 [VirtualWorld]。
 

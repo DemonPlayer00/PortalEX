@@ -17,7 +17,7 @@ class FusedRewriteTest {
         assertTrue(o.bearing.isNaN())
         assertTrue(o.altitude.isNaN())
         assertEquals(0L, o.locationAgeMs)
-        assertTrue(o.keepExtras)
+        assertFalse(o.keepExtras)
     }
 
     @Test

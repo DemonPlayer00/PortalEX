@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.os.Bundle as AndroidBundle
 import android.util.Log
 import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.altitudeJitter
+import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.cadenceMock
 import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.cadenceScale
@@ -78,7 +80,9 @@ object ConfigSync {
      */
     fun mirrorLocal(context: Context) {
         FakeLoc.altitude = context.altitude
+        FakeLoc.altitudeJitter = context.altitudeJitter
         FakeLoc.speed = context.speed
+        FakeLoc.speedAmplitude = context.speedAmplitude
         FakeLoc.enableDebugLog = context.debug
         FakeLoc.fusedMode = context.fusedMode
         FakeLoc.needDowngradeToCdma = context.needDowngradeToCdma
@@ -107,7 +111,9 @@ object ConfigSync {
         val rely = Bundle()
         rely.putString(Key.COMMAND_ID, Cmd.PUT_CONFIG)
         rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
+        rely.putDouble(Key.ALTITUDE_JITTER, FakeLoc.altitudeJitter)
         rely.putDouble(Key.SPEED, FakeLoc.speed)
+        rely.putDouble(Key.SPEED_AMPLITUDE, FakeLoc.speedAmplitude)
         rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
         rely.putInt(Key.FUSED_MODE, FakeLoc.fusedMode)
         // 旧模块只认布尔键：把三态映射过去（拒绝=true；放行/伪装=false ⇒ 旧模块按"伪装"处理）
