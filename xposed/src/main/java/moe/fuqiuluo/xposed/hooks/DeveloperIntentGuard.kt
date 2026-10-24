@@ -33,7 +33,10 @@ object DeveloperIntentGuard {
         Logger.info("DeveloperIntentGuard: enabled=$enabled packages=${this.packages.size}")
         // 配置到达时兜底安装：系统启动阶段若类加载顺序不满足，仍能在真正使用时装上。
         if (!installed) {
-            val cl = Thread.currentThread().contextClassLoader
+            val cl = runCatching {
+                Class.forName("com.android.server.am.ActivityManagerService").classLoader
+            }.getOrNull()
+                ?: Thread.currentThread().contextClassLoader
                 ?: DeveloperIntentGuard::class.java.classLoader
             Logger.info("DeveloperIntentGuard: retry install cl=${cl?.javaClass?.name}")
             install(cl)
