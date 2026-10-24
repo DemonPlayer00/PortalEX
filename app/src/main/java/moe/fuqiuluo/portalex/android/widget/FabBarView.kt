@@ -17,6 +17,7 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.Interpolator
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import androidx.core.content.ContextCompat
 import com.google.android.material.color.MaterialColors
 import moe.fuqiuluo.portalex.R
@@ -52,6 +53,11 @@ class FabBarView @JvmOverloads constructor(
     /** 功能按钮容器（切换功能集时动态重建） */
     private val actionsContainer: LinearLayout
 
+    /** 导入等长任务期间替换展开按钮的转圈指示器。 */
+    private val loadingView: ProgressBar
+
+    private var loading = false
+
     private var mOpened = false
 
     /** outline 裁剪宽度（收起 = 60dp 正圆，展开 = 容器全宽） */
@@ -71,6 +77,14 @@ class FabBarView @JvmOverloads constructor(
             setOnClickListener { toggle() }
         }
         addView(expandButton)
+
+        loadingView = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
+            layoutParams = LayoutParams(dp(48), dp(48))
+            isIndeterminate = true
+            visibility = View.GONE
+            indeterminateTintList = iconTintList()
+        }
+        addView(loadingView)
 
         actionsContainer = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -94,6 +108,29 @@ class FabBarView @JvmOverloads constructor(
 
     /** 收起态可见外廓的边长（60dp 正方形）。页面做避让时用它算按钮占多大 */
     val collapsedSize: Int get() = collapsedWidth()
+
+    /**
+     * 导入/长任务期间把左下角胶囊主按钮替换成转圈；结束后恢复原功能按钮。
+     * 只影响视觉与交互，不改当前页面的 actions 集合。
+     */
+    fun setLoading(value: Boolean) {
+        if (loading == value) return
+        loading = value
+        if (value) {
+            close()
+            expandButton.visibility = View.GONE
+            actionsContainer.visibility = View.GONE
+            loadingView.visibility = View.VISIBLE
+            contentDescription = "正在处理"
+        } else {
+            loadingView.visibility = View.GONE
+            expandButton.visibility = View.VISIBLE
+            actionsContainer.visibility = View.VISIBLE
+            contentDescription = null
+            resetClosed()
+        }
+        requestLayout()
+    }
 
     /**
      * 统一切换功能集：空集 = 隐藏胶囊；非空 = 重建功能按钮并重置为
