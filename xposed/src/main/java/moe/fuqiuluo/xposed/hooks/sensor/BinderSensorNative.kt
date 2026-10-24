@@ -74,6 +74,18 @@ internal object BinderSensorNative {
             Build.SUPPORTED_ABIS.any { it == "x86_64" } -> "x86_64"
             else -> return null
         }
+        /*
+         * 从 /data/app/.../lib/arm64 直接 System.load 在 MI6 的 system_server 里会被内核
+         * 以 “couldn't map segment: Permission denied” 拒绝（apk_data_file 不可执行）。
+         * 安装脚本把同一 .so 复制到 system_server 可执行的 system_lib_file 路径后，
+         * 这里优先加载该副本；没有副本时才回退到模块 APK 的 lib 目录。
+         */
+        for (staged in listOf(
+            "/data/local/tmp/portalex/$LIB_NAME",
+            "/data/system/portalex_$LIB_NAME",
+        )) {
+            if (File(staged).isFile) return staged
+        }
         for (apk in apkCandidates()) {
             val lib = File(File(apk).parentFile, "lib/$abiDir/$LIB_NAME")
             if (lib.exists()) return lib.absolutePath
