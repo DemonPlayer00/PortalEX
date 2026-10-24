@@ -26,7 +26,6 @@ import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
 import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
-import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
@@ -161,7 +160,6 @@ class SettingsFragment : Fragment() {
         binding.altitudeValue.text = "%.2f米".format(context.altitude)
         binding.speedValue.text = "%.2f米/秒".format(context.speed)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
-        binding.satelliteCountValue.text = "%d颗".format(context.minSatelliteCount)
 
         binding.altitudeLayout.setOnClickListener {
             showDialog("设置海拔高度", binding.altitudeValue.text.toString().let { it.substring(0, it.length - 1) }) {
@@ -322,24 +320,6 @@ class SettingsFragment : Fragment() {
                 }
                 context.reportDuration = value
                 binding.reportDurationValue.text = "%dms".format(value)
-            }
-        }
-
-        binding.satelliteCountLayout.setOnClickListener {
-            showDialog("设置最小模拟卫星数量", binding.satelliteCountValue.text.toString().let {
-                it.substring(0, it.length - 1)
-            }) {
-                val value = it.toIntOrNull()
-                if (value == null || value < 0) {
-                    Toast.makeText(context, "数量不合法", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                } else if (value > 35) {
-                    Toast.makeText(context, "卫星数量不能超过35", Toast.LENGTH_SHORT).show()
-                    return@showDialog
-                }
-                context.minSatelliteCount = value
-                binding.satelliteCountValue.text = "%d颗".format(value)
-                updateRemoteConfig()
             }
         }
 
