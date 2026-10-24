@@ -23,7 +23,8 @@ class CameraPointAdapter(
 
     private fun matches(point: CameraVideoPoint): Boolean =
         point.videos.any { v ->
-            v.tags.isEmpty() || filterTags.all { t -> v.tags.any { it.equals(t, true) } }
+            if (filterTags.isEmpty()) true
+            else v.tags.isNotEmpty() && filterTags.all { t -> v.tags.any { it.equals(t, true) } }
         }
 
 
