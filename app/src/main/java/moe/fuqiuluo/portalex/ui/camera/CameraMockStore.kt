@@ -219,10 +219,10 @@ object CameraMockStore {
     // ---- 清单（下发给模块侧的唯一形态）----
 
     /** 预设 + Camera Mock 页创建的自定义 + 库内视频标签。 */
-    fun allTags(context: Context): List<String> {
+    fun allTags(context: Context, source: List<CameraVideoPoint>? = null): List<String> {
         val custom = LinkedHashSet<String>()
         custom.addAll(context.cameraMockCustomTags)
-        points(context).forEach { p -> p.videos.forEach { v -> v.tags.forEach { custom.add(it) } } }
+        (source ?: points(context)).forEach { p -> p.videos.forEach { v -> v.tags.forEach { custom.add(it) } } }
         val hidden = context.cameraMockHiddenTags
         return (CameraTags.PRESETS + custom.filterNot { tag -> CameraTags.PRESETS.any { it.equals(tag, true) } })
             .filterNot { tag -> !CameraTags.isPreset(tag) && hidden.any { it.equals(tag, true) } }
