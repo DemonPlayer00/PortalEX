@@ -5,6 +5,7 @@ import android.content.Context
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.util.Log
@@ -57,6 +58,7 @@ object PortalLocationClient {
     private var manager: LocationManager? = null
     private var listener: LocationListener? = null
     private var intervalMs: Long = 0L
+    private val requestedProviders = mutableListOf<String>()
 
     @Volatile
     private var lastFix: Fix? = null
@@ -97,20 +99,51 @@ object PortalLocationClient {
             @Deprecated("平台已废弃，但仍属接口的一部分")
             override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         }
-        val ok = runCatching {
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, interval, 0f, l, Looper.getMainLooper())
-        }.onFailure {
-            // 权限被回收/服务异常：如实说"没订阅上"，不要静默假装在收帧
-            Log.e(TAG, "requestLocationUpdates 失败：${it.message}", it)
-        }.isSuccess
-        if (!ok) {
+
+        // 只订阅 GPS 是“室内指针消失”的直接原因：GPS 在室内拿不到 fix，但平台 fused
+        // （Wi-Fi/基站/GPS 融合）通常还能出点。API 31+ 优先同时订阅 fused + GPS；
+        // 室外 GPS 精度更高，室内由 fused 兜底。
+        val providers = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val fusedEnabled = runCatching { lm.isProviderEnabled(LocationManager.FUSED_PROVIDER) }
+                    .getOrDefault(false)
+                if (fusedEnabled) add(LocationManager.FUSED_PROVIDER)
+            }
+            if (runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) {
+                add(LocationManager.GPS_PROVIDER)
+            }
+            // 服务刚启动 / 查询失败时仍尝试 GPS，避免完全不订阅
+            if (isEmpty()) add(LocationManager.GPS_PROVIDER)
+        }
+
+        var successCount = 0
+        providers.forEach { provider ->
+            runCatching {
+                lm.requestLocationUpdates(provider, interval, 0f, l, Looper.getMainLooper())
+                true
+            }.onSuccess {
+                successCount += 1
+                requestedProviders += provider
+            }.onFailure {
+                // 权限被回收/服务异常：如实记录；还有其它 provider 就继续
+                Log.e(TAG, "requestLocationUpdates($provider) 失败：${it.message}", it)
+            }
+        }
+        if (successCount == 0) {
             subscribers.remove(owner)
             return false
         }
+
+        // 先给地图一个最近点：刚打开页面时不必等下一次 GPS/fused 回调。
+        providers.forEach { provider ->
+            if (lastFix != null) return@forEach
+            runCatching { lm.getLastKnownLocation(provider) }.getOrNull()?.let { deliver(it) }
+        }
+
         manager = lm
         listener = l
         this.intervalMs = interval
-        Log.i(TAG, "已订阅 ${LocationManager.GPS_PROVIDER}（间隔 ${interval}ms）—— 普通客户端视角")
+        Log.i(TAG, "已订阅 ${providers.joinToString("+")}（间隔 ${interval}ms）—— 普通客户端视角")
         return true
     }
 
@@ -137,9 +170,16 @@ object PortalLocationClient {
             Log.i(TAG, "已退订 LocationManager（本次共收 $frameCount 帧）")
         }
         manager = null
+        requestedProviders.clear()
     }
 
     private fun deliver(location: Location) {
+        // GPS 与 fused 同时订阅时，回调可能交错；只让更晚的帧推进地图，
+        // 避免旧的 GPS 帧把刚到的 fused 室内点覆盖回去。
+        val previous = lastFix
+        if (previous != null && location.elapsedRealtimeNanos + 5_000_000L < previous.elapsedRealtimeNanos) {
+            return
+        }
         val fix = Fix(
             lat = location.latitude,
             lon = location.longitude,
