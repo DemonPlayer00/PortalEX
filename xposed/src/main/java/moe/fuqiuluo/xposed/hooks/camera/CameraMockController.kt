@@ -82,7 +82,10 @@ internal object CameraMockController {
         if (!CameraMockClient.enabledFor(packageName)) return false
         val manifest = CameraMockClient.manifest()
         val position = CameraMockClient.position()
-        val picked = CameraMockSelector.select(manifest, position?.first, position?.second) ?: run {
+        val picked = CameraMockSelector.select(
+            manifest, position?.first, position?.second,
+            nowMs = System.currentTimeMillis(),
+        ) ?: run {
             if (FakeLoc.enableDebugLog) Logger.info("摄像头模拟：开关开着但没有命中素材，本次不拦截")
             return false
         }
