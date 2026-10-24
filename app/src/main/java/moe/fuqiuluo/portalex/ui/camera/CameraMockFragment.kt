@@ -93,6 +93,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     private var mapExpanded = false
     private val main = Handler(Looper.getMainLooper())
+    private var cameraExecutor = Executors.newSingleThreadExecutor()
+    private var lastPoints: List<CameraVideoPoint> = emptyList()
+    private var refreshToken = 0
+    private var mapDrawToken = 0
     private var pendingRecordAfterPermission = false
     private val cammockImportLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -235,6 +239,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        if (cameraExecutor.isShutdown) cameraExecutor = Executors.newSingleThreadExecutor()
         _binding = FragmentCameraMockBinding.inflate(inflater, container, false)
 
         adapter = CameraPointAdapter(mutableListOf()) { point ->
@@ -371,6 +376,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     }
 
     override fun onDestroyView() {
+        refreshToken++
+        mapDrawToken++
+        cameraExecutor.shutdownNow()
         binding.cameraMockMap.onDestroy()
         super.onDestroyView()
         _binding = null
@@ -526,7 +534,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (show) {
             /* 从 GONE 变 VISIBLE 后要让它重新走一遍恢复流程，否则纹理可能是白的 */
             runCatching { binding.cameraMockMap.onResume() }
-            drawPoints(sortedPoints(CameraMockStore.points(requireContext())))
+            drawPoints(sortedPoints(lastPoints))
         } else {
             runCatching { binding.cameraMockMap.onPause() }
         }
@@ -551,24 +559,53 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      * 为什么要画：选片规则是"**距当前表象位置最近的命中点**" —— 只给列表的话，
      * 用户没法判断"现在到底会播哪一个"。地图上"我在这、点在那边"是一眼的事。
      */
+    /**
+     * 地图覆盖物在后台线程构建，主线程只做 addOverlays。
+     * 大量轨迹线时，逐点创建 OverlayOptions + gcj02 换算放在 UI 线程会卡住页面切换。
+     */
     private fun drawPoints(points: List<CameraVideoPoint>) {
-        val map = runCatching { binding.cameraMockMap.map }.getOrNull() ?: return
+        if (!uiAlive()) return
+        val token = ++mapDrawToken
         val pointIcon = BitmapDescriptorFactory.fromResource(R.drawable.icon_selected_location_16)
-        pointOverlays.forEach { runCatching { it.remove() } }
-        pointOverlays = emptyList()
-        val options = ArrayList<OverlayOptions>(points.size + 1)
+        val snapshot = points.toList()
+        cameraExecutor.execute {
+            val options = buildOverlayOptions(snapshot, pointIcon)
+            main.post {
+                if (token != mapDrawToken || !uiAlive()) return@post
+                val map = runCatching { binding.cameraMockMap.map }.getOrNull() ?: return@post
+                pointOverlays.forEach { runCatching { it.remove() } }
+                pointOverlays = if (options.isNotEmpty()) {
+                    runCatching { map.addOverlays(options) }
+                        .onFailure { Log.w("CameraMockFragment", "addOverlays 失败（地图标记没画出来）", it) }
+                        .getOrDefault(emptyList())
+                } else emptyList()
+                Log.i(
+                    "CameraMockFragment",
+                    "地图路线：点位 ${snapshot.size} 个 / 覆盖物 ${pointOverlays.size} 个"
+                )
+                snapshot.firstOrNull()?.let { point ->
+                    runCatching {
+                        map.setMapStatus(MapStatusUpdateFactory.newLatLng((point.lat to point.lon).gcj02))
+                    }
+                }
+            }
+        }
+    }
 
+    /** 纯数据构建，不碰 View/Map；在 cameraExecutor 上运行。 */
+    private fun buildOverlayOptions(
+        points: List<CameraVideoPoint>,
+        pointIcon: com.baidu.mapapi.map.BitmapDescriptor
+    ): List<OverlayOptions> {
+        val options = ArrayList<OverlayOptions>(points.size + 1)
         points.forEach { point ->
             val bundle = android.os.Bundle().apply { putString(EXTRA_POINT_ID, point.id) }
             options += MarkerOptions()
                 .position((point.lat to point.lon).gcj02)
-                /* 图标必须显式给：百度 SDK 对 MarkerOptions 的硬性要求，
-                 * 不给会抛 BDMapSDKException（实测被 runCatching 吞掉 → 地图上一个点都没有） */
                 .icon(pointIcon)
                 .title("${point.name}（${point.videos.size} 段）")
                 .extraInfo(bundle)
         }
-        /* 每段视频的轨迹线：把路线和时间轴里的移动轨迹画出来 */
         points.forEach { point ->
             point.videos.forEach { video ->
                 if (video.track.size >= 2) {
@@ -581,20 +618,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 }
             }
         }
-
-        if (options.isNotEmpty()) {
-            pointOverlays = runCatching { map.addOverlays(options) }
-                .onFailure { Log.w("CameraMockFragment", "addOverlays 失败（地图标记没画出来）", it) }
-                .getOrDefault(emptyList())
-        }
-        Log.i(
-            "CameraMockFragment",
-            "地图路线：点位 ${points.size} 个 / 覆盖物 ${pointOverlays.size} 个"
-        )
-        val focus = points.firstOrNull()?.let { (it.lat to it.lon).gcj02 }
-        if (focus != null) {
-            runCatching { map.setMapStatus(MapStatusUpdateFactory.newLatLng(focus)) }
-        }
+        return options
     }
 
     /** 最新变更的路线/视频点排在上面；同一时间按名称稳定排序。 */
@@ -605,8 +629,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             }.thenBy { it.name }
         )
 
+    /**
+     * 路线集合从 SharedPreferences JSON 解码也要离开 UI 线程；大库切换页面时不再阻塞。
+     */
     private fun refresh() {
         if (!uiAlive()) return
+        val context = requireContext().applicationContext
+        val token = ++refreshToken
+        cameraExecutor.execute {
+            val points = runCatching { CameraMockStore.points(context) }
+                .getOrDefault(emptyList())
+            main.post {
+                if (token != refreshToken || !uiAlive()) return@post
+                applyPoints(points)
+            }
+        }
+    }
+
+    private fun applyPoints(points: List<CameraVideoPoint>) {
         val context = requireContext()
         val filter = context.cameraMockTagFilter
         fun matches(point: CameraVideoPoint): Boolean =
@@ -614,14 +654,15 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 if (filter.isEmpty()) true
                 else v.tags.isNotEmpty() && filter.all { t -> v.tags.any { it.equals(t, true) } }
             }
-        val points = sortedPoints(CameraMockStore.points(context))
+        val sorted = sortedPoints(points)
             .sortedWith(compareByDescending<CameraVideoPoint> { matches(it) })
+        lastPoints = sorted
         adapter.setFilterTags(filter)
-        adapter.replaceAll(points)
-        drawPoints(points)
+        adapter.replaceAll(sorted)
+        drawPoints(sorted)
         rebuildFilterChips()
         updateSwitch()
-        updateStatus(points)
+        updateStatus(sorted)
         updateImplementationUi()
     }
 
@@ -648,6 +689,24 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             group.addView(chip)
         }
         rebuildingFilter = false
+    }
+
+    /**
+     * 启动摄像机模拟时按系统时间自动选择白天/黑夜标签：
+     * 06:00~17:59 = 白天，其余 = 黑夜。弹窗只提示一次（本次启动）。
+     */
+    private fun autoSelectTimeTag(context: android.content.Context) {
+        val now = java.util.Calendar.getInstance()
+        val hour = now.get(java.util.Calendar.HOUR_OF_DAY)
+        val tag = if (hour in 6..17) CameraTags.DAY else CameraTags.NIGHT
+        context.cameraMockTagFilter = setOf(tag)
+        if (!uiAlive()) return
+        val hhmm = "%02d:%02d".format(hour, now.get(java.util.Calendar.MINUTE))
+        MaterialAlertDialogBuilder(context)
+            .setTitle("自动选择标签")
+            .setMessage("当前时间 $hhmm，以 06:00 / 18:00 为界，已自动选择「$tag」标签。")
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun updateSwitch() {
@@ -711,8 +770,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
         fun deleteSelected() {
             val selected = selectedTags()
+                .filterNot { CameraTags.isPreset(it) }
             if (selected.isEmpty()) {
-                Toast.makeText(ctx, "请先选择标签", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, "预设标签不可删除；请选择自定义标签", Toast.LENGTH_SHORT).show()
                 return
             }
             MaterialAlertDialogBuilder(ctx)
@@ -842,8 +902,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 if (!uiAlive()) return@post
                 binding.switchCameraMock.isEnabled = true
                 if (result.isSuccess) {
+                    if (next) autoSelectTimeTag(context)
                     updateSwitch()
-                    updateStatus(CameraMockStore.points(context))
+                    updateStatus(lastPoints)
                     Toast.makeText(
                         context,
                         result.getOrDefault(if (next) "摄像头模拟已启动" else "摄像头模拟已停止"),
