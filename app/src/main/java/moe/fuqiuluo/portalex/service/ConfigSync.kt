@@ -16,7 +16,11 @@ import moe.fuqiuluo.portalex.ext.cadenceWobbleRnd
 import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
 import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.debug
+import moe.fuqiuluo.portalex.ext.fusedAccuracyMeasured
+import moe.fuqiuluo.portalex.ext.fusedDelayMeasured
 import moe.fuqiuluo.portalex.ext.fusedMode
+import moe.fuqiuluo.portalex.ext.maxCn0Measured
+import moe.fuqiuluo.portalex.ext.meanCn0Measured
 import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
@@ -85,6 +89,10 @@ object ConfigSync {
         FakeLoc.speedAmplitude = context.speedAmplitude
         FakeLoc.enableDebugLog = context.debug
         FakeLoc.fusedMode = context.fusedMode
+        FakeLoc.fusedAccuracy = context.fusedAccuracyMeasured
+        FakeLoc.fusedDelayMs = context.fusedDelayMeasured.toLong()
+        FakeLoc.gnssMaxCn0 = context.maxCn0Measured.toDouble()
+        FakeLoc.gnssMeanCn0 = context.meanCn0Measured.toDouble()
         FakeLoc.needDowngradeToCdma = context.needDowngradeToCdma
         FakeLoc.minSatellites = context.minSatelliteCount
         FakeLoc.enableAGPS = context.enableAGPS
@@ -116,6 +124,10 @@ object ConfigSync {
         rely.putDouble(Key.SPEED_AMPLITUDE, FakeLoc.speedAmplitude)
         rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
         rely.putInt(Key.FUSED_MODE, FakeLoc.fusedMode)
+        rely.putFloat(Key.FUSED_ACCURACY, FakeLoc.fusedAccuracy)
+        rely.putLong(Key.FUSED_DELAY_MS, FakeLoc.fusedDelayMs)
+        rely.putDouble(Key.GNSS_MAX_CN0, FakeLoc.gnssMaxCn0)
+        rely.putDouble(Key.GNSS_MEAN_CN0, FakeLoc.gnssMeanCn0)
         // 旧模块只认布尔键：把三态映射过去（拒绝=true；放行/伪装=false ⇒ 旧模块按"伪装"处理）
         rely.putBoolean(
             Key.DISABLE_FUSED_LOCATION,

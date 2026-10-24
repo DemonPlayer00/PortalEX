@@ -67,6 +67,10 @@ object PortalProtocol {
         const val ACCURACY                  = "accuracy"
         const val ALTITUDE                  = "altitude"
         const val ALTITUDE_JITTER           = "altitude_jitter"
+        const val FUSED_ACCURACY            = "fused_accuracy"
+        const val FUSED_DELAY_MS            = "fused_delay_ms"
+        const val GNSS_MAX_CN0              = "gnss_max_cn0"
+        const val GNSS_MEAN_CN0             = "gnss_mean_cn0"
         const val BEARING                   = "bearing"
         /** 步频侧外周传感器模拟：接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
         const val CADENCE_MOCK              = "cadence_mock"
