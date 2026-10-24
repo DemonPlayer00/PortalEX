@@ -82,6 +82,14 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/calib_location_run"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/calibration_location_run" />
+
         <!-- 噪声档列表：行由 CalibrationFragment 按 SensorNoise.ITEMS 动态填充 -->
         <LinearLayout
             android:id="@+id/calib_list"
