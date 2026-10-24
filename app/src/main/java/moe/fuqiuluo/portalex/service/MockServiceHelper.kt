@@ -180,6 +180,31 @@ object MockServiceHelper {
         }
     }
 
+    /**
+     * 下发开发者 Intent 拦截配置（不改位置会话状态）。
+     * 返回 false 表示系统侧未应答/钥匙未握手；调用方只提示，不把本地开关回滚。
+     */
+    fun setDevIntentGuard(
+        locationManager: LocationManager,
+        enabled: Boolean,
+        packages: Set<String>,
+    ): Boolean {
+        if (!::randomKey.isInitialized) {
+            runCatching { tryInitService(locationManager) }
+        }
+        if (!::randomKey.isInitialized) return false
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.SET_DEV_INTENT_GUARD)
+        rely.putBoolean(Key.DEV_INTENT_GUARD_ENABLED, enabled)
+        rely.putStringArrayList(
+            Key.DEV_INTENT_GUARD_PACKAGES,
+            ArrayList(packages.sorted())
+        )
+        return runCatching {
+            locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
+        }.getOrDefault(false)
+    }
+
     fun tryCloseMock(locationManager: LocationManager): Boolean {
         if (!::randomKey.isInitialized) {
             return false

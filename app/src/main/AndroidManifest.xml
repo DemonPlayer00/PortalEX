@@ -67,6 +67,10 @@
             转屏交给 configChanges，避免录制中重建 Activity 把会话打断。
         -->
         <activity
+            android:name=".ui.settings.DevIntentGuardActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.camera.CameraRecordActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
