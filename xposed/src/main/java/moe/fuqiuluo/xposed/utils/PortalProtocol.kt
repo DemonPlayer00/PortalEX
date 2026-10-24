@@ -45,7 +45,6 @@ object PortalProtocol {
         const val ROUTE_CONTROL      = "route_control"
         const val SET_ALTITUDE       = "set_altitude"
         const val SET_BEARING        = "set_bearing"
-        const val SET_DEV_INTENT_GUARD = "set_dev_intent_guard"
         const val SET_PROXY          = "set_proxy"
         const val SET_ROUTE          = "set_route"
         const val SET_ROCKER         = "set_rocker"
@@ -74,8 +73,6 @@ object PortalProtocol {
         const val GNSS_MAX_CN0              = "gnss_max_cn0"
         const val GNSS_MEAN_CN0             = "gnss_mean_cn0"
         const val BEARING                   = "bearing"
-        const val DEV_INTENT_GUARD_ENABLED  = "dev_intent_guard_enabled"
-        const val DEV_INTENT_GUARD_PACKAGES = "dev_intent_guard_packages"
         /** 步频侧外周传感器模拟：接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
         const val CADENCE_MOCK              = "cadence_mock"
 

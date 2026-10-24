@@ -57,11 +57,9 @@
             </androidx.constraintlayout.widget.ConstraintLayout>
 
             <LinearLayout
-                android:id="@+id/dev_intent_guard_layout"
+                android:id="@+id/dev_override_layout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:clickable="true"
-                android:focusable="true"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:padding="5dp">
@@ -73,19 +71,19 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="阻止开发者 Intent"
+                        android:text="覆写开发者模式为否"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="按应用阻止启动开发者选项页面"
+                        android:text="关闭开发者选项入口；尽量保留 USB 调试等已有设置"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.textview.MaterialTextView
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/dev_override_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="›"
-                    android:textSize="24sp" />
+                    android:layout_gravity="center_vertical" />
             </LinearLayout>
 
             <LinearLayout

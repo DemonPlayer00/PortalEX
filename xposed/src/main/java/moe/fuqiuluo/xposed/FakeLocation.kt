@@ -4,7 +4,6 @@ package moe.fuqiuluo.xposed
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.hooks.LocationManagerHook
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
-import moe.fuqiuluo.xposed.hooks.DeveloperIntentGuard
 import moe.fuqiuluo.xposed.hooks.fused.AndroidFusedLocationProviderHook
 import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
@@ -153,11 +152,7 @@ class FakeLocation {
                     // 永久等待 sensorservice）——装载只在模拟会话启动时发生，见
                     // BinderSensorMock.registerAtBoot / onSimulationChanged。
                     BinderSensorMock.registerAtBoot()
-                    Logger.info("FakeLocation: android branch, installing DeveloperIntentGuard cl=${info.classLoader.javaClass.name}")
-                    step("DeveloperIntentGuard") {
-                        DeveloperIntentGuard.install(info.classLoader)
-                    }
-                    Logger.info("FakeLocation: DeveloperIntentGuard step returned")
+
 
                     // 运行时投递通道：只解析框架的 JNI 入口并捕获 SensorService 实例（零副作用），
                     // 注册载体/投递由 BinderSensorMock 在开关打开后按需触发。
