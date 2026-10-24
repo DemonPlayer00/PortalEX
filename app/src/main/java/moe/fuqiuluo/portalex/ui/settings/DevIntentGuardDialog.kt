@@ -109,10 +109,7 @@ object DevIntentGuardDialog {
             val pm = context.packageManager
             val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
                 .asSequence()
-                .filter {
-                    it.packageName != context.packageName &&
-                        pm.getLaunchIntentForPackage(it.packageName) != null
-                }
+                .filter { it.packageName != context.packageName }
                 .map { AppEntry(it.packageName, pm.getApplicationLabel(it).toString()) }
                 .sortedBy { it.label.lowercase() }
                 .toList()

@@ -37,6 +37,7 @@ object DeveloperIntentGuard {
             .firstOrNull { it.contains('.') && !it.startsWith("android.") }
 
     fun install(classLoader: ClassLoader) {
+        Logger.info("DeveloperIntentGuard: install called")
         val cls = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityTaskManagerService", classLoader
         ) ?: run {
