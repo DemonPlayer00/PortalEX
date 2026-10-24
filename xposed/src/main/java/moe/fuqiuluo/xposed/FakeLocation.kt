@@ -121,14 +121,12 @@ class FakeLocation {
                 .javaClass
                 .getClassLoader()
 
-            if (systemClassLoader == null) {
-                Logger.error("Failed to get system class loader")
-                return
-            }
-
+            Logger.info("FakeLocation: systemClassLoader=${systemClassLoader.javaClass.name}")
             if (!injectedPackages.add(info.packageName)) {
+                Logger.info("FakeLocation: duplicate package ${info.packageName}, skip")
                 return
             }
+            Logger.info("FakeLocation: branch dispatch pkg=${info.packageName}")
 
             when (info.packageName) {
                 "com.android.phone" -> {
