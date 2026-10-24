@@ -228,6 +228,33 @@ object DeveloperIntentGuard {
             })
             hooks++
         }
+        // SettingsProvider 类在 boot 阶段可能尚未加载；ContentProvider$Transport
+        // 是框架类，始终可用。作为后备在这里按调用 UID 伪造同一个设置。
+        val transport = XposedHelpers.findClassIfExists(
+            "android.content.ContentProvider\$Transport", classLoader
+        )
+        Logger.info("DeveloperIntentGuard: Transport found=${transport != null}")
+        if (transport != null) {
+            hooks += Hooks.hookAllMethods(transport, "query", afterHook {
+                if (!enabled) return@afterHook
+                val provider = field(thisObject, "mProvider") ?: return@afterHook
+                if (!provider.javaClass.name.contains("SettingsProvider")) return@afterHook
+                val uri = args.getOrNull(0) as? Uri ?: return@afterHook
+                if (uri.pathSegments.size < 2 ||
+                    uri.pathSegments[0] != "global" ||
+                    uri.pathSegments[1] != "development_settings_enabled"
+                ) return@afterHook
+                val pkg = BinderUtils.getUidPackageNames(uid = Binder.getCallingUid())
+                    ?.firstOrNull() ?: return@afterHook
+                if (pkg !in packages) return@afterHook
+                val projection = (args.getOrNull(1) as? Array<*>)?.map { it?.toString() ?: "" }
+                    ?: listOf("value")
+                val cursor = MatrixCursor(projection.toTypedArray(), 1)
+                cursor.addRow(projection.map { if (it == "value") 0 else null }.toTypedArray())
+                result = cursor
+                Logger.info("DeveloperIntentGuard: transport spoof=0 for $pkg")
+            }).size
+        }
         if (hooks > 0) installed = true
         Logger.info("DeveloperIntentGuard: installed hooks=$hooks installed=$installed")
     }
