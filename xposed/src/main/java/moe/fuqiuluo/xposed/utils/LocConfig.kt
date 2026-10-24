@@ -210,6 +210,14 @@ internal object LocConfig {
     var speedAmplitude = 0.3
 
     /**
+     * 海拔波动幅度（米）：虚拟海拔在配置高度上下均匀抖动。
+     * 同时作为 fused/模拟定位的垂直精度数据源（见 [BaseLocationHook.injectLocation]）。
+     * 0 = 不抖动；默认 0.25，与旧实现的固定 ±0.25m 逐位一致。
+     */
+    @Volatile
+    var altitudeJitter = 0.25
+
+    /**
      * 步频倍率（设置页「步频倍率」）：默认 1.0 = 逐位保持原公式；非 1 时按倍率微调
      * "步频 ↔ 速度"的关系（例如 1.1 = 同样速度下步频快 10%）。
      * 作用在**基础值 clamp 之后**，并再钳进 30~300 的物理合理区间——

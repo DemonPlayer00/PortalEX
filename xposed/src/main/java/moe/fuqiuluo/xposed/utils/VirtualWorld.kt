@@ -33,7 +33,10 @@ internal object VirtualWorld {
     @Volatile var altitude = 80.0
 
     val offset_altitude : Double
-        get() = altitude + Random.nextDouble(-0.25, 0.25)
+        get() {
+            val amp = LocConfig.altitudeJitter.coerceAtLeast(0.0)
+            return altitude + if (amp == 0.0) 0.0 else Random.nextDouble(-amp, amp)
+        }
 
     @Volatile var speed = 3.05
 
