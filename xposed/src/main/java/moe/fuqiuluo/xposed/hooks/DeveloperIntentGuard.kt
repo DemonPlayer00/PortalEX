@@ -92,9 +92,13 @@ object DeveloperIntentGuard {
         if (starter != null) {
             for (m in listOf("executeRequest", "execute")) {
                 hooks += Hooks.hookAllMethods(starter, m, beforeHook {
-                    val req = field(thisObject, "mRequest") ?: thisObject
+                    // executeRequest(Request) 的 Request 在 args[0]；execute() 才是 thisObject.mRequest。
+                    val req = args.firstOrNull {
+                        it != null && it.javaClass.name.contains("ActivityStarter\$Request")
+                    } ?: field(thisObject, "mRequest") ?: thisObject
                     val intent = field(req, "intent") as? Intent
-                    if (intent != null && checkAndBlock(thisObject, intent)) result = 0
+                        ?: field(req, "mIntent") as? Intent
+                    if (intent != null && checkAndBlock(req, intent)) result = 0
                 }).size
             }
         }
