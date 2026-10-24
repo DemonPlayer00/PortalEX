@@ -73,7 +73,9 @@ object DeveloperIntentGuard {
             return
         }
         var hooks = 0
-        for (name in listOf("startActivity", "startActivityAsUser")) {
+        for (name in listOf(
+            "startActivity", "startActivityAsUser", "startActivityAndWait", "startActivityWithConfig"
+        )) {
             hooks += Hooks.hookAllMethods(cls, name, beforeHook {
                 if (!enabled) return@beforeHook
                 val intent = args.filterIsInstance<Intent>().firstOrNull()
@@ -83,7 +85,11 @@ object DeveloperIntentGuard {
                 Logger.info("DeveloperIntentGuard: candidate pkg=$pkg selected=${pkg in packages}")
                 if (pkg !in packages) return@beforeHook
                 Logger.info("DeveloperIntentGuard: blocked $pkg -> ${intent.action ?: intent.component}")
-                result = 0
+                result = if (method.name.contains("AndWait")) {
+                    runCatching {
+                        Class.forName("android.app.WaitResult").getDeclaredConstructor().newInstance()
+                    }.getOrNull()
+                } else 0
             }).size
         }
         val starter = XposedHelpers.findClassIfExists(
