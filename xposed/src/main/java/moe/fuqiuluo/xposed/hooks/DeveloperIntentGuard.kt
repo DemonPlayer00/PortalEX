@@ -18,11 +18,14 @@ import moe.fuqiuluo.xposed.utils.beforeHook
 object DeveloperIntentGuard {
     @Volatile private var enabled = false
     @Volatile private var packages: Set<String> = emptySet()
+    @Volatile private var installed = false
 
     fun update(enabled: Boolean, packages: Set<String>) {
         this.enabled = enabled
         this.packages = packages.toSet()
         Logger.info("DeveloperIntentGuard: enabled=$enabled packages=${this.packages.size}")
+        // 配置到达时兜底安装：系统启动阶段若类加载顺序不满足，仍能在真正使用时装上。
+        if (!installed) install(ClassLoader.getSystemClassLoader())
     }
 
     private fun isDeveloperIntent(intent: Intent): Boolean {
@@ -37,6 +40,7 @@ object DeveloperIntentGuard {
             .firstOrNull { it.contains('.') && !it.startsWith("android.") }
 
     fun install(classLoader: ClassLoader) {
+        if (installed) return
         Logger.info("DeveloperIntentGuard: install called")
         val cls = XposedHelpers.findClassIfExists(
             "com.android.server.wm.ActivityTaskManagerService", classLoader
@@ -57,6 +61,7 @@ object DeveloperIntentGuard {
                 result = 0
             }).size
         }
-        Logger.info("DeveloperIntentGuard: installed hooks=$hooks")
+        if (hooks > 0) installed = true
+        Logger.info("DeveloperIntentGuard: installed hooks=$hooks installed=$installed")
     }
 }
