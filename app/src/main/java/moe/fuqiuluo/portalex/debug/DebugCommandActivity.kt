@@ -34,8 +34,7 @@ class DebugCommandActivity : Activity() {
         val cmd = intent.getStringExtra("cmd") ?: "status"
         try {
             val text = when (cmd) {
-                "test" -> moe.fuqiuluo.portalex.ui.test.TestSnapshot.last
-                    ?: "Test 页面尚未打开或尚未完成首次刷新"
+                "test" -> TestReport.build(this)
                 "set" -> setCommand()
                 "help" -> HELP
                 else -> status()
@@ -201,7 +200,7 @@ Access:
   Ordinary apps cannot invoke it.
 
 Notes:
-  - test only returns cached Test text; open Test page for fresh values.
+  - test builds a fresh report; no need to open the Test page.
   - gps/wifi/cell flags also update sim_* preferences.
   - dev_mode=0 restores current adb_enabled value to keep USB debugging.
 """
