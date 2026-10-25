@@ -297,6 +297,29 @@ internal object SystemRuntimeChannel {
             mapField.get(null) as? Map<*, *>
         }.getOrNull() ?: return null
         Logger.info("SystemRuntimeChannel: LocalServices map size=${map.size}")
+        for ((key, value) in map) {
+            Logger.info("SystemRuntimeChannel: LocalServices key=${(key as? Class<*>)?.name ?: key} value=${value?.javaClass?.name}")
+            if (value != null && cls.isInstance(value)) return value
+            val outer = outerOf(value)
+            if (outer != null && cls.isInstance(outer)) return outer
+            // LocalServices 里通常放着 SystemServiceManager；从它的 mServices 列表取 SensorService。
+            if (value?.javaClass?.name == "com.android.server.SystemServiceManager") {
+                val services = runCatching {
+                    val f = value.javaClass.getDeclaredField("mServices")
+                    f.isAccessible = true
+                    f.get(value) as? List<*>
+                }.onFailure {
+                    Logger.warn("SystemRuntimeChannel: mServices 读取失败 ${it.message}")
+                }.getOrNull()
+                Logger.info("SystemRuntimeChannel: mServices size=${services?.size}")
+                services?.forEach { svc ->
+                    if (svc != null && cls.isInstance(svc)) {
+                        Logger.info("SystemRuntimeChannel: 从 SystemServiceManager.mServices 找到 SensorService")
+                        return svc
+                    }
+                }
+            }
+        }
         for (value in map.values) {
             if (value != null && cls.isInstance(value)) return value
             val outer = outerOf(value)
