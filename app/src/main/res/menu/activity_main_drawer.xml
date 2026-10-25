@@ -22,17 +22,9 @@
             android:icon="@drawable/baseline_satellite_alt_24"
             android:title="@string/menu_gnss_mock" />
         <item
-            android:id="@+id/nav_gps_status"
-            android:icon="@drawable/baseline_satellite_alt_24"
-            android:title="@string/menu_gps_status" />
-        <item
-            android:id="@+id/nav_cell_info"
-            android:icon="@android:drawable/ic_menu_mylocation"
-            android:title="@string/menu_cell_info" />
-        <item
-            android:id="@+id/nav_wifi_info"
+            android:id="@+id/nav_baseband"
             android:icon="@android:drawable/ic_menu_compass"
-            android:title="@string/menu_wifi_info" />
+            android:title="@string/menu_baseband" />
         <item
             android:id="@+id/nav_route_gallery"
             android:icon="@drawable/baseline_route_24"

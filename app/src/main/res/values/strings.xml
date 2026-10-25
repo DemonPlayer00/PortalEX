@@ -326,4 +326,16 @@
     <string name="calibration_group_location">GPS / fused</string>
     <string name="calibration_group_baseband">Cell / Wi-Fi baseband</string>
     <string name="calibration_nothing_selected">Nothing selected</string>
+    <string name="gnss_gps_status_code">GPS status code</string>
+    <string name="gnss_gps_satellites">Satellite count</string>
+    <string name="gnss_gps_params">GPS status params</string>
+    <string name="menu_baseband">Baseband Mock</string>
+    <string name="baseband_title">Baseband mock</string>
+    <string name="baseband_desc">Simulate cell and Wi-Fi information.</string>
+    <string name="baseband_cell_title">Cell</string>
+    <string name="baseband_mcc_mnc">MCC / MNC</string>
+    <string name="baseband_cid_tac">CID / TAC</string>
+    <string name="baseband_wifi_title">Wi-Fi</string>
+    <string name="baseband_ssid">SSID</string>
+    <string name="baseband_bssid">BSSID</string>
 </resources>

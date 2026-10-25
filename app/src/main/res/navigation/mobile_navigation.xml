@@ -24,25 +24,10 @@
         tools:layout="@layout/fragment_gnss_mock" />
 
     <fragment
-        android:id="@+id/nav_gps_status"
-        android:name="moe.fuqiuluo.portalex.ui.sim.NetworkSimFragment"
-        android:label="@string/menu_gps_status">
-        <argument android:name="sim_kind" android:defaultValue="gps" app:argType="string" />
-    </fragment>
-
-    <fragment
-        android:id="@+id/nav_cell_info"
-        android:name="moe.fuqiuluo.portalex.ui.sim.NetworkSimFragment"
-        android:label="@string/menu_cell_info">
-        <argument android:name="sim_kind" android:defaultValue="cell" app:argType="string" />
-    </fragment>
-
-    <fragment
-        android:id="@+id/nav_wifi_info"
-        android:name="moe.fuqiuluo.portalex.ui.sim.NetworkSimFragment"
-        android:label="@string/menu_wifi_info">
-        <argument android:name="sim_kind" android:defaultValue="wifi" app:argType="string" />
-    </fragment>
+        android:id="@+id/nav_baseband"
+        android:name="moe.fuqiuluo.portalex.ui.baseband.BasebandMockFragment"
+        android:label="@string/menu_baseband"
+        tools:layout="@layout/fragment_baseband_mock" />
 
     <fragment
         android:id="@+id/nav_route_gallery"
