@@ -121,8 +121,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
         }
 
         requireContext().selectRoute?.let {
-            if (it.route.size < 2) {
-                // 存储中的选中路线已损坏（端点不足）：清除选中项，不带着幽灵路线进播放器
+            if (it.route.isEmpty()) {
+                // 空路线才是坏数据；只有一个点的路线是合法坐标点，不能清掉。
                 requireContext().selectRoute = null
                 mockServiceViewModel.clearSelectedRoute()
             } else {
