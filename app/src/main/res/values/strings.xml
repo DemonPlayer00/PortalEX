@@ -252,4 +252,13 @@
     <string name="sim_cell_param2">CID / TAC</string>
     <string name="sim_wifi_param1">SSID</string>
     <string name="sim_wifi_param2">BSSID</string>
+    <string name="gnss_permissions_granted">All permissions granted</string>
+    <string name="gnss_permissions_denied">Permissions denied: %1$s</string>
+    <string name="gnss_restart">Restart GNSS mock to apply</string>
+    <string name="gnss_location_service_failed">Location service unavailable</string>
+    <string name="gnss_overlay_required">Overlay permission is required</string>
+    <string name="gnss_injection_failed">System service injection failed</string>
+    <string name="gnss_start_failed">Failed to start GNSS mock</string>
+    <string name="gnss_not_running">Mock service is not running</string>
+    <string name="gnss_stop_failed">Failed to stop GNSS mock</string>
 </resources>

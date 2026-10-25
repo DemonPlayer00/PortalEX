@@ -265,4 +265,13 @@
     <string name="sim_cell_param2">CID / TAC</string>
     <string name="sim_wifi_param1">SSID</string>
     <string name="sim_wifi_param2">BSSID</string>
+    <string name="gnss_permissions_granted">所有权限都已授予</string>
+    <string name="gnss_permissions_denied">以下权限被拒绝: %1$s</string>
+    <string name="gnss_restart">重启GNSS模拟生效</string>
+    <string name="gnss_location_service_failed">定位服务获取失败</string>
+    <string name="gnss_overlay_required">请授权悬浮窗权限</string>
+    <string name="gnss_injection_failed">系统服务注入失败</string>
+    <string name="gnss_start_failed">模拟GNSS服务启动失败</string>
+    <string name="gnss_not_running">模拟服务未启动</string>
+    <string name="gnss_stop_failed">模拟GNSS服务停止失败</string>
 </resources>

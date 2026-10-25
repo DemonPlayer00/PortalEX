@@ -48,12 +48,12 @@ class GnssMockFragment : Fragment() {
         val allGranted = permissions.entries.all { it.value }
 
         if (allGranted) {
-            Toast.makeText(requireContext(), "所有权限都已授予", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.gnss_permissions_granted, Toast.LENGTH_SHORT).show()
             setupGnssStatusCallback()
         } else {
             // 显示哪些权限被拒绝
             val deniedPermissions = permissions.filter { !it.value }.keys.joinToString()
-            Toast.makeText(requireContext(), "以下权限被拒绝: $deniedPermissions", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.gnss_permissions_denied, deniedPermissions), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -86,29 +86,29 @@ class GnssMockFragment : Fragment() {
         binding.switchRequestGeofence.isChecked = requireContext().enableRequestGeofence
         binding.switchRequestGeofence.setOnCheckedChangeListener { _, isChecked ->
             requireContext().enableRequestGeofence = isChecked
-            Toast.makeText(requireContext(), "重启GNSS模拟生效", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.gnss_restart, Toast.LENGTH_SHORT).show()
         }
 
         binding.switchGetFromLocation.isChecked = requireContext().enableGetFromLocation
         binding.switchGetFromLocation.setOnCheckedChangeListener { _, isChecked ->
             requireContext().enableGetFromLocation = isChecked
-            Toast.makeText(requireContext(), "重启GNSS模拟生效", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.gnss_restart, Toast.LENGTH_SHORT).show()
         }
 
         binding.switchEnableAgps.isChecked = requireContext().enableAGPS
         binding.switchEnableAgps.setOnCheckedChangeListener { _, isChecked ->
             requireContext().enableAGPS = isChecked
-            Toast.makeText(requireContext(), "重启GNSS模拟生效", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.gnss_restart, Toast.LENGTH_SHORT).show()
         }
 
         binding.switchEnableNmea.isChecked = requireContext().enableNMEA
         binding.switchEnableNmea.setOnCheckedChangeListener { _, isChecked ->
             requireContext().enableNMEA = isChecked
-            Toast.makeText(requireContext(), "重启GNSS模拟生效", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.gnss_restart, Toast.LENGTH_SHORT).show()
         }
 
         if (!::locationManager.isInitialized) {
-            showToast("定位服务获取失败")
+            showToast(getString(R.string.gnss_location_service_failed))
             // 直接退出返回根布局，接下来的操作将不会执行！
             return root
         }
@@ -131,12 +131,12 @@ class GnssMockFragment : Fragment() {
 
     private fun tryOpenService(button: MaterialButton) {
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
-            showToast("请授权悬浮窗权限")
+            showToast(getString(R.string.gnss_overlay_required))
             return
         }
 
         if (!MockServiceHelper.isServiceInit()) {
-            showToast("系统服务注入失败")
+            showToast(getString(R.string.gnss_injection_failed))
             return
         }
 
@@ -149,7 +149,7 @@ class GnssMockFragment : Fragment() {
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流
                     restartGpsProvider()
                 } else {
-                    showToast("模拟GNSS服务启动失败")
+                    showToast(getString(R.string.gnss_start_failed))
                     return@launch
                 }
             } finally {
@@ -210,7 +210,7 @@ class GnssMockFragment : Fragment() {
 
     private fun tryCloseService(button: MaterialButton) {
         if (!MockServiceHelper.isServiceInit()) {
-            showToast("系统服务注入失败")
+            showToast(getString(R.string.gnss_injection_failed))
             return
         }
 
@@ -219,7 +219,7 @@ class GnssMockFragment : Fragment() {
             try {
                 withContext(Dispatchers.IO) {
                     if (!MockServiceHelper.isGnssMockStart(locationManager)) {
-                        showToast("模拟服务未启动")
+                        showToast(getString(R.string.gnss_not_running))
                         return@withContext false
                     }
 
@@ -227,7 +227,7 @@ class GnssMockFragment : Fragment() {
                         updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
-                        showToast("模拟GNSS服务停止失败")
+                        showToast(getString(R.string.gnss_stop_failed))
                         return@withContext false
                     }
                 }
