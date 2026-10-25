@@ -326,7 +326,6 @@ class TestFragment : Fragment() {
             appendLine("朝向目标/帧    ${"%.1f".format(status.getDouble("bearing_target"))}° / ${"%.1f".format(status.getDouble("bearing_frame"))}°")
             appendLine("GNSS 模拟      ${yn(status.getBoolean("gnss_mock"))}")
         }
-        TestSnapshot.last = text
         withContext(Dispatchers.Main) {
             _binding?.testOutput?.text = text
         }
