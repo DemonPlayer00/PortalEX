@@ -29,6 +29,7 @@ import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
+import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
@@ -112,6 +113,8 @@ class GnssMockFragment : Fragment() {
             // 直接退出返回根布局，接下来的操作将不会执行！
             return root
         }
+        binding.gnssGpsStatusCode.setText(requireContext().sharedPrefs.getString("sim_gps_v1", "3"))
+        binding.gnssGpsSatellites.setText(requireContext().sharedPrefs.getString("sim_gps_v2", "12"))
         if (MockServiceHelper.isGnssMockStart(locationManager)) {
             binding.switchGnssMock.text = getString(R.string.gnss_stop_mock)
             ContextCompat.getDrawable(requireContext(), R.drawable.rounded_play_disabled_24)?.let {
@@ -145,6 +148,10 @@ class GnssMockFragment : Fragment() {
             try {
                 ConfigSync.push(requireContext(), locationManager)
                 if (MockServiceHelper.startGnssMock(locationManager)) {
+                    val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                    val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
+                    requireContext().sharedPrefs.edit().putString("sim_gps_v1", code).putString("sim_gps_v2", sats).apply()
+                    MockServiceHelper.setSimConfig(locationManager, "gps", true, code, sats)
                     updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流
                     restartGpsProvider()
@@ -224,6 +231,9 @@ class GnssMockFragment : Fragment() {
                     }
 
                     if (MockServiceHelper.stopGnssMock(locationManager)) {
+                        val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                        val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
+                        MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats)
                         updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
