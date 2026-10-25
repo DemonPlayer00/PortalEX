@@ -31,6 +31,7 @@ import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -349,6 +350,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                     }
 
                     if (MockServiceHelper.tryCloseMock(lm)) {
+                        FeatureDependency.suspendClass2(requireContext())
                         updateMockButtonState(button, "开始模拟", R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {

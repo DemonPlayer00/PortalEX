@@ -42,6 +42,7 @@ import com.baidu.mapapi.map.OverlayOptions
 import com.baidu.mapapi.map.PolylineOptions
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.mapType
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
@@ -891,14 +892,12 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             return
         }
         // 所有实现统一由 cammock 的 start.sh / stop.sh 执行；
-        // PortalEX 只负责位置模拟前置检查和状态显示。
-        if (next) {
-            val lm = mockServiceViewModel.locationManager
-            if (lm == null || !moe.fuqiuluo.portalex.service.MockServiceHelper.isMockStart(lm)) {
-                android.util.Log.w("CameraMockFragment", "camera start blocked: location mock not started")
-                Toast.makeText(context, "请先开启位置模拟，再启动摄像头模拟", Toast.LENGTH_LONG).show()
-                return
-            }
+        // 二类功能先记住意图，等一类（路线/GNSS）启动后由 FeatureDependency 统一拉起。
+        if (next && !FeatureDependency.isMasterActive(context)) {
+            context.cameraMockEnabled = true
+            updateSwitch()
+            Toast.makeText(context, R.string.class2_waiting_master, Toast.LENGTH_LONG).show()
+            return
         }
         binding.switchCameraMock.isEnabled = false
         binding.cameraMockStatus.text = if (next) "正在启动 cammock…" else "正在停止 cammock…"
