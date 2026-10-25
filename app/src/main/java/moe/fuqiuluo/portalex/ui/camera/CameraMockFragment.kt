@@ -891,12 +891,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 .show()
             return
         }
-        // 所有实现统一由 cammock 的 start.sh / stop.sh 执行；
-        // 二类功能先记住意图，等一类（路线/GNSS）启动后由 FeatureDependency 统一拉起。
-        if (next && !FeatureDependency.isMasterActive(context)) {
-            context.cameraMockEnabled = true
-            updateSwitch()
-            Toast.makeText(context, R.string.class2_waiting_master, Toast.LENGTH_LONG).show()
+        // cammock 是特例：严格依赖位置/路线模拟，关闭时必须随位置模拟一起停，
+        // 因此不能在位置模拟未启动时"预启用"。
+        if (next && !FeatureDependency.isRouteActive(context)) {
+            Toast.makeText(context, R.string.camera_requires_route, Toast.LENGTH_LONG).show()
             return
         }
         binding.switchCameraMock.isEnabled = false
