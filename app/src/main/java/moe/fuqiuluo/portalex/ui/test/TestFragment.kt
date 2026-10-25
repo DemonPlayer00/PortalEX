@@ -71,6 +71,14 @@ class TestFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        // Test 页的 CellInfo 探针需要 READ_PHONE_STATE；只在进入本页时申请。
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                requireContext(), android.Manifest.permission.READ_PHONE_STATE
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.READ_PHONE_STATE), 0x51)
+        }
+
         // "普通应用视角"探针：真订阅步数传感器（进入本页即开始，离开即停）
         runCatching { StepProbe.start(requireContext().applicationContext) }
             .onFailure { android.util.Log.w("TestFragment", "StepProbe start failed", it) }
