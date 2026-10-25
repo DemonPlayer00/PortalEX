@@ -47,9 +47,11 @@ class HistoricalRouteAdapter(
     @SuppressLint("SetTextI18n")
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         holder.name.text = dataSet[position].name
-        holder.route.text = dataSet[position].route.toString()
+        holder.route.text = dataSet[position].route.joinToString("  ") {
+            String.format("%.5f, %.5f", it.first, it.second)
+        }
         val smooth = dataSet[position].smooth
-        holder.smoothDesc.text = if (smooth.isEmpty()) {
+        holder.smoothDesc.text = if (dataSet[position].route.size < 2 || smooth.isEmpty()) {
             "平滑: 无"
         } else {
             "平滑: [" + smooth.joinToString(",") { if (it) "T" else "F" } + "]"
