@@ -149,6 +149,11 @@ object TelephonyHook: BaseTelephonyHook() {
         }
 
         if(Hooks.hookAllMethods(cPhoneInterfaceManager, "getCellLocation", afterHook {
+                val callerUid = BinderUtils.getCallerUid()
+                val callerPkg = BinderUtils.getUidPackageNames(uid = callerUid)?.firstOrNull()
+                if (callerPkg == NetworkTypeSpoof.TARGET) {
+                    Logger.info("TelephonyHook: target getCellLocation")
+                }
                 if (!FakeLoc.enable || BinderUtils.isSystemAppsCall()) {
                     return@afterHook
                 }
