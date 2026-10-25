@@ -2,6 +2,8 @@ package moe.fuqiuluo.portalex.ui.test
 
 import moe.fuqiuluo.portalex.ext.fusedMode
 import android.content.Context
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -59,6 +61,7 @@ class TestFragment : Fragment() {
 
     private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
     private var refreshJob: Job? = null
+    private var gpsListener: LocationListener? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -88,6 +91,19 @@ class TestFragment : Fragment() {
         // IMU 平滑度探针：把"是否平滑"变成可读的数（|Δ| 中位/最大 + accel=gravity+linear 残差）
         runCatching { ImuProbe.start(requireContext().applicationContext) }
             .onFailure { android.util.Log.w("TestFragment", "ImuProbe start failed", it) }
+        // Test 页自己订阅一次 GPS，让 getLastKnownLocation / gps.last 有真实注入帧可看。
+        runCatching {
+            val lm = requireContext().getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val listener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {}
+                @Deprecated("Deprecated in Java")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+            }
+            gpsListener = listener
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, listener)
+        }.onFailure { android.util.Log.w("TestFragment", "GPS probe subscribe failed", it) }
         if (refreshJob?.isActive == true) return
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
@@ -104,6 +120,13 @@ class TestFragment : Fragment() {
         runCatching { StepProbe.stop() }
         runCatching { StepTickProbe.stop() }
         runCatching { ImuProbe.stop() }
+        gpsListener?.let {
+            runCatching {
+                (requireContext().getSystemService(Context.LOCATION_SERVICE) as LocationManager)
+                    .removeUpdates(it)
+            }
+        }
+        gpsListener = null
         super.onPause()
     }
 
