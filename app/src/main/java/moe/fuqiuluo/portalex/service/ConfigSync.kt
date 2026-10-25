@@ -25,7 +25,6 @@ import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
-import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.satelliteJitter
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
@@ -138,7 +137,6 @@ object ConfigSync {
         rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
         rely.putInt(Key.MIN_SATELLITES, FakeLoc.minSatellites)
         rely.putDouble(Key.SATELLITE_JITTER, FakeLoc.satelliteJitter)
-        rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, context.loopBroadcastlocation)
         rely.putBoolean(Key.ENABLE_AGPS, FakeLoc.enableAGPS)
         rely.putBoolean(Key.ENABLE_NMEA, FakeLoc.enableNMEA)
         rely.putBoolean(Key.DISABLE_REQUEST_GEOFENCE, FakeLoc.disableRequestGeofence)

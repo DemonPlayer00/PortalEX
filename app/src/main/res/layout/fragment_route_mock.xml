@@ -30,7 +30,7 @@
                     android:layout_height="wrap_content"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                    android:text="@string/target_location"/>
+                    android:text="@string/target_route"/>
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -40,49 +40,13 @@
                     android:orientation="vertical">
 
                     <TextView
-                        android:id="@+id/mock_location_name"
+                        android:id="@+id/mock_route_name"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/none"
-                        android:textStyle="bold"
+                        android:text="@string/none_route"
                         android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                        android:textColor="?attr/colorOnSurface"/>
-
-                    <TextView
-                        android:id="@+id/mock_location_address"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/none_none"
-                        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                        android:textColor="?attr/colorOnSurface"/>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:layout_marginTop="4dp">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/latlon_display"
-                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                            android:textColor="?attr/colorOnSurface"/>
-
-                        <!-- 同 layout_route_item：横向容器里用 0dp+weight，match_parent 会把行撑出视口 -->
-                        <TextView
-                            android:id="@+id/mock_location_latlon"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:maxLines="1"
-                            android:ellipsize="end"
-                            android:text="@string/default_latlon"
-                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                            android:textColor="?attr/colorPrimary"/>
-
-                    </LinearLayout>
-
+                        android:textColor="?attr/colorOnSurface"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -140,60 +104,31 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="20dp"
-            android:paddingEnd="12dp">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/target_route"
-                android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                android:textColor="?attr/colorOnSurfaceVariant" />
-
-            <TextView
-                android:id="@+id/mock_route_name"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="2"
-                android:text="@string/none_route"
-                android:textSize="13sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/mock_route_pick"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/quick_select" />
-        </LinearLayout>
-
         <TextView
+            android:id="@+id/historical_route_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:layout_marginLeft="20dp"
-            android:layout_marginRight="20dp"
+            android:layout_marginStart="@dimen/history_label_margin"
+            android:layout_marginEnd="@dimen/history_label_margin"
             android:layout_marginBottom="4dp"
             android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
             android:textColor="?attr/colorOnSurfaceVariant"
-            android:text="@string/history_location"/>
+            android:text="@string/history_route"/>
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/historical_route_card"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
+            android:minHeight="160dp"
             android:layout_margin="8dp"
             app:cardCornerRadius="12dp"
             app:cardPreventCornerOverlap="false"
             app:contentPadding="8dp">
 
             <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/historical_location_list"
+                android:id="@+id/historical_route_list"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"/>
 
@@ -215,5 +150,6 @@
         android:visibility="gone"
         android:layout_gravity="bottom|end"
         app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
+
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

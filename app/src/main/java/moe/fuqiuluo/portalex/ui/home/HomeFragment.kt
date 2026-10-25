@@ -40,7 +40,8 @@ import moe.fuqiuluo.portalex.bdmap.setMapConfig
 import moe.fuqiuluo.portalex.databinding.FragmentHomeBinding
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.mapType
-import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
+import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
+import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
@@ -355,12 +356,18 @@ class HomeFragment : Fragment(), MapControlsHost {
                     }
 
                     with(requireContext()) {
-                        val locations = rawHistoricalLocations.toMutableSet()
+                        val routes = HistoricalRoute.parseList(jsonHistoricalRoutes).toMutableList()
                         var count = 0
-                        while (!locations.addLocation(name!!, address, newLat!!, newLon!!)) {
+                        while (routes.any { it.name == name }) {
                             name = "$name(${++count})"
                         }
-                        rawHistoricalLocations = locations
+                        val point = HistoricalRoute(
+                            name!!,
+                            mutableListOf((newLat ?: 0.0) to (newLon ?: 0.0))
+                        )
+                        routes += point
+                        jsonHistoricalRoutes = HistoricalRoute.listToJson(routes)
+                        selectRoute = point
                     }
 
                     Toast.makeText(requireContext(), "位置已保存", Toast.LENGTH_SHORT).show()

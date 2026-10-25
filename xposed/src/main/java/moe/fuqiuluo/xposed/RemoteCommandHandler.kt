@@ -40,7 +40,7 @@ object RemoteCommandHandler {
     enum class Origin { PROVIDER, PROXY }
 
     private val proxyBinders by lazy { Collections.synchronizedList(arrayListOf<IBinder>()) }
-    private val needProxyCmd = arrayOf(Cmd.START, Cmd.STOP, Cmd.SET_SPEED_AMP, Cmd.SET_ALTITUDE, Cmd.SET_SPEED, Cmd.UPDATE_LOCATION, Cmd.SET_BEARING, Cmd.MOVE, Cmd.PUT_CONFIG)
+    private val needProxyCmd = arrayOf(Cmd.START, Cmd.STOP, Cmd.SET_SPEED_AMP, Cmd.SET_ALTITUDE, Cmd.SET_SPEED, Cmd.SET_BEARING, Cmd.MOVE, Cmd.PUT_CONFIG)
 
     /** 已被拒绝过的 uid：门禁告警只记一次，免得被别的应用刷日志（刷日志本身就是一种提示） */
     private val warnedDeniedUids = Collections.synchronizedSet(HashSet<Int>())
@@ -372,45 +372,6 @@ object RemoteCommandHandler {
                     if (FakeLoc.isSystemServerProcess) LocationServiceHook.callOnLocationChanged(force = true)
                 }
             }
-            Cmd.UPDATE_LOCATION -> {
-                val mode = rely.getString(Key.MODE)
-                var newLat = rely.getDouble(Key.LAT, 0.0)
-                var newLon = rely.getDouble(Key.LON, 0.0)
-                // 统一落点入口：写坐标后**立即投递一帧**。
-                // 旧回调架构下只有 move / broadcast_location 会投递，而**路线自动播放**走的是
-                // update_location——不在此投递就会出现「坐标在推进但应用收不到」：
-                // 表现为位置不动、被拉回真实坐标、GPS 信号差（长时间无帧）。
-                fun applyCoordinate(lat: Double, lon: Double, explicitBearing: Double? = null): Boolean {
-                    val ok = updateCoordinate(lat, lon, updateBearing = true, explicitBearing = explicitBearing)
-                    if (ok && FakeLoc.isSystemServerProcess) {
-                        // force：路线播放/设点每 tick 都推进坐标，必须立刻送达
-                        LocationServiceHook.callOnLocationChanged(force = true)
-                    }
-                    return ok
-                }
-                when(mode) {
-                    "+" -> return applyCoordinate(newLat + FakeLoc.latitude, newLon + FakeLoc.longitude)
-                    "-" -> return applyCoordinate(FakeLoc.latitude - newLat, FakeLoc.longitude - newLon)
-                    "*" -> return applyCoordinate(newLat * FakeLoc.latitude, newLon * FakeLoc.longitude)
-                    "/" -> {
-                        if (newLat == 0.0 || newLon == 0.0) {
-                            return false
-                        }
-                        return applyCoordinate(FakeLoc.latitude / newLat, FakeLoc.longitude / newLon)
-                    }
-                    "=" -> {
-                        // 路线播放：方位随位置显式下发（路线切线）——弧长推进每 tick 位移
-                        // 仅约 0.2m，达不到位移法 1m 门控，靠位移推算会导致朝向永不更新。
-                        val explicitBearing =
-                            if (rely.containsKey("bearing")) rely.getDouble(Key.BEARING) else null
-                        return applyCoordinate(newLat, newLon, explicitBearing)
-                    }
-                    Cmd.RANDOM -> {
-                        return applyCoordinate(Random.nextDouble(-90.0, 90.0), Random.nextDouble(-180.0, 180.0))
-                    }
-                }
-                return true
-            }
             Cmd.PUT_CONFIG -> {
                 val enable = rely.getBoolean(Key.ENABLE, FakeLoc.enable)
                 val speed = rely.numberOr("speed", FakeLoc.speed)
@@ -537,11 +498,6 @@ object RemoteCommandHandler {
                 rely.putBoolean(Key.NEED_DOWNGRADE_TO_2G, FakeLoc.needDowngradeToCdma)
                 rely.putBoolean(Key.LOOP_BROADCAST_LOCATION, FakeLoc.loopBroadcastLocation)
                 putSensorMockSwitches(rely)
-                return true
-            }
-            Cmd.BROADCAST_LOCATION -> {
-                // force：显式广播就是「现在推一帧」——反定位拉回线程靠反复强制推送压制真实位置
-                LocationServiceHook.callOnLocationChanged(force = true)
                 return true
             }
             else -> {
