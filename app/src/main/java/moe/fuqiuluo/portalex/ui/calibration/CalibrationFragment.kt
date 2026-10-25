@@ -1,7 +1,14 @@
 package moe.fuqiuluo.portalex.ui.calibration
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.location.LocationManager
+import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.telephony.CellIdentityGsm
+import android.telephony.CellIdentityLte
+import android.telephony.CellIdentityNr
+import android.telephony.TelephonyManager
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -35,6 +42,7 @@ import moe.fuqiuluo.portalex.ext.satellitesMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
+import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.LocationAccuracyCalibrator
@@ -55,6 +63,11 @@ import kotlin.math.abs
  * 下发真的落到了 system_server 的原生注入层，而不是只写进了 App 的偏好。
  */
 class CalibrationFragment : Fragment() {
+    companion object {
+        private const val GROUP_SENSOR = 0
+        private const val GROUP_LOCATION = 1
+        private const val GROUP_BASEBAND = 2
+    }
 
     private var _binding: FragmentCalibrationBinding? = null
     private val binding get() = _binding!!
@@ -88,7 +101,7 @@ class CalibrationFragment : Fragment() {
         renderValues(requireContext().sensorNoise)
         renderFluctuation()
         binding.calibStatus.text = requireContext().sensorNoiseReport
-        binding.calibRun.setOnClickListener { runCalibration() }
+        binding.calibRun.setOnClickListener { showCalibrationDialog() }
         binding.calibReset.setOnClickListener { confirmReset() }
         refreshEcho()
         return binding.root
@@ -349,9 +362,113 @@ class CalibrationFragment : Fragment() {
             .show()
     }
 
+    // ---- 网络模拟参数自动填入 ----
+
+    private fun autoFillGps() {
+        val ctx = requireContext()
+        runCatching {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val satellites = loc?.extras?.getInt("satellites", 0) ?: 0
+            ctx.sharedPrefs.edit()
+                .putString("sim_gps_v1", "3")
+                .putString("sim_gps_v2", satellites.takeIf { it > 0 }?.toString() ?: "0")
+                .apply()
+            sendSim("gps", "3", satellites.takeIf { it > 0 }?.toString() ?: "0")
+            showToast(if (loc == null) getString(R.string.calibration_auto_no_fix) else getString(R.string.calibration_auto_done))
+        }.onFailure { showToast(it.message ?: "GPS") }
+    }
+
+    private fun autoFillCell() {
+        val ctx = requireContext()
+        runCatching {
+            val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            val cell = tm.allCellInfo?.firstOrNull { it.isRegistered } ?: tm.allCellInfo?.firstOrNull()
+            val id = cell?.cellIdentity
+            val mcc: String?
+            val mnc: String?
+            val cid: String?
+            val tac: String?
+            when (id) {
+                is CellIdentityLte -> {
+                    mcc = id.mccString; mnc = id.mncString; cid = id.ci.toString(); tac = id.tac.toString()
+                }
+                is CellIdentityGsm -> {
+                    mcc = id.mccString; mnc = id.mncString; cid = id.cid.toString(); tac = id.lac.toString()
+                }
+                is CellIdentityNr -> {
+                    mcc = id.mccString; mnc = id.mncString; cid = id.nci.toString(); tac = id.tac.toString()
+                }
+                else -> { mcc = null; mnc = null; cid = null; tac = null }
+            }
+            if (mcc == null || cid == null) {
+                showToast(getString(R.string.calibration_auto_no_cell))
+                return
+            }
+            val v1 = "$mcc/$mnc"
+            val v2 = "$cid/$tac"
+            ctx.sharedPrefs.edit().putString("sim_cell_v1", v1).putString("sim_cell_v2", v2).apply()
+            sendSim("cell", v1, v2)
+            showToast(getString(R.string.calibration_auto_done))
+        }.onFailure { showToast(it.message ?: "Cell") }
+    }
+
+    private fun autoFillWifi() {
+        val ctx = requireContext()
+        runCatching {
+            val wm = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            @Suppress("DEPRECATION")
+            val info = wm.connectionInfo
+            val ssid = info?.ssid?.trim('"').orEmpty()
+            val bssid = info?.bssid.orEmpty()
+            if (ssid.isBlank() && bssid.isBlank()) {
+                showToast(getString(R.string.calibration_auto_no_wifi))
+                return
+            }
+            ctx.sharedPrefs.edit().putString("sim_wifi_v1", ssid).putString("sim_wifi_v2", bssid).apply()
+            sendSim("wifi", ssid, bssid)
+            showToast(getString(R.string.calibration_auto_done))
+        }.onFailure { showToast(it.message ?: "Wi-Fi") }
+    }
+
+    private fun sendSim(kind: String, v1: String, v2: String) {
+        val lm = mockServiceViewModel.locationManager ?: return
+        val enabled = requireContext().sharedPrefs.getBoolean("sim_${kind}_enabled", false)
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { MockServiceHelper.setSimConfig(lm, kind, enabled, v1, v2) }
+        }
+    }
+
     // ---- 一键校准 ----
 
-    private fun runCalibration() {
+    private fun showCalibrationDialog() {
+        val ctx = requireContext()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 0)
+        }
+        val checks = listOf(
+            android.widget.CheckBox(ctx).apply { text = getString(R.string.calibration_group_sensor); isChecked = true },
+            android.widget.CheckBox(ctx).apply { text = getString(R.string.calibration_group_location); isChecked = true },
+            android.widget.CheckBox(ctx).apply { text = getString(R.string.calibration_group_baseband); isChecked = true },
+        )
+        checks.forEach { box.addView(it) }
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle(R.string.calibration_run)
+            .setView(box)
+            .setPositiveButton(R.string.calibration_run) { _, _ ->
+                val selected = checks.mapIndexedNotNull { i, c -> i.takeIf { c.isChecked } }.toSet()
+                if (selected.isEmpty()) {
+                    showToast(getString(R.string.calibration_nothing_selected))
+                } else {
+                    runCalibration(selected)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun runCalibration(groups: Set<Int>) {
         val ctx = requireContext()
         // 前置：模拟会话在跑时不能校准。
         // 框架侧的注入一旦生效就会**压制真实事件**，那时采到的全是我们自己生成的假数据
@@ -372,6 +489,9 @@ class CalibrationFragment : Fragment() {
             return
         }
 
+        val doSensor = GROUP_SENSOR in groups
+        val doLocation = GROUP_LOCATION in groups
+        val doBaseband = GROUP_BASEBAND in groups
         val token = ++runToken
         // 采集 dialog：**实时波形** + 静止自检读数（图上那条线就是判定用的量）
         val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_sensor_trace, null)
@@ -393,7 +513,7 @@ class CalibrationFragment : Fragment() {
 
         val base = ctx.sensorNoise
         viewLifecycleOwner.lifecycleScope.launch {
-            val locationDeferred = async(Dispatchers.IO) {
+            val locationDeferred = if (doLocation) async(Dispatchers.IO) {
                 runCatching { LocationAccuracyCalibrator.collect(ctx) }
                     .getOrElse {
                         LocationAccuracyCalibrator.Result(
@@ -404,8 +524,8 @@ class CalibrationFragment : Fragment() {
                             message = "GPS/fused 采集异常：${it.message}",
                         )
                     }
-            }
-            val result = withContext(Dispatchers.IO) {
+            } else null
+            val result = if (doSensor) withContext(Dispatchers.IO) {
                 runCatching {
                     SensorNoiseCalibrator.collect(
                         ctx, base,
@@ -422,25 +542,34 @@ class CalibrationFragment : Fragment() {
                 }.getOrElse {
                     SensorNoiseCalibrator.Result(base, "", false, "采集异常：${it.message}")
                 }
-            }
+            } else SensorNoiseCalibrator.Result(base, "", true, "传感器采集已跳过")
             if (token != runToken) {
                 runCatching { progress.dismiss() }
                 showToast("已取消校准")
                 return@launch
             }
             runCatching { progress.dismiss() }
-            if (!result.ok) {
+            if (doSensor && !result.ok) {
                 _binding?.calibStatus?.text = result.message
                 showToast(result.message)
                 return@launch
             }
-            ctx.sensorNoise = result.values
-            ctx.sensorNoiseReport = result.report
-            renderValues(ctx.sensorNoise)
-            _binding?.calibStatus?.text = result.report
-            showToast(result.message)
-            pushConfig()
-            applyLocationAccuracy(ctx, locationDeferred.await())
+            if (doSensor) {
+                ctx.sensorNoise = result.values
+                ctx.sensorNoiseReport = result.report
+                renderValues(ctx.sensorNoise)
+                _binding?.calibStatus?.text = result.report
+                showToast(result.message)
+                pushConfig()
+            }
+            if (doLocation) {
+                autoFillGps()
+                locationDeferred?.let { applyLocationAccuracy(ctx, it.await()) }
+            }
+            if (doBaseband) {
+                autoFillCell()
+                autoFillWifi()
+            }
         }
     }
 
