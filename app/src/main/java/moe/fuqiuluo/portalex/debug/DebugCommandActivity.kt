@@ -34,6 +34,8 @@ class DebugCommandActivity : Activity() {
         val cmd = intent.getStringExtra("cmd") ?: "status"
         try {
             val text = when (cmd) {
+                "test" -> moe.fuqiuluo.portalex.ui.test.TestSnapshot.last
+                    ?: "Test 页面尚未打开或尚未完成首次刷新"
                 "set" -> setCommand()
                 "help" -> HELP
                 else -> status()
@@ -156,6 +158,7 @@ class DebugCommandActivity : Activity() {
         private const val HELP = """
 commands:
   --es cmd status
+  --es cmd test
   --es cmd set [--es dev_mode 0|1] [--es gps on|off] [--es wifi on|off] [--es cell on|off] [--es ssid NAME]
 result: logcat -s PortalDebug
 file: /sdcard/Android/data/moe.fuqiuluo.portalex/files/portal_debug.txt
