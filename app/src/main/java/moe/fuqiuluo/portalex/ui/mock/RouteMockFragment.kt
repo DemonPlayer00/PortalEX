@@ -350,7 +350,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                     }
 
                     if (MockServiceHelper.tryCloseMock(lm)) {
-                        FeatureDependency.suspendClass2(requireContext())
+                        FeatureDependency.suspendClass2(requireContext(), stopCamera = true)
                         updateMockButtonState(button, "开始模拟", R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
