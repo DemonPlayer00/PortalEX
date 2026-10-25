@@ -184,6 +184,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                             Toast.makeText(requireContext(), "更新位置失败", Toast.LENGTH_SHORT).show()
                         }
                     }
+                } else {
+                    Toast.makeText(requireContext(), "已选择路线，启动模拟后生效", Toast.LENGTH_SHORT).show()
                 }
             }
         }

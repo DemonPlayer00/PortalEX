@@ -14,6 +14,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import com.baidu.location.BDAbstractLocationListener
+import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.PortalLocationClient
 import moe.fuqiuluo.portalex.ext.reportDuration
 import com.baidu.location.BDLocation
@@ -38,6 +39,7 @@ import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.bdmap.locateMe
 import moe.fuqiuluo.portalex.bdmap.setMapConfig
 import moe.fuqiuluo.portalex.databinding.FragmentHomeBinding
+import moe.fuqiuluo.portalex.ext.Loc4j
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.mapType
 import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
@@ -57,6 +59,8 @@ class HomeFragment : Fragment(), MapControlsHost {
     // This property is only valid between onCreateView and
     // onDestroyView.
     private val binding get() = _binding!!
+    /** 地图最近一次跟随的模拟点；只在明显移动时重新居中，避免抖动抢视角。 */
+    private var lastFollowPoint: Pair<Double, Double>? = null
 
     private lateinit var mLocationClient: LocationClient
     private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
@@ -178,6 +182,17 @@ class HomeFragment : Fragment(), MapControlsHost {
         PortalLocationClient.subscribe(this, requireContext(), requireContext().reportDuration.toLong()) { fix ->
             if (baiduMapViewModel.isExists) {
                 baiduMapViewModel.applyFix(fix.lat, fix.lon, fix.bearing, fix.accuracy)
+                // 路线/坐标点更新后模拟位置可能离当前视野很远；把地图跟过去，
+                // 否则“位置已更新”但红色指示点仍在视野外，看起来像没生效。
+                val last = lastFollowPoint
+                val moved = last == null ||
+                        Math.abs(last.first - fix.lat) > 5e-4 ||
+                        Math.abs(last.second - fix.lon) > 5e-4
+                if (moved) {
+                    lastFollowPoint = fix.lat to fix.lon
+                    val gcj = Loc4j.wgs2gcj(fix.lat, fix.lon)
+                    baiduMapViewModel.baiduMap.setMapStatus(MapStatusUpdateFactory.newLatLng(LatLng(gcj.first, gcj.second)))
+                }
             }
         }
 
@@ -471,6 +486,16 @@ class HomeFragment : Fragment(), MapControlsHost {
 
         if (_binding != null)
             binding.bmapView.onResume()
+
+        // 未启动模拟时仍给路线一个可见的预览点：否则点完路线回到首页只看到真实位置，
+        // 像是"选择没生效"。启动后由 PortalLocationClient 的注入帧接管跟随。
+        val lm = requireContext().getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
+        if (lm != null && !MockServiceHelper.isMockStart(lm)) {
+            requireContext().selectRoute?.route?.firstOrNull()?.let { (lat, lon) ->
+                baiduMapViewModel.markedLoc = lat to lon
+                runCatching { markMap(moveEyes = true) }
+            }
+        }
 
         // 注册悬浮胶囊功能集：主界面 = 我的位置 / 跳转 / 添加
         // （胶囊为 Activity 级单实例，切换功能集自动重置收起态）
