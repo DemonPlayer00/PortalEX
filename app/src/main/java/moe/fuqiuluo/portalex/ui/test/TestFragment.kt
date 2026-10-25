@@ -133,6 +133,7 @@ class TestFragment : Fragment() {
     private suspend fun refresh() {
         val ctx = context ?: return
         val text = buildString {
+            appendLine(moe.fuqiuluo.portalex.debug.TestReport.summary(ctx))
             appendLine("═══ 应用侧（本进程）═══")
             appendLine("包名           ${ctx.packageName}")
             appendLine("外周模拟(步频)  ${if (ctx.cadenceMock) "开" else "关"}")
