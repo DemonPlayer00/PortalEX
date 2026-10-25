@@ -86,7 +86,23 @@ class HomeFragment : Fragment(), MapControlsHost {
         }
 
         with(binding.bmapView.map) {
-            setMapStatus(MapStatusUpdateFactory.zoomTo(19f))
+            val savedCenter = baiduMapViewModel.mapCenter
+            setMapStatus(
+                if (savedCenter != null) {
+                    MapStatusUpdateFactory.newLatLngZoom(savedCenter, baiduMapViewModel.mapZoom)
+                } else {
+                    MapStatusUpdateFactory.zoomTo(19f)
+                }
+            )
+            setOnMapStatusChangeListener(object : BaiduMap.OnMapStatusChangeListener {
+                override fun onMapStatusChangeStart(status: com.baidu.mapapi.map.MapStatus) {}
+                override fun onMapStatusChangeStart(status: com.baidu.mapapi.map.MapStatus, reason: Int) {}
+                override fun onMapStatusChange(status: com.baidu.mapapi.map.MapStatus) {}
+                override fun onMapStatusChangeFinish(status: com.baidu.mapapi.map.MapStatus) {
+                    baiduMapViewModel.mapCenter = status.target
+                    baiduMapViewModel.mapZoom = status.zoom
+                }
+            })
 
             mapType = context?.mapType ?: BaiduMap.MAP_TYPE_NORMAL
             compassPosition = Point(50, 50)
@@ -487,10 +503,20 @@ class HomeFragment : Fragment(), MapControlsHost {
         if (_binding != null)
             binding.bmapView.onResume()
 
+        baiduMapViewModel.pendingCenterWgs?.let { (lat, lon) ->
+            baiduMapViewModel.pendingCenterWgs = null
+            baiduMapViewModel.markedLoc = lat to lon
+            val gcj = Loc4j.wgs2gcj(lat, lon)
+            baiduMapViewModel.baiduMap.setMapStatus(
+                MapStatusUpdateFactory.newLatLng(LatLng(gcj.first, gcj.second))
+            )
+            runCatching { markMap(moveEyes = true) }
+        }
+
         // 未启动模拟时仍给路线一个可见的预览点：否则点完路线回到首页只看到真实位置，
         // 像是"选择没生效"。启动后由 PortalLocationClient 的注入帧接管跟随。
         val lm = requireContext().getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
-        if (lm != null && !MockServiceHelper.isMockStart(lm)) {
+        if (lm != null && !MockServiceHelper.isMockStart(lm) && baiduMapViewModel.mapCenter == null) {
             requireContext().selectRoute?.route?.firstOrNull()?.let { (lat, lon) ->
                 baiduMapViewModel.markedLoc = lat to lon
                 runCatching { markMap(moveEyes = true) }
@@ -531,6 +557,10 @@ class HomeFragment : Fragment(), MapControlsHost {
         super.onPause()
 
         if (_binding != null) {
+            binding.bmapView.map.mapStatus?.let {
+                baiduMapViewModel.mapCenter = it.target
+                baiduMapViewModel.mapZoom = it.zoom
+            }
             binding.bmapView.onPause()
         }
     }
