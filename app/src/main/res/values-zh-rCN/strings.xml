@@ -388,7 +388,7 @@
     <string name="baseband_mnc">MNC</string>
     <string name="baseband_cid">CID</string>
     <string name="baseband_tac">TAC</string>
-    <string name="baseband_waiting_master">已记住，启动路线或 GNSS 模拟后自动启用</string>
-    <string name="class2_waiting_master">已记住，启动路线或 GNSS 模拟后自动启用</string>
+    <string name="baseband_waiting_master">已记住，启动路线模拟后自动启用</string>
+    <string name="class2_waiting_master">已记住，启动路线模拟后自动启用</string>
     <string name="camera_requires_route">请先启动路线模拟，再启用摄像头模拟</string>
 </resources>
