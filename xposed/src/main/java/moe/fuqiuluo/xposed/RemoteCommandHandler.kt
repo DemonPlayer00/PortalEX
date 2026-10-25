@@ -274,7 +274,17 @@ object RemoteCommandHandler {
                 val lat = rely.getDoubleArray(Key.ROUTE_LAT)
                 val lon = rely.getDoubleArray(Key.ROUTE_LON)
                 val points = MotionEngine.setRoute(lat, lon)
-                Logger.info("MotionEngine: 路线已上传 ${points} 点，全长 %.1f m".format(MotionEngine.distance()))
+                // 单点路线不是"空路线"：清掉播放路径，但立刻把坐标落到该点。
+                // 页面点击历史坐标/单点路线时依赖这一步，否则 App 收到成功但地图不动。
+                if (points == 0 && lat?.size == 1 && lon?.size == 1 &&
+                    lat[0].isFinite() && lon[0].isFinite()
+                ) {
+                    updateCoordinate(lat[0], lon[0], updateBearing = false)
+                    if (FakeLoc.isSystemServerProcess) {
+                        LocationServiceHook.callOnLocationChanged(force = true)
+                    }
+                    Logger.info("MotionEngine: 单点路线已设为坐标 %.5f, %.5f".format(lat[0], lon[0]))
+                }
                 return true
             }
             Cmd.ROUTE_CONTROL -> {
