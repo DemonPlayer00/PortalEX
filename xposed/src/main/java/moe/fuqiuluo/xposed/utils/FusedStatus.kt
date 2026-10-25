@@ -53,7 +53,7 @@ object FusedStatus {
         "available=$available in=${installedIn.ifEmpty { "-" }} " +
                 "chooseBest=$chooseBestHookInstalled child=$childListenerHookInstalled " +
                 "blindMethods=${blindHooked.get()} rewrites=${FusedRewrite.rewritten} " +
-                "mode=${FusedMode.label(FakeLoc.fusedMode)}(${FakeLoc.fusedMode})"
+                "mode=${FakeLoc.fusedMode}"
 
     /** 调试模式打开时打一条（用户点名要的那条日志）；关闭时完全安静 */
     fun logIfDebug(tag: String = "融合定位 hook 状态") {

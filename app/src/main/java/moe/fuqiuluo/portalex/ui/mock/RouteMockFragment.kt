@@ -50,7 +50,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
         _binding = FragmentRouteMockBinding.inflate(inflater, container, false)
 
         if (mockServiceViewModel.isServiceStart()) {
-            binding.switchMock.text = "停止模拟"
+            binding.switchMock.text = getString(R.string.stop_mock)
             ContextCompat.getDrawable(requireContext(), R.drawable.rounded_play_disabled_24)?.let {
                 binding.switchMock.icon = it
             }
@@ -278,7 +278,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                     ) {
                         updateMockButtonState(
                             button,
-                            "停止模拟",
+                            getString(R.string.stop_mock),
                             R.drawable.rounded_play_disabled_24
                         )
                     } else {

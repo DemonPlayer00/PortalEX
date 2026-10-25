@@ -62,7 +62,7 @@ class MockFragment : Fragment() {
         }
 
         if (mockServiceViewModel.isServiceStart()) {
-            binding.switchMock.text = "停止模拟"
+            binding.switchMock.text = getString(R.string.stop_mock)
             ContextCompat.getDrawable(requireContext(), R.drawable.rounded_play_disabled_24)?.let {
                 binding.switchMock.icon = it
             }
@@ -241,7 +241,7 @@ class MockFragment : Fragment() {
                 withContext(Dispatchers.IO) {
                     mockServiceViewModel.locationManager!!.let {
                         if (MockServiceHelper.tryOpenMock(it, speed, altitude, accuracy)) {
-                            updateMockButtonState(button, "停止模拟", R.drawable.rounded_play_disabled_24)
+                            updateMockButtonState(button, getString(R.string.stop_mock), R.drawable.rounded_play_disabled_24)
                         } else {
                             showToast("模拟服务启动失败")
                             return@withContext

@@ -28,7 +28,7 @@
                     android:id="@+id/su_path_title"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="su 路径"
+                    android:text="@string/su_path_title"
                     android:textColor="?attr/colorOnSurfaceVariant"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toStartOf="@id/su_path_value"
@@ -38,7 +38,7 @@
                     android:id="@+id/su_path_desc"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="部分设备 su 不在 PATH，可填写绝对路径"
+                    android:text="@string/su_path_desc"
                     android:textSize="11sp"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toStartOf="@id/su_path_value"
@@ -71,12 +71,12 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="开发者模式"
+                        android:text="@string/developer_mode_title"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="显示当前状态；关闭入口时尽量保留 USB 调试等已有设置"
+                        android:text="@string/developer_mode_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -184,7 +184,7 @@
                     android:layout_width="96dp"
                     android:layout_height="wrap_content"
                     android:gravity="end"
-                    android:text="80.0米"
+                    android:text="@string/altitude_value_default"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/altitude_title"
                     app:layout_constraintEnd_toEndOf="parent" />
@@ -225,7 +225,7 @@
                     android:layout_width="96dp"
                     android:layout_height="wrap_content"
                     android:gravity="end"
-                    android:text="3.05米/秒"
+                    android:text="@string/speed_value_default"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/speed_title"
                     app:layout_constraintEnd_toEndOf="parent" />
@@ -299,7 +299,7 @@
                     android:layout_width="96dp"
                     android:layout_height="wrap_content"
                     android:gravity="end"
-                    android:text="伪装"
+                    android:text="@string/fused_spoof"
                     android:textSize="11sp"
                     app:layout_constraintTop_toBottomOf="@id/dfused_title"
                     app:layout_constraintEnd_toEndOf="parent" />
@@ -395,12 +395,12 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="禁用扫描WIFI列表"
+                        android:text="@string/disable_wifi_scan_title"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="阻止应用扫描 Wi-Fi 列表，缓解位置被拉回"
+                        android:text="@string/disable_wifi_scan_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -426,12 +426,12 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="反定位拉回"
+                        android:text="@string/anti_pullback_title"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="按需强力回推位置，缓解被拉回；回推间隔受「最大位置上报间隔」限制。开启后可能发热\n重启模拟生效"
+                        android:text="@string/anti_pullback_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -460,12 +460,12 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="后台保活"
+                        android:text="@string/background_keepalive_title"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="仅在**无人值守仍在走**时启用（自动播放 / 摇杆锁定后继续走）：\n用前台服务把 App 钉住，防止被系统冻结导致位置停住；空闲时按系统默认省电"
+                        android:text="@string/background_keepalive_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -492,13 +492,13 @@
                     <com.google.android.material.textview.MaterialTextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="电池优化白名单"
+                        android:text="@string/battery_optimization_title"
                         android:textColor="?attr/colorOnSurfaceVariant" />
                     <com.google.android.material.textview.MaterialTextView
                         android:id="@+id/battery_optimization_state"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="读取中…"
+                        android:text="@string/loading"
                         android:textSize="11sp" />
                 </LinearLayout>
             </LinearLayout>

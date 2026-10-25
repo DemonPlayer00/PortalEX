@@ -70,7 +70,7 @@
                                 android:visibility="gone"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:text="卫星信息"
+                                android:text="@string/gnss_satellite_info"
                                 android:gravity="center" />
 
                             <androidx.constraintlayout.widget.ConstraintLayout
@@ -152,7 +152,7 @@
                                     android:id="@+id/signal_strength_left_item"
                                     android:layout_width="0dp"
                                     android:layout_height="wrap_content"
-                                    android:text="平均信号强度"
+                                    android:text="@string/gnss_average_signal"
                                     android:gravity="center"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
@@ -194,7 +194,7 @@
                                     <TextView
                                         android:layout_width="match_parent"
                                         android:layout_height="wrap_content"
-                                        android:text="选中卫星详情"
+                                        android:text="@string/gnss_selected_satellite"
                                         android:gravity="center"
                                         android:textStyle="bold"
                                         android:textSize="10sp"/>
@@ -203,28 +203,28 @@
                                         android:id="@+id/selected_satellite_prn"
                                         android:layout_width="match_parent"
                                         android:layout_height="wrap_content"
-                                        android:text="PRN: --"
+                                        android:text="@string/gnss_prn"
                                         android:textSize="9sp"/>
 
                                     <TextView
                                         android:id="@+id/selected_satellite_snr"
                                         android:layout_width="match_parent"
                                         android:layout_height="wrap_content"
-                                        android:text="信号强度: -- dB-Hz"
+                                        android:text="@string/gnss_signal_strength"
                                         android:textSize="9sp"/>
 
                                     <TextView
                                         android:id="@+id/selected_satellite_elevation"
                                         android:layout_width="match_parent"
                                         android:layout_height="wrap_content"
-                                        android:text="仰角: -- 度"
+                                        android:text="@string/gnss_elevation"
                                         android:textSize="9sp"/>
 
                                     <TextView
                                         android:id="@+id/selected_satellite_azimuth"
                                         android:layout_width="match_parent"
                                         android:layout_height="wrap_content"
-                                        android:text="方位角: -- 度"
+                                        android:text="@string/gnss_azimuth"
                                         android:textSize="9sp"/>
                                 </LinearLayout>
                             </com.google.android.material.card.MaterialCardView>
@@ -250,7 +250,7 @@
                                     android:id="@+id/nav_systems_title"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
-                                    android:text="导航系统"
+                                    android:text="@string/gnss_navigation_system"
                                     android:gravity="center"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
@@ -302,7 +302,7 @@
                                     android:id="@+id/accuracy_left_item"
                                     android:layout_width="0dp"
                                     android:layout_height="wrap_content"
-                                    android:text="位置精度"
+                                    android:text="@string/gnss_position_accuracy"
                                     android:gravity="center"
                                     android:textStyle="bold"
                                     android:textSize="10sp"
@@ -316,7 +316,7 @@
                                     android:id="@+id/accuracy_right_item"
                                     android:layout_width="0dp"
                                     android:layout_height="wrap_content"
-                                    android:text="未知"
+                                    android:text="@string/gnss_unknown"
                                     android:gravity="center"
                                     android:textColor="?attr/colorOnSurface"
                                     android:textStyle="bold"
@@ -376,7 +376,7 @@
                                 android:checkMarkTint="?attr/colorOnSurfaceVariant"
                                 android:checked="true"
                                 android:gravity="center"
-                                android:text="随机化卫星信息"
+                                android:text="@string/gnss_randomize"
                                 android:textColor="?attr/colorOnSurfaceVariant"
                                 android:textSize="12sp" />
                         </LinearLayout>
@@ -404,7 +404,7 @@
                         android:layout_height="wrap_content"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                        android:text="功能设置"/>
+                        android:text="@string/gnss_features"/>
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -416,7 +416,7 @@
                             android:id="@+id/switch_request_geofence"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="允许地理围栏请求"
+                            android:text="@string/gnss_allow_geofence"
                             android:checked="true"
                             android:padding="8dp"/>
 
@@ -426,13 +426,13 @@
                             android:layout_height="wrap_content"
                             android:checked="true"
                             android:padding="8dp"
-                            android:text="允许位置获取" />
+                            android:text="@string/gnss_allow_location" />
 
                         <com.google.android.material.switchmaterial.SwitchMaterial
                             android:id="@+id/switch_enable_agps"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="启用AGPS模块"
+                            android:text="@string/gnss_agps"
                             android:checked="false"
                             android:padding="8dp"/>
 
@@ -440,7 +440,7 @@
                             android:id="@+id/switch_enable_nmea"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="启用NMEA模块"
+                            android:text="@string/gnss_nmea"
                             android:checked="false"
                             android:padding="8dp"/>
                     </LinearLayout>
