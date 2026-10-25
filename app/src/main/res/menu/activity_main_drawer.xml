@@ -14,6 +14,10 @@
             android:icon="@drawable/baseline_edit_location_alt_24"
             android:title="@string/menu_home" />
         <item
+            android:id="@+id/nav_quick_launch"
+            android:icon="@drawable/rounded_play_arrow_24"
+            android:title="@string/menu_quick_launch" />
+        <item
             android:id="@+id/nav_mock"
             android:icon="@drawable/baseline_label_important_24"
             android:title="@string/menu_mock" />
