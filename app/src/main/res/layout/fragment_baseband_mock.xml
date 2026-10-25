@@ -73,7 +73,8 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/baseband_mcc"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content" />
+                            android:layout_height="wrap_content"
+                            android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -85,7 +86,8 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/baseband_mnc"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content" />
+                            android:layout_height="wrap_content"
+                            android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
@@ -104,7 +106,8 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/baseband_cid"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content" />
+                            android:layout_height="wrap_content"
+                            android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -116,7 +119,8 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/baseband_tac"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content" />
+                            android:layout_height="wrap_content"
+                            android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </LinearLayout>
@@ -152,7 +156,8 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/baseband_ssid"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content" />
+                            android:layout_height="wrap_content"
+                            android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
@@ -164,7 +169,8 @@
                         <com.google.android.material.textfield.TextInputEditText
                             android:id="@+id/baseband_bssid"
                             android:layout_width="match_parent"
-                            android:layout_height="wrap_content" />
+                            android:layout_height="wrap_content"
+                            android:singleLine="true" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </LinearLayout>

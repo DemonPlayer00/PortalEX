@@ -123,7 +123,10 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:minHeight="160dp"
-            android:layout_margin="@dimen/page_gutter"
+            android:layout_marginTop="@dimen/page_gutter"
+            android:layout_marginBottom="@dimen/page_gutter"
+            android:layout_marginStart="@dimen/page_gutter"
+            android:layout_marginEnd="@dimen/page_gutter"
             app:cardCornerRadius="@dimen/card_radius"
             app:cardPreventCornerOverlap="false"
             app:contentPadding="@dimen/card_padding">
