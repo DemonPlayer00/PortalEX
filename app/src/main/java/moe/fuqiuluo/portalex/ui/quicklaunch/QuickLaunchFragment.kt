@@ -67,7 +67,18 @@ class QuickLaunchFragment : Fragment() {
                 text = QuickLaunch.label(ctx, id); isChecked = true; tag = id
             }
         }
-        checks.forEach { root.addView(it) }
+        val list = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        checks.forEach { list.addView(it) }
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.55f).toInt()
+        root.addView(android.widget.ScrollView(ctx).apply {
+            isFillViewport = true
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, maxHeight
+            )
+            addView(list)
+        })
         MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.quick_select)
             .setView(root)
