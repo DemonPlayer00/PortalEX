@@ -23,15 +23,20 @@ object TestReport {
         val st = runCatching { lm?.let { MockServiceHelper.getSensorStatus(it) } }.getOrNull()
         val rt = st?.getString("rt_channel").orEmpty()
         val native = st?.getString("native").orEmpty()
-        val hardware = sensors.isNotEmpty() && rt.contains("carrier-ok") ||
-                native.contains("active=1") && rt.contains("carrier-ok")
+        // MI6（sagit）没有可用的真实传感器，系统列表里的条目是虚拟/占位；
+        // 不能仅凭 getSensorList 非空就判定为硬件替换。
+        val softwareOnly = android.os.Build.DEVICE.equals("sagit", true) ||
+                android.os.Build.MODEL.contains("MI 6", true)
+        val hardware = !softwareOnly && sensors.isNotEmpty() && rt.contains("carrier-ok") ||
+                !softwareOnly && native.contains("active=1") && rt.contains("carrier-ok")
         val backend = if (hardware) "hardware-replacement" else "software"
+        val runtime = if (softwareOnly) "not-applicable (software-only device)" else rt.ifBlank { "unknown" }
         return buildString {
             appendLine("--- mode ---")
             appendLine("sensor.backend=$backend")
             appendLine("sensor.count=${sensors.size}")
             appendLine("sensor.names=${sensors.take(8).joinToString { it.name }}")
-            appendLine("runtime.channel=${rt.ifBlank { "unknown" }}")
+            appendLine("runtime.channel=$runtime")
             appendLine("native=${native.take(80)}")
         }
     }
@@ -81,6 +86,7 @@ object TestReport {
             out.appendLine("last=${loc?.latitude}, ${loc?.longitude}")
             out.appendLine("satellites=${loc?.extras?.getInt("satellites", -1)}")
             out.appendLine("extras=${loc?.extras?.keySet()?.joinToString { "$it=${loc.extras?.get(it)}" } ?: "null"}")
+            out.appendLine("note=${if (loc == null) "No recent fix; provider is enabled" else "ok"}")
         }.onFailure { out.appendLine("error=${it.message}") }
 
         out.appendLine()
@@ -92,6 +98,7 @@ object TestReport {
             @Suppress("DEPRECATION")
             val cells = tm.allCellInfo
             out.appendLine("count=${cells?.size ?: 0}")
+            out.appendLine("note=${if (cells.isNullOrEmpty()) "No CellInfo reported by system" else "ok"}")
             cells?.forEachIndexed { i, c ->
                 out.appendLine("cell[$i]=${c.javaClass.simpleName} registered=${c.isRegistered}")
             }
