@@ -114,7 +114,10 @@ class DebugCommandActivity : Activity() {
         val ok = runCatching {
             MockServiceHelper.tryOpenMock(lm, speed = 3.05, altitude = 80.0, accuracy = 25f)
         }.getOrDefault(false)
-        return "start=$ok service_init=${MockServiceHelper.isServiceInit()}"
+        // 完整模拟：位置会话 + GNSS 状态流 + Wi-Fi 信息开关
+        val gnss = runCatching { MockServiceHelper.startGnssMock(lm) }.getOrDefault(false)
+        val wifi = runCatching { MockServiceHelper.startWifiMock(lm) }.getOrDefault(false)
+        return "start=$ok gnss=$gnss wifi=$wifi service_init=${MockServiceHelper.isServiceInit()}"
     }
 
     private fun stopMock(): String {
