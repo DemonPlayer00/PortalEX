@@ -177,7 +177,7 @@ class StaminaFragment : Fragment() {
         binding.staminaSwitch.isChecked = StaminaController.config().enabled
         binding.staminaSwitch.setOnCheckedChangeListener { _, isChecked ->
             val c = StaminaController.config().copy(enabled = isChecked)
-            if (isChecked && !FeatureDependency.isMasterActive(context)) {
+            if (isChecked && !FeatureDependency.isRouteActive(context)) {
                 StaminaPrefs.save(context, c)
                 android.widget.Toast.makeText(context, R.string.class2_waiting_master, android.widget.Toast.LENGTH_SHORT).show()
                 renderRows()

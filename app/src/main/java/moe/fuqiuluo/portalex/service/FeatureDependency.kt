@@ -10,8 +10,8 @@ import moe.fuqiuluo.portalex.ui.camera.CammockManager
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 
 /**
- * 功能依赖：一类（路线/GNSS）是总开关，二类（基带/摄像头/体力/步频/朝向）
- * 只保存"想开"的意图；一类启用后由这里统一真正启动。
+ * 功能依赖：路线（位置）是二类功能的唯一依赖；GNSS 只服务自身/直接对接 GNSS 的功能。
+ * 二类（基带/摄像头/体力/步频/朝向）只保存"想开"的意图，路线启用后统一落地。
  */
 object FeatureDependency {
     fun isRouteActive(ctx: Context): Boolean {
@@ -39,7 +39,7 @@ object FeatureDependency {
 
     /** 一类启动后，把二类里"预先打开"的意图一次性落地。 */
     fun applyPending(ctx: Context): Boolean {
-        if (!isMasterActive(ctx)) return false
+        if (!isRouteActive(ctx)) return false
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
         if (!MockServiceHelper.isServiceInit()) return false
         val sp = ctx.sharedPrefs

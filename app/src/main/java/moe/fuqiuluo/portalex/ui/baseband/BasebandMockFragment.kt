@@ -45,7 +45,7 @@ class BasebandMockFragment : Fragment() {
         val tac = binding.basebandTac.text?.toString().orEmpty()
         val ssid = binding.basebandSsid.text?.toString().orEmpty()
         val bssid = binding.basebandBssid.text?.toString().orEmpty()
-        if (enabled && !FeatureDependency.isMasterActive(ctx)) {
+        if (enabled && !FeatureDependency.isRouteActive(ctx)) {
             // 先记住意图：一类（路线/GNSS）启用时由 FeatureDependency 统一真正启动。
             ctx.sharedPrefs.edit()
                 .putBoolean("sim_baseband_enabled", true)

@@ -31,7 +31,6 @@ import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
-import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 class GnssMockFragment : Fragment() {
@@ -153,7 +152,6 @@ class GnssMockFragment : Fragment() {
                     val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                     requireContext().sharedPrefs.edit().putString("sim_gps_v1", code).putString("sim_gps_v2", sats).apply()
                     MockServiceHelper.setSimConfig(locationManager, "gps", true, code, sats)
-                    FeatureDependency.applyPending(requireContext())
                     updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流
                     restartGpsProvider()
@@ -233,7 +231,6 @@ class GnssMockFragment : Fragment() {
                     }
 
                     if (MockServiceHelper.stopGnssMock(locationManager)) {
-                        FeatureDependency.suspendClass2(requireContext())
                         val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                         val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                         MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats)
