@@ -542,11 +542,12 @@
                         android:text="@string/allow_landscape_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/allow_landscape_switch"
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/allow_landscape_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"/>
+                    android:textSize="12sp"
+                    android:text="@string/orientation_portrait" />
             </LinearLayout>
 
         </LinearLayout>

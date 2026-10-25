@@ -81,6 +81,9 @@ import moe.fuqiuluo.portalex.bdmap.Poi
 import moe.fuqiuluo.portalex.bdmap.toPoi
 import moe.fuqiuluo.portalex.databinding.ActivityMainBinding
 import moe.fuqiuluo.portalex.ext.allowLandscape
+import moe.fuqiuluo.portalex.ext.orientationMode
+import moe.fuqiuluo.portalex.ext.ORIENTATION_AUTO
+import moe.fuqiuluo.portalex.ext.ORIENTATION_LANDSCAPE
 import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
@@ -761,10 +764,10 @@ class MainActivity : AppCompatActivity() {
      * 让设置页立即调用一次。
      */
     fun applyOrientationPreference() {
-        val want = if (allowLandscape) {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        val want = when (orientationMode) {
+            ORIENTATION_AUTO -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
         if (requestedOrientation != want) {
             requestedOrientation = want

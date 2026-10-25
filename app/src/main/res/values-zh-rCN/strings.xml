@@ -55,8 +55,8 @@
     <string name="accuracy_desc">模拟定位抖动的范围</string>
     <string name="debug">调试模式</string>
     <string name="debug_desc">是否打印调试日志</string>
-    <string name="allow_landscape">允许横屏</string>
-    <string name="allow_landscape_desc">横屏下部分界面可能显示异常</string>
+    <string name="allow_landscape">屏幕方向</string>
+    <string name="allow_landscape_desc">选择自动、竖屏或横屏。</string>
     <string name="menu_stamina">体力模拟</string>
     <!-- 入口名（抽屉 + 顶栏标题）：这一页管步频侧（步数计数器/检测器）的模拟 -->
     <string name="menu_cadence">步频与加速度模拟</string>
@@ -391,4 +391,7 @@
     <string name="baseband_waiting_master">已记住，启动路线模拟后自动启用</string>
     <string name="class2_waiting_master">已记住，启动路线模拟后自动启用</string>
     <string name="camera_requires_route">请先启动路线模拟，再启用摄像头模拟</string>
+    <string name="orientation_auto">自动</string>
+    <string name="orientation_portrait">竖屏</string>
+    <string name="orientation_landscape">横屏</string>
 </resources>

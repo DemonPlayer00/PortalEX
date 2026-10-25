@@ -369,14 +369,26 @@ var Context.orientationMock: Boolean
         putBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, value)
     }
 
-/**
- * 是否允许横屏。默认关闭（锁竖屏）——横屏下部分界面尚未完全适配，
- * 需要横屏的用户可以在设置页手动打开。
- */
-var Context.allowLandscape: Boolean
-    get() = sharedPrefs.getBoolean("allowLandscape", false)
+/** 屏幕方向模式：auto / portrait / landscape。 */
+var Context.orientationMode: String
+    get() = sharedPrefs.getString(
+        "orientationMode",
+        if (sharedPrefs.getBoolean("allowLandscape", false)) ORIENTATION_AUTO else ORIENTATION_PORTRAIT
+    ) ?: ORIENTATION_PORTRAIT
     set(value) = sharedPrefs.edit {
-        putBoolean("allowLandscape", value)
+        putString("orientationMode", value)
+        putBoolean("allowLandscape", value != ORIENTATION_PORTRAIT)
+    }
+
+const val ORIENTATION_AUTO = "auto"
+const val ORIENTATION_PORTRAIT = "portrait"
+const val ORIENTATION_LANDSCAPE = "landscape"
+
+/** 兼容旧调用：false = 竖屏，true = 自动。 */
+var Context.allowLandscape: Boolean
+    get() = orientationMode != ORIENTATION_PORTRAIT
+    set(value) {
+        orientationMode = if (value) ORIENTATION_AUTO else ORIENTATION_PORTRAIT
     }
 
 

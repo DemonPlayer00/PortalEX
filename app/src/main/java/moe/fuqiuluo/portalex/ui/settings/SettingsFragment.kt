@@ -23,7 +23,10 @@ import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.databinding.FragmentSettingsBinding
-import moe.fuqiuluo.portalex.ext.allowLandscape
+import moe.fuqiuluo.portalex.ext.ORIENTATION_AUTO
+import moe.fuqiuluo.portalex.ext.ORIENTATION_LANDSCAPE
+import moe.fuqiuluo.portalex.ext.ORIENTATION_PORTRAIT
+import moe.fuqiuluo.portalex.ext.orientationMode
 import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
@@ -443,12 +446,40 @@ class SettingsFragment : Fragment() {
             }
         }
 
-binding.allowLandscapeSwitch.setOnCheckedChangeListener { _, isChecked ->
-            requireContext().allowLandscape = isChecked
-            // 立即生效：MainActivity 是 configChanges 的单 Activity，不会重建
-            (activity as? MainActivity)?.applyOrientationPreference()
-        }
+        refreshOrientationMode()
+        binding.allowLandscapeLayout.setOnClickListener { showOrientationDialog() }
         return root
+    }
+
+    private fun refreshOrientationMode() {
+        binding.allowLandscapeValue.text = getString(
+            when (requireContext().orientationMode) {
+                ORIENTATION_AUTO -> R.string.orientation_auto
+                ORIENTATION_LANDSCAPE -> R.string.orientation_landscape
+                else -> R.string.orientation_portrait
+            }
+        )
+    }
+
+    private fun showOrientationDialog() {
+        val ctx = requireContext()
+        val modes = listOf(ORIENTATION_AUTO, ORIENTATION_PORTRAIT, ORIENTATION_LANDSCAPE)
+        val labels = listOf(
+            getString(R.string.orientation_auto),
+            getString(R.string.orientation_portrait),
+            getString(R.string.orientation_landscape)
+        ).toTypedArray()
+        val checked = modes.indexOf(ctx.orientationMode).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle(R.string.allow_landscape)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                ctx.orientationMode = modes[which]
+                refreshOrientationMode()
+                (activity as? MainActivity)?.applyOrientationPreference()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun showToast(message: String) {
