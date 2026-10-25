@@ -114,6 +114,28 @@ object MockServiceHelper {
         return false
     }
 
+    fun setSimConfig(
+        locationManager: LocationManager,
+        kind: String,
+        enabled: Boolean,
+        value1: String,
+        value2: String,
+    ): Boolean {
+        if (!::randomKey.isInitialized) {
+            runCatching { tryInitService(locationManager) }
+        }
+        if (!::randomKey.isInitialized) return false
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.SET_SIM_CONFIG)
+        rely.putString(Key.SIM_KIND, kind)
+        rely.putBoolean(Key.SIM_ENABLED, enabled)
+        rely.putString(Key.SIM_VALUE1, value1)
+        rely.putString(Key.SIM_VALUE2, value2)
+        return runCatching {
+            locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
+        }.getOrDefault(false)
+    }
+
     fun startGnssMock(locationManager: LocationManager): Boolean {
         if (!::randomKey.isInitialized) {
             return false

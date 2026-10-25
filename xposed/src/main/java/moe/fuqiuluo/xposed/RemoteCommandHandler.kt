@@ -24,6 +24,7 @@ import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.LocConfig
 import moe.fuqiuluo.xposed.utils.SensorNoise
+import moe.fuqiuluo.xposed.utils.NetworkSimConfig
 import java.util.Collections
 import kotlin.random.Random
 
@@ -196,6 +197,18 @@ object RemoteCommandHandler {
             }
             Cmd.STOP_WIFI_MOCK -> {
                 FakeLoc.enableMockWifi = false
+                return true
+            }
+            Cmd.SET_SIM_CONFIG -> {
+                val kind = rely.getString(Key.SIM_KIND) ?: return false
+                val enabled = rely.getBoolean(Key.SIM_ENABLED, false)
+                val v1 = rely.getString(Key.SIM_VALUE1).orEmpty()
+                val v2 = rely.getString(Key.SIM_VALUE2).orEmpty()
+                when (kind) {
+                    "gps" -> { NetworkSimConfig.gpsEnabled = enabled; NetworkSimConfig.gpsCode = v1; NetworkSimConfig.gpsSatellites = v2 }
+                    "cell" -> { NetworkSimConfig.cellEnabled = enabled; NetworkSimConfig.cellMcc = v1; NetworkSimConfig.cellMnc = v2 }
+                    "wifi" -> { NetworkSimConfig.wifiEnabled = enabled; NetworkSimConfig.wifiSsid = v1; NetworkSimConfig.wifiBssid = v2 }
+                }
                 return true
             }
             Cmd.SET_SENSOR_MOCK -> {
