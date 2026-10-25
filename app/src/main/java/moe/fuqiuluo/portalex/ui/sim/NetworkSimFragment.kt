@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentSimInfoBinding
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -26,23 +27,32 @@ class NetworkSimFragment : Fragment() {
         _binding = FragmentSimInfoBinding.inflate(inflater, container, false)
         kind = arguments?.getString(ARG_KIND) ?: "gps"
         val ctx = requireContext()
-        val (title, desc, hint) = when (kind) {
-            "cell" -> Triple("Cell 基站信息模拟", "模拟当前驻留基站，供目标应用读取 CellInfo。", "当前配置：MCC 460 / MNC 00 / 模拟基站待下发")
-            "wifi" -> Triple("Wi-Fi 信息模拟", "模拟 WLAN 连接信息与扫描结果。", "当前配置：SSID / BSSID / RSSI 待下发")
-            else -> Triple("GPS 状态码模拟", "模拟 GPS 定位状态码和卫星状态。", "当前配置：状态码 3 / 卫星状态由 GNSS 引擎提供")
+        val title = when (kind) {
+            "cell" -> getString(R.string.sim_cell_title)
+            "wifi" -> getString(R.string.sim_wifi_title)
+            else -> getString(R.string.sim_gps_title)
         }
-        binding.simTitle.text = title
+        val desc = when (kind) {
+            "cell" -> getString(R.string.sim_cell_desc)
+            "wifi" -> getString(R.string.sim_wifi_desc)
+            else -> getString(R.string.sim_gps_desc)
+        }
+        val hint = when (kind) {
+            "cell" -> getString(R.string.sim_cell_hint)
+            "wifi" -> getString(R.string.sim_wifi_hint)
+            else -> getString(R.string.sim_gps_hint)
+        }
         binding.simDesc.text = desc
         binding.simHint.text = hint
         val label1 = when (kind) {
-            "cell" -> "MCC / MNC"
-            "wifi" -> "SSID"
-            else -> "GPS 状态码"
+            "cell" -> getString(R.string.sim_cell_param1)
+            "wifi" -> getString(R.string.sim_wifi_param1)
+            else -> getString(R.string.sim_gps_param1)
         }
         val label2 = when (kind) {
-            "cell" -> "CID / TAC"
-            "wifi" -> "BSSID"
-            else -> "卫星数量"
+            "cell" -> getString(R.string.sim_cell_param2)
+            "wifi" -> getString(R.string.sim_wifi_param2)
+            else -> getString(R.string.sim_gps_param2)
         }
         (binding.simValue1.parent.parent as? com.google.android.material.textfield.TextInputLayout)?.hint = label1
         (binding.simValue2.parent.parent as? com.google.android.material.textfield.TextInputLayout)?.hint = label2

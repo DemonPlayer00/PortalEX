@@ -113,7 +113,7 @@ class GnssMockFragment : Fragment() {
             return root
         }
         if (MockServiceHelper.isGnssMockStart(locationManager)) {
-            binding.switchGnssMock.text = "停止模拟"
+            binding.switchGnssMock.text = getString(R.string.gnss_stop_mock)
             ContextCompat.getDrawable(requireContext(), R.drawable.rounded_play_disabled_24)?.let {
                 binding.switchGnssMock.icon = it
             }
@@ -145,7 +145,7 @@ class GnssMockFragment : Fragment() {
             try {
                 ConfigSync.push(requireContext(), locationManager)
                 if (MockServiceHelper.startGnssMock(locationManager)) {
-                    updateMockButtonState(button, "停止模拟", R.drawable.rounded_play_disabled_24)
+                    updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流
                     restartGpsProvider()
                 } else {
@@ -224,7 +224,7 @@ class GnssMockFragment : Fragment() {
                     }
 
                     if (MockServiceHelper.stopGnssMock(locationManager)) {
-                        updateMockButtonState(button, "开始模拟", R.drawable.rounded_play_arrow_24)
+                        updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
                         showToast("模拟GNSS服务停止失败")
