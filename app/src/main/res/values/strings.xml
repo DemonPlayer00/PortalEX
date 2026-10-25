@@ -322,4 +322,8 @@
     <string name="calibration_auto_no_fix">No recent GPS fix</string>
     <string name="calibration_auto_no_cell">No CellInfo available</string>
     <string name="calibration_auto_no_wifi">No Wi-Fi connection</string>
+    <string name="calibration_group_sensor">Sensor</string>
+    <string name="calibration_group_location">GPS / fused</string>
+    <string name="calibration_group_baseband">Cell / Wi-Fi baseband</string>
+    <string name="calibration_nothing_selected">Nothing selected</string>
 </resources>

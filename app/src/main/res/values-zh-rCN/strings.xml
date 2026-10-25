@@ -335,4 +335,8 @@
     <string name="calibration_auto_no_fix">没有最近 GPS 定位</string>
     <string name="calibration_auto_no_cell">没有可用 CellInfo</string>
     <string name="calibration_auto_no_wifi">未连接 Wi-Fi</string>
+    <string name="calibration_group_sensor">传感器</string>
+    <string name="calibration_group_location">GPS 与 fused</string>
+    <string name="calibration_group_baseband">基站与 Wi-Fi 等基带参数</string>
+    <string name="calibration_nothing_selected">未选择任何项目</string>
 </resources>
