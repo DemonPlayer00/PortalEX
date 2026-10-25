@@ -29,7 +29,7 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 object QuickLaunch {
     private const val PREF = "quick_configs"
     private const val FULL = "__full__"
-    val ALL = listOf("location", "route", "gnss", "gps", "cell", "wifi", "camera", "stamina", "cadence", "orientation")
+    val ALL = listOf("route", "gnss", "gps", "cell", "wifi", "camera", "stamina", "cadence", "orientation")
     fun label(ctx: Context, id: String): String = when (id) {
         "location" -> ctx.getString(R.string.quick_location)
         "gnss" -> ctx.getString(R.string.quick_gnss)
@@ -110,7 +110,7 @@ object QuickLaunch {
     fun validate(ctx: Context, ids: Set<String>): String? {
         val hasRoute = ctx.selectRoute != null
         if ("route" in ids && !hasRoute) return ctx.getString(R.string.quick_need_route)
-        if (("camera" in ids || "location" in ids) && !hasRoute) return ctx.getString(R.string.quick_need_location)
+        if (("camera" in ids || "route" in ids) && !hasRoute) return ctx.getString(R.string.quick_need_location)
         return null
     }
 
@@ -123,7 +123,7 @@ object QuickLaunch {
         runCatching { MockServiceHelper.tryInitService(lm) }
 
         val wantCamera = "camera" in ids
-        val wantLocation = "location" in ids || wantCamera
+        val wantLocation = "route" in ids || wantCamera
 
         onProgress?.invoke(ctx.getString(if (ids.isEmpty()) R.string.quick_stopping else R.string.quick_validating))
         if (!wantCamera) ctx.cameraMockEnabled = false
