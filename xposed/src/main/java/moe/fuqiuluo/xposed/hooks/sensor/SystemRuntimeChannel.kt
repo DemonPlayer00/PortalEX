@@ -214,16 +214,16 @@ internal object SystemRuntimeChannel {
         return null
     }
 
-    /** 构造函数 hook：boot 期实例化时把实例抓住（`mPtr` 随后由异步任务写入）。 */    private fun installCtorHook() {
-        val cls = serviceCls ?: return
-        runCatching {
-            Hooks.hookAllConstructors(cls, object : MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    serviceInstance = param.thisObject
-                    Logger.info("SystemRuntimeChannel: 捕获 SensorService 实例（构造函数）")
-                }
-            })
-        }.onFailure { Logger.warn("SystemRuntimeChannel: 构造函数 hook 失败：${it.message}") }
+    /**
+     * 不再挂构造函数 hook。
+     *
+     * 实测 libxposed 的 hookAllConstructors 在该 ROM 上会把**所有系统服务构造器**
+     * 都回调进来；旧回调把第一个实例当成 SensorService，导致 mPtr 反射报
+     * "Expected receiver of type ..."，并把运行时通道永久卡在 ptr-pending。
+     * 现在只走 LocalServices(SensorManagerInternal) → this$0 这条精确路径。
+     */
+    private fun installCtorHook() {
+        Logger.info("SystemRuntimeChannel: 跳过全局构造函数 hook，使用 LocalServices 解析实例")
     }
 
     /**
@@ -240,7 +240,12 @@ internal object SystemRuntimeChannel {
     @Volatile private var nextInstanceAttemptNanos = 0L
 
     private fun refreshInstance(): Any? {
-        var inst = serviceInstance
+        // 构造函数 hook 可能是全局/泛化的，先校验，避免错误实例阻止 LocalServices 兜底。
+        var inst = serviceInstance?.takeIf { serviceCls?.isInstance(it) == true }
+        if (inst == null && serviceInstance != null) {
+            Logger.warn("SystemRuntimeChannel: 丢弃错误构造函数实例 ${serviceInstance?.javaClass?.name}")
+            serviceInstance = null
+        }
         if (inst == null) {
             if (System.nanoTime() < nextInstanceAttemptNanos) return null
             nextInstanceAttemptNanos = System.nanoTime() + INSTANCE_RETRY_NANOS
@@ -249,14 +254,22 @@ internal object SystemRuntimeChannel {
                 val getService = ls.getMethod("getService", Class::class.java)
                 getService.isAccessible = true
                 val local = getService.invoke(null, internalCls)
+                Logger.info("SystemRuntimeChannel: LocalServices local=${local?.javaClass?.name}")
                 outerOf(local)
             }.onFailure {
                 Logger.debug("SystemRuntimeChannel: LocalServices 取实例失败：${it.message}")
             }.getOrNull()
             if (inst != null) {
                 serviceInstance = inst
-                Logger.info("SystemRuntimeChannel: 捕获 SensorService 实例（LocalServices）")
+                Logger.info("SystemRuntimeChannel: 捕获实例（LocalServices）${inst.javaClass.name}")
             }
+        }
+        // LocalServices/outerOf 可能拿到同层其它服务对象；必须确认是 SensorService，
+        // 否则 mPtrField.getLong 会报 "Expected receiver of type ..." 并把通道永久卡在 ptr-pending。
+        if (inst != null && serviceCls?.isInstance(inst) != true) {
+            lastError = "instance type mismatch: ${inst.javaClass.name}"
+            Logger.warn("SystemRuntimeChannel: 捕获到错误实例 ${inst.javaClass.name}，丢弃")
+            inst = null
         }
         inst?.let {
             runCatching { ptr = mPtrField?.getLong(it) ?: 0L }
@@ -273,7 +286,8 @@ internal object SystemRuntimeChannel {
                     (field.name == "this\$0" || serviceCls?.isAssignableFrom(field.type) == true)
         } ?: return null
         f.isAccessible = true
-        return f.get(local)
+        val value = runCatching { f.get(local) }.getOrNull()
+        return value?.takeIf { serviceCls?.isInstance(it) == true }
     }
 
     // ------------------------------------------------------------------
