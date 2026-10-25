@@ -1,6 +1,8 @@
 package moe.fuqiuluo.xposed.hooks
 
+import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkInfo
 import android.os.Binder
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Hooks
@@ -50,7 +52,7 @@ object NetworkTypeSpoof {
             if (!enabled) return@afterHook
             val uid = runCatching { Binder.getCallingUid() }.getOrDefault(-1)
             val pkg = BinderUtils.getUidPackageNames(uid = uid)?.firstOrNull()
-            Logger.info("NetworkTypeSpoof: getNetworkCapabilities caller=${pkg ?: uid}")
+            Logger.info("NetworkTypeSpoof: getNetworkCapabilities uid=$uid pkg=${pkg ?: "?"}")
             if (pkg != TARGET) return@afterHook
             val original = result as? NetworkCapabilities ?: return@afterHook
             val copy = runCatching {
@@ -73,7 +75,19 @@ object NetworkTypeSpoof {
             result = copy
             Logger.info("NetworkTypeSpoof: $pkg -> CELLULAR (was WIFI=${original.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)})")
         }).size
-        Logger.info("NetworkTypeSpoof: installed hooks=$count")
-        installed = count > 0
+        val netInfoHooks = Hooks.hookAllMethods(cls, "getActiveNetworkInfo", afterHook {
+            val uid = runCatching { Binder.getCallingUid() }.getOrDefault(-1)
+            val pkg = BinderUtils.getUidPackageNames(uid = uid)?.firstOrNull()
+            Logger.info("NetworkTypeSpoof: getActiveNetworkInfo uid=$uid pkg=${pkg ?: "?"}")
+            if (pkg != TARGET) return@afterHook
+            val info = NetworkInfo::class.java
+                .getConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java, String::class.java)
+                .newInstance(0, 0, "MOBILE", "")
+            runCatching { info.javaClass.getMethod("setDetailedState", NetworkInfo.DetailedState::class.java, String::class.java).invoke(info, NetworkInfo.DetailedState.CONNECTED, null) }
+            runCatching { info.javaClass.getMethod("setIsAvailable", Boolean::class.javaPrimitiveType).invoke(info, true) }
+            result = info
+        }).size
+        Logger.info("NetworkTypeSpoof: installed hooks=$count netInfo=$netInfoHooks")
+        installed = count > 0 || netInfoHooks > 0
     }
 }

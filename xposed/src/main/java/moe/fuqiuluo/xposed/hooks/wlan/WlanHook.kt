@@ -67,6 +67,7 @@ object WlanHook {
                 Logger.debug("In getConnectionInfo with caller: $packageName, state: ${FakeLoc.enableMockWifi}")
 
             val targetSpoof = packageName == NetworkTypeSpoof.TARGET
+            if (targetSpoof) Logger.info("WlanHook: target getConnectionInfo")
             if ((FakeLoc.enableMockWifi || targetSpoof) && !BinderUtils.isSystemPackages(packageName)) {
                 val wifiInfo = WifiInfo::class.java.getConstructor().newInstance()
                 XposedHelpers.callMethod(wifiInfo, "setMacAddress", "02:00:00:00:00:00")
