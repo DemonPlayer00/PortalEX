@@ -28,8 +28,8 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 object QuickLaunch {
     private const val PREF = "quick_configs"
     private const val FULL = "__full__"
-    private val ALL = listOf("location", "gnss", "gps", "cell", "wifi", "camera", "stamina", "cadence", "orientation")
-    private fun label(ctx: Context, id: String): String = when (id) {
+    val ALL = listOf("location", "gnss", "gps", "cell", "wifi", "camera", "stamina", "cadence", "orientation")
+    fun label(ctx: Context, id: String): String = when (id) {
         "location" -> ctx.getString(R.string.quick_location)
         "gnss" -> ctx.getString(R.string.quick_gnss)
         "gps" -> ctx.getString(R.string.quick_gps)
@@ -105,7 +105,7 @@ object QuickLaunch {
         dialog.show()
     }
 
-    private fun apply(ctx: Context, ids: Set<String>) {
+    fun apply(ctx: Context, ids: Set<String>) {
         if (ids.isEmpty()) return
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         if (lm == null) {
@@ -163,13 +163,13 @@ object QuickLaunch {
         Toast.makeText(ctx, R.string.quick_applied, Toast.LENGTH_SHORT).show()
     }
 
-    private data class Config(val name: String, val ids: Set<String>)
-    private fun load(ctx: Context): MutableList<Config> =
+    data class Config(val name: String, val ids: Set<String>)
+    fun load(ctx: Context): MutableList<Config> =
         ctx.sharedPrefs.getStringSet(PREF, emptySet()).orEmpty().mapNotNull { raw ->
             val parts = raw.split("|", limit = 2)
             if (parts.size != 2) null else Config(parts[0], parts[1].split(",").filter { it.isNotBlank() }.toSet())
         }.toMutableList()
-    private fun save(ctx: Context, items: List<Config>) {
+    fun save(ctx: Context, items: List<Config>) {
         ctx.sharedPrefs.edit().putStringSet(PREF, items.map { "${it.name}|${it.ids.joinToString(",")}" }.toSet()).apply()
     }
 
