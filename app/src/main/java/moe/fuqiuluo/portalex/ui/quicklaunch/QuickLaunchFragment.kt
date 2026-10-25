@@ -60,23 +60,14 @@ class QuickLaunchFragment : Fragment() {
         val ctx = requireContext()
         val root = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(16, 8, 16, 0)
-        }
-        val row = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            setPadding(0, 8, 0, 8)
+            setPadding(24, 8, 24, 0)
         }
         val checks = QuickLaunch.ALL.map { id ->
             CheckBox(ctx).apply {
                 text = QuickLaunch.label(ctx, id); isChecked = true; tag = id
-                setPadding(8, 0, 8, 0)
             }
         }
-        checks.forEach { row.addView(it) }
-        root.addView(android.widget.HorizontalScrollView(ctx).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(row)
-        })
+        checks.forEach { root.addView(it) }
         MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.quick_select)
             .setView(root)
