@@ -20,6 +20,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.ext.StaminaPrefs
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
+import moe.fuqiuluo.portalex.ext.selectLocation
+import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -28,13 +30,14 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 object QuickLaunch {
     private const val PREF = "quick_configs"
     private const val FULL = "__full__"
-    val ALL = listOf("location", "gnss", "gps", "cell", "wifi", "camera", "stamina", "cadence", "orientation")
+    val ALL = listOf("location", "route", "gnss", "gps", "cell", "wifi", "camera", "stamina", "cadence", "orientation")
     fun label(ctx: Context, id: String): String = when (id) {
         "location" -> ctx.getString(R.string.quick_location)
         "gnss" -> ctx.getString(R.string.quick_gnss)
         "gps" -> ctx.getString(R.string.quick_gps)
         "cell" -> ctx.getString(R.string.quick_cell)
         "wifi" -> ctx.getString(R.string.quick_wifi)
+        "route" -> ctx.getString(R.string.quick_route)
         "camera" -> ctx.getString(R.string.quick_camera)
         "stamina" -> ctx.getString(R.string.quick_stamina)
         "cadence" -> ctx.getString(R.string.quick_cadence)
@@ -105,34 +108,44 @@ object QuickLaunch {
         dialog.show()
     }
 
-    fun apply(ctx: Context, ids: Set<String>) {
+    fun validate(ctx: Context, ids: Set<String>): String? {
+        val hasRoute = ctx.selectRoute != null
+        if ("route" in ids && !hasRoute) return ctx.getString(R.string.quick_need_route)
+        if ("camera" in ids && ctx.selectLocation == null && !hasRoute) return ctx.getString(R.string.quick_need_location)
+        if ("location" in ids && ctx.selectLocation == null && !hasRoute) return ctx.getString(R.string.quick_need_location)
+        return null
+    }
+
+    fun apply(ctx: Context, ids: Set<String>, onProgress: ((String) -> Unit)? = null): String? {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-        if (lm == null) {
-            Toast.makeText(ctx, R.string.quick_no_service, Toast.LENGTH_SHORT).show()
-            return
+            ?: return ctx.getString(R.string.quick_no_service)
+        if (ids.isNotEmpty()) {
+            validate(ctx, ids)?.let { return it }
         }
         runCatching { MockServiceHelper.tryInitService(lm) }
 
         val wantCamera = "camera" in ids
         val wantLocation = "location" in ids || wantCamera
 
-        // 关闭顺序：相机先停，位置最后停——相机素材依赖当前位置。
+        onProgress?.invoke(ctx.getString(if (ids.isEmpty()) R.string.quick_stopping else R.string.quick_validating))
         if (!wantCamera) ctx.cameraMockEnabled = false
 
-        // 开启顺序：位置先起，GNSS/GPS/基带随后，相机最后。
         if (wantLocation) {
+            onProgress?.invoke(ctx.getString(R.string.quick_starting_location))
             runCatching { MockServiceHelper.tryOpenMock(lm, 3.05, 80.0, 25f) }
         } else {
             runCatching { MockServiceHelper.tryCloseMock(lm) }
         }
 
         if ("gnss" in ids) {
+            onProgress?.invoke(ctx.getString(R.string.quick_starting_gnss))
             runCatching { MockServiceHelper.startGnssMock(lm) }
         } else {
             runCatching { MockServiceHelper.stopGnssMock(lm) }
         }
 
         val gpsOn = "gps" in ids
+        if (gpsOn) onProgress?.invoke(ctx.getString(R.string.quick_starting_gps))
         val gpsV1 = ctx.sharedPrefs.getString("sim_gps_v1", "3").orEmpty()
         val gpsV2 = ctx.sharedPrefs.getString("sim_gps_v2", "12").orEmpty()
         runCatching { MockServiceHelper.setSimConfig(lm, "gps", gpsOn, gpsV1, gpsV2) }
@@ -147,19 +160,22 @@ object QuickLaunch {
         val wifiV2 = ctx.sharedPrefs.getString("sim_wifi_v2", "02:00:00:00:00:00").orEmpty()
         runCatching { MockServiceHelper.setSimConfig(lm, "wifi", wifiOn, wifiV1, wifiV2) }
 
-        runCatching {
-            ConfigSync.setSensorMock(ctx, lm, "cadence" in ids, "orientation" in ids)
-        }
+        onProgress?.invoke(ctx.getString(R.string.quick_starting_sensors))
+        runCatching { ConfigSync.setSensorMock(ctx, lm, "cadence" in ids, "orientation" in ids) }
         runCatching {
             val cfg = StaminaPrefs.load(ctx).copy(enabled = "stamina" in ids)
             StaminaPrefs.save(ctx, cfg)
             ConfigSync.push(ctx, lm)
         }
 
-        // 相机最后开：此时位置已经可用，素材选取不会拿到旧坐标。
-        if (wantCamera) ctx.cameraMockEnabled = true
-
-        Toast.makeText(ctx, R.string.quick_applied, Toast.LENGTH_SHORT).show()
+        if (wantCamera) {
+            onProgress?.invoke(ctx.getString(R.string.quick_starting_camera))
+            // 让位置会话的第一次出帧先落地，再启用依赖坐标的相机。
+            runCatching { Thread.sleep(300) }
+            ctx.cameraMockEnabled = true
+        }
+        onProgress?.invoke(ctx.getString(R.string.quick_done))
+        return null
     }
 
     data class Config(val name: String, val ids: Set<String>)

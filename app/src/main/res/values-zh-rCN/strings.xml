@@ -371,4 +371,16 @@
     <string name="quick_cadence">步频模拟</string>
     <string name="quick_orientation">朝向模拟</string>
     <string name="menu_quick_launch">快速启动</string>
+    <string name="quick_stopped">已关闭配置</string>
+    <string name="quick_validating">正在检查依赖…</string>
+    <string name="quick_stopping">正在关闭…</string>
+    <string name="quick_starting_location">正在启动位置模拟…</string>
+    <string name="quick_starting_gnss">正在启动 GNSS…</string>
+    <string name="quick_starting_gps">正在应用 GPS 状态…</string>
+    <string name="quick_starting_sensors">正在应用传感器设置…</string>
+    <string name="quick_starting_camera">正在启动摄像头…</string>
+    <string name="quick_done">正在完成…</string>
+    <string name="quick_need_location">请先在首页选择坐标</string>
+    <string name="quick_need_route">请先选择路线</string>
+    <string name="quick_route">路线模拟</string>
 </resources>
