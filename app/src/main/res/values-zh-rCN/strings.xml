@@ -325,4 +325,6 @@
     <string name="fused_reject">拒绝</string>
     <string name="fused_allow">放行（不推荐）</string>
     <string name="fused_disguise">伪装</string>
+    <string name="battery_added">已加入（系统不会限制后台运行）</string>
+    <string name="battery_not_added">未加入 — 点此申请（部分 ROM 会限制后台，导致模拟中途停住）</string>
 </resources>

@@ -312,4 +312,6 @@
     <string name="fused_reject">Reject</string>
     <string name="fused_allow">Allow (not recommended)</string>
     <string name="fused_disguise">Disguise</string>
+    <string name="battery_added">Added (system will not restrict background)</string>
+    <string name="battery_not_added">Not added - tap to request exemption (some ROMs may freeze background work)</string>
 </resources>

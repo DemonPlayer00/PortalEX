@@ -203,9 +203,9 @@ class SettingsFragment : Fragment() {
         val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
         val exempt = pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
         binding.batteryOptimizationState.text = if (exempt) {
-            "已加入（系统不会限制后台运行）"
+            getString(R.string.battery_added)
         } else {
-            "未加入 — 点此申请（部分 ROM 会限制后台，导致模拟中途停住）"
+            getString(R.string.battery_not_added)
         }
     }
 
