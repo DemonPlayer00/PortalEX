@@ -106,7 +106,10 @@ data class HistoricalRoute(
         private fun parseSmooth(obj: JSONObject, pointCount: Int): List<Boolean> {
             val array = obj.getJSONArray("smooth") ?: return List(pointCount) { false }
             return List(pointCount) { i ->
-                when (val v = array.get(i)) {
+                // 单点路线的 smooth 可以是空数组；越界必须当作 false，
+                // 否则整个 parseRoute 会被异常吞掉，路线从列表里静默消失。
+                val v = if (i < array.size) array.get(i) else null
+                when (v) {
                     is Boolean -> v
                     is Number -> v.toInt() != 0
                     else -> false
