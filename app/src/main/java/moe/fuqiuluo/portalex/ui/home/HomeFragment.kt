@@ -309,7 +309,7 @@ class HomeFragment : Fragment(), MapControlsHost {
             val lat = BigDecimal.valueOf(markedLoc?.first ?: return false)
             val lon = BigDecimal.valueOf(markedLoc?.second ?: return false)
 
-            editAddress.setText(markName ?: "位置地址")
+            editAddress.setText(markName ?: getString(R.string.location_address))
             editLatLon.setText("${lon.toPlainString()}, ${lat.toPlainString()}")
 
             val builder = MaterialAlertDialogBuilder(requireContext())
