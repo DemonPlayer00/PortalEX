@@ -81,36 +81,20 @@ class QuickLaunchFragment : Fragment() {
             )
             addView(list)
         })
-        // 按钮放进自定义内容底部，避免对话框按钮面板被超长列表挤到屏幕外。
-        val actions = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.END
-            setPadding(0, 8, 0, 0)
-        }
-        val dialog = MaterialAlertDialogBuilder(ctx)
+        MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.quick_select)
             .setView(root)
-            .create()
-        fun save() {
-            val ids = checks.filter { it.isChecked }.map { it.tag as String }.toSet()
-            if (ids.isNotEmpty()) {
-                val name = getString(R.string.quick_config_name, adapter.items.size)
-                adapter.items += Row(QuickLaunch.Config(name, ids), false)
-                adapter.notifyItemInserted(adapter.items.lastIndex)
-                QuickLaunch.save(requireContext(), adapter.items.filter { !it.full }.map { it.config })
+            .setPositiveButton(R.string.quick_save) { _, _ ->
+                val ids = checks.filter { it.isChecked }.map { it.tag as String }.toSet()
+                if (ids.isNotEmpty()) {
+                    val name = getString(R.string.quick_config_name, adapter.items.size)
+                    adapter.items += Row(QuickLaunch.Config(name, ids), false)
+                    adapter.notifyItemInserted(adapter.items.lastIndex)
+                    QuickLaunch.save(requireContext(), adapter.items.filter { !it.full }.map { it.config })
+                }
             }
-            dialog.dismiss()
-        }
-        actions.addView(android.widget.Button(ctx).apply {
-            text = getString(R.string.quick_discard)
-            setOnClickListener { dialog.dismiss() }
-        })
-        actions.addView(android.widget.Button(ctx).apply {
-            text = getString(R.string.quick_save)
-            setOnClickListener { save() }
-        })
-        root.addView(actions)
-        dialog.show()
+            .setNegativeButton(R.string.quick_discard, null)
+            .show()
     }
 
     private fun applyWithProgress(row: Row, enable: Boolean) {
