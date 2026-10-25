@@ -13,6 +13,7 @@ import android.telephony.SignalStrength
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.NetworkSimConfig
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
 import moe.fuqiuluo.xposed.utils.beforeHook
@@ -115,7 +116,7 @@ object TelephonyHook: BaseTelephonyHook() {
                     Logger.debug("getAllCellInfo: injected! caller = ${BinderUtils.getCallerUid()}")
                 }
 
-                if (FakeLoc.enable && !BinderUtils.isSystemAppsCall()) {
+                if ((FakeLoc.enable || NetworkSimConfig.cellEnabled) && !BinderUtils.isSystemAppsCall()) {
                     val cResult = arrayListOf<CellInfo>()
                     val cellInfo = kotlin.runCatching {
                         CellInfoCdma::class.java.getConstructor().newInstance().also {

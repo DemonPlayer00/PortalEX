@@ -34,16 +34,39 @@ class NetworkSimFragment : Fragment() {
         binding.simTitle.text = title
         binding.simDesc.text = desc
         binding.simHint.text = hint
+        val label1 = when (kind) {
+            "cell" -> "MCC / MNC"
+            "wifi" -> "SSID"
+            else -> "GPS 状态码"
+        }
+        val label2 = when (kind) {
+            "cell" -> "CID / TAC"
+            "wifi" -> "BSSID"
+            else -> "卫星数量"
+        }
+        (binding.simValue1.parent.parent as? com.google.android.material.textfield.TextInputLayout)?.hint = label1
+        (binding.simValue2.parent.parent as? com.google.android.material.textfield.TextInputLayout)?.hint = label2
+        binding.simValue1.setText(ctx.sharedPrefs.getString("sim_${kind}_v1", ""))
+        binding.simValue2.setText(ctx.sharedPrefs.getString("sim_${kind}_v2", ""))
         val key = "sim_${kind}_enabled"
         binding.simSwitch.isChecked = ctx.sharedPrefs.getBoolean(key, false)
         binding.simSwitch.setOnCheckedChangeListener { _, checked ->
             ctx.sharedPrefs.edit().putBoolean(key, checked).apply()
+            ctx.sharedPrefs.edit()
+                .putString("sim_${kind}_v1", binding.simValue1.text?.toString().orEmpty())
+                .putString("sim_${kind}_v2", binding.simValue2.text?.toString().orEmpty())
+                .apply()
             binding.simHint.text = if (checked) "$hint\n已启用" else "$hint\n未启用"
             if (kind == "gps" || kind == "wifi") {
                 val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
                 if (lm != null) {
                     lifecycleScope.launch {
                         withContext(Dispatchers.IO) {
+                            MockServiceHelper.setSimConfig(
+                                lm, kind, checked,
+                                binding.simValue1.text?.toString().orEmpty(),
+                                binding.simValue2.text?.toString().orEmpty()
+                            )
                             if (checked) {
                                 if (kind == "gps") MockServiceHelper.startGnssMock(lm)
                                 else MockServiceHelper.startWifiMock(lm)

@@ -11,6 +11,7 @@ import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
 import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
+import moe.fuqiuluo.xposed.utils.NetworkSimConfig
 import moe.fuqiuluo.xposed.utils.beforeHook
 import moe.fuqiuluo.xposed.utils.hookAllMethods
 import moe.fuqiuluo.xposed.utils.toClass
@@ -69,10 +70,10 @@ object WlanHook {
             if ((FakeLoc.enableMockWifi || targetSpoof) && !BinderUtils.isSystemPackages(packageName)) {
                 val wifiInfo = WifiInfo::class.java.getConstructor().newInstance()
                 XposedHelpers.callMethod(wifiInfo, "setMacAddress", "02:00:00:00:00:00")
-                XposedHelpers.callMethod(wifiInfo, "setBSSID", "02:00:00:00:00:00")
-                XposedHelpers.callMethod(wifiInfo, "setSSID", "")
-                XposedHelpers.callMethod(wifiInfo, "setNetworkId", -1)
-                XposedHelpers.callMethod(wifiInfo, "setRssi", -127)
+                XposedHelpers.callMethod(wifiInfo, "setBSSID", NetworkSimConfig.wifiBssid)
+                XposedHelpers.callMethod(wifiInfo, "setSSID", NetworkSimConfig.wifiSsid)
+                XposedHelpers.callMethod(wifiInfo, "setNetworkId", 1)
+                XposedHelpers.callMethod(wifiInfo, "setRssi", NetworkSimConfig.wifiRssi)
                 XposedHelpers.callMethod(wifiInfo, "setLinkSpeed", 0)
                 XposedHelpers.callMethod(wifiInfo, "setFrequency", 0)
                 result = wifiInfo
