@@ -40,6 +40,8 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
     var isStart = false
     var isHide = false
     private var autoCardVisible = false
+    var onAutoPlayRequest: (() -> Boolean)? = null
+
     var autoStatus = false
         get() = field
         set(value) {
@@ -89,6 +91,10 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
         }
         
         root.findViewById<View>(R.id.auto_play).setOnClickListener {
+            if (!autoStatus && onAutoPlayRequest?.invoke() == false) {
+                Toast.makeText(activity, R.string.route_too_short, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             autoStatus = !autoStatus
             playAuto(rockerView)
         }

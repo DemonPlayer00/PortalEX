@@ -20,7 +20,6 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.ext.StaminaPrefs
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
-import moe.fuqiuluo.portalex.ext.selectLocation
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
@@ -111,8 +110,7 @@ object QuickLaunch {
     fun validate(ctx: Context, ids: Set<String>): String? {
         val hasRoute = ctx.selectRoute != null
         if ("route" in ids && !hasRoute) return ctx.getString(R.string.quick_need_route)
-        if ("camera" in ids && ctx.selectLocation == null && !hasRoute) return ctx.getString(R.string.quick_need_location)
-        if ("location" in ids && ctx.selectLocation == null && !hasRoute) return ctx.getString(R.string.quick_need_location)
+        if (("camera" in ids || "location" in ids) && !hasRoute) return ctx.getString(R.string.quick_need_location)
         return null
     }
 
