@@ -22,6 +22,7 @@ import moe.fuqiuluo.portalex.databinding.FragmentStaminaBinding
 import moe.fuqiuluo.portalex.ext.StaminaPrefs
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.portalex.ui.common.NumberRow
 import moe.fuqiuluo.portalex.ui.common.renderNumberRows
@@ -176,6 +177,13 @@ class StaminaFragment : Fragment() {
         binding.staminaSwitch.isChecked = StaminaController.config().enabled
         binding.staminaSwitch.setOnCheckedChangeListener { _, isChecked ->
             val c = StaminaController.config().copy(enabled = isChecked)
+            if (isChecked && !FeatureDependency.isMasterActive(context)) {
+                StaminaPrefs.save(context, c)
+                android.widget.Toast.makeText(context, R.string.class2_waiting_master, android.widget.Toast.LENGTH_SHORT).show()
+                renderRows()
+                refreshStatus()
+                return@setOnCheckedChangeListener
+            }
             StaminaController.applyConfig(context, c)
             // 打开时复位：否则会继承上一次运行遗留的体力/休息计时，看起来像"一开就累"
             if (isChecked) StaminaController.resetStamina(context)
