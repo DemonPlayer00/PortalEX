@@ -31,6 +31,7 @@ import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 class GnssMockFragment : Fragment() {
@@ -133,6 +134,11 @@ class GnssMockFragment : Fragment() {
     }
 
     private fun tryOpenService(button: MaterialButton) {
+        if (!FeatureDependency.isRouteActive(requireContext())) {
+            requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", true).apply()
+            showToast(getString(R.string.class2_waiting_master))
+            return
+        }
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
             showToast(getString(R.string.gnss_overlay_required))
             return
@@ -148,6 +154,7 @@ class GnssMockFragment : Fragment() {
             try {
                 ConfigSync.push(requireContext(), locationManager)
                 if (MockServiceHelper.startGnssMock(locationManager)) {
+                    requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", false).apply()
                     val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                     val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                     requireContext().sharedPrefs.edit().putString("sim_gps_v1", code).putString("sim_gps_v2", sats).apply()
@@ -231,6 +238,7 @@ class GnssMockFragment : Fragment() {
                     }
 
                     if (MockServiceHelper.stopGnssMock(locationManager)) {
+                        requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", false).apply()
                         val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                         val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                         MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats)
