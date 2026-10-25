@@ -15,10 +15,10 @@
             android:id="@+id/mock_location_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="12dp"
-            android:layout_margin="8dp"
+            app:cardCornerRadius="@dimen/card_radius"
+            android:layout_margin="@dimen/page_gutter"
             app:cardPreventCornerOverlap="false"
-            app:contentPadding="8dp">
+            app:contentPadding="@dimen/card_padding">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -63,7 +63,7 @@
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/switch_mock"
                             android:layout_width="wrap_content"
-                            android:layout_height="28dp"
+                            android:layout_height="40dp"
                             android:textColor="?attr/colorOnPrimary"
                             android:text="@string/start_mock"
                             style="@style/Widget.Material3.Button"
@@ -71,11 +71,12 @@
                             android:insetLeft="0dp"
                             android:insetTop="0dp"
                             android:insetBottom="0dp"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             app:icon="@drawable/rounded_play_arrow_24"
                             app:iconGravity="textStart"
                             app:iconPadding="0dp"
-                            android:padding="6dp"
+                            android:paddingStart="12dp"
+                                android:paddingEnd="12dp"
                             app:iconTint="?attr/colorOnPrimary"
                             app:cornerRadius="12dp"/>
 
@@ -97,7 +98,7 @@
                             android:gravity="center"
                             android:text="@string/rocker"
                             android:textColor="?attr/colorOnSurfaceVariant"
-                            android:textSize="12sp" />
+                            android:textSize="13sp" />
                     </LinearLayout>
                 </LinearLayout>
 
@@ -122,10 +123,10 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:minHeight="160dp"
-            android:layout_margin="8dp"
-            app:cardCornerRadius="12dp"
+            android:layout_margin="@dimen/page_gutter"
+            app:cardCornerRadius="@dimen/card_radius"
             app:cardPreventCornerOverlap="false"
-            app:contentPadding="8dp">
+            app:contentPadding="@dimen/card_padding">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/historical_route_list"

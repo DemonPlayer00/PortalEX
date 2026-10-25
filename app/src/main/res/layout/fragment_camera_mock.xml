@@ -20,10 +20,10 @@
             android:id="@+id/camera_mock_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="8dp"
-            app:cardCornerRadius="12dp"
+            android:layout_margin="@dimen/page_gutter"
+            app:cardCornerRadius="@dimen/card_radius"
             app:cardPreventCornerOverlap="false"
-            app:contentPadding="8dp">
+            app:contentPadding="@dimen/card_padding">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -180,10 +180,10 @@
             android:layout_width="match_parent"
             android:layout_height="180dp"
             android:visibility="gone"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="@dimen/page_gutter"
             android:layout_marginTop="4dp"
-            android:layout_marginEnd="8dp"
-            app:cardCornerRadius="12dp"
+            android:layout_marginEnd="@dimen/page_gutter"
+            app:cardCornerRadius="@dimen/card_radius"
             app:cardPreventCornerOverlap="false">
 
             <com.baidu.mapapi.map.MapView
@@ -262,13 +262,13 @@
             android:layout_height="0dp"
             android:layout_weight="1"
             android:minHeight="160dp"
-            android:layout_marginStart="8dp"
-            android:layout_marginEnd="8dp"
+            android:layout_marginStart="@dimen/page_gutter"
+            android:layout_marginEnd="@dimen/page_gutter"
             android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"
-            app:cardCornerRadius="12dp"
+            app:cardCornerRadius="@dimen/card_radius"
             app:cardPreventCornerOverlap="false"
-            app:contentPadding="8dp">
+            app:contentPadding="@dimen/card_padding">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/camera_point_list"
