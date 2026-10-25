@@ -18,12 +18,6 @@
         tools:layout="@layout/fragment_quick_launch" />
 
     <fragment
-        android:id="@+id/nav_mock"
-        android:name="moe.fuqiuluo.portalex.ui.mock.MockFragment"
-        android:label="@string/menu_mock"
-        tools:layout="@layout/fragment_mock" />
-
-    <fragment
         android:id="@+id/nav_gnss_mock"
         android:name="moe.fuqiuluo.portalex.ui.gnss.GnssMockFragment"
         android:label="@string/menu_gnss_mock"
@@ -34,6 +28,12 @@
         android:name="moe.fuqiuluo.portalex.ui.baseband.BasebandMockFragment"
         android:label="@string/menu_baseband"
         tools:layout="@layout/fragment_baseband_mock" />
+
+    <fragment
+        android:id="@+id/nav_route_gallery"
+        android:name="moe.fuqiuluo.portalex.ui.mock.RouteMockFragment"
+        android:label="@string/menu_route_mock"
+        tools:layout="@layout/fragment_route_mock" />
 
     <fragment
         android:id="@+id/nav_route_edit"

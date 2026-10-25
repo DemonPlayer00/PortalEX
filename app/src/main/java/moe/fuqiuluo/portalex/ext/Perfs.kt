@@ -37,12 +37,6 @@ var Context.selectRoute: HistoricalRoute?
         putString("selectedRoute", value?.let { HistoricalRoute.toJson(it) })
     }
 
-val Context.historicalLocations: List<HistoricalLocation>
-    get() {
-        return sharedPrefs.getStringSet("locations", emptySet())?.map {
-            HistoricalLocation.fromString(it)
-        } ?: emptyList()
-    }
 
 var Context.rawHistoricalLocations: Set<String>
     get() {
@@ -270,17 +264,7 @@ var Context.disableWifiScan: Boolean
         FakeLoc.enableMockWifi = value
     }
 
-var Context.loopBroadcastlocation: Boolean
-    get() = sharedPrefs.getBoolean("loopBroadcastLocation", FakeLoc.loopBroadcastLocation)
-    set(value) = sharedPrefs.edit {
-        putBoolean("loopBroadcastLocation", value)
-        FakeLoc.loopBroadcastLocation = value
-    }
 
-/**
- * 步频倍率（微调"步频 ↔ 速度"关系）。默认 1.0；可填整数或小数。
- * 1.0 = 逐位保持原公式；>1 = 同速度下步频更高，<1 = 更低。钳在 0.2~3.0 防手滑。
- */
 var Context.cadenceScale: Float
     get() = sharedPrefs.getFloat("cadenceScale", 1.0f)
     set(value) = sharedPrefs.edit(commit = true) {

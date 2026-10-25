@@ -23,7 +23,6 @@ object PortalProtocol {
 
     /** 命令名：sendExtraCommand(provider, <command>, extras) 的第二个参数 */
     object Cmd {
-        const val BROADCAST_LOCATION = "broadcast_location"
         const val GET_ALTITUDE       = "get_altitude"
         const val GET_BEARING        = "get_bearing"
         const val GET_CAMERA_EVENTS  = "get_camera_events"
@@ -40,7 +39,6 @@ object PortalProtocol {
         const val IS_WIFI_MOCK_START = "is_wifi_mock_start"
         const val MOVE               = "move"
         const val PUT_CONFIG         = "put_config"
-        const val RANDOM             = "random"
         const val RESET_STAMINA      = "reset_stamina"
         const val ROUTE_CONTROL      = "route_control"
         const val SET_ALTITUDE       = "set_altitude"
@@ -59,7 +57,6 @@ object PortalProtocol {
         const val STOP_GNSS_MOCK     = "stop_gnss_mock"
         const val STOP_WIFI_MOCK     = "stop_wifi_mock"
         const val SYNC_CONFIG        = "sync_config"
-        const val UPDATE_LOCATION    = "update_location"
         const val EXCHANGE_KEY       = "exchange_key"
     }
 

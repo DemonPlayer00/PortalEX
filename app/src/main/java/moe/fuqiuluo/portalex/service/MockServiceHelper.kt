@@ -18,7 +18,6 @@ import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.sensorNoise
-import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -189,7 +188,6 @@ object MockServiceHelper {
         rely.putFloat(Key.ACCURACY, accuracy)
         // App 侧状态同步：putConfig 不再携带 enable，避免打开设置页/GNSS 页时把模拟误关
         FakeLoc.enable = true
-        startLoopBroadcastLocation(locationManager)
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
         // 注意：**不在这里起后台保活**。迁移后推进在 system_server（App 被冻结也照样走），
@@ -208,7 +206,6 @@ object MockServiceHelper {
         }
         val rely = Bundle()
         rely.putString(Key.COMMAND_ID, Cmd.STOP)
-        stopLoopBroadcastLocation()
         runCatching { Portal.appContext }.getOrNull()?.let { stopSensorPollKeepAlive(it) }
         // 会话结束 ⇒ 前台服务必须跟着走（不做"没人开会话却常驻"的幽灵）
         runCatching { Portal.appContext }.getOrNull()?.let { MockKeepAliveService.stop(it) }
@@ -237,7 +234,6 @@ object MockServiceHelper {
         if (locationManager == null || !isServiceInit()) return false
         if (!isMockStart(locationManager)) return false
         startSensorPollKeepAlive(context)
-        if (context.loopBroadcastlocation) startLoopBroadcastLocation(locationManager)
         Log.i("MockServiceHelper", "App 重启后已重挂观察者职责（传感器轮询保活）")
         return true
     }
@@ -294,23 +290,6 @@ object MockServiceHelper {
         }
         return null
     }
-
-    fun broadcastLocation(locationManager: LocationManager): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.BROADCAST_LOCATION)
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
-
-
-
-
-
-
-
-
 
     /**
      * 摇杆意图（`set_rocker`）：**只表达"往哪个方向走"**。
@@ -396,44 +375,6 @@ object MockServiceHelper {
 
     fun isServiceInit(): Boolean {
         return ::randomKey.isInitialized
-    }
-
-    /**
-     * 下发实验性开关「Binder 外周传感器模拟」。
-     *
-     * 单独一条命令（而不是塞进 put_config）的目的：系统侧在原生注入层装载失败时
-     * 会让本命令返回 false，App 侧据此给出明确提示——**不做假成功**。
-     * 启动时（tryInitService 之后）也调一次，让开关跨重启自动恢复。
-     */
-    private fun startLoopBroadcastLocation(locationManager: LocationManager) {
-        val appContext = Portal.appContext
-        val delayTime = appContext.reportDuration.toLong()
-        if (isRunning) return
-        if (!appContext.loopBroadcastlocation) return
-
-        isRunning = true
-
-        loopThread = Thread {
-            Log.d("MockServiceHelper", "loopBoardcast: Start")
-            while (isRunning) {
-                try {
-                    broadcastLocation(locationManager)
-                    Thread.sleep(delayTime)
-                } catch (e: InterruptedException) {
-                    if (FakeLoc.enableDebugLog) {
-                        Log.d("MockServiceHelper", "loopBoardcast: Stop")
-                    }
-                    break
-                }
-            }
-        }
-        loopThread!!.start()
-    }
-
-    private fun stopLoopBroadcastLocation(){
-        isRunning =false
-        loopThread?.interrupt()
-        loopThread = null
     }
 
 }
