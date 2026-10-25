@@ -311,7 +311,6 @@ class MockServiceViewModel : ViewModel() {
             }
         }
 
-    var selectedLocation: HistoricalLocation? = null
     var selectedRoute: HistoricalRoute? = null
 
     fun initRocker(activity: Activity): Rocker {
@@ -332,6 +331,7 @@ class MockServiceViewModel : ViewModel() {
         if (!::rocker.isInitialized) {
             rocker = Rocker(activity)
         }
+        rocker.onAutoPlayRequest = { pathPoints.size >= 2 }
 
         ensureDirectorLoop(activity)
 

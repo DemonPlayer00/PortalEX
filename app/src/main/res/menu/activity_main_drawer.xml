@@ -30,10 +30,6 @@
             android:icon="@android:drawable/ic_menu_compass"
             android:title="@string/menu_baseband" />
         <item
-            android:id="@+id/nav_route_gallery"
-            android:icon="@drawable/baseline_route_24"
-            android:title="@string/menu_route_mock" />
-        <item
             android:id="@+id/nav_camera_mock"
             android:icon="@drawable/baseline_control_camera_24"
             android:title="@string/menu_camera_mock" />

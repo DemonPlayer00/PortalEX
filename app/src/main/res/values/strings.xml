@@ -370,4 +370,5 @@
     <string name="quick_need_location">Select a location on Home first</string>
     <string name="quick_need_route">Select a route first</string>
     <string name="quick_route">Route</string>
+    <string name="route_too_short">A single point cannot be played as a route</string>
 </resources>

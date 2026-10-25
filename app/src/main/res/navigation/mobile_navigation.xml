@@ -36,12 +36,6 @@
         tools:layout="@layout/fragment_baseband_mock" />
 
     <fragment
-        android:id="@+id/nav_route_gallery"
-        android:name="moe.fuqiuluo.portalex.ui.mock.RouteMockFragment"
-        android:label="@string/menu_route_mock"
-        tools:layout="@layout/fragment_route_mock" />
-
-    <fragment
         android:id="@+id/nav_route_edit"
         android:name="moe.fuqiuluo.portalex.ui.mock.RouteEditFragment"
         android:label="@string/menu_route_mock_edit"
