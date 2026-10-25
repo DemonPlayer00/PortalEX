@@ -4,6 +4,8 @@ import android.content.Context
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.hardware.Sensor
+import android.hardware.SensorManager
 import android.provider.Settings
 import android.telephony.TelephonyManager
 import android.net.wifi.WifiManager
@@ -13,6 +15,27 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 /** 与 UI 无关的实时调试报告；root 命令直接调用，不依赖 Test 页面是否打开。 */
 object TestReport {
+    fun summary(ctx: Context): String {
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        val sensors = sm?.getSensorList(Sensor.TYPE_ALL).orEmpty()
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+        if (lm != null) runCatching { MockServiceHelper.tryInitService(lm) }
+        val st = runCatching { lm?.let { MockServiceHelper.getSensorStatus(it) } }.getOrNull()
+        val rt = st?.getString("rt_channel").orEmpty()
+        val native = st?.getString("native").orEmpty()
+        val hardware = sensors.isNotEmpty() && rt.contains("carrier-ok") ||
+                native.contains("active=1") && rt.contains("carrier-ok")
+        val backend = if (hardware) "hardware-replacement" else "software"
+        return buildString {
+            appendLine("--- mode ---")
+            appendLine("sensor.backend=$backend")
+            appendLine("sensor.count=${sensors.size}")
+            appendLine("sensor.names=${sensors.take(8).joinToString { it.name }}")
+            appendLine("runtime.channel=${rt.ifBlank { "unknown" }}")
+            appendLine("native=${native.take(80)}")
+        }
+    }
+
     fun build(ctx: Context): String {
         val out = StringBuilder()
         out.appendLine("=== PortalEX live report ===")
@@ -20,6 +43,7 @@ object TestReport {
         out.appendLine("sdk=${android.os.Build.VERSION.SDK_INT}")
         out.appendLine("dev_mode=${Settings.Global.getInt(ctx.contentResolver, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, -1)}")
         out.appendLine("adb_enabled=${Settings.Global.getInt(ctx.contentResolver, Settings.Global.ADB_ENABLED, -1)}")
+        out.appendLine(summary(ctx))
 
         out.appendLine()
         out.appendLine("--- network ---")
