@@ -351,4 +351,24 @@
     <string name="baseband_wifi_title">Wi-Fi</string>
     <string name="baseband_ssid">SSID</string>
     <string name="baseband_bssid">BSSID</string>
+    <string name="quick_title">快速启动</string>
+    <string name="quick_add">添加配置</string>
+    <string name="quick_full">完全体配置（全开）</string>
+    <string name="quick_close">关闭</string>
+    <string name="quick_select">选择模拟控制</string>
+    <string name="quick_save">保存</string>
+    <string name="quick_discard">丢弃</string>
+    <string name="quick_applied">已应用配置</string>
+    <string name="quick_no_service">定位服务不可用</string>
+    <string name="quick_config_name">配置 %1$d</string>
+    <string name="quick_location">位置模拟</string>
+    <string name="quick_gnss">GNSS 模拟</string>
+    <string name="quick_gps">GPS 状态</string>
+    <string name="quick_cell">基站模拟</string>
+    <string name="quick_wifi">Wi-Fi 模拟</string>
+    <string name="quick_camera">摄像头模拟</string>
+    <string name="quick_stamina">体力模拟</string>
+    <string name="quick_cadence">步频模拟</string>
+    <string name="quick_orientation">朝向模拟</string>
+    <string name="menu_quick_launch">快速启动</string>
 </resources>

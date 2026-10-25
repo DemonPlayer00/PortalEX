@@ -338,4 +338,24 @@
     <string name="baseband_wifi_title">Wi-Fi</string>
     <string name="baseband_ssid">SSID</string>
     <string name="baseband_bssid">BSSID</string>
+    <string name="quick_title">Quick launch</string>
+    <string name="quick_add">Add config</string>
+    <string name="quick_full">Full config (all on)</string>
+    <string name="quick_close">Close</string>
+    <string name="quick_select">Select controls</string>
+    <string name="quick_save">Save</string>
+    <string name="quick_discard">Discard</string>
+    <string name="quick_applied">Configuration applied</string>
+    <string name="quick_no_service">Location service unavailable</string>
+    <string name="quick_config_name">Config %1$d</string>
+    <string name="quick_location">Location</string>
+    <string name="quick_gnss">GNSS</string>
+    <string name="quick_gps">GPS status</string>
+    <string name="quick_cell">Cell</string>
+    <string name="quick_wifi">Wi-Fi</string>
+    <string name="quick_camera">Camera</string>
+    <string name="quick_stamina">Stamina</string>
+    <string name="quick_cadence">Cadence</string>
+    <string name="quick_orientation">Orientation</string>
+    <string name="menu_quick_launch">Quick launch</string>
 </resources>

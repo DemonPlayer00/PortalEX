@@ -56,6 +56,7 @@ import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.navigateUp
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupActionBarWithNavController
+import androidx.navigation.ui.NavigationUI
 import androidx.navigation.ui.setupWithNavController
 import androidx.recyclerview.widget.RecyclerView
 import com.baidu.mapapi.map.BitmapDescriptorFactory
@@ -85,6 +86,7 @@ import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
+import moe.fuqiuluo.portalex.ui.quicklaunch.QuickLaunch
 import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
@@ -259,6 +261,17 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
+                navView.setNavigationItemSelectedListener { item ->
+                    if (item.itemId == R.id.nav_quick_launch) {
+                        QuickLaunch.show(this@MainActivity)
+                        drawerLayout.closeDrawers()
+                        true
+                    } else {
+                        val handled = NavigationUI.onNavDestinationSelected(item, navController)
+                        if (handled) drawerLayout.closeDrawers()
+                        handled
+                    }
+                }
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
                 attachDrawerGroupDivider(navView, R.id.nav_calibration)
 
