@@ -17,6 +17,7 @@ import moe.fuqiuluo.xposed.utils.Hooks
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.RemoteCommandHandler
+import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
 import moe.fuqiuluo.xposed.hooks.gnss.GnssHook
 import moe.fuqiuluo.xposed.hooks.miui.MiuiBlurLocationProviderHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
@@ -1494,6 +1495,10 @@ internal object LocationServiceHook: BaseLocationHook() {
 
                     val callback = param.args[0] ?: return
                     val cIGnssStatusListener = callback.javaClass
+                    val callerPkg = BinderUtils.getUidPackageNames(uid = BinderUtils.getCallerUid())?.firstOrNull()
+                    if (callerPkg == NetworkTypeSpoof.TARGET) {
+                        Logger.info("LocationServiceHook: target registerGnssStatusCallback")
+                    }
 
                     if(FakeLoc.enableDebugLog) {
                         Logger.debug("registerGnssStatusCallback: injected! ${cIGnssStatusListener.name}")
