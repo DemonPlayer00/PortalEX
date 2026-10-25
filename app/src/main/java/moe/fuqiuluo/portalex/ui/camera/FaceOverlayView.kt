@@ -18,6 +18,10 @@ class FaceOverlayView(context: Context) : View(context) {
     var sourceAspect: Float = 1f
         set(value) { field = value; invalidate() }
 
+    /** 前置摄像头预览会被 CameraX 水平镜像；检测框来自未镜像的分析帧，必须同步翻转。 */
+    var mirrorX: Boolean = false
+        set(value) { field = value; invalidate() }
+
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8f }
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 14f; color = Color.BLACK
@@ -39,10 +43,12 @@ class FaceOverlayView(context: Context) : View(context) {
 
     private fun map(r: RectF): RectF {
         val c = contentRect()
+        val left = if (mirrorX) 1f - r.right else r.left
+        val right = if (mirrorX) 1f - r.left else r.right
         return RectF(
-            c.left + r.left * c.width(),
+            c.left + left * c.width(),
             c.top + r.top * c.height(),
-            c.left + r.right * c.width(),
+            c.left + right * c.width(),
             c.top + r.bottom * c.height()
         )
     }
