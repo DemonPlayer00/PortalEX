@@ -32,6 +32,7 @@ object FeatureDependency {
         runCatching { MockServiceHelper.setSimConfig(lm, "cell", false, "", "") }
         runCatching { MockServiceHelper.setSimConfig(lm, "wifi", false, "", "") }
         runCatching { ConfigSync.setSensorMock(ctx, lm, false, false) }
+        runCatching { MockServiceHelper.stopGnssMock(lm) }
         if (stopCamera) {
             runCatching { moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle.stopForLocationMockOff(ctx) }
         }
@@ -43,6 +44,18 @@ object FeatureDependency {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
         if (!MockServiceHelper.isServiceInit()) return false
         val sp = ctx.sharedPrefs
+        if (sp.getBoolean("gnss_pending_enabled", false)) {
+            runCatching {
+                if (MockServiceHelper.startGnssMock(lm)) {
+                    MockServiceHelper.setSimConfig(
+                        lm, "gps", true,
+                        sp.getString("sim_gps_v1", "3").orEmpty(),
+                        sp.getString("sim_gps_v2", "12").orEmpty(),
+                    )
+                    sp.edit().putBoolean("gnss_pending_enabled", false).apply()
+                }
+            }
+        }
         if (sp.getBoolean("sim_cell_enabled", false)) {
             MockServiceHelper.setSimConfig(
                 lm, "cell", true,
