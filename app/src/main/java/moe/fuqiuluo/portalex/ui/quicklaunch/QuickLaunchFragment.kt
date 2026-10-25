@@ -71,7 +71,9 @@ class QuickLaunchFragment : Fragment() {
             orientation = android.widget.LinearLayout.VERTICAL
         }
         checks.forEach { list.addView(it) }
-        val maxHeight = (resources.displayMetrics.heightPixels * 0.55f).toInt()
+        // 给标题和底部按钮留出足够空间：内容区最多约 38% 屏高，宁可多滚一点也不能把按钮顶出窗口。
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.38f).toInt()
+            .coerceAtMost((resources.displayMetrics.density * 360).toInt())
         root.addView(android.widget.ScrollView(ctx).apply {
             isFillViewport = true
             layoutParams = android.widget.LinearLayout.LayoutParams(
@@ -79,20 +81,36 @@ class QuickLaunchFragment : Fragment() {
             )
             addView(list)
         })
-        MaterialAlertDialogBuilder(ctx)
+        // 按钮放进自定义内容底部，避免对话框按钮面板被超长列表挤到屏幕外。
+        val actions = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+            setPadding(0, 8, 0, 0)
+        }
+        val dialog = MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.quick_select)
             .setView(root)
-            .setPositiveButton(R.string.quick_save) { _, _ ->
-                val ids = checks.filter { it.isChecked }.map { it.tag as String }.toSet()
-                if (ids.isNotEmpty()) {
-                    val name = getString(R.string.quick_config_name, adapter.items.size)
-                    adapter.items += Row(QuickLaunch.Config(name, ids), false)
-                    adapter.notifyItemInserted(adapter.items.lastIndex)
-                    QuickLaunch.save(requireContext(), adapter.items.filter { !it.full }.map { it.config })
-                }
+            .create()
+        fun save() {
+            val ids = checks.filter { it.isChecked }.map { it.tag as String }.toSet()
+            if (ids.isNotEmpty()) {
+                val name = getString(R.string.quick_config_name, adapter.items.size)
+                adapter.items += Row(QuickLaunch.Config(name, ids), false)
+                adapter.notifyItemInserted(adapter.items.lastIndex)
+                QuickLaunch.save(requireContext(), adapter.items.filter { !it.full }.map { it.config })
             }
-            .setNegativeButton(R.string.quick_discard, null)
-            .show()
+            dialog.dismiss()
+        }
+        actions.addView(android.widget.Button(ctx).apply {
+            text = getString(R.string.quick_discard)
+            setOnClickListener { dialog.dismiss() }
+        })
+        actions.addView(android.widget.Button(ctx).apply {
+            text = getString(R.string.quick_save)
+            setOnClickListener { save() }
+        })
+        root.addView(actions)
+        dialog.show()
     }
 
     private fun applyWithProgress(row: Row, enable: Boolean) {
