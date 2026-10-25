@@ -42,7 +42,7 @@ class QuickLaunchFragment : Fragment() {
                 adapter.notifyItemRemoved(pos)
                 if (checkedName == item.config.name) {
                     checkedName = null
-                    QuickLaunch.apply(requireContext(), emptySet())
+                    applyWithProgress(item, false)
                 }
                 QuickLaunch.save(requireContext(), adapter.items.filter { !it.full }.map { it.config })
             }
@@ -87,18 +87,18 @@ class QuickLaunchFragment : Fragment() {
     private fun applyWithProgress(row: Row, enable: Boolean) {
         val ctx = requireContext()
         val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 32, 48, 8)
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(48, 28, 48, 28)
         }
         root.addView(CircularProgressIndicator(ctx).apply {
             isIndeterminate = true
-            layoutParams = LinearLayout.LayoutParams(64, 64).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }
+            layoutParams = LinearLayout.LayoutParams(48, 48)
         })
         val text = TextView(ctx).apply {
-            text = getString(R.string.quick_validating)
+            text = getString(if (enable) R.string.quick_validating else R.string.quick_stopping)
             textSize = 14f
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, 16, 0, 0)
+            setPadding(24, 0, 0, 0)
         }
         root.addView(text)
         val dialog = MaterialAlertDialogBuilder(ctx)
