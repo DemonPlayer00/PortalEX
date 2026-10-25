@@ -1,5 +1,7 @@
 package moe.fuqiuluo.portalex.ui.sim
 
+import android.content.Context
+import android.location.LocationManager
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -8,6 +10,11 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import moe.fuqiuluo.portalex.databinding.FragmentSimInfoBinding
 import moe.fuqiuluo.portalex.ext.sharedPrefs
+import moe.fuqiuluo.portalex.service.MockServiceHelper
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 三个侧栏页面的共用骨架：GPS 状态码 / Cell 基站 / Wi-Fi 信息。 */
 class NetworkSimFragment : Fragment() {
@@ -32,6 +39,22 @@ class NetworkSimFragment : Fragment() {
         binding.simSwitch.setOnCheckedChangeListener { _, checked ->
             ctx.sharedPrefs.edit().putBoolean(key, checked).apply()
             binding.simHint.text = if (checked) "$hint\n已启用" else "$hint\n未启用"
+            if (kind == "gps" || kind == "wifi") {
+                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                if (lm != null) {
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) {
+                            if (checked) {
+                                if (kind == "gps") MockServiceHelper.startGnssMock(lm)
+                                else MockServiceHelper.startWifiMock(lm)
+                            } else {
+                                if (kind == "gps") MockServiceHelper.stopGnssMock(lm)
+                                else MockServiceHelper.stopWifiMock(lm)
+                            }
+                        }
+                    }
+                }
+            }
             Toast.makeText(ctx, if (checked) "$title 已启用" else "$title 已关闭", Toast.LENGTH_SHORT).show()
         }
         return binding.root
