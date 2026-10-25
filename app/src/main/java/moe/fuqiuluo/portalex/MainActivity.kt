@@ -56,7 +56,6 @@ import androidx.navigation.ui.AppBarConfiguration
 import androidx.navigation.ui.navigateUp
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupActionBarWithNavController
-import androidx.navigation.ui.NavigationUI
 import androidx.navigation.ui.setupWithNavController
 import androidx.recyclerview.widget.RecyclerView
 import com.baidu.mapapi.map.BitmapDescriptorFactory
@@ -86,7 +85,6 @@ import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
-import moe.fuqiuluo.portalex.ui.quicklaunch.QuickLaunchActivity
 import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
@@ -251,7 +249,7 @@ class MainActivity : AppCompatActivity() {
                 // menu should be considered as top level destinations.
                 appBarConfiguration = AppBarConfiguration(
                     setOf(
-                        R.id.nav_home, R.id.nav_mock, R.id.nav_gnss_mock, R.id.nav_route_gallery,
+                        R.id.nav_home, R.id.nav_quick_launch, R.id.nav_mock, R.id.nav_gnss_mock, R.id.nav_route_gallery,
                         R.id.nav_baseband,
                         R.id.nav_camera_mock,
                         R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass,
@@ -261,17 +259,6 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
-                navView.setNavigationItemSelectedListener { item ->
-                    if (item.itemId == R.id.nav_quick_launch) {
-                        startActivity(android.content.Intent(this@MainActivity, QuickLaunchActivity::class.java))
-                        drawerLayout.closeDrawers()
-                        true
-                    } else {
-                        val handled = NavigationUI.onNavDestinationSelected(item, navController)
-                        if (handled) drawerLayout.closeDrawers()
-                        handled
-                    }
-                }
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
                 attachDrawerGroupDivider(navView, R.id.nav_calibration)
 
@@ -388,6 +375,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyMenuVisibility(destinationId: Int) {
         val menu = binding.appBarMain.toolbar.menu
         menu.findItem(R.id.action_search)?.isVisible = destinationId == R.id.nav_home
+        menu.findItem(R.id.action_quick_add)?.isVisible = destinationId == R.id.nav_quick_launch
         menu.findItem(R.id.action_map_controls)?.isVisible =
             destinationId == R.id.nav_home ||
                     destinationId == R.id.nav_route_edit ||
@@ -464,6 +452,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
+            R.id.action_quick_add -> {
+                val host = supportFragmentManager.findFragmentById(R.id.nav_host_fragment_content_main) as? androidx.navigation.fragment.NavHostFragment
+                (host?.childFragmentManager?.primaryNavigationFragment as? moe.fuqiuluo.portalex.ui.quicklaunch.QuickLaunchFragment)?.showAdd()
+                true
+            }
+
             R.id.action_map_controls -> {
                 showMapControlsMenu()
                 true

@@ -12,6 +12,12 @@
         tools:layout="@layout/fragment_home" />
 
     <fragment
+        android:id="@+id/nav_quick_launch"
+        android:name="moe.fuqiuluo.portalex.ui.quicklaunch.QuickLaunchFragment"
+        android:label="@string/quick_title"
+        tools:layout="@layout/fragment_quick_launch" />
+
+    <fragment
         android:id="@+id/nav_mock"
         android:name="moe.fuqiuluo.portalex.ui.mock.MockFragment"
         android:label="@string/menu_mock"

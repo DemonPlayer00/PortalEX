@@ -106,7 +106,6 @@ object QuickLaunch {
     }
 
     fun apply(ctx: Context, ids: Set<String>) {
-        if (ids.isEmpty()) return
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         if (lm == null) {
             Toast.makeText(ctx, R.string.quick_no_service, Toast.LENGTH_SHORT).show()

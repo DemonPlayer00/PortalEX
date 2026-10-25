@@ -61,11 +61,6 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
-            android:name=".ui.quicklaunch.QuickLaunchActivity"
-            android:exported="false"
-            android:label="@string/quick_title" />
-
-        <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize"
             android:exported="true">
