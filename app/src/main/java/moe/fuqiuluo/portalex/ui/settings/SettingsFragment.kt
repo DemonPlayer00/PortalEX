@@ -27,7 +27,6 @@ import moe.fuqiuluo.portalex.ext.ORIENTATION_AUTO
 import moe.fuqiuluo.portalex.ext.ORIENTATION_LANDSCAPE
 import moe.fuqiuluo.portalex.ext.ORIENTATION_PORTRAIT
 import moe.fuqiuluo.portalex.ext.orientationMode
-import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
@@ -259,24 +258,8 @@ class SettingsFragment : Fragment() {
             }
         })
 
-        binding.altitudeValue.text = getString(R.string.altitude_format, context.altitude)
         binding.speedValue.text = getString(R.string.speed_format, context.speed)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
-
-        binding.altitudeLayout.setOnClickListener {
-            showDialog(getString(R.string.altitude), binding.altitudeValue.text.toString().let { it.substring(0, it.length - 1) }) {
-                val value = it.toDoubleOrNull()
-                if (value == null || value < 0.0) {
-                    showToast(getString(R.string.altitude_invalid))
-                    return@showDialog
-                } else if (value > 10000) {
-                    showToast(getString(R.string.altitude_max))
-                    return@showDialog
-                }
-                context.altitude = value
-                binding.altitudeValue.text = getString(R.string.altitude_format, value)
-            }
-        }
 
         binding.speedLayout.setOnClickListener {
             showDialog(getString(R.string.rocker_speed), binding.speedValue.text.toString().let { it.substring(0, it.length - 3) }) {

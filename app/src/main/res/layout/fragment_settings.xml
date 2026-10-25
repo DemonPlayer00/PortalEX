@@ -155,48 +155,6 @@
             </LinearLayout>
 
             <androidx.constraintlayout.widget.ConstraintLayout
-                android:id="@+id/altitude_layout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:paddingHorizontal="@dimen/page_gutter"
-                android:paddingVertical="8dp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="4dp">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/altitude_title"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/altitude"
-                    android:textColor="?attr/colorOnSurfaceVariant"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/altitude_value"
-                    app:layout_constraintTop_toTopOf="parent"/>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/altitude_desc"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:text="@string/altitude_desc"
-                    android:textSize="11sp"
-                    app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/altitude_value"
-                    app:layout_constraintTop_toBottomOf="@id/altitude_title"/>
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/altitude_value"
-                    android:layout_width="96dp"
-                    android:layout_height="wrap_content"
-                    android:gravity="end"
-                    android:text="@string/altitude_value_default"
-                    android:textSize="11sp"
-                    app:layout_constraintTop_toBottomOf="@id/altitude_title"
-                    app:layout_constraintEnd_toEndOf="parent" />
-
-            </androidx.constraintlayout.widget.ConstraintLayout>
-
-            <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/speed_layout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
