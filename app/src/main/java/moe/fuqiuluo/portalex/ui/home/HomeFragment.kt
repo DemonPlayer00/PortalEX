@@ -516,7 +516,7 @@ class HomeFragment : Fragment(), MapControlsHost {
         // 未启动模拟时仍给路线一个可见的预览点：否则点完路线回到首页只看到真实位置，
         // 像是"选择没生效"。启动后由 PortalLocationClient 的注入帧接管跟随。
         val lm = requireContext().getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
-        if (lm != null && !MockServiceHelper.isMockStart(lm)) {
+        if (lm != null && !MockServiceHelper.isMockStart(lm) && baiduMapViewModel.mapCenter == null) {
             requireContext().selectRoute?.route?.firstOrNull()?.let { (lat, lon) ->
                 baiduMapViewModel.markedLoc = lat to lon
                 runCatching { markMap(moveEyes = true) }
