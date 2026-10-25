@@ -12,6 +12,8 @@ import android.widget.Toast
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.suPath
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
+import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
 import java.io.File
 
 /**
@@ -38,6 +40,7 @@ class DebugCommandActivity : Activity() {
                 "start" -> startMock()
                 "stop" -> stopMock()
                 "set" -> setCommand()
+                "route" -> routeTest()
                 "help" -> HELP
                 else -> status()
             }
@@ -172,6 +175,26 @@ class DebugCommandActivity : Activity() {
             out.appendLine("ssid=$ssid")
         }
         return out.toString()
+    }
+
+    private fun routeTest(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        val routes = HistoricalRoute.parseList(sharedPrefs.getString("routes", "").orEmpty())
+        if (routes.isEmpty()) return "routes=empty"
+        val route = routes.firstOrNull { it.route.size >= 2 } ?: return "routes=no-multipoint"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val started = runCatching { MockServiceHelper.tryOpenMock(lm, 3.05, 80.0, 25f) }.getOrDefault(false)
+        if (!started) return "start=false"
+        val lats = route.route.map { it.first }.toDoubleArray()
+        val lons = route.route.map { it.second }.toDoubleArray()
+        val uploaded = MockServiceHelper.setRoute(lm, lats, lons)
+        val playing = MockServiceHelper.setRoutePlaying(lm, true)
+        Thread.sleep(1500)
+        val loc = MockServiceHelper.getLocation(lm)
+        val motion = MockServiceHelper.getSensorStatus(lm)?.getBundle("motion")
+        MockServiceHelper.setRoutePlaying(lm, false)
+        return "route=${route.name} points=${lats.size} uploaded=$uploaded playing=$playing loc=$loc motion=$motion"
     }
 
     companion object {
