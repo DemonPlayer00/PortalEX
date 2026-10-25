@@ -33,6 +33,7 @@ import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
+import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import androidx.navigation.findNavController
@@ -42,6 +43,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
     private val binding get() = _binding!!
 
     private val mockServiceViewModel by activityViewModels<MockServiceViewModel>()
+    private val baiduMapViewModel by activityViewModels<BaiduMapViewModel>()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -128,6 +130,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
             } else {
                 binding.mockRouteName.text = it.name
                 mockServiceViewModel.selectRouteForPlayback(it)
+                it.route.firstOrNull()?.let { p -> baiduMapViewModel.requestCenter(p.first, p.second) }
             }
         }
 
@@ -168,6 +171,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                 // 选中路线 → 立即完整重置播放器（重选同一条也从头开始）
                 mockServiceViewModel.selectRouteForPlayback(route)
                 requireContext().selectRoute = route
+                route.route.firstOrNull()?.let { p -> baiduMapViewModel.requestCenter(p.first, p.second) }
 
                 val lm = mockServiceViewModel.locationManager
                 if (lm != null && MockServiceHelper.isMockStart(lm)) {

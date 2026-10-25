@@ -9,6 +9,7 @@ import com.baidu.mapapi.map.BitmapDescriptorFactory
 import com.baidu.mapapi.map.MyLocationConfiguration
 import com.baidu.mapapi.map.MyLocationData
 import moe.fuqiuluo.portalex.R
+import com.baidu.mapapi.model.LatLng
 import com.baidu.mapapi.search.geocode.GeoCoder
 import moe.fuqiuluo.portalex.bdmap.setMapConfig
 import moe.fuqiuluo.portalex.ext.Loc4j
@@ -23,6 +24,17 @@ class BaiduMapViewModel: ViewModel() {
      * WGS84
      */
     var currentLocation: Pair<Double, Double>? = null
+
+    /** 首页地图相机（GCJ02）：页面销毁后仍由 Activity 级 ViewModel 保存。 */
+    var mapCenter: LatLng? = null
+    var mapZoom: Float = 19f
+
+    /** 路线页选点后请求首页地图下一次可见时居中（WGS84）。 */
+    var pendingCenterWgs: Pair<Double, Double>? = null
+
+    fun requestCenter(lat: Double, lon: Double) {
+        pendingCenterWgs = lat to lon
+    }
 
     var markName: String? = null
 
