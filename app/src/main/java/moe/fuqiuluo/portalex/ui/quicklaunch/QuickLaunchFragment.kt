@@ -42,7 +42,7 @@ class QuickLaunchFragment : Fragment() {
                 adapter.notifyItemRemoved(pos)
                 if (checkedName == item.config.name) {
                     checkedName = null
-                    QuickLaunch.apply(requireContext(), emptySet())
+                    applyWithProgress(item, false)
                 }
                 QuickLaunch.save(requireContext(), adapter.items.filter { !it.full }.map { it.config })
             }
@@ -96,7 +96,7 @@ class QuickLaunchFragment : Fragment() {
             layoutParams = LinearLayout.LayoutParams(48, 48)
         })
         val text = TextView(ctx).apply {
-            text = getString(R.string.quick_validating)
+            text = getString(if (enable) R.string.quick_validating else R.string.quick_stopping)
             textSize = 14f
             setPadding(24, 0, 0, 0)
         }
