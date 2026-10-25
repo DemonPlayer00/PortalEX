@@ -156,12 +156,54 @@ class DebugCommandActivity : Activity() {
     companion object {
         private const val TAG = "PortalDebug"
         private const val HELP = """
-commands:
-  --es cmd status
-  --es cmd test
-  --es cmd set [--es dev_mode 0|1] [--es gps on|off] [--es wifi on|off] [--es cell on|off] [--es ssid NAME]
-result: logcat -s PortalDebug
-file: /sdcard/Android/data/moe.fuqiuluo.portalex/files/portal_debug.txt
+PortalEX root debug interface
+=============================
+Entry:
+  adb shell su -c 'am start -n moe.fuqiuluo.portalex/.debug.DebugCommandActivity --es cmd <cmd>'
+
+Commands:
+  status
+      Dump app-side config, network, Wi-Fi, dev/adb flags and full sensor_status.
+
+  test
+      Dump the last rendered text of the Test page.
+      Requires opening PortalEX -> Test once after the app starts.
+
+  help
+      Print this document.
+
+  set
+      Change simulation switches. Multiple flags may be combined:
+        --es dev_mode 0|1        close/open developer options entry
+        --es gps on|off          start/stop GNSS mock
+        --es wifi on|off         start/stop WLAN mock
+        --es cell on|off         enable/disable CellInfo mock
+        --es ssid NAME           set fake Wi-Fi SSID
+
+Examples:
+  su -c 'am start -n moe.fuqiuluo.portalex/.debug.DebugCommandActivity \
+      --es cmd status'
+  su -c 'am start -n moe.fuqiuluo.portalex/.debug.DebugCommandActivity \
+      --es cmd set --es gps on --es wifi on --es cell on'
+  su -c 'am start -n moe.fuqiuluo.portalex/.debug.DebugCommandActivity \
+      --es cmd set --es dev_mode 0'
+  su -c 'am start -n moe.fuqiuluo.portalex/.debug.DebugCommandActivity \
+      --es cmd test'
+
+Output:
+  adb logcat -s PortalDebug
+  /sdcard/Android/data/moe.fuqiuluo.portalex/files/portal_debug.txt
+  (status/set/test/help all write the same file; last command wins)
+
+Access:
+  Component is not exported. Only root/adb root can start it.
+  Non-root adb gets SecurityException: not exported.
+  Ordinary apps cannot invoke it.
+
+Notes:
+  - test only returns cached Test text; open Test page for fresh values.
+  - gps/wifi/cell flags also update sim_* preferences.
+  - dev_mode=0 restores current adb_enabled value to keep USB debugging.
 """
     }
 }
