@@ -314,4 +314,12 @@
     <string name="fused_disguise">Disguise</string>
     <string name="battery_added">Added (system will not restrict background)</string>
     <string name="battery_not_added">Not added - tap to request exemption (some ROMs may freeze background work)</string>
+    <string name="calibration_auto_title">Auto-fill simulation values</string>
+    <string name="calibration_auto_gps">GPS</string>
+    <string name="calibration_auto_cell">Cell</string>
+    <string name="calibration_auto_wifi">Wi-Fi</string>
+    <string name="calibration_auto_done">Auto-fill done</string>
+    <string name="calibration_auto_no_fix">No recent GPS fix</string>
+    <string name="calibration_auto_no_cell">No CellInfo available</string>
+    <string name="calibration_auto_no_wifi">No Wi-Fi connection</string>
 </resources>

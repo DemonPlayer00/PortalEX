@@ -1,7 +1,14 @@
 package moe.fuqiuluo.portalex.ui.calibration
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.location.LocationManager
+import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.telephony.CellIdentityGsm
+import android.telephony.CellIdentityLte
+import android.telephony.CellIdentityNr
+import android.telephony.TelephonyManager
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -35,6 +42,7 @@ import moe.fuqiuluo.portalex.ext.satellitesMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.sensorNoiseReport
+import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.shiftAboveIme
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.LocationAccuracyCalibrator
@@ -89,6 +97,9 @@ class CalibrationFragment : Fragment() {
         renderFluctuation()
         binding.calibStatus.text = requireContext().sensorNoiseReport
         binding.calibRun.setOnClickListener { runCalibration() }
+        binding.calibAutoGps.setOnClickListener { autoFillGps() }
+        binding.calibAutoCell.setOnClickListener { autoFillCell() }
+        binding.calibAutoWifi.setOnClickListener { autoFillWifi() }
         binding.calibReset.setOnClickListener { confirmReset() }
         refreshEcho()
         return binding.root
@@ -347,6 +358,83 @@ class CalibrationFragment : Fragment() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    // ---- 网络模拟参数自动填入 ----
+
+    private fun autoFillGps() {
+        val ctx = requireContext()
+        runCatching {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val satellites = loc?.extras?.getInt("satellites", 0) ?: 0
+            ctx.sharedPrefs.edit()
+                .putString("sim_gps_v1", "3")
+                .putString("sim_gps_v2", satellites.takeIf { it > 0 }?.toString() ?: "0")
+                .apply()
+            sendSim("gps", "3", satellites.takeIf { it > 0 }?.toString() ?: "0")
+            showToast(if (loc == null) getString(R.string.calibration_auto_no_fix) else getString(R.string.calibration_auto_done))
+        }.onFailure { showToast(it.message ?: "GPS") }
+    }
+
+    private fun autoFillCell() {
+        val ctx = requireContext()
+        runCatching {
+            val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            val cell = tm.allCellInfo?.firstOrNull { it.isRegistered } ?: tm.allCellInfo?.firstOrNull()
+            val id = cell?.cellIdentity
+            val mcc: String?
+            val mnc: String?
+            val cid: String?
+            val tac: String?
+            when (id) {
+                is CellIdentityLte -> {
+                    mcc = id.mccString; mnc = id.mncString; cid = id.ci.toString(); tac = id.tac.toString()
+                }
+                is CellIdentityGsm -> {
+                    mcc = id.mccString; mnc = id.mncString; cid = id.cid.toString(); tac = id.lac.toString()
+                }
+                is CellIdentityNr -> {
+                    mcc = id.mccString; mnc = id.mncString; cid = id.nci.toString(); tac = id.tac.toString()
+                }
+                else -> { mcc = null; mnc = null; cid = null; tac = null }
+            }
+            if (mcc == null || cid == null) {
+                showToast(getString(R.string.calibration_auto_no_cell))
+                return
+            }
+            val v1 = "$mcc/$mnc"
+            val v2 = "$cid/$tac"
+            ctx.sharedPrefs.edit().putString("sim_cell_v1", v1).putString("sim_cell_v2", v2).apply()
+            sendSim("cell", v1, v2)
+            showToast(getString(R.string.calibration_auto_done))
+        }.onFailure { showToast(it.message ?: "Cell") }
+    }
+
+    private fun autoFillWifi() {
+        val ctx = requireContext()
+        runCatching {
+            val wm = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            @Suppress("DEPRECATION")
+            val info = wm.connectionInfo
+            val ssid = info?.ssid?.trim('"').orEmpty()
+            val bssid = info?.bssid.orEmpty()
+            if (ssid.isBlank() && bssid.isBlank()) {
+                showToast(getString(R.string.calibration_auto_no_wifi))
+                return
+            }
+            ctx.sharedPrefs.edit().putString("sim_wifi_v1", ssid).putString("sim_wifi_v2", bssid).apply()
+            sendSim("wifi", ssid, bssid)
+            showToast(getString(R.string.calibration_auto_done))
+        }.onFailure { showToast(it.message ?: "Wi-Fi") }
+    }
+
+    private fun sendSim(kind: String, v1: String, v2: String) {
+        val lm = mockServiceViewModel.locationManager ?: return
+        val enabled = requireContext().sharedPrefs.getBoolean("sim_${kind}_enabled", false)
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { MockServiceHelper.setSimConfig(lm, kind, enabled, v1, v2) }
+        }
     }
 
     // ---- 一键校准 ----
