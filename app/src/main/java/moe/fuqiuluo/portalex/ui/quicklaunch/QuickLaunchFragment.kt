@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentQuickLaunchBinding
@@ -101,13 +102,23 @@ class QuickLaunchFragment : Fragment() {
             }
             dialog.dismiss()
         }
-        actions.addView(android.widget.Button(ctx).apply {
+        actions.addView(MaterialButton(ctx).apply {
             text = getString(R.string.quick_discard)
+            isAllCaps = false
+            backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+            setTextColor(com.google.android.material.color.MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorPrimary, android.graphics.Color.BLACK))
             setOnClickListener { dialog.dismiss() }
         })
-        actions.addView(android.widget.Button(ctx).apply {
+        actions.addView(MaterialButton(ctx).apply {
             text = getString(R.string.quick_save)
+            isAllCaps = false
+            backgroundTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
+            setTextColor(com.google.android.material.color.MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorPrimary, android.graphics.Color.BLACK))
             setOnClickListener { save() }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = 8 }
         })
         root.addView(actions)
         dialog.show()
