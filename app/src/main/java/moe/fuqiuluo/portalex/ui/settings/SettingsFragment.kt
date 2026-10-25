@@ -78,7 +78,7 @@ class SettingsFragment : Fragment() {
                 // 系统侧没应答（模块未生效/未重启）：保持可用，但如实说明
                 setFusedRow(
                     enabled = true,
-                    value = FusedMode.label(ctx.fusedMode),
+                    value = fusedLabel(ctx.fusedMode),
                     desc = "系统侧未应答（模块需重启生效）"
                 )
                 return@launch
@@ -89,7 +89,7 @@ class SettingsFragment : Fragment() {
             )
             setFusedRow(
                 enabled = fusedAvailable,
-                value = if (fusedAvailable) FusedMode.label(mode) else "不适用",
+                value = if (fusedAvailable) fusedLabel(mode) else "不适用",
                 desc = if (!fusedAvailable) "本机无融合定位，此项不适用"
                 else if (ctx.debug) state.getString(PortalProtocol.Key.FUSED_STATUS)
                 else null
@@ -105,6 +105,12 @@ class SettingsFragment : Fragment() {
         b.dfusedLayout.alpha = if (enabled) 1f else 0.5f
         b.dfusedValue.text = value
         b.dfusedDesc.text = desc ?: getString(R.string.dfused_desc)
+    }
+
+    private fun fusedLabel(mode: Int): String = when (FusedMode.sanitize(mode)) {
+        FusedMode.REJECT -> getString(R.string.fused_reject)
+        FusedMode.ALLOW -> getString(R.string.fused_allow)
+        else -> getString(R.string.fused_disguise)
     }
 
     private fun refreshLanguageValue() {
@@ -251,8 +257,8 @@ class SettingsFragment : Fragment() {
             }
         })
 
-        binding.altitudeValue.text = "%.2f米".format(context.altitude)
-        binding.speedValue.text = "%.2f米/秒".format(context.speed)
+        binding.altitudeValue.text = getString(R.string.altitude_format, context.altitude)
+        binding.speedValue.text = getString(R.string.speed_format, context.speed)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
 
         binding.altitudeLayout.setOnClickListener {
@@ -266,7 +272,7 @@ class SettingsFragment : Fragment() {
                     return@showDialog
                 }
                 context.altitude = value
-                binding.altitudeValue.text = "%.2f米".format(value)
+                binding.altitudeValue.text = getString(R.string.altitude_format, value)
             }
         }
 
@@ -281,7 +287,7 @@ class SettingsFragment : Fragment() {
                     return@showDialog
                 }
                 context.speed = value
-                binding.speedValue.text = "%.2f米/秒".format(value)
+                binding.speedValue.text = getString(R.string.speed_format, value)
             }
         }
 
@@ -313,15 +319,15 @@ class SettingsFragment : Fragment() {
                 return@setOnClickListener
             }
             val modes = intArrayOf(FusedMode.REJECT, FusedMode.ALLOW, FusedMode.DISGUISE)
-            val labels = modes.map { FusedMode.label(it) }.toTypedArray()
+            val labels = modes.map { fusedLabel(it) }.toTypedArray()
             val checked = modes.indexOf(requireContext().fusedMode).coerceAtLeast(0)
             val dialog = MaterialAlertDialogBuilder(requireContext())
                 .setTitle("融合定位处置")
                 .setSingleChoiceItems(labels, checked) { d, which ->
                     val mode = modes[which]
                     requireContext().fusedMode = mode
-                    binding.dfusedValue.text = FusedMode.label(mode)
-                    showToast("融合定位处置：${FusedMode.label(mode)}")
+                    binding.dfusedValue.text = fusedLabel(mode)
+                    showToast("融合定位处置：${fusedLabel(mode)}")
                     updateRemoteConfig()
                     refreshFusedState()
                     d.dismiss()
