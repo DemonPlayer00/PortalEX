@@ -20,24 +20,6 @@ var Context.suPath: String
         putString("suPath", value.trim().ifBlank { "su" })
     }
 
-var Context.selectLocation: HistoricalLocation?
-    get() {
-        return sharedPrefs.getString("selectedLocation", null)?.let {
-            try {
-                HistoricalLocation.fromString(it)
-            } catch (e: Exception) {
-                // 历史/损坏数据容错：清掉脏值，避免下次读取再次崩溃
-                sharedPrefs.edit {
-                    putString("selectedLocation", "")
-                }
-                null
-            }
-        }
-    }
-    set(value) = sharedPrefs.edit {
-        putString("selectedLocation", value?.toString())
-    }
-
 var Context.selectRoute: HistoricalRoute?
     get() {
         return sharedPrefs.getString("selectedRoute", null)?.let {

@@ -29,7 +29,8 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.drawOverOtherAppsEnabled
 import moe.fuqiuluo.portalex.ext.historicalLocations
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
-import moe.fuqiuluo.portalex.ext.selectLocation
+import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
+import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -132,12 +133,8 @@ class MockFragment : Fragment() {
             })
         }
 
-        requireContext().selectLocation?.let {
-            binding.mockLocationName.text = it.name
-            binding.mockLocationAddress.text = it.address
-            binding.mockLocationLatlon.text = it.lat.toString().take(8) + ", " + it.lon.toString().take(8)
-            mockServiceViewModel.selectedLocation = it
-        }
+        binding.mockRouteName.text = requireContext().selectRoute?.name ?: getString(R.string.none_route)
+        binding.mockRoutePick.setOnClickListener { showRoutePicker() }
 
         val locations = requireContext().historicalLocations
 
@@ -154,22 +151,8 @@ class MockFragment : Fragment() {
                 binding.mockLocationName.text = loc.name
                 binding.mockLocationAddress.text = loc.address
                 binding.mockLocationLatlon.text = loc.lat.toString().take(8) + ", " + loc.lon.toString().take(8)
-                mockServiceViewModel.selectedLocation = loc
-                requireContext().selectLocation = loc
-
-                if (mockServiceViewModel.locationManager == null) {
-                    Toast.makeText(requireContext(), "定位服务加载异常", Toast.LENGTH_SHORT).show()
-                    Log.w("MockFragment", "运行时 mockServiceViewModel.locationManager 为空")
-                    return@HistoricalLocationAdapter
-                }
-
-                if (MockServiceHelper.isMockStart(mockServiceViewModel.locationManager!!)) {
-                    if (MockServiceHelper.setLocation(mockServiceViewModel.locationManager!!, loc.lat, loc.lon)) {
-                        Toast.makeText(requireContext(), "位置更新成功", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(requireContext(), "更新位置失败", Toast.LENGTH_SHORT).show()
-                    }
-                }
+                // 坐标点就是只有一个点的路线，统一走路线播放器。
+                useLocationAsRoute(loc)
             }
         }
         val recyclerView = binding.historicalLocationList
@@ -215,8 +198,8 @@ class MockFragment : Fragment() {
             return
         }
 
-        val selectedLocation = mockServiceViewModel.selectedLocation ?: run {
-            showToast("请选择一个位置")
+        val selectedRoute = mockServiceViewModel.selectedRoute ?: run {
+            showToast("请选择位置或路线")
             return
         }
 
@@ -247,16 +230,11 @@ class MockFragment : Fragment() {
                             return@withContext
                         }
 
-                        if (!MockServiceHelper.setLocation(it, selectedLocation.lat, selectedLocation.lon)) {
-                            showToast("更新位置失败")
-                            return@let
-                        }
-
-                        if (MockServiceHelper.broadcastLocation(it)) {
-                            showToast("更新位置成功")
-                        } else {
-                            showToast("更新位置失败")
-                        }
+                        mockServiceViewModel.selectRouteForPlayback(selectedRoute)
+                        val lats = selectedRoute.route.map { it.first }.toDoubleArray()
+                        val lons = selectedRoute.route.map { it.second }.toDoubleArray()
+                        MockServiceHelper.setRoute(it, lats, lons)
+                        MockServiceHelper.setRoutePlaying(it, false)
                     }
                 }
             } finally {
@@ -333,5 +311,29 @@ class MockFragment : Fragment() {
         ContextCompat.getDrawable(requireContext(), iconRes)?.let {
             button.icon = it
         }
+    }
+
+    private fun showRoutePicker() {
+        val routes = HistoricalRoute.parseList(requireContext().jsonHistoricalRoutes)
+        if (routes.isEmpty()) {
+            Toast.makeText(requireContext(), getString(R.string.none_route), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = routes.map { it.name }.toTypedArray()
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.target_route)
+            .setItems(names) { _, which -> selectRoute(routes[which]) }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun selectRoute(route: HistoricalRoute) {
+        requireContext().selectRoute = route
+        mockServiceViewModel.selectRouteForPlayback(route)
+        binding.mockRouteName.text = route.name
+    }
+
+    private fun useLocationAsRoute(loc: moe.fuqiuluo.portalex.ui.mock.HistoricalLocation) {
+        selectRoute(HistoricalRoute(loc.name, mutableListOf(loc.lat to loc.lon)))
     }
 } //

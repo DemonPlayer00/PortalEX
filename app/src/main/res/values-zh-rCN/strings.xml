@@ -383,4 +383,5 @@
     <string name="quick_need_location">请先在首页选择坐标</string>
     <string name="quick_need_route">请先选择路线</string>
     <string name="quick_route">路线模拟</string>
+    <string name="route_too_short">只有一个点，无法播放路线</string>
 </resources>

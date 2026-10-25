@@ -312,50 +312,6 @@ object MockServiceHelper {
 
 
 
-    fun setLocation(locationManager: LocationManager, lat: Double, lon: Double): Boolean {
-        return updateLocation(locationManager, lat, lon, "=")
-    }
-
-    /**
-     * 设置位置。[bearing] 非空时随位置显式下发朝向（自动播放的路线切线方向）——
-     * 系统侧直接采用，不走位移推算（弧长推进步长小，位移法 1m 门控会挡住朝向更新）。
-     */
-    fun setLocation(
-        locationManager: LocationManager,
-        lat: Double,
-        lon: Double,
-        bearing: Double?
-    ): Boolean {
-        // 本进程镜像同一次赋值：App 侧的 FakeLoc.bearing 与系统侧保持同一口径
-        // （否则自动播放结束后，App 侧仍拿着旧朝向）
-        if (bearing != null) {
-            FakeLoc.bearing = bearing
-            FakeLoc.hasBearings = true
-        }
-        return updateLocation(locationManager, lat, lon, "=", bearing)
-    }
-
-    fun updateLocation(
-        locationManager: LocationManager,
-        lat: Double,
-        lon: Double,
-        mode: String,
-        bearing: Double? = null
-    ): Boolean {
-        if (!::randomKey.isInitialized) {
-            return false
-        }
-        val rely = Bundle()
-        rely.putString(Key.COMMAND_ID, Cmd.UPDATE_LOCATION)
-        rely.putDouble(Key.LAT, lat)
-        rely.putDouble(Key.LON, lon)
-        rely.putString(Key.MODE, mode)
-        if (bearing != null) {
-            rely.putDouble(Key.BEARING, bearing)
-        }
-        return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
-    }
-
     /**
      * 摇杆意图（`set_rocker`）：**只表达"往哪个方向走"**。
      *

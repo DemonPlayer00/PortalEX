@@ -249,7 +249,7 @@ class MainActivity : AppCompatActivity() {
                 // menu should be considered as top level destinations.
                 appBarConfiguration = AppBarConfiguration(
                     setOf(
-                        R.id.nav_home, R.id.nav_quick_launch, R.id.nav_mock, R.id.nav_gnss_mock, R.id.nav_route_gallery,
+                        R.id.nav_home, R.id.nav_quick_launch, R.id.nav_mock, R.id.nav_gnss_mock,
                         R.id.nav_baseband,
                         R.id.nav_camera_mock,
                         R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass,
@@ -282,7 +282,6 @@ class MainActivity : AppCompatActivity() {
                         // 悬浮胶囊单实例：仅主界面/路线回放页/路线模拟页/摄像头模拟页注册功能集
                         // （各自 Fragment onResume 中 setActions），其余目的地统一隐藏
                         if (destination.id != R.id.nav_home &&
-                            destination.id != R.id.nav_route_gallery &&
                             destination.id != R.id.nav_route_edit &&
                             destination.id != R.id.nav_camera_mock &&
                             destination.id != R.id.nav_camera_point_edit
