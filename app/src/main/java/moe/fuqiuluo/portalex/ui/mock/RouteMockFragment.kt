@@ -57,26 +57,6 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
             }
         }
 
-        binding.routeAuto.setOnClickListener {
-            val route = mockServiceViewModel.selectedRoute
-            if (route == null) {
-                showToast("请选择一个路线")
-                return@setOnClickListener
-            }
-            if (route.route.size < 2) {
-                showToast(getString(R.string.route_too_short))
-                return@setOnClickListener
-            }
-            if (!mockServiceViewModel.isServiceStart()) {
-                showToast("请先启动模拟")
-                return@setOnClickListener
-            }
-            mockServiceViewModel.initRocker(requireActivity())
-            mockServiceViewModel.rocker.autoStatus = !mockServiceViewModel.rocker.autoStatus
-            binding.routeAuto.text = getString(
-                if (mockServiceViewModel.rocker.autoStatus) R.string.route_auto_stop else R.string.route_auto_start
-            )
-        }
         binding.switchMock.setOnClickListener {
             if (mockServiceViewModel.isServiceStart()) {
                 tryCloseService(it as MaterialButton)
