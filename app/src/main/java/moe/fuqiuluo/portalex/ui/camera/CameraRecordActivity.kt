@@ -226,6 +226,7 @@ class CameraRecordActivity : AppCompatActivity() {
                     CameraSelector.DEFAULT_BACK_CAMERA
                 }
                 provider.unbindAll()
+                faceOverlay?.mirrorX = usingFrontCamera
                 val faceAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setTargetResolution(Size(640, 480))
