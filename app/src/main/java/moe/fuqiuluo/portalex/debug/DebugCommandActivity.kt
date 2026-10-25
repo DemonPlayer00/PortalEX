@@ -70,8 +70,9 @@ class DebugCommandActivity : Activity() {
         }
         val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         s.appendLine("--- module commands ---")
-        s.appendLine("service_init=${MockServiceHelper.isServiceInit()}")
         if (lm != null) {
+            runCatching { MockServiceHelper.tryInitService(lm) }
+            s.appendLine("service_init=${MockServiceHelper.isServiceInit()}")
             runCatching { s.appendLine("gnss_mock=${MockServiceHelper.isGnssMockStart(lm)}") }
             runCatching { s.appendLine("sensor_status=${MockServiceHelper.getSensorStatus(lm)}") }
         }
