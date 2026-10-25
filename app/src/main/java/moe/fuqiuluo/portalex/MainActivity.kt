@@ -86,7 +86,7 @@ import moe.fuqiuluo.portalex.ext.gcj02
 import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
-import moe.fuqiuluo.portalex.ui.quicklaunch.QuickLaunch
+import moe.fuqiuluo.portalex.ui.quicklaunch.QuickLaunchActivity
 import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
@@ -263,7 +263,7 @@ class MainActivity : AppCompatActivity() {
                 navView.setupWithNavController(navController)
                 navView.setNavigationItemSelectedListener { item ->
                     if (item.itemId == R.id.nav_quick_launch) {
-                        QuickLaunch.show(this@MainActivity)
+                        startActivity(android.content.Intent(this@MainActivity, QuickLaunchActivity::class.java))
                         drawerLayout.closeDrawers()
                         true
                     } else {
