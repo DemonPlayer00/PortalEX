@@ -381,4 +381,6 @@
     <string name="orientation_auto">Automatic</string>
     <string name="orientation_portrait">Portrait</string>
     <string name="orientation_landscape">Landscape</string>
+    <string name="calibration_altitude">Altitude</string>
+    <string name="calibration_altitude_desc">GPS-measured altitude above sea level.</string>
 </resources>

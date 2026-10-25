@@ -28,6 +28,7 @@ import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.android.widget.SensorTraceChart
 import moe.fuqiuluo.portalex.databinding.FragmentCalibrationBinding
 import moe.fuqiuluo.portalex.ext.accuracy
+import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.altitudeJitter
 import moe.fuqiuluo.portalex.ext.fusedAccuracyMeasured
 import moe.fuqiuluo.portalex.ext.fusedDelayMeasured
@@ -84,6 +85,7 @@ class CalibrationFragment : Fragment() {
     private var fusedDelayValue: TextView? = null
     private var gpsIntervalValue: TextView? = null
     private var satellitesValue: TextView? = null
+    private var altitudeValue: TextView? = null
     private var maxCn0Value: TextView? = null
     private var meanCn0Value: TextView? = null
 
@@ -181,6 +183,16 @@ class CalibrationFragment : Fragment() {
                 ctx.accuracy = v.toFloat()
             }
         }
+        altitudeValue = measurementRow(
+            getString(R.string.calibration_altitude),
+            getString(R.string.calibration_altitude_desc),
+        ) {
+            editScalar("海拔高度", ctx.altitude, -500.0, 10_000.0) { v ->
+                ctx.altitude = v
+                altitudeValue?.text = "%.1f m".format(v)
+            }
+        }
+        altitudeValue?.text = "%.1f m".format(ctx.altitude)
         fusedAccuracyValue = measurementRow(
             getString(R.string.calibration_fused_accuracy),
             getString(R.string.calibration_fused_accuracy_desc),
@@ -268,6 +280,10 @@ class CalibrationFragment : Fragment() {
             ctx.gpsAccuracyMeasured = it
             // GPS 精度 -> 模拟水平抖动/上报精度参数
             ctx.accuracy = it
+        }
+        result.altitudeMeters?.let {
+            ctx.altitude = it
+            altitudeValue?.text = "%.1f m".format(it)
         }
         result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
         result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }

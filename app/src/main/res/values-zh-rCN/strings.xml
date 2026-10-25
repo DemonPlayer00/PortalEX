@@ -394,4 +394,6 @@
     <string name="orientation_auto">自动</string>
     <string name="orientation_portrait">竖屏</string>
     <string name="orientation_landscape">横屏</string>
+    <string name="calibration_altitude">海拔高度</string>
+    <string name="calibration_altitude_desc">GPS 实测海拔高度。</string>
 </resources>

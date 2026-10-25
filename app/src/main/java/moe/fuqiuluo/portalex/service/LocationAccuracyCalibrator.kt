@@ -49,6 +49,8 @@ object LocationAccuracyCalibrator {
         val satellitesJitter: Float? = null,
         /** fused provider 是否成功注册；false = 设备不支持/不可用。 */
         val fusedRegistered: Boolean = false,
+        /** GPS 实测海拔中位数（米）；无有效 altitude 时为 null。 */
+        val altitudeMeters: Double? = null,
     )
 
     private const val TAG = "PortalLocationCalib"
@@ -84,6 +86,7 @@ object LocationAccuracyCalibrator {
         val satelliteValues = ArrayList<Float>()
         val maxCn0Values = ArrayList<Float>()
         val meanCn0Values = ArrayList<Float>()
+        val altitudeValues = ArrayList<Float>()
         var lastGps: Location? = null
         var lastFused: Location? = null
         var lastGpsAtNanos = 0L
@@ -186,6 +189,7 @@ object LocationAccuracyCalibrator {
                 } else 0f
                 val maxCn0Median = medianOrNull(maxCn0Values)
                 val meanCn0Median = medianOrNull(meanCn0Values)
+                val altitudeMedian = medianOrNull(altitudeValues)?.toDouble()
                 Result(
                     gpsAccuracyMeters = gpsMedian,
                     fusedAccuracyMeters = fusedMedian,
@@ -206,6 +210,7 @@ object LocationAccuracyCalibrator {
                     },
                     fusedRegistered = fusedRegistered,
                     satellitesJitter = satJitter,
+                    altitudeMeters = altitudeMedian,
                     detail = buildString {
                         append("GPS accuracy median=%.2fm".format(gpsMedian))
                         fusedMedian?.let { append("；GPS-fused 水平差 median=%.2fm".format(it)) }
@@ -214,6 +219,7 @@ object LocationAccuracyCalibrator {
                         satMedian?.let { append("；卫星 median=%.0f".format(it)) }
                         maxCn0Median?.let { append("；maxCn0 median=%.1f".format(it)) }
                         meanCn0Median?.let { append("；meanCn0 median=%.1f".format(it)) }
+                        altitudeMedian?.let { append("；海拔 median=%.1fm".format(it)) }
                     },
                 )
             }
