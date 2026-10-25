@@ -57,7 +57,7 @@ class SettingsFragment : Fragment() {
     /**
      * 查询系统侧的融合定位状态：决定本行**是否可用**，并把当前处置写在右侧（与其它设置项一致）。
      *
-     * · 没有融合定位的机型 ⇒ 整行置灰 + 显示"不适用"，不做"看着能点其实没用"的假设置；
+     * · 没有融合定位的机型 ⇒ 整行置灰 + 显示getString(R.string.not_applicable)，不做"看着能点其实没用"的假设置；
      * · 有 ⇒ 右侧显示当前档位（拒绝 / 放行（不推荐） / 伪装）；调试模式打开时把系统侧的
      *   hook 状态单行诊断显示在标题下（同时系统侧也会打一条 debug 日志）。
      */
@@ -66,7 +66,7 @@ class SettingsFragment : Fragment() {
         val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
             as? android.location.LocationManager
         if (lm == null) {
-            setFusedRow(enabled = false, value = "不适用", desc = null)
+            setFusedRow(enabled = false, value = getString(R.string.not_applicable), desc = null)
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
@@ -79,7 +79,7 @@ class SettingsFragment : Fragment() {
                 setFusedRow(
                     enabled = true,
                     value = fusedLabel(ctx.fusedMode),
-                    desc = "系统侧未应答（模块需重启生效）"
+                    desc = getString(R.string.fused_no_response)
                 )
                 return@launch
             }
@@ -89,8 +89,8 @@ class SettingsFragment : Fragment() {
             )
             setFusedRow(
                 enabled = fusedAvailable,
-                value = if (fusedAvailable) fusedLabel(mode) else "不适用",
-                desc = if (!fusedAvailable) "本机无融合定位，此项不适用"
+                value = if (fusedAvailable) fusedLabel(mode) else getString(R.string.not_applicable),
+                desc = if (!fusedAvailable) getString(R.string.fused_unavailable)
                 else if (ctx.debug) state.getString(PortalProtocol.Key.FUSED_STATUS)
                 else null
             )
@@ -169,7 +169,7 @@ class SettingsFragment : Fragment() {
             }
             if (_binding == null) return@launch
             if (ok) {
-                showToast(if (enabled) "开发者模式已开启" else "开发者模式已关闭")
+                showToast(if (enabled) getString(R.string.dev_mode_on) else getString(R.string.dev_mode_off))
             } else {
                 // 命令失败就回到真实值，不制造假成功
                 val actual = runCatching {
@@ -184,7 +184,7 @@ class SettingsFragment : Fragment() {
                 binding.developerModeSwitch.setOnCheckedChangeListener { _, checked ->
                     setDeveloperMode(checked)
                 }
-                showToast("修改失败：su 不可用或系统拒绝")
+                showToast(getString(R.string.dev_mode_failed))
             }
         }
     }
@@ -220,15 +220,15 @@ class SettingsFragment : Fragment() {
         val context = requireContext()
         binding.suPathValue.text = context.suPath
         binding.suPathLayout.setOnClickListener {
-            showDialog("设置 su 路径", context.suPath) { path ->
+            showDialog(getString(R.string.su_path_title), context.suPath) { path ->
                 val p = path.trim()
                 if (p.isEmpty()) {
-                    showToast("su 路径不能为空")
+                    showToast(getString(R.string.su_path_invalid))
                     return@showDialog
                 }
                 context.suPath = p
                 binding.suPathValue.text = context.suPath
-                showToast("su 路径已更新")
+                showToast(getString(R.string.su_path_updated))
             }
         }
         // 只有一个开发者模式开关：开关状态直接反映系统当前值。
@@ -253,7 +253,7 @@ class SettingsFragment : Fragment() {
                 isChecked: Boolean
             ) {
                 context.needOpenSELinux = isChecked
-                showToast(if (isChecked) "已开启SELinux" else "已关闭SELinux")
+                showToast(if (isChecked) getString(R.string.selinux_on) else getString(R.string.selinux_off))
             }
         })
 
@@ -262,13 +262,13 @@ class SettingsFragment : Fragment() {
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
 
         binding.altitudeLayout.setOnClickListener {
-            showDialog("设置海拔高度", binding.altitudeValue.text.toString().let { it.substring(0, it.length - 1) }) {
+            showDialog(getString(R.string.altitude), binding.altitudeValue.text.toString().let { it.substring(0, it.length - 1) }) {
                 val value = it.toDoubleOrNull()
                 if (value == null || value < 0.0) {
-                    showToast("海拔高度不合法")
+                    showToast(getString(R.string.altitude_invalid))
                     return@showDialog
                 } else if (value > 10000) {
-                    showToast("海拔高度不能超过10000米")
+                    showToast(getString(R.string.altitude_max))
                     return@showDialog
                 }
                 context.altitude = value
@@ -277,13 +277,13 @@ class SettingsFragment : Fragment() {
         }
 
         binding.speedLayout.setOnClickListener {
-            showDialog("设置速度", binding.speedValue.text.toString().let { it.substring(0, it.length - 3) }) {
+            showDialog(getString(R.string.rocker_speed), binding.speedValue.text.toString().let { it.substring(0, it.length - 3) }) {
                 val value = it.toDoubleOrNull()
                 if (value == null || value < 0.0) {
-                    showToast("速度不合法")
+                    showToast(getString(R.string.speed_invalid))
                     return@showDialog
                 } else if (value > 1000) {
-                    showToast("速度不能超过1000米/秒")
+                    showToast(getString(R.string.speed_max))
                     return@showDialog
                 }
                 context.speed = value
@@ -298,7 +298,7 @@ class SettingsFragment : Fragment() {
                 isChecked: Boolean
             ) {
                 context.debug = isChecked
-                showToast(if (isChecked) "已开启调试模式" else "已关闭调试模式")
+                showToast(if (isChecked) getString(R.string.debug_on) else getString(R.string.debug_off))
                 updateRemoteConfig()
                 // 融合处置那一行的说明位在调试模式下显示 hook 状态诊断 ⇒ 开关一变就要重画，
                 // 否则会停在旧文案上（看着像"状态没变"）
@@ -315,24 +315,24 @@ class SettingsFragment : Fragment() {
         // 「融合定位处置」：与其它设置项同一交互 —— 点一行，弹三选一（拒绝 / 放行 / 伪装）。
         binding.dfusedLayout.setOnClickListener {
             if (!fusedAvailable) {
-                showToast("本机无融合定位，此项不适用")
+                showToast(getString(R.string.fused_unavailable))
                 return@setOnClickListener
             }
             val modes = intArrayOf(FusedMode.REJECT, FusedMode.ALLOW, FusedMode.DISGUISE)
             val labels = modes.map { fusedLabel(it) }.toTypedArray()
             val checked = modes.indexOf(requireContext().fusedMode).coerceAtLeast(0)
             val dialog = MaterialAlertDialogBuilder(requireContext())
-                .setTitle("融合定位处置")
+                .setTitle(getString(R.string.fused_title))
                 .setSingleChoiceItems(labels, checked) { d, which ->
                     val mode = modes[which]
                     requireContext().fusedMode = mode
                     binding.dfusedValue.text = fusedLabel(mode)
-                    showToast("融合定位处置：${fusedLabel(mode)}")
+                    showToast(getString(R.string.fused_applied, fusedLabel(mode)))
                     updateRemoteConfig()
                     refreshFusedState()
                     d.dismiss()
                 }
-                .setNegativeButton("取消", null)
+                .setNegativeButton(getString(R.string.cancel), null)
                 .create()
             // **点空白处不关闭**：这是"改设置"的对话框，误触空白关掉会让人以为没生效/白操作一次。
             // 退出路径保持明确：选中某一档，或按「取消」/返回键。
@@ -350,7 +350,7 @@ class SettingsFragment : Fragment() {
                 isChecked: Boolean
             ) {
                 context.needDowngradeToCdma = isChecked
-                showToast(if (isChecked) "已降级为CDMA" else "已取消降级为CDMA")
+                showToast(if (isChecked) getString(R.string.cdma_on) else getString(R.string.cdma_off))
                 updateRemoteConfig()
             }
         })
@@ -373,10 +373,10 @@ class SettingsFragment : Fragment() {
                 if (mockServiceViewModel.isAutoPlaying) {
                     MockKeepAliveService.start(ctx)
                 }
-                showToast("已开启后台保活")
+                showToast(getString(R.string.keepalive_on))
             } else {
                 MockKeepAliveService.stop(ctx)
-                showToast("已关闭后台保活（退后台可能被系统冻结）")
+                showToast(getString(R.string.keepalive_off))
             }
         }
 
@@ -385,7 +385,7 @@ class SettingsFragment : Fragment() {
             val pm = requireContext().getSystemService(android.content.Context.POWER_SERVICE)
                 as? android.os.PowerManager
             if (pm?.isIgnoringBatteryOptimizations(requireContext().packageName) == true) {
-                showToast("已在电池优化白名单中")
+                showToast(getString(R.string.battery_already_whitelisted))
                 return@setOnClickListener
             }
             runCatching {
@@ -399,23 +399,23 @@ class SettingsFragment : Fragment() {
                 // 个别 ROM 没有这个 Activity：退回「电池优化」列表页，让用户手动加白
                 runCatching {
                     startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                }.onFailure { e -> showToast("无法打开电池优化设置：${e.message}") }
+                }.onFailure { e -> showToast(getString(R.string.battery_open_failed, e.message)) }
             }
         }
         refreshBatteryOptimizationState()
 
         // 「步频倍率」：微调步频↔速度，默认 1.0；整数或小数都可
         binding.reportDurationLayout.setOnClickListener {
-            showDialog("设置最大位置上报间隔", binding.reportDurationValue.text.toString().let {
+            showDialog(getString(R.string.item_report_duration_title), binding.reportDurationValue.text.toString().let {
                 it.substring(0, it.length - 2)
             }) {
                 val value = it.toIntOrNull()
                 // 下限 1ms：0 会让摇杆/播放循环 delay(0) 空转并触发除零
                 if (value == null || value < 1) {
-                    Toast.makeText(context, "最大位置上报间隔不合法", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, getString(R.string.report_invalid), Toast.LENGTH_SHORT).show()
                     return@showDialog
                 } else if (value > 1000) {
-                    Toast.makeText(context, "最大位置上报间隔不能大于1s", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, getString(R.string.report_max), Toast.LENGTH_SHORT).show()
                     return@showDialog
                 }
                 context.reportDuration = value
@@ -429,16 +429,16 @@ class SettingsFragment : Fragment() {
             with(mockServiceViewModel) {
                 val lm = locationManager
                 if (lm == null) {
-                    showToast("定位服务加载异常，无法切换WLAN扫描")
+                    showToast(getString(R.string.wifi_service_unavailable))
                     return@setOnCheckedChangeListener
                 }
                 if (isChecked) {
                     if(!MockServiceHelper.startWifiMock(lm)) {
-                        showToast("禁用WLAN扫描失败: 无法连接到系统服务")
+                        showToast(getString(R.string.wifi_disable_failed))
                     }
                 } else {
                     if(!MockServiceHelper.stopWifiMock(lm)) {
-                        showToast("启用WLAN扫描失败: 无法连接到系统服务")
+                        showToast(getString(R.string.wifi_enable_failed))
                     }
                 }
             }
@@ -469,7 +469,7 @@ class SettingsFragment : Fragment() {
         with(mockServiceViewModel) {
             val lm = locationManager
             if (lm == null) {
-                showToast("定位服务加载异常，配置未同步")
+                showToast(getString(R.string.config_sync_failed))
                 return
             }
             // 三态结果：成功 / 没握手 / 系统侧拒绝 —— 后者绝不能说"成功"（那是假成功）
@@ -493,10 +493,10 @@ class SettingsFragment : Fragment() {
         val dialog = builder
             .setCancelable(false)
             .setView(dialogView)
-            .setPositiveButton("保存") { _, _ ->
+            .setPositiveButton(getString(R.string.save)) { _, _ ->
                 handler(value.text.toString())
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.cancel), null)
             .show()
         dialog.shiftAboveIme(requireActivity().window.decorView)
     }
