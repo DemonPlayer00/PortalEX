@@ -34,8 +34,9 @@ class DebugCommandActivity : Activity() {
         val cmd = intent.getStringExtra("cmd") ?: "status"
         try {
             val text = when (cmd) {
-                "test" -> moe.fuqiuluo.portalex.ui.test.TestSnapshot.last
-                    ?: "Test 页面尚未打开或尚未完成首次刷新"
+                "test" -> TestReport.build(this)
+                "start" -> startMock()
+                "stop" -> stopMock()
                 "set" -> setCommand()
                 "help" -> HELP
                 else -> status()
@@ -106,6 +107,23 @@ class DebugCommandActivity : Activity() {
         }
     }
 
+    private fun startMock(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val ok = runCatching {
+            MockServiceHelper.tryOpenMock(lm, speed = 3.05, altitude = 80.0, accuracy = 25f)
+        }.getOrDefault(false)
+        return "start=$ok service_init=${MockServiceHelper.isServiceInit()}"
+    }
+
+    private fun stopMock(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        val ok = runCatching { MockServiceHelper.tryCloseMock(lm) }.getOrDefault(false)
+        return "stop=$ok"
+    }
+
     private fun setCommand(): String {
         val ctx = this
         val out = StringBuilder("=== set ===\n")
@@ -165,6 +183,12 @@ Commands:
   status
       Dump app-side config, network, Wi-Fi, dev/adb flags and full sensor_status.
 
+  start
+      Start full location simulation (speed 3.05, altitude 80, accuracy 25).
+
+  stop
+      Stop the simulation session.
+
   test
       Dump the last rendered text of the Test page.
       Requires opening PortalEX -> Test once after the app starts.
@@ -201,7 +225,7 @@ Access:
   Ordinary apps cannot invoke it.
 
 Notes:
-  - test only returns cached Test text; open Test page for fresh values.
+  - test builds a fresh report; no need to open the Test page.
   - gps/wifi/cell flags also update sim_* preferences.
   - dev_mode=0 restores current adb_enabled value to keep USB debugging.
 """
