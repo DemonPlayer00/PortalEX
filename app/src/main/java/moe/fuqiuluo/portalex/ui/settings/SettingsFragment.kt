@@ -28,7 +28,6 @@ import moe.fuqiuluo.portalex.ext.altitude
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.disableWifiScan
-import moe.fuqiuluo.portalex.ext.loopBroadcastlocation
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
@@ -444,13 +443,7 @@ class SettingsFragment : Fragment() {
             }
         }
 
-        binding.loopBroadcastLocationSwitch.isChecked = requireContext().loopBroadcastlocation
-        binding.loopBroadcastLocationSwitch.setOnCheckedChangeListener { _, isChecked ->
-            requireContext().loopBroadcastlocation = isChecked
-        }
-
-        binding.allowLandscapeSwitch.isChecked = requireContext().allowLandscape
-        binding.allowLandscapeSwitch.setOnCheckedChangeListener { _, isChecked ->
+binding.allowLandscapeSwitch.setOnCheckedChangeListener { _, isChecked ->
             requireContext().allowLandscape = isChecked
             // 立即生效：MainActivity 是 configChanges 的单 Activity，不会重建
             (activity as? MainActivity)?.applyOrientationPreference()
