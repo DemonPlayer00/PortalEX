@@ -1,7 +1,11 @@
 package moe.fuqiuluo.portalex.ui.test
 
 import moe.fuqiuluo.portalex.ext.fusedMode
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
+import android.telephony.TelephonyManager
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -107,6 +111,46 @@ class TestFragment : Fragment() {
             appendLine("服务已握手     ${MockServiceHelper.isServiceInit()}")
             appendLine("会话运行中     ${mockServiceViewModel.isServiceStart()}")
             appendLine("作用域         LSPosed 决定；本页只统计系统侧数据")
+
+            appendLine()
+            appendLine("═══ 系统 API 原始探针（本进程）═══")
+            runCatching {
+                val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val network = cm.activeNetwork
+                val caps = network?.let { cm.getNetworkCapabilities(it) }
+                appendLine("活动网络       ${network ?: "无"}")
+                appendLine("WIFI 传输      ${caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ?: false}")
+                appendLine("CELLULAR 传输  ${caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ?: false}")
+                @Suppress("DEPRECATION")
+                val ni = cm.activeNetworkInfo
+                appendLine("NetworkInfo    type=${ni?.type} ${ni?.typeName} state=${ni?.state}")
+            }.onFailure { appendLine("Connectivity   ${it.message}") }
+
+            runCatching {
+                val wm = ctx.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                @Suppress("DEPRECATION")
+                val wi = wm.connectionInfo
+                appendLine("Wi-Fi enabled  ${wm.isWifiEnabled}")
+                appendLine("Wi-Fi SSID     ${wi?.ssid}")
+                appendLine("Wi-Fi BSSID    ${wi?.bssid}")
+                appendLine("Wi-Fi RSSI     ${wi?.rssi}")
+                appendLine("Wi-Fi scans    ${runCatching { wm.scanResults?.size }.getOrDefault(-1)}")
+            }.onFailure { appendLine("Wi-Fi          ${it.message}") }
+
+            runCatching {
+                val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                appendLine("数据状态       ${tm.dataState}")
+                appendLine("网络类型       ${tm.dataNetworkType}")
+                @Suppress("DEPRECATION")
+                appendLine("CellInfo       ${tm.allCellInfo?.joinToString { it.javaClass.simpleName } ?: "无"}")
+            }.onFailure { appendLine("Telephony      ${it.message}") }
+
+            runCatching {
+                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                val loc = lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                appendLine("GPS provider   ${lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)}")
+                appendLine("GPS last       ${loc?.latitude}, ${loc?.longitude} / ${loc?.extras}")
+            }.onFailure { appendLine("Location       ${it.message}") }
 
             // 摄像头模拟是唯一注入目标应用的功能族，它的"有没有生效"只能靠 provider
             // 两侧的旁证看出来：谁在什么时候来取过清单、模块侧回报拦到了什么。
