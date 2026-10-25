@@ -377,4 +377,5 @@
     <string name="baseband_tac">TAC</string>
     <string name="baseband_waiting_master">Saved. Start route or GNSS mock to activate baseband.</string>
     <string name="class2_waiting_master">Saved. Start route or GNSS mock to activate.</string>
+    <string name="camera_requires_route">Start route mock before enabling camera mock</string>
 </resources>

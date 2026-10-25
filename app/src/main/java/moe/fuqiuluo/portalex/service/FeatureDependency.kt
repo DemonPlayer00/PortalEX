@@ -27,12 +27,14 @@ object FeatureDependency {
     fun isMasterActive(ctx: Context): Boolean = isRouteActive(ctx) || isGnssActive(ctx)
 
     /** 一类停止后：二类意图保留，但实际注入先停掉，避免脱离总开关继续运行。 */
-    fun suspendClass2(ctx: Context) {
+    fun suspendClass2(ctx: Context, stopCamera: Boolean = false) {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
         runCatching { MockServiceHelper.setSimConfig(lm, "cell", false, "", "") }
         runCatching { MockServiceHelper.setSimConfig(lm, "wifi", false, "", "") }
         runCatching { ConfigSync.setSensorMock(ctx, lm, false, false) }
-        runCatching { moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle.stopForLocationMockOff(ctx) }
+        if (stopCamera) {
+            runCatching { moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle.stopForLocationMockOff(ctx) }
+        }
     }
 
     /** 一类启动后，把二类里"预先打开"的意图一次性落地。 */
@@ -59,9 +61,6 @@ object FeatureDependency {
         runCatching {
             val stamina = StaminaPrefs.load(ctx)
             if (stamina.enabled) ConfigSync.push(ctx, lm)
-        }
-        if (ctx.cameraMockEnabled) {
-            runCatching { CammockManager.start(ctx) }
         }
         return true
     }
