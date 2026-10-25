@@ -255,7 +255,7 @@ internal object SystemRuntimeChannel {
                 getService.isAccessible = true
                 val local = getService.invoke(null, internalCls)
                 Logger.info("SystemRuntimeChannel: LocalServices local=${local?.javaClass?.name}")
-                outerOf(local)
+                outerOf(local) ?: findSensorServiceInLocalServices()
             }.onFailure {
                 Logger.debug("SystemRuntimeChannel: LocalServices 取实例失败：${it.message}")
             }.getOrNull()
@@ -276,6 +276,36 @@ internal object SystemRuntimeChannel {
                 .onFailure { lastError = "mPtr: ${it.message}" }
         }
         return inst
+    }
+
+    /**
+     * 某些 ROM 没有把 SensorManagerInternal 注册到 LocalServices（实测 MI6 返回 null），
+     * 但 LocalServices 的内部 map 仍可能持有 SensorService 的 LocalService/外层对象。
+     * 这里只读扫描 map；找到第一个真正的 SensorService 实例。
+     */
+    private fun findSensorServiceInLocalServices(): Any? {
+        val cls = serviceCls ?: return null
+        val ls = runCatching {
+            Class.forName(CLS_LOCAL_SERVICES, false, cls.classLoader)
+        }.getOrNull() ?: return null
+        val mapField = ls.declaredFields.firstOrNull {
+            Map::class.java.isAssignableFrom(it.type) && !java.lang.reflect.Modifier.isStatic(it.modifiers)
+        } ?: ls.declaredFields.firstOrNull { Map::class.java.isAssignableFrom(it.type) }
+        ?: return null
+        val map = runCatching {
+            mapField.isAccessible = true
+            mapField.get(null) as? Map<*, *>
+        }.getOrNull() ?: return null
+        Logger.info("SystemRuntimeChannel: LocalServices map size=${map.size}")
+        for (value in map.values) {
+            if (value != null && cls.isInstance(value)) return value
+            val outer = outerOf(value)
+            if (outer != null && cls.isInstance(outer)) {
+                Logger.info("SystemRuntimeChannel: 从 LocalServices map 找到 SensorService")
+                return outer
+            }
+        }
+        return null
     }
 
     /** 内部类实例的外层对象（标准合成字段 `this$0`；找不到就按类型扫）。 */
