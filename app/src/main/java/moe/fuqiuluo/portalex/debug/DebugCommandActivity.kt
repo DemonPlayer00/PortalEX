@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
+import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.suPath
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -153,6 +154,11 @@ class DebugCommandActivity : Activity() {
             "1", "on", "true", "yes" -> true
             "0", "off", "false", "no" -> false
             else -> null
+        }
+        intent.getStringExtra("landscape")?.let { value ->
+            val on = value == "1" || value.equals("on", true) || value.equals("true", true)
+            ctx.allowLandscape = on
+            out.appendLine("landscape=$on")
         }
         flag("gps")?.let { on ->
             ctx.sharedPrefs.edit().putBoolean("sim_gps_enabled", on).apply()
