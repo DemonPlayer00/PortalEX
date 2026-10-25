@@ -169,6 +169,23 @@ class MainActivity : AppCompatActivity() {
      * onCreate) can safely access [binding] even while the permission prompt
      * is still pending in the lifecycle coroutine.
      */
+    /**
+     * 横屏时抽屉标题区高度会吃掉大半个侧栏，导致路线入口落在可视区外；
+     * 这里按方向压缩标题区（隐藏大图标、保留标题），给菜单留出滚动空间。
+     */
+    private fun applyDrawerHeaderHeight() {
+        val header = binding.drawerContainer.getChildAt(0) ?: return
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        header.findViewById<android.view.View>(R.id.imageView)?.visibility =
+            if (landscape) android.view.View.GONE else android.view.View.VISIBLE
+        val height = if (landscape) {
+            (72 * resources.displayMetrics.density).toInt()
+        } else {
+            resources.getDimensionPixelSize(R.dimen.nav_header_height)
+        }
+        header.layoutParams = header.layoutParams.apply { this.height = height }
+    }
+
     private fun initBinding() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -224,6 +241,7 @@ class MainActivity : AppCompatActivity() {
         // so the binding must exist before the lifecycle coroutine may suspend
         // on the permission prompt.
         initBinding()
+        applyDrawerHeaderHeight()
         // 按「允许横屏」设置应用屏幕方向（默认锁竖屏）
         applyOrientationPreference()
 
@@ -724,6 +742,7 @@ class MainActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         // 旋转后重新摆放悬浮胶囊：布局不会重新 inflate，边距会停在旧方向的取值
         fabBar.recalibrate()
+        applyDrawerHeaderHeight()
         // 需要给胶囊让位的页面（如路线模拟的历史列表）也得按新方向重算一次
         val navHost = supportFragmentManager
             .findFragmentById(R.id.nav_host_fragment_content_main) as? NavHostFragment
