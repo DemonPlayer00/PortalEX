@@ -24,15 +24,15 @@
         <item
             android:id="@+id/nav_gps_status"
             android:icon="@drawable/baseline_satellite_alt_24"
-            android:title="GPS 状态码模拟" />
+            android:title="@string/menu_gps_status" />
         <item
             android:id="@+id/nav_cell_info"
             android:icon="@android:drawable/ic_menu_mylocation"
-            android:title="Cell 基站信息模拟" />
+            android:title="@string/menu_cell_info" />
         <item
             android:id="@+id/nav_wifi_info"
             android:icon="@android:drawable/ic_menu_compass"
-            android:title="Wi-Fi 信息模拟" />
+            android:title="@string/menu_wifi_info" />
         <item
             android:id="@+id/nav_route_gallery"
             android:icon="@drawable/baseline_route_24"

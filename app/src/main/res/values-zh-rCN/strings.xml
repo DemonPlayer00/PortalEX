@@ -1,0 +1,224 @@
+<resources>
+    <string name="app_name">PortalEX</string>
+    <string name="navigation_drawer_open">Open navigation drawer</string>
+    <string name="navigation_drawer_close">Close navigation drawer</string>
+    <string name="nav_header_title">PortalEX</string>
+    <string name="nav_header_subtitle">仅提供学习与交流，请3小时内删除</string>
+    <string name="nav_header_desc">Navigation header</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_search">搜索</string>
+    <string name="action_info">信息</string>
+
+    <string name="menu_home">首页</string>
+    <string name="menu_mock">位置模拟</string>
+    <string name="menu_route_mock">路线模拟</string>
+    <string name="menu_gnss_mock">GNSS 模拟</string>
+    <string name="menu_route_mock_edit">编辑路线</string>
+    <string name="menu_setting">设置</string>
+    <string name="request_permission">能否给我一个权限呢？</string>
+    <string name="fab_expand">展开操作</string>
+    <string name="follow_location">镜头跟随</string>
+    <string name="add_route">创建路线</string>
+    <string name="normal_view">普通图</string>
+    <string name="satellite_view">卫星图</string>
+    <string name="loc_detail_text">逆地理编码，根据经纬度获取地址信息</string>
+    <string name="latlon">经纬度</string>
+    <string name="route_set">路线经纬度</string>
+    <string name="route_smooth_set">平滑数组（true/false，每个端点对应其后线段，最后一个端点无线段）</string>
+    <string name="address">地址</string>
+    <string name="input_lat">请输入纬度</string>
+    <string name="input_lon">请输入经度</string>
+    <string name="target_location">目标位置</string>
+    <string name="target_route">实行路线</string>
+    <string name="none">请选择一个位置</string>
+    <string name="none_route">请选择一个路线</string>
+    <string name="none_none">未知地址</string>
+    <string name="latlon_display">经纬度：</string>
+    <string name="default_latlon">0.00, 0.00</string>
+    <string name="start_mock">启动模拟</string>
+    <string name="rocker">移动摇杆</string>
+    <string name="history_location">历史位置</string>
+    <string name="history_route">历史路线</string>
+    <string name="goto_location">跳转位置</string>
+    <string name="save_location">保存位置</string>
+    <string name="add_location">添加位置</string>
+    <string name="name">名称</string>
+    <string name="colorful">独属于我的蒙娜丽莎</string>
+    <string name="rocker_speed">摇杆速度</string>
+    <string name="default_speed">1m/s</string>
+    <string name="selinux">SELinux</string>
+    <string name="need_open_selinux">是否开启SELinux</string>
+    <string name="altitude">定位海拔</string>
+    <string name="altitude_desc">模拟定位的海拔高度</string>
+    <string name="rocker_speed_desc">模拟移动的移动速度</string>
+    <string name="accuracy">定位精度</string>
+    <string name="accuracy_desc">模拟定位抖动的范围</string>
+    <string name="debug">调试模式</string>
+    <string name="debug_desc">是否打印调试日志</string>
+    <string name="allow_landscape">允许横屏</string>
+    <string name="allow_landscape_desc">横屏下部分界面可能显示异常</string>
+    <string name="menu_stamina">体力模拟</string>
+    <!-- 入口名（抽屉 + 顶栏标题）：这一页管步频侧（步数计数器/检测器）的模拟 -->
+    <string name="menu_cadence">步频与加速度模拟</string>
+    <string name="menu_angle_compass">角度与指南针模拟</string>
+    <string name="stamina_enable">启用体力模拟</string>
+    <string name="stamina_enable_desc">体力随跑动衰减、空闲时持续恢复；低了会降速并进入疲劳，冷却还完才重新开跑</string>
+    <string name="stamina_status">当前体力</string>
+    <string name="stamina_chart_title">速度倍率 / 距离</string>
+    <string name="stamina_chart_desc">横轴=距离（窗口 2 km，左右滑动看更远），纵轴=速度倍率</string>
+    <!-- 步频模拟页 -->
+    <string name="cadence_page_desc">决定"目标应用看到的步频"：由 速度 × 步频倍率 得出。这一页只放属于本域、且不与其它设置耦合的项（步频倍率）。事件投递速率已改为**跟随框架采用值**（不再有"注入栅格分辨率"这个设置），步事件在框架侧按步间隔分摊下发。</string>
+    <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>
+    <string name="cadence_scale">步频倍率</string>
+    <string name="cadence_scale_desc">微调「步频 ↔ 速度」的关系；1 = 不调整（0.2~3.0）</string>
+    <string name="cadence_mock">外周传感器模拟（步频侧）</string>
+    <string name="cadence_mock_desc">接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR；系统框架层伪造，不向目标应用注入 hook</string>
+    <string name="orientation_mock">外周传感器模拟（角度与指南针侧）</string>
+    <string name="orientation_mock_desc">接管加速度/陀螺/磁场（朝向）；系统框架层伪造，不向目标应用注入 hook</string>
+
+    <!--
+      按组波动（两组各两条，单位 %，默认 15）：与噪声档两层 —— 噪声档是"本底噪声"，
+      这两条是叠加其上的慢漂与逐条随机。施加口径见 xposed/src/main/cpp/vw_wobble.c。
+    -->
+    <string name="wobble_amp">波动强度（%）</string>
+    <string name="wobble_amp_desc">慢漂半幅：读数在秒级上来回走的幅度（默认 15%，0 = 关闭）</string>
+    <string name="wobble_rnd">随机区间（%）</string>
+    <string name="wobble_rnd_desc">逐条事件的均匀随机半宽（默认 15%，0 = 关闭）</string>
+    <string name="wobble_amp_hint_cadence">波动强度（步频侧）：作用在**步间隔**上的慢漂半幅。15 = 步频在一个慢周期里最多偏高/偏低 15%（真人走路本就不是恒定步频）。0 = 逐位回到"均匀步间隔"。</string>
+    <string name="wobble_rnd_hint_cadence">随机区间（步频侧）：每一步的间隔在 ±该比例内**逐条均匀抽取**。15 = 每步 ±15% 以内随机（不会累积漂移）。0 = 关闭逐条随机。</string>
+    <string name="wobble_amp_hint_orientation">波动强度（角度与指南针侧）：慢漂半幅，按**该类型的参考量**折算 —— 加速度/重力/线性=1g、陀螺=1 rad/s、磁场=50µT、方向角=180°、旋转矢量=π。15 = 参考量的 15%，0 = 逐位回到原输出。</string>
+    <string name="wobble_rnd_hint_orientation">随机区间（角度与指南针侧）：每条事件在 ±该比例的参考量内**均匀抽取**（与慢漂相互独立）。旋转矢量加在**半角**上，四元数因此仍是单位四元数。</string>
+    <string name="cadence_footer">步频公式只有一处（FakeLoc.cadenceForSpeed，钳在 30~300 步/分）。步进事件由系统框架侧按"步间隔"分摊下发，目标应用不需要进入作用域。事件投递速率跟随框架对每个传感器的采用值（真机 HAL 语义），无需手工调；最大位置上报间隔（运动循环拍长上限）仍在 Setting 页。</string>
+
+    <!-- 角度计和指南针模拟页 -->
+    <string name="angle_page_desc">角度计与指南针相关设置的归属页。**当前没有从「Setting」页搬过来的设置项**：方向/角度类的数值（磁场 σ、方向角 σ、旋转矢量 σ）是传感器噪声档，按用户口径仍留在「Calibration」页。</string>
+    <string name="angle_readout_injection">注入开关（Binder 外周传感器模拟）：%1$s</string>
+    <string name="angle_readout_bearing">当前下发朝向：%1$s</string>
+    <string name="angle_footer">这一页只做只读状态显示。要改数值请去：Calibration（磁场/方向角/旋转矢量噪声 σ、一键校准）与 Setting（Binder 外周传感器模拟开关）。</string>
+
+    <string name="stamina_chart_mode_theory">理论</string>
+    <string name="stamina_chart_mode_generated">生成</string>
+    <string name="stamina_chart_sample">本次生成：%1$s km 用 %2$s 分钟 · 平均配速 %3$s/km · 疲劳 %4$d 次（共 %5$s 分钟）</string>
+    <string name="stamina_reset">重置体力</string>
+    <string name="stamina_phase_unavailable">状态不可读（模块未装载或命令通道未握手）—— 体力模拟未生效</string>
+    <string name="stamina_phase_not_applied">参数尚未同步到系统侧（模拟会话未启动？）—— 当前数值来自内置默认</string>
+    <string name="stamina_reset_data">重置数据</string>
+    <string name="stamina_reset_data_confirm">把所有体力参数恢复为出厂默认，并重置当前体力与统计。\n\n开关状态会保留；旧参数不保留，之后只能手动调回。</string>
+    <string name="stamina_reset_data_ok">恢复默认</string>
+    <string name="stamina_reset_data_done">已恢复默认参数并重置体力</string>
+    <string name="stamina_params">参数（点击修改）</string>
+    <string name="stamina_decay">体力衰减</string>
+    <string name="stamina_decay_desc">满速跑动时每分钟消耗的体力</string>
+    <string name="stamina_rest_at">疲劳体力值</string>
+    <string name="stamina_rest_at_desc">体力降到该值以下进入疲劳</string>
+    <string name="stamina_resume">开跑阈值</string>
+    <string name="stamina_resume_desc">疲劳中冷却计数的方向分界，回到 0 即开跑（须高于休息体力值）</string>
+    <string name="stamina_transition">过渡时间</string>
+    <string name="stamina_transition_desc">进出疲劳时速度平滑所用的秒数（每次过渡重新随机，0 = 直接跳变）</string>
+    <string name="stamina_ignore_window">忽略窗口</string>
+    <string name="stamina_ignore_speed">忽略阈值</string>
+    <string name="stamina_ignore_window_desc">判断异常速度用的时间窗口</string>
+    <string name="stamina_ignore_speed_desc">快于它的表象移动不计消耗</string>
+    <string name="stamina_recover">恢复速度</string>
+    <string name="stamina_recover_desc">满体力时的恢复速率（体力越低回得越快，0% 时翻倍）</string>
+    <string name="stamina_walk_speed">疲劳时速度</string>
+    <string name="stamina_walk_speed_desc">疲劳期间的速度（m/s）—— 疲劳速度就是它，没有第二个旋钮</string>
+    <string name="stamina_floor">跑动降速下限</string>
+    <string name="stamina_floor_desc">跑动段体力见底前最低降到基础速度的几成</string>
+    <string name="stamina_random">随机化幅度</string>
+    <string name="stamina_random_desc">施加在衰减速率、每次过渡时长与每次疲劳时长上的随机浮动</string>
+    <string name="stamina_fatigue_sec">疲劳时长</string>
+    <string name="stamina_fatigue_sec_desc">一次疲劳的倒计时预算（秒）；低于开跑阈值倒得慢、高于倒得快</string>
+    <string name="stamina_metrics_label">这套参数跑出来</string>
+    <string name="stamina_metrics">首次疲劳 %1$s km（跑 %2$s 分）· 一次疲劳 %3$s 分 · 周期 %4$s 分 · 疲劳时 %5$s m/s · 1.5km 内 %6$d 次 / 2km 内 %7$d 次</string>
+    <string name="stamina_metrics_no_fatigue">10 km 内不会进疲劳（疲劳体力值 %.0f%% 太低，或体力衰减太小）</string>
+    <string name="stamina_metrics_unknown_cycle">周期：窗口内只出现过一次疲劳</string>
+    <string name="stamina_health_decay">⚠ 体力衰减过高：疲劳期体力净下降（上限约 %1$s 点/分），曲线会一路掉到 0 并卡住</string>
+    <string name="stamina_health_no_slowdown">⚠ 疲劳时速度不低于跑动速度，疲劳等于没降速（把「疲劳时速度」调低）</string>
+    <string name="menu_test">测试</string>
+    <string name="menu_calibration">校准</string>
+    <string name="calibration_hint">这里存放注入到系统框架层的各路传感器噪声：逐轴标准差 σ（使用时按高斯分布逐事件生成动态值）与陀螺零偏 μ。可逐行手改，也可用「一键校准」按本机真实噪声自动填充。\n\n一键校准要把手机放在平稳的表面、保持静止 8 秒（按 50Hz 采集）；检测到移动会作废重来。校准必须在「模拟未运行」时进行——模拟一跑，框架侧就在压制真实传感器，那时采到的只会是我们自己注入的数据。\n\n中位数只有陀螺那一行会被注入：陀螺的零参考物理上就是 0，实测中位数就是它的真实零偏。加速度/重力/线性加速度/磁场的中位数里混着手机姿态与环境地磁的直流分量，注入会破坏模型，因此只作统计参照显示。</string>
+    <string name="calibration_run">一键校准</string>
+    <string name="calibration_reset">恢复默认</string>
+    <string name="calibration_satellite_count">模拟卫星数</string>
+    <string name="calibration_satellite_count_desc">采集 GPS 卫星数及波动，用于生成模拟卫星</string>
+    <string name="calibration_gps_accuracy">GPS 定位精度</string>
+    <string name="calibration_gps_accuracy_desc">有 GPS 信号时记录每次 fix 自带 accuracy 的中位数</string>
+    <string name="calibration_fused_accuracy">fused 定位精度</string>
+    <string name="calibration_fused_accuracy_desc">有 GPS 信号时记录 GPS 与 fused 水平距离的中位数</string>
+    <string name="calibration_fused_delay">fused 时间差</string>
+    <string name="calibration_fused_delay_desc">GPS 与 fused 配对帧的时间戳差</string>
+    <string name="calibration_gps_interval">GPS 间隔</string>
+    <string name="calibration_gps_interval_desc">相邻 GPS fix 的间隔</string>
+    <string name="calibration_satellites">GPS 卫星数</string>
+    <string name="calibration_satellites_desc">GPS extras 中的 satellites</string>
+    <string name="calibration_max_cn0">最大 C/N0</string>
+    <string name="calibration_max_cn0_desc">GPS extras 中的 maxCn0</string>
+    <string name="calibration_mean_cn0">平均 C/N0</string>
+    <string name="calibration_mean_cn0_desc">GPS extras 中的 meanCn0</string>
+    <string name="calibration_fluctuation">定位波动</string>
+    <string name="calibration_accuracy_desc">融合/模拟定位在目标点附近随机抖动的半径</string>
+    <string name="calibration_altitude_jitter">海拔波动</string>
+    <string name="calibration_altitude_jitter_desc">虚拟海拔上下抖动幅度，同时作为垂直精度</string>
+    <string name="calibration_speed_amplitude">速度波动</string>
+    <string name="calibration_speed_amplitude_desc">模拟速度的随机波动幅度（m/s）</string>
+    <string name="calibration_footer">σ 就是标准差本身，改大即更抖；σ = 0 表示该轴完全不抖。方向角与旋转矢量是融合量，不参与一键校准。</string>
+    <string name="dfused">融合定位处置</string>
+    <string name="dfused_desc">对系统融合定位（fused）的处置方式\n伪装 = 让融合照常算，但结果换成模拟位置</string>
+    <string name="cdma">网络降级</string>
+    <string name="cdma_desc">将网络降级为CDMA</string>
+    <string name="show_route">显示路线</string>
+    <string name="fab_start_route">开始绘制路线</string>
+    <string name="fab_smooth_draw">平滑绘制（切换线段平滑）</string>
+    <string name="fab_complete_route">完成路线</string>
+    <string name="rollback">撤回上一点</string>
+    <string name="draw_crosshair">绘制准星（当前画笔落点）</string>
+    <string name="item_report_duration_title">最大位置上报间隔</string>
+    <string name="item_report_duration_desc">上报位置的频率，单位毫秒（ms）\n重启模拟生效</string>
+    <string name="item_report_duration_value">100ms</string>
+    <string name="gnss_mock">Gnss Mock</string>
+    <string name="satellites_info">星图信息</string>
+    <string name="zero">0 G</string>
+    <string name="in_view_left_item">可用卫星数量</string>
+    <string name="in_use_satellite">在用卫星数量</string>
+
+    <!-- ===== 摄像头模拟（地图视频点 / Camera Mock）===== -->
+    <string name="menu_camera_mock">摄像头模拟</string>
+    <string name="camera_mock">摄像头模拟</string>
+    <string name="camera_mock_start">启动摄像头模拟</string>
+    <string name="camera_mock_stop">停止模拟</string>
+    <string name="camera_mock_hint">启动后，目标应用申请到的摄像头画面会被换成「距当前模拟位置最近、且标签匹配」的视频点素材：同一坐标有多段时随机取一段，从随机秒数起播、播完回到开头循环。\n\n需要先在 LSPosed 作用域里勾选目标应用，并在其下次申请摄像头时生效。\n\n自测：把 PortalEX 自己勾进作用域，点「录制视频」应当看到模拟画面（那里走的就是被拦截的相机）。</string>
+    <string name="camera_mock_info">玩法说明</string>
+    <string name="got_it">知道了</string>
+    <string name="camera_mock_filter_label">标签筛选（多个标签为「全含」）</string>
+    <string name="camera_mock_position_idle">未启动：目标应用看到的仍是真实摄像头</string>
+    <string name="camera_mock_position_unknown">当前模拟位置未知 → 本次在全部匹配素材里随机取一段</string>
+    <string name="camera_mock_started_open">摄像头模拟已启动：所有被注入的应用都会命中</string>
+    <string name="camera_mock_stopped">摄像头模拟已停止</string>
+    <string name="camera_point_list">视频点</string>
+    <string name="camera_point_new">新建视频点</string>
+    <string name="camera_point_name">点位名称</string>
+    <string name="camera_point_unnamed">未命名点位</string>
+    <string name="camera_point_save">保存点位</string>
+    <string name="camera_video_list">本点视频</string>
+    <string name="camera_video_tags">标签</string>
+    <string name="camera_video_delete">删除</string>
+    <string name="camera_record">录制视频</string>
+    <string name="camera_record_start">开始录制</string>
+    <string name="camera_record_stop">停止并保存</string>
+    <string name="camera_import_archive">导入视频包</string>
+    <string name="camera_import">导入视频</string>
+    <string name="camera_tag_presets">预设标签</string>
+    <string name="camera_tag_custom">自定义标签</string>
+    <string name="camera_tag_new_hint">新增标签</string>
+    <string name="camera_tag_add">添加</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="delete">删除</string>
+    <string name="camera_mock_current_position">当前表象位置</string>
+    <string name="camera_mock_show_map">地图</string>
+    <string name="camera_mock_hide_map">收起地图</string>
+    <string name="menu_gps_status">GPS 状态码模拟</string>
+    <string name="menu_cell_info">Cell 基站信息模拟</string>
+    <string name="menu_wifi_info">Wi-Fi 信息模拟</string>
+</resources>
