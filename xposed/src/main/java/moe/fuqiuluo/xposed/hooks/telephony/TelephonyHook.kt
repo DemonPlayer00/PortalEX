@@ -12,6 +12,7 @@ import android.telephony.NeighboringCellInfo
 import android.telephony.SignalStrength
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
+import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.NetworkSimConfig
 import moe.fuqiuluo.xposed.utils.Logger
@@ -112,8 +113,13 @@ object TelephonyHook: BaseTelephonyHook() {
 
         cPhoneInterfaceManager.declaredMethods.find { it.name == "getAllCellInfo" }?.let {
             val hookGetAllCellInfo = afterHook {
+                val caller = BinderUtils.getCallerUid()
+                val callerPkg = BinderUtils.getUidPackageNames(uid = caller)?.firstOrNull()
+                if (callerPkg == NetworkTypeSpoof.TARGET) {
+                    Logger.info("TelephonyHook: target getAllCellInfo")
+                }
                 if (FakeLoc.enableDebugLog) {
-                    Logger.debug("getAllCellInfo: injected! caller = ${BinderUtils.getCallerUid()}")
+                    Logger.debug("getAllCellInfo: injected! caller = $caller")
                 }
 
                 if ((FakeLoc.enable || NetworkSimConfig.cellEnabled) && !BinderUtils.isSystemAppsCall()) {
