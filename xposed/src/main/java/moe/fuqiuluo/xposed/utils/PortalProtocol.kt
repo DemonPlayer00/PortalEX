@@ -49,6 +49,7 @@ object PortalProtocol {
         const val SET_ROUTE          = "set_route"
         const val SET_ROCKER         = "set_rocker"
         const val SET_SENSOR_MOCK    = "set_sensor_mock"
+        const val SET_SIM_CONFIG     = "set_sim_config"
         const val SET_SPEED          = "set_speed"
         const val SET_SPEED_AMP      = "set_speed_amp"
         const val START              = "start"
@@ -73,6 +74,11 @@ object PortalProtocol {
         const val GNSS_MAX_CN0              = "gnss_max_cn0"
         const val GNSS_MEAN_CN0             = "gnss_mean_cn0"
         const val BEARING                   = "bearing"
+        const val SIM_KIND                  = "sim_kind"
+        const val SIM_ENABLED               = "sim_enabled"
+        const val SIM_VALUE1                = "sim_value1"
+        const val SIM_VALUE2                = "sim_value2"
+        const val SIM_VALUE3                = "sim_value3"
         /** 步频侧外周传感器模拟：接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
         const val CADENCE_MOCK              = "cadence_mock"
 

@@ -24,6 +24,27 @@
         tools:layout="@layout/fragment_gnss_mock" />
 
     <fragment
+        android:id="@+id/nav_gps_status"
+        android:name="moe.fuqiuluo.portalex.ui.sim.NetworkSimFragment"
+        android:label="GPS 状态码模拟">
+        <argument android:name="sim_kind" android:defaultValue="gps" app:argType="string" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/nav_cell_info"
+        android:name="moe.fuqiuluo.portalex.ui.sim.NetworkSimFragment"
+        android:label="Cell 基站信息模拟">
+        <argument android:name="sim_kind" android:defaultValue="cell" app:argType="string" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/nav_wifi_info"
+        android:name="moe.fuqiuluo.portalex.ui.sim.NetworkSimFragment"
+        android:label="Wi-Fi 信息模拟">
+        <argument android:name="sim_kind" android:defaultValue="wifi" app:argType="string" />
+    </fragment>
+
+    <fragment
         android:id="@+id/nav_route_gallery"
         android:name="moe.fuqiuluo.portalex.ui.mock.RouteMockFragment"
         android:label="@string/menu_route_mock"

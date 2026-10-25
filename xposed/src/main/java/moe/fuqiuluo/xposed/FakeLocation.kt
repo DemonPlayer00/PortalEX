@@ -9,6 +9,7 @@ import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.camera.CameraWatch
+import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.SystemRuntimeChannel
 import moe.fuqiuluo.xposed.hooks.telephony.TelephonyHook
@@ -152,6 +153,7 @@ class FakeLocation {
                     // 永久等待 sensorservice）——装载只在模拟会话启动时发生，见
                     // BinderSensorMock.registerAtBoot / onSimulationChanged。
                     BinderSensorMock.registerAtBoot()
+                    NetworkTypeSpoof.install(info.classLoader)
 
 
                     // 运行时投递通道：只解析框架的 JNI 入口并捕获 SensorService 实例（零副作用），
