@@ -371,4 +371,8 @@
     <string name="quick_need_route">Select a route first</string>
     <string name="quick_route">Route</string>
     <string name="route_too_short">A single point cannot be played as a route</string>
+    <string name="baseband_mcc">MCC</string>
+    <string name="baseband_mnc">MNC</string>
+    <string name="baseband_cid">CID</string>
+    <string name="baseband_tac">TAC</string>
 </resources>
