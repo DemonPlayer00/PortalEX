@@ -278,7 +278,9 @@ class MainActivity : AppCompatActivity() {
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
-                attachDrawerGroupDivider(navView, R.id.nav_calibration)
+                attachDrawerGroupDivider(navView, R.id.nav_route_gallery)
+                attachDrawerGroupDivider(navView, R.id.nav_baseband)
+                attachDrawerGroupDivider(navView, R.id.nav_settings)
 
                 navController.addOnDestinationChangedListener(object: OnDestinationChangedListener {
                     override fun onDestinationChanged(
