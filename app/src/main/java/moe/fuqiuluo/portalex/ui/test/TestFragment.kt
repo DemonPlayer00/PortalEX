@@ -2,6 +2,7 @@ package moe.fuqiuluo.portalex.ui.test
 
 import moe.fuqiuluo.portalex.ext.fusedMode
 import android.content.Context
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
@@ -26,6 +27,7 @@ import moe.fuqiuluo.portalex.ext.cadenceMock
 import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.reportDuration
+import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.ImuProbe
@@ -151,6 +153,68 @@ class TestFragment : Fragment() {
                 appendLine("GPS provider   ${lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)}")
                 appendLine("GPS last       ${loc?.latitude}, ${loc?.longitude} / ${loc?.extras}")
             }.onFailure { appendLine("Location       ${it.message}") }
+
+            appendLine()
+            appendLine("═══ 网络模拟：配置 / 实测 ═══")
+            appendLine("-- 配置 --")
+            for (k in listOf("gps", "cell", "wifi")) {
+                appendLine("$k.enabled=${ctx.sharedPrefs.getBoolean("sim_${k}_enabled", false)}")
+                appendLine("$k.v1=${ctx.sharedPrefs.getString("sim_${k}_v1", "")}")
+                appendLine("$k.v2=${ctx.sharedPrefs.getString("sim_${k}_v2", "")}")
+            }
+            appendLine("-- 实测 --")
+            runCatching {
+                val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+                @Suppress("DEPRECATION")
+                val ni = cm.activeNetworkInfo
+                appendLine("network.type=${ni?.type} ${ni?.typeName} state=${ni?.state}")
+                appendLine("network.wifi=${caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ?: false}")
+                appendLine("network.cellular=${caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ?: false}")
+            }.onFailure { appendLine("network.error=${it.message}") }
+
+            appendLine()
+            appendLine("═══ GPS 状态码模拟：实测 ═══")
+            runCatching {
+                val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                appendLine("gps.provider=${lm.isProviderEnabled(LocationManager.GPS_PROVIDER)}")
+                val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                appendLine("gps.last=${loc?.latitude}, ${loc?.longitude}")
+                appendLine("gps.extras=${loc?.extras?.keySet()?.joinToString { "$it=${loc.extras?.get(it)}" } ?: "null"}")
+                appendLine("gps.satellites=${loc?.extras?.getInt("satellites", -1)}")
+            }.onFailure { appendLine("gps.error=${it.message}") }
+
+            appendLine()
+            appendLine("═══ Cell 基站信息模拟：实测 ═══")
+            runCatching {
+                val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                appendLine("cell.dataState=${tm.dataState}")
+                appendLine("cell.networkType=${tm.dataNetworkType}")
+                @Suppress("DEPRECATION")
+                val cells = tm.allCellInfo
+                appendLine("cell.count=${cells?.size ?: 0}")
+                cells?.forEachIndexed { i, c ->
+                    appendLine("cell[$i]=${c.javaClass.simpleName} registered=${c.isRegistered}")
+                }
+            }.onFailure { appendLine("cell.error=${it.javaClass.simpleName}: ${it.message}") }
+
+            appendLine()
+            appendLine("═══ Wi-Fi 信息模拟：实测 ═══")
+            runCatching {
+                val wm = ctx.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                @Suppress("DEPRECATION")
+                val wi = wm.connectionInfo
+                appendLine("wifi.enabled=${wm.isWifiEnabled}")
+                appendLine("wifi.ssid=${wi?.ssid}")
+                appendLine("wifi.bssid=${wi?.bssid}")
+                appendLine("wifi.rssi=${wi?.rssi}")
+                appendLine("wifi.frequency=${wi?.frequency}")
+                appendLine("wifi.scanCount=${runCatching { wm.scanResults?.size }.getOrDefault(-1)}")
+            }.onFailure { appendLine("wifi.error=${it.message}") }
+
+            appendLine()
+            appendLine("═══ 融合定位：实测 ═══")
+            appendLine(moe.fuqiuluo.portalex.service.FusedProbe.status(requireContext()))
 
             // 摄像头模拟是唯一注入目标应用的功能族，它的"有没有生效"只能靠 provider
             // 两侧的旁证看出来：谁在什么时候来取过清单、模块侧回报拦到了什么。
