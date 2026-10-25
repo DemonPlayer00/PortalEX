@@ -74,7 +74,12 @@ class DebugCommandActivity : Activity() {
             runCatching { MockServiceHelper.tryInitService(lm) }
             s.appendLine("service_init=${MockServiceHelper.isServiceInit()}")
             runCatching { s.appendLine("gnss_mock=${MockServiceHelper.isGnssMockStart(lm)}") }
-            runCatching { s.appendLine("sensor_status=${MockServiceHelper.getSensorStatus(lm)}") }
+            runCatching {
+                val st = MockServiceHelper.getSensorStatus(lm)
+                s.appendLine("sensor_status=" + (st?.keySet()?.joinToString(" ") { k ->
+                    "$k=${st.get(k)}"
+                } ?: "null"))
+            }
         }
         s.appendLine()
         s.appendLine(HELP)
