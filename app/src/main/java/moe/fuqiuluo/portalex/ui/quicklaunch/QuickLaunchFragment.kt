@@ -5,7 +5,15 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import com.google.android.material.progressindicator.CircularProgressIndicator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -76,6 +84,48 @@ class QuickLaunchFragment : Fragment() {
             .show()
     }
 
+    private fun applyWithProgress(row: Row, enable: Boolean) {
+        val ctx = requireContext()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 8)
+        }
+        root.addView(CircularProgressIndicator(ctx).apply {
+            isIndeterminate = true
+            layoutParams = LinearLayout.LayoutParams(64, 64).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL }
+        })
+        val text = TextView(ctx).apply {
+            text = getString(R.string.quick_validating)
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 16, 0, 0)
+        }
+        root.addView(text)
+        val dialog = MaterialAlertDialogBuilder(ctx)
+            .setView(root)
+            .setCancelable(false)
+            .create()
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val error = withContext(Dispatchers.IO) {
+                QuickLaunch.apply(ctx, if (enable) row.config.ids else emptySet()) { msg ->
+                    activity?.runOnUiThread { if (dialog.isShowing) text.text = msg }
+                }
+            }
+            if (!isAdded) return@launch
+            dialog.dismiss()
+            if (error != null) {
+                checkedName = null
+                adapter.notifyDataSetChanged()
+                Toast.makeText(ctx, error, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(ctx, if (enable) R.string.quick_applied else R.string.quick_stopped, Toast.LENGTH_SHORT).show()
+                if (!enable) adapter.notifyDataSetChanged()
+            }
+        }
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
@@ -95,11 +145,11 @@ class QuickLaunchFragment : Fragment() {
             holder.b.quickCheck.setOnCheckedChangeListener { _, checked ->
                 if (checked) {
                     checkedName = row.config.name
-                    QuickLaunch.apply(requireContext(), row.config.ids)
                     notifyDataSetChanged()
+                    applyWithProgress(row, true)
                 } else if (checkedName == row.config.name) {
                     checkedName = null
-                    QuickLaunch.apply(requireContext(), emptySet())
+                    applyWithProgress(row, false)
                 }
             }
         }

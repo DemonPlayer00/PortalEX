@@ -358,4 +358,16 @@
     <string name="quick_cadence">Cadence</string>
     <string name="quick_orientation">Orientation</string>
     <string name="menu_quick_launch">Quick launch</string>
+    <string name="quick_stopped">Configuration disabled</string>
+    <string name="quick_validating">Checking dependencies…</string>
+    <string name="quick_stopping">Stopping…</string>
+    <string name="quick_starting_location">Starting location…</string>
+    <string name="quick_starting_gnss">Starting GNSS…</string>
+    <string name="quick_starting_gps">Applying GPS status…</string>
+    <string name="quick_starting_sensors">Applying sensor settings…</string>
+    <string name="quick_starting_camera">Starting camera…</string>
+    <string name="quick_done">Finishing…</string>
+    <string name="quick_need_location">Select a location on Home first</string>
+    <string name="quick_need_route">Select a route first</string>
+    <string name="quick_route">Route</string>
 </resources>
