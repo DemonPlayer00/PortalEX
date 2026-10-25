@@ -61,7 +61,7 @@ class CadenceFragment : Fragment() {
         binding.cadenceMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
             ctx.cadenceMock = checked
-            if (checked && !FeatureDependency.isMasterActive(ctx)) {
+            if (checked && !FeatureDependency.isRouteActive(ctx)) {
                 android.widget.Toast.makeText(ctx, R.string.class2_waiting_master, android.widget.Toast.LENGTH_SHORT).show()
                 return@setOnCheckedChangeListener
             }
