@@ -54,8 +54,8 @@
     <string name="accuracy_desc">Simulated jitter radius</string>
     <string name="debug">Debug logging</string>
     <string name="debug_desc">Print debug logs</string>
-    <string name="allow_landscape">Allow landscape</string>
-    <string name="allow_landscape_desc">Some screens may render incorrectly in landscape</string>
+    <string name="allow_landscape">Screen orientation</string>
+    <string name="allow_landscape_desc">Choose automatic, portrait, or landscape.</string>
     <string name="menu_stamina">Stamina Mock</string>
     <string name="menu_cadence">Cadence &amp; Acceleration Mock</string>
     <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
@@ -378,4 +378,7 @@
     <string name="baseband_waiting_master">Saved. Start route mock to activate baseband.</string>
     <string name="class2_waiting_master">Saved. Start route mock to activate.</string>
     <string name="camera_requires_route">Start route mock before enabling camera mock</string>
+    <string name="orientation_auto">Automatic</string>
+    <string name="orientation_portrait">Portrait</string>
+    <string name="orientation_landscape">Landscape</string>
 </resources>
