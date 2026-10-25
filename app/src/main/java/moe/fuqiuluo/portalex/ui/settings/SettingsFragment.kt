@@ -12,6 +12,8 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.ViewModelProvider
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
@@ -103,6 +105,40 @@ class SettingsFragment : Fragment() {
         b.dfusedLayout.alpha = if (enabled) 1f else 0.5f
         b.dfusedValue.text = value
         b.dfusedDesc.text = desc ?: getString(R.string.dfused_desc)
+    }
+
+    private fun refreshLanguageValue() {
+        val locales = AppCompatDelegate.getApplicationLocales()
+        binding.languageValue.text = when {
+            locales.isEmpty -> getString(R.string.language_system)
+            locales.toLanguageTags().startsWith("zh") -> getString(R.string.language_zh)
+            else -> getString(R.string.language_en)
+        }
+    }
+
+    private fun showLanguageDialog() {
+        val options = arrayOf(
+            getString(R.string.language_system),
+            getString(R.string.language_zh),
+            getString(R.string.language_en)
+        )
+        val current = binding.languageValue.text.toString()
+        val checked = options.indexOf(current).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.language_title)
+            .setSingleChoiceItems(options, checked) { dialog, which ->
+                val locales = when (which) {
+                    1 -> LocaleListCompat.forLanguageTags("zh-CN")
+                    2 -> LocaleListCompat.forLanguageTags("en-US")
+                    else -> LocaleListCompat.getEmptyLocaleList()
+                }
+                AppCompatDelegate.setApplicationLocales(locales)
+                dialog.dismiss()
+                refreshLanguageValue()
+                requireActivity().recreate()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun setDeveloperMode(enabled: Boolean) {
@@ -201,6 +237,8 @@ class SettingsFragment : Fragment() {
         binding.developerModeSwitch.setOnCheckedChangeListener { _, checked ->
             setDeveloperMode(checked)
         }
+        refreshLanguageValue()
+        binding.languageLayout.setOnClickListener { showLanguageDialog() }
 
         binding.selinuxSwitch.isChecked = context.needOpenSELinux
         binding.selinuxSwitch.setOnCheckedChangeListener(object: CompoundButton.OnCheckedChangeListener {
