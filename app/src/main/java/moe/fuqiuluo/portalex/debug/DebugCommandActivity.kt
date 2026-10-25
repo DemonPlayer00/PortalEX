@@ -35,6 +35,8 @@ class DebugCommandActivity : Activity() {
         try {
             val text = when (cmd) {
                 "test" -> TestReport.build(this)
+                "start" -> startMock()
+                "stop" -> stopMock()
                 "set" -> setCommand()
                 "help" -> HELP
                 else -> status()
@@ -105,6 +107,23 @@ class DebugCommandActivity : Activity() {
         }
     }
 
+    private fun startMock(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val ok = runCatching {
+            MockServiceHelper.tryOpenMock(lm, speed = 3.05, altitude = 80.0, accuracy = 25f)
+        }.getOrDefault(false)
+        return "start=$ok service_init=${MockServiceHelper.isServiceInit()}"
+    }
+
+    private fun stopMock(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        val ok = runCatching { MockServiceHelper.tryCloseMock(lm) }.getOrDefault(false)
+        return "stop=$ok"
+    }
+
     private fun setCommand(): String {
         val ctx = this
         val out = StringBuilder("=== set ===\n")
@@ -163,6 +182,12 @@ Entry:
 Commands:
   status
       Dump app-side config, network, Wi-Fi, dev/adb flags and full sensor_status.
+
+  start
+      Start full location simulation (speed 3.05, altitude 80, accuracy 25).
+
+  stop
+      Stop the simulation session.
 
   test
       Dump the last rendered text of the Test page.
