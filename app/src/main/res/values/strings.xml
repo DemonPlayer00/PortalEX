@@ -375,13 +375,10 @@
     <string name="baseband_mnc">MNC</string>
     <string name="baseband_cid">CID</string>
     <string name="baseband_tac">TAC</string>
-    <string name="baseband_waiting_master">Saved. Start route mock to activate baseband.</string>
-    <string name="class2_waiting_master">Saved. Start route mock to activate.</string>
     <string name="camera_requires_route">Start route mock before enabling camera mock</string>
     <string name="orientation_auto">Automatic</string>
     <string name="orientation_portrait">Portrait</string>
     <string name="orientation_landscape">Landscape</string>
     <string name="calibration_altitude">Altitude</string>
     <string name="calibration_altitude_desc">GPS-measured altitude above sea level.</string>
-    <string name="gnss_waiting_route">GNSS armed; it will start when route mock starts</string>
 </resources>

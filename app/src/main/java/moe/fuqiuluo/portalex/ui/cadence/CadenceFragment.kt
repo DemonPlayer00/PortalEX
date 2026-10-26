@@ -1,7 +1,6 @@
 package moe.fuqiuluo.portalex.ui.cadence
 
 import moe.fuqiuluo.portalex.service.ConfigSync
-import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.cadenceMock
 import android.location.LocationManager
@@ -61,10 +60,6 @@ class CadenceFragment : Fragment() {
         binding.cadenceMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
             ctx.cadenceMock = checked
-            if (checked && !FeatureDependency.isRouteActive(ctx)) {
-                android.widget.Toast.makeText(ctx, R.string.class2_waiting_master, android.widget.Toast.LENGTH_SHORT).show()
-                return@setOnCheckedChangeListener
-            }
             // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
             val r = ConfigSync.setSensorMock(
                 ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock

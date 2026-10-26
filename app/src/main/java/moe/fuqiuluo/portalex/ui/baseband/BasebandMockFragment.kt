@@ -13,7 +13,6 @@ import androidx.lifecycle.lifecycleScope
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentBasebandMockBinding
 import moe.fuqiuluo.portalex.ext.sharedPrefs
-import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 /** 基站 + Wi-Fi 合并后的基带模拟页。 */
@@ -45,22 +44,6 @@ class BasebandMockFragment : Fragment() {
         val tac = binding.basebandTac.text?.toString().orEmpty()
         val ssid = binding.basebandSsid.text?.toString().orEmpty()
         val bssid = binding.basebandBssid.text?.toString().orEmpty()
-        if (enabled && !FeatureDependency.isRouteActive(ctx)) {
-            // 先记住意图：一类（路线/GNSS）启用时由 FeatureDependency 统一真正启动。
-            ctx.sharedPrefs.edit()
-                .putBoolean("sim_baseband_enabled", true)
-                .putBoolean("sim_cell_enabled", true)
-                .putBoolean("sim_wifi_enabled", true)
-                .putString("sim_cell_v1", "$mcc/$mnc")
-                .putString("sim_cell_v2", "$cid/$tac")
-                .putString("sim_wifi_v1", ssid)
-                .putString("sim_wifi_v2", bssid)
-                .apply()
-            android.widget.Toast.makeText(
-                ctx, R.string.baseband_waiting_master, android.widget.Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
         ctx.sharedPrefs.edit()
             .putBoolean("sim_baseband_enabled", enabled)
             .putBoolean("sim_cell_enabled", enabled)

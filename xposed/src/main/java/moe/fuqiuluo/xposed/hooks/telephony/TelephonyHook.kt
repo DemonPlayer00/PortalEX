@@ -14,6 +14,7 @@ import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.FeatureGate
 import moe.fuqiuluo.xposed.utils.NetworkSimConfig
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
@@ -122,7 +123,10 @@ object TelephonyHook: BaseTelephonyHook() {
                     Logger.debug("getAllCellInfo: injected! caller = $caller")
                 }
 
-                if ((FakeLoc.enable || NetworkSimConfig.cellEnabled) && !BinderUtils.isSystemAppsCall()) {
+                if (FeatureGate.isClass2Enabled() &&
+                    NetworkSimConfig.cellEnabled &&
+                    !BinderUtils.isSystemAppsCall()
+                ) {
                     val cResult = arrayListOf<CellInfo>()
                     val cellInfo = kotlin.runCatching {
                         CellInfoCdma::class.java.getConstructor().newInstance().also {

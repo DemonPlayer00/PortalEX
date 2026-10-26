@@ -24,6 +24,7 @@ import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.nmea.LocationNMEAHook
 import moe.fuqiuluo.xposed.hooks.provider.LocationProviderManagerHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.FeatureGate
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.Logger
@@ -785,7 +786,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 
     /** 主动向已注册的 GNSS 状态回调推送模拟卫星数据（守护线程每 1s 调用）。 */
     fun pushGnssStatus() {
-        if (!FakeLoc.enableMockGnss) return
+        if (!FeatureGate.isGnssHookActive()) return
         if (gnssStatusListeners.isEmpty()) return
 
         val status = buildMockGnssStatus() ?: return
@@ -813,7 +814,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         kotlin.concurrent.thread(name = "GnssStatusPusher", isDaemon = true, start = true) {
             while (true) {
                 try {
-                    if (FakeLoc.enableMockGnss && gnssStatusListeners.isNotEmpty()) {
+                    if (FeatureGate.isGnssHookActive() && gnssStatusListeners.isNotEmpty()) {
                         pushGnssStatus()
                         Thread.sleep(1000)
                     } else {
@@ -836,7 +837,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             Logger.error("find onSvStatusChanged failed! class=${cIGnssStatusListener.name}")
         } else {
             mSvStatusChanged.onceHook(beforeHook {
-                if (!FakeLoc.enableMockGnss) return@beforeHook
+                if (!FeatureGate.isGnssHookActive()) return@beforeHook
 
                 val mockGps = buildMockGnssData()
 
@@ -893,7 +894,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             if (FakeLoc.enableDebugLog) {
                 Logger.debug("onNmeaReceived")
             }
-            if (FakeLoc.enableMockGnss) result = null
+            if (FeatureGate.isGnssHookActive()) result = null
         })
     }
 
@@ -1519,7 +1520,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 
                     hookGnssStatusListener(cIGnssStatusListener)
 
-                    if (FakeLoc.enableMockGnss) {
+                    if (FeatureGate.isGnssHookActive()) {
                         pushGnssStatus()
                     }
                 }

@@ -8,6 +8,7 @@ import moe.fuqiuluo.xposed.BaseLocationHook
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation
 import moe.fuqiuluo.xposed.hooks.blindhook.BlindHookLocation.invoke
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.FeatureGate
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.beforeHook
 import moe.fuqiuluo.xposed.utils.hookAllMethods
@@ -32,7 +33,7 @@ object GnssHook: BaseLocationHook() {
                     Logger.debug("doNothingMethod: ${param.method.name}")
                 }
 
-                if (FakeLoc.enableMockGnss && !FakeLoc.enableAGPS) {
+                if (FeatureGate.isGnssHookActive() && !FakeLoc.enableAGPS) {
                     if (FakeLoc.enableDebugLog) {
                         Logger.debug("${param.method.name}: disable")
                     }
@@ -67,7 +68,7 @@ object GnssHook: BaseLocationHook() {
                         kotlin.runCatching {
                             XposedHelpers.findAndHookMethod(classListener, "onNmeaReceived", Long::class.java, String::class.java, object: MethodHook() {
                                 override fun beforeHookedMethod(param: MethodHookParam) {
-                                    if (FakeLoc.enableMockGnss && !FakeLoc.enableAGPS) {
+                                    if (FeatureGate.isGnssHookActive() && !FakeLoc.enableAGPS) {
                                         if (FakeLoc.enableDebugLog)
                                             Logger.debug("GnssManagerService.onNmeaReceived: disable")
                                         param.result = null

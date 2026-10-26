@@ -388,13 +388,10 @@
     <string name="baseband_mnc">MNC</string>
     <string name="baseband_cid">CID</string>
     <string name="baseband_tac">TAC</string>
-    <string name="baseband_waiting_master">已记住，启动路线模拟后自动启用</string>
-    <string name="class2_waiting_master">已记住，启动路线模拟后自动启用</string>
     <string name="camera_requires_route">请先启动路线模拟，再启用摄像头模拟</string>
     <string name="orientation_auto">自动</string>
     <string name="orientation_portrait">竖屏</string>
     <string name="orientation_landscape">横屏</string>
     <string name="calibration_altitude">海拔高度</string>
     <string name="calibration_altitude_desc">GPS 实测海拔高度。</string>
-    <string name="gnss_waiting_route">GNSS 已开启，等待路线模拟启动</string>
 </resources>
