@@ -111,10 +111,9 @@ class HomeFragment : Fragment(), MapControlsHost {
             uiSettings.isOverlookingGesturesEnabled = true
             isMyLocationEnabled = true
 
-            setMapConfig(
-                baiduMapViewModel.perspectiveState,
-                if (Random.nextBoolean()) R.drawable.icon_my_location else null
-            )
+            // 当前定位固定使用百度默认蓝色位置点；不再随机切换自定义图标，
+            // 也不要把选中位置的红色标记当作当前位置。
+            setMapConfig(baiduMapViewModel.perspectiveState, null)
 
             setOnMapClickListener(object : BaiduMap.OnMapClickListener {
                 override fun onMapClick(loc: LatLng) {
@@ -510,7 +509,6 @@ class HomeFragment : Fragment(), MapControlsHost {
             baiduMapViewModel.baiduMap.setMapStatus(
                 MapStatusUpdateFactory.newLatLng(LatLng(gcj.first, gcj.second))
             )
-            runCatching { markMap(moveEyes = true) }
         }
 
         // 未启动模拟时仍给路线一个可见的预览点：否则点完路线回到首页只看到真实位置，
@@ -518,8 +516,10 @@ class HomeFragment : Fragment(), MapControlsHost {
         val lm = requireContext().getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
         if (lm != null && !MockServiceHelper.isMockStart(lm) && baiduMapViewModel.mapCenter == null) {
             requireContext().selectRoute?.route?.firstOrNull()?.let { (lat, lon) ->
-                baiduMapViewModel.markedLoc = lat to lon
-                runCatching { markMap(moveEyes = true) }
+                val gcj = Loc4j.wgs2gcj(lat, lon)
+                baiduMapViewModel.baiduMap.setMapStatus(
+                    MapStatusUpdateFactory.newLatLng(LatLng(gcj.first, gcj.second))
+                )
             }
         }
 
@@ -530,7 +530,11 @@ class HomeFragment : Fragment(), MapControlsHost {
                 FabBarView.Action(
                     R.drawable.baseline_my_location_24,
                     getString(R.string.follow_location)
-                ) { baiduMapViewModel.baiduMap.locateMe() },
+                ) {
+                    if (!baiduMapViewModel.locateToCurrent()) {
+                        Toast.makeText(requireContext(), "暂无可用的定位点", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 FabBarView.Action(
                     R.drawable.baseline_edit_location_alt_24,
                     getString(R.string.goto_location)

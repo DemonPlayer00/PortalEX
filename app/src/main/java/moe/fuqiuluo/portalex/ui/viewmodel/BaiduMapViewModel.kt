@@ -10,9 +10,10 @@ import com.baidu.mapapi.map.MyLocationConfiguration
 import com.baidu.mapapi.map.MyLocationData
 import moe.fuqiuluo.portalex.R
 import com.baidu.mapapi.model.LatLng
+import moe.fuqiuluo.portalex.ext.Loc4j
+import moe.fuqiuluo.portalex.service.PortalLocationClient
 import com.baidu.mapapi.search.geocode.GeoCoder
 import moe.fuqiuluo.portalex.bdmap.setMapConfig
-import moe.fuqiuluo.portalex.ext.Loc4j
 
 class BaiduMapViewModel: ViewModel() {
     var isExists = false
@@ -84,5 +85,15 @@ class BaiduMapViewModel: ViewModel() {
             .build()
         currentLocation = lat to lon
         baiduMap.setMyLocationData(data)
+    } 
+
+    /** 把地图中心移到当前定位点；没有可用帧时返回 false。 */
+    fun locateToCurrent(): Boolean {
+        val wgs = currentLocation ?: PortalLocationClient.lastFix()?.let { it.lat to it.lon } ?: return false
+        val gcj = Loc4j.wgs2gcj(wgs.first, wgs.second)
+        baiduMap.setMapStatus(
+            com.baidu.mapapi.map.MapStatusUpdateFactory.newLatLng(LatLng(gcj.first, gcj.second))
+        )
+        return true
     }
 }
