@@ -31,7 +31,6 @@ import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
-import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 class GnssMockFragment : Fragment() {
@@ -118,16 +117,8 @@ class GnssMockFragment : Fragment() {
         binding.gnssGpsSatellites.setText(requireContext().sharedPrefs.getString("sim_gps_v2", "12"))
         refreshGnssButton()
         binding.switchGnssMock.setOnClickListener {
-            if (MockServiceHelper.isGnssMockStart(locationManager) ||
-                requireContext().sharedPrefs.getBoolean("gnss_pending_enabled", false)
-            ) {
-                if (!MockServiceHelper.isGnssMockStart(locationManager)) {
-                    // 尚未等到路线模拟：再次点击表示取消预启用。
-                    requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", false).apply()
-                    refreshGnssButton()
-                } else {
-                    tryCloseService(it as MaterialButton)
-                }
+            if (MockServiceHelper.isGnssMockStart(locationManager)) {
+                tryCloseService(it as MaterialButton)
             } else {
                 tryOpenService(it as MaterialButton)
             }
@@ -137,12 +128,6 @@ class GnssMockFragment : Fragment() {
     }
 
     private fun tryOpenService(button: MaterialButton) {
-        if (!FeatureDependency.isRouteActive(requireContext())) {
-            requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", true).apply()
-            refreshGnssButton()
-            showToast(getString(R.string.gnss_waiting_route))
-            return
-        }
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
             showToast(getString(R.string.gnss_overlay_required))
             return
@@ -158,7 +143,6 @@ class GnssMockFragment : Fragment() {
             try {
                 ConfigSync.push(requireContext(), locationManager)
                 if (MockServiceHelper.startGnssMock(locationManager)) {
-                    requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", false).apply()
                     val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                     val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                     requireContext().sharedPrefs.edit().putString("sim_gps_v1", code).putString("sim_gps_v2", sats).apply()
@@ -242,8 +226,7 @@ class GnssMockFragment : Fragment() {
                     }
 
                     if (MockServiceHelper.stopGnssMock(locationManager)) {
-                        requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", false).apply()
-                        val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                            val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                         val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                         MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats)
                         updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
@@ -265,8 +248,7 @@ class GnssMockFragment : Fragment() {
 
     private fun refreshGnssButton() {
         val running = ::locationManager.isInitialized && MockServiceHelper.isGnssMockStart(locationManager)
-        val pending = requireContext().sharedPrefs.getBoolean("gnss_pending_enabled", false)
-        val on = running || pending
+        val on = running
         binding.switchGnssMock.text = getString(if (on) R.string.gnss_stop_mock else R.string.gnss_start_mock)
         ContextCompat.getDrawable(
             requireContext(),

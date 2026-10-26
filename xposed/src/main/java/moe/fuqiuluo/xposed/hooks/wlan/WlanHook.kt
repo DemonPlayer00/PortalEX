@@ -8,6 +8,7 @@ import dalvik.system.PathClassLoader
 import moe.fuqiuluo.xposed.utils.XposedHelpers
 import moe.fuqiuluo.xposed.utils.BinderUtils
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.FeatureGate
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.afterHook
 import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
@@ -68,7 +69,10 @@ object WlanHook {
 
             val targetSpoof = packageName == NetworkTypeSpoof.TARGET
             if (targetSpoof) Logger.info("WlanHook: target getConnectionInfo")
-            if ((FakeLoc.enableMockWifi || targetSpoof) && !BinderUtils.isSystemPackages(packageName)) {
+            if (FeatureGate.isWifiHookActive() &&
+                (FakeLoc.enableMockWifi || targetSpoof) &&
+                !BinderUtils.isSystemPackages(packageName)
+            ) {
                 val wifiInfo = WifiInfo::class.java.getConstructor().newInstance()
                 XposedHelpers.callMethod(wifiInfo, "setMacAddress", "02:00:00:00:00:00")
                 XposedHelpers.callMethod(wifiInfo, "setBSSID", NetworkSimConfig.wifiBssid)
@@ -96,7 +100,9 @@ object WlanHook {
             if (FakeLoc.enableDebugLog)
                 Logger.debug("In getScanResults with caller: $packageName, state: ${FakeLoc.enableMockWifi}")
 
-            if(FakeLoc.enableMockWifi || packageName == NetworkTypeSpoof.TARGET) {
+            if (FeatureGate.isWifiHookActive() &&
+                (FakeLoc.enableMockWifi || packageName == NetworkTypeSpoof.TARGET)
+            ) {
                 if(result == null) {
                     return@afterHook 
                 }

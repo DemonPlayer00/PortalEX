@@ -31,7 +31,6 @@ import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
 import moe.fuqiuluo.portalex.ext.rawHistoricalLocations
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
-import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -131,7 +130,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
             } else {
                 binding.mockRouteName.text = it.name
                 mockServiceViewModel.selectRouteForPlayback(it)
-                it.route.firstOrNull()?.let { p -> baiduMapViewModel.requestCenter(p.first, p.second) }
+                centerHomeMap(it)
             }
         }
 
@@ -172,7 +171,7 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                 // 选中路线 → 立即完整重置播放器（重选同一条也从头开始）
                 mockServiceViewModel.selectRouteForPlayback(route)
                 requireContext().selectRoute = route
-                route.route.firstOrNull()?.let { p -> baiduMapViewModel.requestCenter(p.first, p.second) }
+                centerHomeMap(route)
 
                 val lm = mockServiceViewModel.locationManager
                 if (lm != null && MockServiceHelper.isMockStart(lm)) {
@@ -350,7 +349,6 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                     }
 
                     if (MockServiceHelper.tryCloseMock(lm)) {
-                        FeatureDependency.suspendClass2(requireContext(), stopCamera = true)
                         updateMockButtonState(button, "开始模拟", R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
@@ -408,6 +406,12 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                 }
             )
         )
+    }
+
+    private fun centerHomeMap(route: HistoricalRoute) {
+        route.route.firstOrNull()?.let { p ->
+            baiduMapViewModel.requestCenter(p.first, p.second)
+        }
     }
 
     /**
