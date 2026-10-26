@@ -64,13 +64,51 @@ object PortalLocationClient {
     private var lastFix: Fix? = null
 
     @Volatile
-    private var frameCount: Long = 0
+    private var frameCount: Long = 0L
+
+    /** 最近一帧落盘，页面/进程重建后仍能显示最后稳定坐标（室内无新 fix 时不至于空点）。 */
+    private const val CACHE_PREFS = "portal_location_cache"
+    private const val CACHE_TIME = "last_fix_time"
+    private var cacheContext: Context? = null
+    private var lastCachedAt = 0L
 
     val isSubscribed: Boolean get() = listener != null
 
     fun lastFix(): Fix? = lastFix
 
     fun frameCount(): Long = frameCount
+
+    private fun loadCachedFix(ctx: Context): Fix? = runCatching {
+        val sp = ctx.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE)
+        val lat = sp.getFloat("lat", Float.NaN)
+        val lon = sp.getFloat("lon", Float.NaN)
+        if (!lat.isFinite() || !lon.isFinite()) return null
+        Fix(
+            lat = lat.toDouble(), lon = lon.toDouble(),
+            bearing = sp.getFloat("bearing", 0f),
+            speed = sp.getFloat("speed", 0f),
+            accuracy = sp.getFloat("accuracy", 0f),
+            provider = sp.getString("provider", "cache").orEmpty(),
+            timeMillis = sp.getLong("time", 0L),
+            elapsedRealtimeNanos = sp.getLong("elapsed", 0L),
+        )
+    }.getOrNull()
+
+    private fun saveCachedFix(ctx: Context, fix: Fix) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastCachedAt < 2_000L && fix.timeMillis == 0L) return
+        lastCachedAt = now
+        ctx.getSharedPreferences(CACHE_PREFS, Context.MODE_PRIVATE).edit()
+            .putFloat("lat", fix.lat.toFloat())
+            .putFloat("lon", fix.lon.toFloat())
+            .putFloat("bearing", fix.bearing)
+            .putFloat("speed", fix.speed)
+            .putFloat("accuracy", fix.accuracy)
+            .putString("provider", fix.provider)
+            .putLong("time", fix.timeMillis)
+            .putLong("elapsed", fix.elapsedRealtimeNanos)
+            .apply()
+    }
 
     /**
      * 订阅（幂等：同一 owner 重复订阅只替换回调）。
@@ -81,9 +119,16 @@ object PortalLocationClient {
     @SuppressLint("MissingPermission")
     fun subscribe(owner: Any, context: Context, intervalMs: Long, onFix: (Fix) -> Unit): Boolean {
         subscribers[owner] = onFix
-        if (listener != null) return true
-        // 新一次订阅 = 新一次统计（上一次的帧数已经作为历史证据留在诊断里，这里从头计）
-        lastFix = null
+        cacheContext = context.applicationContext
+        if (lastFix == null) lastFix = loadCachedFix(context)
+        if (listener != null) {
+            // 页面重新订阅时 listener 仍在：把最近一帧立即补给它，
+            // 否则暂停/静止时地图要等下一次定位回调，看起来像“没有坐标点”。
+            lastFix?.let { onFix(it) }
+            return true
+        }
+        // 新一次订阅 = 新一次统计；但保留/加载最近坐标，室内无新帧时仍能显示稳定点。
+        if (lastFix == null) lastFix = loadCachedFix(context)
         frameCount = 0L
 
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
@@ -111,6 +156,11 @@ object PortalLocationClient {
             }
             if (runCatching { lm.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) {
                 add(LocationManager.GPS_PROVIDER)
+            }
+            // 没有 fused 的机型（API < 31 或厂商裁剪）由网络定位兜底，
+            // 室内/弱 GPS 场景仍然能显示坐标点。
+            if (runCatching { lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)) {
+                add(LocationManager.NETWORK_PROVIDER)
             }
             // 服务刚启动 / 查询失败时仍尝试 GPS，避免完全不订阅
             if (isEmpty()) add(LocationManager.GPS_PROVIDER)
@@ -191,6 +241,7 @@ object PortalLocationClient {
             elapsedRealtimeNanos = location.elapsedRealtimeNanos,
         )
         lastFix = fix
+        cacheContext?.let { saveCachedFix(it, fix) }
         frameCount += 1
         // 逐帧落盘（仅在调试日志打开时；见 FrameRecorder）：配速尖峰一类问题只能靠
         // "逐帧时间序列"定位，而这份序列必须来自客户端真正收到的那一份帧
