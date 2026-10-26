@@ -383,4 +383,5 @@
     <string name="orientation_landscape">Landscape</string>
     <string name="calibration_altitude">Altitude</string>
     <string name="calibration_altitude_desc">GPS-measured altitude above sea level.</string>
+    <string name="gnss_waiting_route">GNSS armed; it will start when route mock starts</string>
 </resources>

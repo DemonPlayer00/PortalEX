@@ -116,15 +116,18 @@ class GnssMockFragment : Fragment() {
         }
         binding.gnssGpsStatusCode.setText(requireContext().sharedPrefs.getString("sim_gps_v1", "3"))
         binding.gnssGpsSatellites.setText(requireContext().sharedPrefs.getString("sim_gps_v2", "12"))
-        if (MockServiceHelper.isGnssMockStart(locationManager)) {
-            binding.switchGnssMock.text = getString(R.string.gnss_stop_mock)
-            ContextCompat.getDrawable(requireContext(), R.drawable.rounded_play_disabled_24)?.let {
-                binding.switchGnssMock.icon = it
-            }
-        }
+        refreshGnssButton()
         binding.switchGnssMock.setOnClickListener {
-            if (MockServiceHelper.isGnssMockStart(locationManager)) {
-                tryCloseService(it as MaterialButton)
+            if (MockServiceHelper.isGnssMockStart(locationManager) ||
+                requireContext().sharedPrefs.getBoolean("gnss_pending_enabled", false)
+            ) {
+                if (!MockServiceHelper.isGnssMockStart(locationManager)) {
+                    // 尚未等到路线模拟：再次点击表示取消预启用。
+                    requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", false).apply()
+                    refreshGnssButton()
+                } else {
+                    tryCloseService(it as MaterialButton)
+                }
             } else {
                 tryOpenService(it as MaterialButton)
             }
@@ -136,7 +139,8 @@ class GnssMockFragment : Fragment() {
     private fun tryOpenService(button: MaterialButton) {
         if (!FeatureDependency.isRouteActive(requireContext())) {
             requireContext().sharedPrefs.edit().putBoolean("gnss_pending_enabled", true).apply()
-            showToast(getString(R.string.class2_waiting_master))
+            refreshGnssButton()
+            showToast(getString(R.string.gnss_waiting_route))
             return
         }
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
@@ -259,6 +263,17 @@ class GnssMockFragment : Fragment() {
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
     }
 
+    private fun refreshGnssButton() {
+        val running = ::locationManager.isInitialized && MockServiceHelper.isGnssMockStart(locationManager)
+        val pending = requireContext().sharedPrefs.getBoolean("gnss_pending_enabled", false)
+        val on = running || pending
+        binding.switchGnssMock.text = getString(if (on) R.string.gnss_stop_mock else R.string.gnss_start_mock)
+        ContextCompat.getDrawable(
+            requireContext(),
+            if (on) R.drawable.rounded_play_disabled_24 else R.drawable.rounded_play_arrow_24
+        )?.let { binding.switchGnssMock.icon = it }
+    }
+
     private fun updateMockButtonState(button: MaterialButton, text: String, iconRes: Int) =
         lifecycleScope.launch(Dispatchers.Main) {
             button.text = text
@@ -349,6 +364,7 @@ class GnssMockFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        if (_binding != null) refreshGnssButton()
     }
 
     override fun onDestroy() {
