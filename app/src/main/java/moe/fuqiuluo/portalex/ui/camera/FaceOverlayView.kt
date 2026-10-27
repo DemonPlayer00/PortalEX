@@ -11,8 +11,34 @@ import android.view.View
 class FaceOverlayView(context: Context) : View(context) {
     var expected: RectF? = null
         set(value) { field = value; invalidate() }
+    /**
+     * 检测结果（目标框）。检测只有 6 次/秒，直接把每帧结果画出来就是"跳"；
+     * 这里只当作目标，绘制时按屏幕刷新率向它收敛。
+     */
     var actual: RectF? = null
-        set(value) { field = value; invalidate() }
+        set(value) {
+            field = value
+            val target = value
+            if (target == null) {
+                drawn = null
+                animating = false
+            } else {
+                val current = drawn
+                // 首次出现或位置突变量大：视为重新捕获，直接对齐，不做慢速追赶
+                if (current == null || !sameSpot(current, target)) {
+                    drawn = RectF(target)
+                }
+                if (!animating) {
+                    animating = true
+                    postInvalidateOnAnimation()
+                }
+            }
+            invalidate()
+        }
+
+    /** 实际画到屏幕上的框（向 [actual] 收敛的中间值）。 */
+    private var drawn: RectF? = null
+    private var animating = false
 
     /** 人脸有效性提示（闭眼/遮挡/头部出框）。透明底、黑描边、白字，居中绘制。 */
     var warnings: List<String> = emptyList()
@@ -101,10 +127,38 @@ class FaceOverlayView(context: Context) : View(context) {
         )
     }
 
+    private fun sameSpot(a: RectF, b: RectF): Boolean {
+        val jitter = maxOf(a.width(), b.width()) * 0.25f
+        return kotlin.math.abs(a.centerX() - b.centerX()) < jitter &&
+            kotlin.math.abs(a.centerY() - b.centerY()) < jitter
+    }
+
+    /** 向目标框插值；剩下不到千分之五就不再重绘，避免空转。 */
+    private fun animateBox() {
+        val target = actual ?: return
+        val current = drawn ?: return
+        val k = 0.35f
+        current.left += (target.left - current.left) * k
+        current.top += (target.top - current.top) * k
+        current.right += (target.right - current.right) * k
+        current.bottom += (target.bottom - current.bottom) * k
+        val settled = kotlin.math.abs(target.left - current.left) < 0.0005f &&
+            kotlin.math.abs(target.top - current.top) < 0.0005f &&
+            kotlin.math.abs(target.right - current.right) < 0.0005f &&
+            kotlin.math.abs(target.bottom - current.bottom) < 0.0005f
+        if (settled) {
+            current.set(target)
+            animating = false
+        } else {
+            postInvalidateOnAnimation()
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        animateBox()
         val exp = expected
-        val act = actual
+        val act = drawn
         if (exp != null) {
             val r = map(exp)
             canvas.drawRect(r, outline)
