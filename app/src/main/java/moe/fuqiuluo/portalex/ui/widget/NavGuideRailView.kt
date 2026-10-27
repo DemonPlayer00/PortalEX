@@ -129,21 +129,39 @@ class NavGuideRailView @JvmOverloads constructor(
         val color = if (active) COLOR_ACTIVE else COLOR_IDLE
         val railX = 6f * density
         val stubEnd = 13f * density
-        val top = anchors.first().centerY()
-        val bottom = anchors.last().centerY()
 
         railPaint.color = color
         dotPaint.color = color
-        // 《传送门》式圆点：等距排开，同一时刻只隐藏一个点，缺口从下往上走
         val step = 9f * density
         val radius = 1.7f * density
-        val count = (((bottom - top) / step).toInt() + 1).coerceAtLeast(1)
-        val tick = SystemClock.uptimeMillis() / 140L
-        // 缺口从上往下走（与上一版相反）
-        val hidden = (tick % count).toInt()
-        for (i in 0 until count) {
-            if (i == hidden) continue
-            canvas.drawCircle(railX, top + i * step, radius, dotPaint)
+
+        // 圆点按菜单项位置对齐：每个条目中心必有一个点，条目之间按步长均分补点。
+        // 这样支线永远正对着一个圆点，不需要任何“接上去”的补线。
+        val dotYs = ArrayList<Float>(anchors.size * 4)
+        anchors.forEachIndexed { index, anchor ->
+            val y = anchor.centerY()
+            if (index == 0) {
+                dotYs.add(y)
+            } else {
+                val prev = anchors[index - 1].centerY()
+                val gap = y - prev
+                val parts = kotlin.math.max(1, kotlin.math.round(gap / step).toInt())
+                for (k in 1..parts) dotYs.add(prev + gap * k / parts)
+            }
+        }
+
+        // 缺口只在两根支线之间的点里轮转：连接处始终可见，动画依旧一次只藏一个点
+        val freeDots = dotYs.indices.filter { i ->
+            anchors.none { kotlin.math.abs(it.centerY() - dotYs[i]) < 0.5f }
+        }
+        val hidden = if (freeDots.isEmpty()) {
+            -1
+        } else {
+            freeDots[((SystemClock.uptimeMillis() / 140L) % freeDots.size).toInt()]
+        }
+        dotYs.forEachIndexed { i, y ->
+            if (i == hidden) return@forEachIndexed
+            canvas.drawCircle(railX, y, radius, dotPaint)
         }
         if (isShown) postInvalidateOnAnimation()
 
