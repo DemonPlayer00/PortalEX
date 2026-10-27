@@ -15,6 +15,8 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
@@ -58,6 +60,8 @@ class CameraRecordActivity : AppCompatActivity() {
         // 允许长视频：2 小时；实际停止仍由用户或存储/相机异常决定。
         private const val MAX_DURATION_MS = 2 * 60 * 60 * 1000L
         private const val OCCUPANCY_TIMEOUT_MS = MAX_DURATION_MS + 5 * 60_000L
+        // 人脸分析按帧抽样：每 5 帧看一次，约 30fps 下 6 次/秒。
+        private const val FACE_SAMPLE_INTERVAL = 5
     }
 
     private lateinit var binding: ActivityCameraRecordBinding
@@ -82,7 +86,9 @@ class CameraRecordActivity : AppCompatActivity() {
     private val faceSamples = Collections.synchronizedList(ArrayList<RectF>())
     private var faceCalibrationPending = false
     private var faceCalibrating = false
-    @Volatile private var lastFaceAnalyzeAt = 0L
+    private var faceFrameCount = 0
+    private var analyzedWidth = 0
+    private var analyzedHeight = 0
     private var faceCalibrationDeadline = 0L
 
     private val ticker = object : Runnable {
@@ -213,10 +219,13 @@ class CameraRecordActivity : AppCompatActivity() {
 
     private fun analyzeFace(image: ImageProxy) {
         try {
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (now - lastFaceAnalyzeAt < 180L) return
-            lastFaceAnalyzeAt = now
-            Log.i("CameraFace", "analyze frame ${image.width}x${image.height}")
+            faceFrameCount++
+            if (faceFrameCount == 1 || image.width != analyzedWidth || image.height != analyzedHeight) {
+                analyzedWidth = image.width
+                analyzedHeight = image.height
+                Log.i(TAG, "analysis frame ${image.width}x${image.height}")
+            }
+            if (faceFrameCount % FACE_SAMPLE_INTERVAL != 0) return
             val analysis = CameraFaceDetector.detect(this, image)
             mainHandler.post {
                 faceOverlay?.sourceAspect = if (image.imageInfo.rotationDegrees % 180 == 0) {
@@ -225,8 +234,9 @@ class CameraRecordActivity : AppCompatActivity() {
                     image.height.toFloat() / image.width
                 }
                 faceOverlay?.actual = analysis.face
-                faceOverlay?.warnings = analysis.warnings +
-                        CameraFaceCalibration.framingWarnings(this, analysis.face)
+                // 取景校对以标准框为基准，排在检测问题之前（它决定这段素材还能不能用）。
+                faceOverlay?.warnings = CameraFaceCalibration.framingWarnings(this, analysis.face) +
+                        analysis.warnings
                 if (analysis.face != null && faceCalibrating) faceSamples.add(analysis.face)
                 if (faceCalibrating && System.currentTimeMillis() >= faceCalibrationDeadline) {
                     finishFaceCalibration()
@@ -267,9 +277,18 @@ class CameraRecordActivity : AppCompatActivity() {
                 }
                 provider.unbindAll()
                 faceOverlay?.mirrorX = usingFrontCamera
+                // 分析流固定 640x480：YuNet 在这里推理，分辨率再高只是浪费算力。
+                val analysisResolution = ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(640, 480),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                        )
+                    )
+                    .build()
                 val faceAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setTargetResolution(Size(640, 480))
+                    .setResolutionSelector(analysisResolution)
                     .build()
                 faceAnalysis.setAnalyzer(faceExecutor) { image -> analyzeFace(image) }
                 provider.bindToLifecycle(this, selector, preview, capture, faceAnalysis)
