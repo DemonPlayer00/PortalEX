@@ -36,20 +36,42 @@ object CameraFaceDetector {
     @Volatile private var eyeCascade: CascadeClassifier? = null
     @Volatile private var initTried = false
 
-    /** 去抖：Haar 眼睛级联在睁眼时也会偶尔漏检，必须连续多帧一致才提示。 */
-    private class Latch(private val required: Int) {
-        private var count = 0
+    /**
+     * 滑动窗口去抖：窗口内命中够多次才提示。
+     *
+     * 早先用的是「连续 N 次」计数器，一旦 YuNet 漏检一帧就清零 —— 实际使用中漏检很常见，
+     * 闭眼提示因此几乎永远攒不满，表现为「闭眼没反应」。窗口容忍个别漏帧。
+     */
+    private class Latch(private val window: Int, private val required: Int) {
+        private val recent = ArrayDeque<Boolean>()
         fun update(value: Boolean): Boolean {
-            if (value) count++ else count = 0
-            return count >= required
+            recent.addLast(value)
+            while (recent.size > window) recent.removeFirst()
+            return recent.count { it } >= required
         }
-        fun reset() { count = 0 }
+        fun hits(): Int = recent.count { it }
     }
-    // 睁闭眼只靠 Haar 眼睛级联，证据必须足够硬才提示：连续 12 次分析（约 2 秒）一致。
-    private val closedLatch = Latch(required = 12)
-    private val oneEyeLatch = Latch(required = 12)
-    private val occlusionLatch = Latch(required = 3)
-    private val glareLatch = Latch(required = 3)
+    private val occlusionLatch = Latch(window = 6, required = 4)
+    private val glareLatch = Latch(window = 6, required = 4)
+
+    /**
+     * 睁闭眼不做去抖：本帧看到闭眼就提示。
+     * 只保留 2 帧的「尾巴」，避免提示在相邻帧之间闪烁，不会带来可感知的延迟。
+     */
+    private var closedHold = 0
+    private var oneEyeHold = 0
+    private var analysisCount = 0
+
+    /**
+     * 闭眼时 YuNet 常常直接给不出人脸，界面就会「框消失 + 未检测到人脸」，
+     * 于是闭眼反而永远等不到闭眼提示。这里保留最近一次成功检测的框：
+     * 短时间内继续在该区域判睁眼，画面明显变了（人走了/转身）就立刻放弃。
+     */
+    private var heldBox: Rect? = null
+    private var heldMean = 0.0
+    private var heldStd = 0.0
+    private var heldFrames = 0
+    private const val HELD_LIMIT = 18
 
     data class Analysis(
         val face: RectF?,
@@ -68,7 +90,8 @@ object CameraFaceDetector {
             }
             eyeCascade = loadCascade(context, "haarcascade_eye.xml")?.takeUnless { it.empty() }
             val model = copyAsset(context, MODEL_ASSET)
-            faceDetector = FaceDetectorYN.create(model.absolutePath, "", Size(640.0, 480.0), 0.7f, 0.3f, 5000)
+            // 0.55 而不是 0.7：闭眼时 YuNet 的置信度会明显下降，阈值太高会导致「闭眼即丢脸」。
+            faceDetector = FaceDetectorYN.create(model.absolutePath, "", Size(640.0, 480.0), 0.55f, 0.3f, 5000)
             Log.i(TAG, "yunet ready=${faceDetector != null} eyes=${eyeCascade != null}")
         }.onFailure { Log.e(TAG, "init failed", it) }
         return faceDetector != null
@@ -112,7 +135,20 @@ object CameraFaceDetector {
             val detector = detectorFor(rotated.cols(), rotated.rows())
                 ?: return Analysis(null, 0, listOf("人脸检测未就绪"))
             detector.detect(bgr, faces)
-            analyze(rotated, faces)
+            val best = bestFace(faces)
+            if (best != null) {
+                rememberFace(rotated, best)
+                analyze(rotated, best)
+            } else {
+                val held = heldBox
+                if (held != null && heldFrames < HELD_LIMIT && stillSameFace(rotated, held)) {
+                    heldFrames++
+                    analyzeHeld(rotated, held)
+                } else {
+                    heldBox = null
+                    Analysis(null, 0, listOf("未检测到人脸，请正对镜头")).also { decayLatches() }
+                }
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "detect failed", t)
             Analysis(null, 0, listOf("人脸分析失败"))
@@ -124,9 +160,7 @@ object CameraFaceDetector {
         }
     }
 
-    private fun analyze(frame: Mat, faces: Mat): Analysis {
-        val best = bestFace(faces)
-            ?: return Analysis(null, 0, listOf("未检测到人脸，请正对镜头")).also { resetLatches() }
+    private fun analyze(frame: Mat, best: FloatArray): Analysis {
         val fw = frame.cols().toFloat()
         val fh = frame.rows().toFloat()
         val box = Rect(best[0].toInt(), best[1].toInt(), best[2].toInt(), best[3].toInt())
@@ -155,20 +189,12 @@ object CameraFaceDetector {
         val eyeMouthGap = (mouthMidY - eyeMidY).coerceAtLeast(1f)
         val pitch = (nose[1] - eyeMidY) / eyeMouthGap
 
-        // 脸太小时眼睛只有十几个像素，级联不可靠，直接不判睁闭眼。
         // YuNet 的框允许越界，裁到画面内再算 ROI，否则密度/眼睛检测会整体失效。
-        val safeBox = Rect(
-            box.x.coerceIn(0, frame.cols() - 1),
-            box.y.coerceIn(0, frame.rows() - 1),
-            0,
-            0
-        ).let {
-            it.width = ((box.x + box.width).coerceAtMost(frame.cols()) - it.x).coerceAtLeast(1)
-            it.height = ((box.y + box.height).coerceAtMost(frame.rows()) - it.y).coerceAtLeast(1)
-            it
-        }
-        // 只有「整张脸都在画面里 + 够大」时才判睁闭眼；否则级联只会给出噪声。
-        val eyeCheckable = eyeDistance >= 30f && safeBox.width == box.width && safeBox.height == box.height
+        val safeBox = clampBox(frame, box)
+        // 只要上半张脸（眼睛所在的那一带）完整在画面里，就足以判睁闭眼；
+        // 要求整张脸框都在画面内会把大量正常构图排除掉，等于关掉检查。
+        val eyeBand = Rect(safeBox.x, safeBox.y, safeBox.width, (safeBox.height * 0.6f).toInt().coerceAtLeast(8))
+        val eyeCheckable = eyeDistance >= 26f && inside(frame, eyeBand) && safeBox.width == box.width
         val eyes = if (eyeCheckable) countEyes(frame, safeBox) else -1
         val faceDensity = edgeDensity(frame, safeBox)
         val mouthDensity = edgeDensity(
@@ -182,8 +208,8 @@ object CameraFaceDetector {
 
         val mouthCovered = faceDensity > 0f && mouthDensity in 0f..(faceDensity * 0.25f)
         val noseCovered = faceDensity > 0f && noseDensity in 0f..(faceDensity * 0.18f)
-        val closed = closedLatch.update(eyes == 0)
-        val oneEye = oneEyeLatch.update(eyes == 1)
+        val closed = holdEye(eyes == 0)
+        val oneEye = !closed && holdOneEye(eyes == 1)
         val occluded = occlusionLatch.update(mouthCovered || noseCovered)
 
         val glareOnFace = glareRatio(frame, safeBox)
@@ -208,25 +234,152 @@ object CameraFaceDetector {
             else if (oneEye) add("单侧眼睛被遮挡，请检查")
             if (occluded) add("口鼻区域疑似被遮挡，请检查口罩/手部")
         }
-        // 只在「有问题」或「眼睛没数够」时留一行指标，方便真机调阈值。
-        if (warnings.isNotEmpty() || eyes < 2) {
+        // 诊断日志：有问题、眼睛没数够、或每 30 次分析（约 5 秒）留一行。
+        analysisCount++
+        if (warnings.isNotEmpty() || eyes < 2 || analysisCount % 30 == 0) {
             Log.i(
                 TAG,
-                "roll=%.1f yaw=%.2f pitch=%.2f eyes=%d mouth=%.3f nose=%.3f face=%.3f " +
-                    "glareFace=%.3f glareAll=%.3f sharp=%.0f".format(
-                        roll, yaw, pitch, eyes, mouthDensity, noseDensity, faceDensity,
-                        glareOnFace, glareOverall, sharpness
-                    )
+                "eyes=%d checkable=%b ".format(eyes, eyeCheckable) + eyeStats(frame, rightEye, leftEye, eyeDistance)
             )
         }
         return Analysis(face, eyes, warnings)
     }
 
-    private fun resetLatches() {
-        closedLatch.reset()
-        oneEyeLatch.reset()
-        occlusionLatch.reset()
-        glareLatch.reset()
+    /**
+     * 眼部像素指标（不依赖级联）：暗像素占比 d、单行最大暗像素占比 mr。
+     * 睁眼时虹膜是一块紧凑暗区（mr 高），闭眼时只剩睫毛线（mr 低）。
+     */
+    private fun eyeStats(frame: Mat, rightEye: FloatArray, leftEye: FloatArray, eyeDistance: Float): String {
+        return " L[" + eyeStatsOne(frame, leftEye, eyeDistance) + "] R[" +
+            eyeStatsOne(frame, rightEye, eyeDistance) + "]"
+    }
+
+    private fun eyeStatsOne(frame: Mat, center: FloatArray, eyeDistance: Float): String {
+        val w = (eyeDistance * 0.55f).toInt().coerceAtLeast(8)
+        val h = (eyeDistance * 0.38f).toInt().coerceAtLeast(6)
+        val r = rectAround(center[0], center[1], w.toFloat(), h.toFloat())
+        if (!inside(frame, r)) return "na"
+        val roi = frame.submat(r)
+        val mean = org.opencv.core.MatOfDouble()
+        val std = org.opencv.core.MatOfDouble()
+        return try {
+            Core.meanStdDev(roi, mean, std)
+            val m = mean.toArray()[0]
+            val thresh = m - std.toArray()[0] * 0.5
+            var dark = 0
+            var maxRow = 0
+            val line = ByteArray(r.width)
+            for (y in 0 until r.height) {
+                roi.get(y, 0, line)
+                var rowDark = 0
+                for (x in 0 until r.width) {
+                    if ((line[x].toInt() and 0xFF) < thresh) rowDark++
+                }
+                dark += rowDark
+                if (rowDark > maxRow) maxRow = rowDark
+            }
+            val area = (r.width * r.height).toFloat()
+            "d=%.2f mr=%.2f m=%.0f".format(dark / area, maxRow / r.width.toFloat(), m)
+        } catch (t: Throwable) {
+            "err:" + (t.message ?: t.javaClass.simpleName).take(30)
+        } finally {
+            std.release()
+            mean.release()
+            roi.release()
+        }
+    }
+
+    private fun holdEye(now: Boolean): Boolean {
+        closedHold = if (now) 2 else (closedHold - 1).coerceAtLeast(0)
+        return now || closedHold > 0
+    }
+
+    private fun holdOneEye(now: Boolean): Boolean {
+        oneEyeHold = if (now) 2 else (oneEyeHold - 1).coerceAtLeast(0)
+        return now || oneEyeHold > 0
+    }
+
+    private fun clampBox(frame: Mat, box: Rect): Rect {
+        val x = box.x.coerceIn(0, frame.cols() - 1)
+        val y = box.y.coerceIn(0, frame.rows() - 1)
+        val right = (box.x + box.width).coerceAtMost(frame.cols())
+        val bottom = (box.y + box.height).coerceAtMost(frame.rows())
+        return Rect(x, y, (right - x).coerceAtLeast(1), (bottom - y).coerceAtLeast(1))
+    }
+
+    /** 记下最近一次成功检测的框，以及这块区域的亮度/对比度基线。 */
+    private fun rememberFace(frame: Mat, best: FloatArray) {
+        val box = clampBox(frame, Rect(best[0].toInt(), best[1].toInt(), best[2].toInt(), best[3].toInt()))
+        heldBox = box
+        heldFrames = 0
+        readStats(frame, box)?.let { (mean, std) ->
+            heldMean = mean
+            heldStd = std
+        }
+    }
+
+    /**
+     * 缓存框是否还对得上：亮度或对比度大幅变化说明人已经走了/画面换了，
+     * 这时继续在旧位置判睁眼只会给出错误提示。
+     */
+    private fun stillSameFace(frame: Mat, box: Rect): Boolean {
+        val safe = clampBox(frame, box)
+        val (mean, std) = readStats(frame, safe) ?: return false
+        if (kotlin.math.abs(mean - heldMean) > 28.0) return false
+        if (heldStd > 1.0 && std < heldStd * 0.55) return false
+        return true
+    }
+
+    private fun readStats(frame: Mat, r: Rect): Pair<Double, Double>? {
+        if (!inside(frame, r)) return null
+        val roi = frame.submat(r)
+        val mean = org.opencv.core.MatOfDouble()
+        val std = org.opencv.core.MatOfDouble()
+        return try {
+            Core.meanStdDev(roi, mean, std)
+            mean.toArray()[0] to std.toArray()[0]
+        } catch (t: Throwable) {
+            null
+        } finally {
+            std.release()
+            mean.release()
+            roi.release()
+        }
+    }
+
+    /**
+     * 人脸检测暂时失败时，用缓存框继续判睁眼：闭眼时级联同样数不到眼睛，
+     * 但至少不会因为「没人脸」而把整条检查链丢掉。
+     */
+    private fun analyzeHeld(frame: Mat, box: Rect): Analysis {
+        val safeBox = clampBox(frame, box)
+        val band = Rect(safeBox.x, safeBox.y, safeBox.width, (safeBox.height * 0.6f).toInt().coerceAtLeast(8))
+        val eyeDistanceEstimate = box.width * 0.32f
+        val eyes = if (eyeDistanceEstimate >= 26f && inside(frame, band)) countEyes(frame, safeBox) else -1
+        val closed = holdEye(eyes == 0)
+        val oneEye = !closed && holdOneEye(eyes == 1)
+        val warnings = buildList {
+            if (closed) add("闭眼或眼部遮挡，请睁眼并保持正脸")
+            else if (oneEye) add("单侧眼睛被遮挡，请检查")
+        }
+        Log.i(TAG, "held eyes=" + eyes + " frames=" + heldFrames + " closed=" + closed)
+        return Analysis(
+            RectF(
+                box.x / frame.cols().toFloat(), box.y / frame.rows().toFloat(),
+                (box.x + box.width) / frame.cols().toFloat(),
+                (box.y + box.height) / frame.rows().toFloat()
+            ),
+            eyes,
+            warnings
+        )
+    }
+
+    /** 没有脸时按「未命中」喂一帧，让窗口自然衰减，而不是整段清空。 */
+    private fun decayLatches() {
+        closedHold = 0
+        oneEyeHold = 0
+        occlusionLatch.update(false)
+        glareLatch.update(false)
     }
 
     private fun rectAround(cx: Float, cy: Float, w: Float, h: Float): Rect = Rect(
