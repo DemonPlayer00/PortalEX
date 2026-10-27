@@ -396,10 +396,10 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 ) { startRecordingFromMap() },
                 FabBarView.Action(
                     R.drawable.baseline_file_download_24,
-                    getString(R.string.camera_import_archive)
-                ) {
-                    videoArchiveLauncher.launch(zipPickerIntent())
-                }
+                    getString(R.string.camera_import_archive),
+                    onClick = { videoArchiveLauncher.launch(zipPickerIntent()) },
+                    iconSizeDp = 20
+                )
             )
         )
     }
