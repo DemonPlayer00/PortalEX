@@ -80,6 +80,7 @@ class CameraRecordActivity : AppCompatActivity() {
     private val faceSamples = Collections.synchronizedList(ArrayList<RectF>())
     private var faceCalibrationPending = false
     private var faceCalibrating = false
+    @Volatile private var lastFaceAnalyzeAt = 0L
     private var faceCalibrationDeadline = 0L
 
     private val ticker = object : Runnable {
@@ -178,6 +179,9 @@ class CameraRecordActivity : AppCompatActivity() {
 
     private fun analyzeFace(image: ImageProxy) {
         try {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastFaceAnalyzeAt < 180L) return
+            lastFaceAnalyzeAt = now
             Log.i("CameraFace", "analyze frame ${image.width}x${image.height}")
             val analysis = CameraFaceDetector.detect(this, image)
             mainHandler.post {
