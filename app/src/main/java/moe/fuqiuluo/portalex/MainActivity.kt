@@ -281,7 +281,16 @@ class MainActivity : AppCompatActivity() {
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
                 // 侧栏引导线：路线模拟 → 角度模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）
-                binding.navGuideRail.bind(navView, R.id.nav_route_gallery, R.id.nav_angle_compass)
+                binding.navGuideRail.bind(
+                    navView,
+                    R.id.nav_route_gallery,
+                    R.id.nav_angle_compass,
+                    // 二类功能：随路线模拟启动的那几项，末端画三角
+                    listOf(
+                        R.id.nav_gnss_mock, R.id.nav_baseband, R.id.nav_camera_mock,
+                        R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass
+                    )
+                )
                 binding.navGuideRail.active = moe.fuqiuluo.xposed.utils.FakeLoc.enable
                 drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
                     override fun onDrawerOpened(drawerView: android.view.View) {
