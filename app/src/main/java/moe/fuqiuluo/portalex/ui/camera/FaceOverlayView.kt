@@ -110,7 +110,7 @@ class FaceOverlayView(context: Context) : View(context) {
 
     /** 提示位于时长显示器下方，水平居中；过宽时整体缩小以留在可选区宽度内。 */
     private fun drawWarnings(canvas: Canvas) {
-        val lines = warnings.take(3)
+        val lines = warnings.take(4)
         if (lines.isEmpty()) return
         val maxWidth = width - density * 24f
         if (maxWidth <= 0f) return
