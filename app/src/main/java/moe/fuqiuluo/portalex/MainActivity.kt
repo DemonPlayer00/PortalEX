@@ -280,6 +280,15 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
+                // 侧栏引导线：路线模拟 → 角度模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）
+                binding.navGuideRail.bind(navView, R.id.nav_route_gallery, R.id.nav_angle_compass)
+                binding.navGuideRail.active = moe.fuqiuluo.xposed.utils.FakeLoc.enable
+                drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+                    override fun onDrawerOpened(drawerView: android.view.View) {
+                        binding.navGuideRail.active = moe.fuqiuluo.xposed.utils.FakeLoc.enable
+                        binding.navGuideRail.invalidate()
+                    }
+                })
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
                 attachDrawerGroupDivider(navView, R.id.nav_gnss_mock)
                 attachDrawerGroupDivider(navView, R.id.nav_settings)

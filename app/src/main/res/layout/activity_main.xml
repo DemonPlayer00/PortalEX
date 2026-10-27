@@ -45,13 +45,26 @@
 
         <include layout="@layout/nav_header_main" />
 
-        <com.google.android.material.navigation.NavigationView
-            android:id="@+id/nav_view"
+        <!-- 引导线叠在菜单之上：路线模拟 → 角度模拟，颜色随路线模拟开关变化 -->
+        <FrameLayout
             android:layout_width="wrap_content"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:background="@android:color/transparent"
-            app:menu="@menu/activity_main_drawer" />
+            android:layout_weight="1">
+
+            <com.google.android.material.navigation.NavigationView
+                android:id="@+id/nav_view"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:background="@android:color/transparent"
+                app:menu="@menu/activity_main_drawer" />
+
+            <moe.fuqiuluo.portalex.ui.widget.NavGuideRailView
+                android:id="@+id/nav_guide_rail"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clickable="false"
+                android:focusable="false" />
+        </FrameLayout>
 
     </LinearLayout>
 
