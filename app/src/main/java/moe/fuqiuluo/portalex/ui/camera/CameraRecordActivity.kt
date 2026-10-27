@@ -179,15 +179,17 @@ class CameraRecordActivity : AppCompatActivity() {
     private fun analyzeFace(image: ImageProxy) {
         try {
             Log.i("CameraFace", "analyze frame ${image.width}x${image.height}")
-            val rect = CameraFaceDetector.detect(this, image)
+            val analysis = CameraFaceDetector.detect(this, image)
             mainHandler.post {
                 faceOverlay?.sourceAspect = if (image.imageInfo.rotationDegrees % 180 == 0) {
                     image.width.toFloat() / image.height
                 } else {
                     image.height.toFloat() / image.width
                 }
-                faceOverlay?.actual = rect
-                if (rect != null && faceCalibrating) faceSamples.add(rect)
+                faceOverlay?.actual = analysis.face
+                faceOverlay?.warnings = analysis.warnings +
+                        CameraFaceCalibration.framingWarnings(this, analysis.face)
+                if (analysis.face != null && faceCalibrating) faceSamples.add(analysis.face)
                 if (faceCalibrating && System.currentTimeMillis() >= faceCalibrationDeadline) {
                     finishFaceCalibration()
                 }

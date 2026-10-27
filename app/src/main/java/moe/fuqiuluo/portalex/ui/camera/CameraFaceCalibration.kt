@@ -21,6 +21,24 @@ object CameraFaceCalibration {
             .putString(KEY, "${r.left},${r.top},${r.right},${r.bottom}").apply()
     }
 
+    /** 用校准阶段保存的人头框，对录像阶段的位置/大小做轻量校对。 */
+    fun framingWarnings(context: Context, actual: RectF?): List<String> {
+        if (actual == null) return emptyList()
+        val expected = load(context) ?: return emptyList()
+        val warnings = mutableListOf<String>()
+        val expectedArea = expected.width() * expected.height()
+        val actualArea = actual.width() * actual.height()
+        if (expectedArea > 0f) {
+            val ratio = actualArea / expectedArea
+            if (ratio < 0.45f) warnings += "离镜头太远，请靠近一些"
+            else if (ratio > 2.2f) warnings += "离镜头太近，请退后一些"
+        }
+        val dx = kotlin.math.abs((actual.centerX()) - expected.centerX())
+        val dy = kotlin.math.abs((actual.centerY()) - expected.centerY())
+        if (dx > 0.18f || dy > 0.18f) warnings += "请回到校准时的位置"
+        return warnings
+    }
+
     fun calibrate(samples: List<RectF>): RectF? {
         if (samples.size < 3) return null
         val cx = samples.map { (it.left + it.right) / 2f }.sorted()[samples.size / 2]

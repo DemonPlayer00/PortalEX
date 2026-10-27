@@ -14,6 +14,10 @@ class FaceOverlayView(context: Context) : View(context) {
     var actual: RectF? = null
         set(value) { field = value; invalidate() }
 
+    /** 人脸有效性提示（闭眼/遮挡/头部出框）。透明底、黑描边、白字。 */
+    var warnings: List<String> = emptyList()
+        set(value) { field = value; invalidate() }
+
     /** 分析帧的宽高比；归一化框必须按同一宽高比映射到 View，否则会被拉长。 */
     var sourceAspect: Float = 1f
         set(value) { field = value; invalidate() }
@@ -25,6 +29,19 @@ class FaceOverlayView(context: Context) : View(context) {
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8f }
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 14f; color = Color.BLACK
+    }
+    private val textStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+        color = Color.BLACK
+        textSize = 34f
+        isFakeBoldText = true
+    }
+    private val textFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.WHITE
+        textSize = 34f
+        isFakeBoldText = true
     }
 
     private fun contentRect(): RectF {
@@ -76,6 +93,12 @@ class FaceOverlayView(context: Context) : View(context) {
             canvas.drawRect(r, outline)
             fill.color = Color.WHITE
             canvas.drawRect(r, fill)
+        }
+        var y = 44f
+        warnings.take(3).forEach { text ->
+            canvas.drawText(text, 24f, y, textStroke)
+            canvas.drawText(text, 24f, y, textFill)
+            y += 42f
         }
     }
 }
