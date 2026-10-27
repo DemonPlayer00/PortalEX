@@ -25,6 +25,8 @@ import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.graphics.RectF
 import android.util.Size
 import android.widget.FrameLayout
@@ -117,6 +119,8 @@ class CameraRecordActivity : AppCompatActivity() {
         faceOverlay = overlay
         binding.cameraFaceCalibrate.setOnClickListener { beginFaceCalibration() }
         binding.cameraRecordStatus.text = statusText(0L)
+        keepStatusBelowStatusBar()
+        alignWarningsBelowStatus()
         binding.cameraRecordButton.setOnClickListener {
             when {
                 recordingActive -> stopRecording()
@@ -137,6 +141,36 @@ class CameraRecordActivity : AppCompatActivity() {
         binding.cameraPreview.implementationMode =
             androidx.camera.view.PreviewView.ImplementationMode.COMPATIBLE
         bindCamera()
+    }
+
+    /** 全屏录制不隐藏状态栏：时长显示器让出状态栏高度，避免被时间/图标压住。 */
+    private fun keepStatusBelowStatusBar() {
+        val base = (24 * resources.displayMetrics.density).toInt()
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val top = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val lp = binding.cameraRecordStatus.layoutParams as FrameLayout.LayoutParams
+            val target = base + top
+            if (lp.topMargin != target) {
+                lp.topMargin = target
+                binding.cameraRecordStatus.layoutParams = lp
+            }
+            insets
+        }
+        ViewCompat.requestApplyInsets(binding.root)
+    }
+
+    /** 提示文字紧随时长显示器下方，水平居中（含状态栏/外边距变化）。 */
+    private fun alignWarningsBelowStatus() {
+        val gap = 12 * resources.displayMetrics.density
+        val statusLocation = IntArray(2)
+        val overlayLocation = IntArray(2)
+        binding.cameraRecordStatus.addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            val overlay = faceOverlay ?: return@addOnLayoutChangeListener
+            view.getLocationInWindow(statusLocation)
+            overlay.getLocationInWindow(overlayLocation)
+            val top = statusLocation[1] + view.height - overlayLocation[1] + gap
+            if (overlay.warningsTop != top) overlay.warningsTop = top
+        }
     }
 
     fun onFaceCalibrate(view: android.view.View) {

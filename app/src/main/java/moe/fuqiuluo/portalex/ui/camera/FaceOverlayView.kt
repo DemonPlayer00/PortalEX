@@ -14,8 +14,12 @@ class FaceOverlayView(context: Context) : View(context) {
     var actual: RectF? = null
         set(value) { field = value; invalidate() }
 
-    /** 人脸有效性提示（闭眼/遮挡/头部出框）。透明底、黑描边、白字。 */
+    /** 人脸有效性提示（闭眼/遮挡/头部出框）。透明底、黑描边、白字，居中绘制。 */
     var warnings: List<String> = emptyList()
+        set(value) { field = value; invalidate() }
+
+    /** 提示文字首行顶部（px，相对本 View）；由 Activity 按时长显示器底边计算。 */
+    var warningsTop: Float = 0f
         set(value) { field = value; invalidate() }
 
     /** 分析帧的宽高比；归一化框必须按同一宽高比映射到 View，否则会被拉长。 */
@@ -30,17 +34,24 @@ class FaceOverlayView(context: Context) : View(context) {
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 14f; color = Color.BLACK
     }
+    private val density = context.resources.displayMetrics.density
+    private val warningTextSize = android.util.TypedValue.applyDimension(
+        android.util.TypedValue.COMPLEX_UNIT_SP, 18f, context.resources.displayMetrics
+    )
+
     private val textStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 5f
+        strokeWidth = density * 2f
         color = Color.BLACK
-        textSize = 34f
+        textSize = warningTextSize
+        textAlign = Paint.Align.CENTER
         isFakeBoldText = true
     }
     private val textFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = Color.WHITE
-        textSize = 34f
+        textSize = warningTextSize
+        textAlign = Paint.Align.CENTER
         isFakeBoldText = true
     }
 
@@ -94,11 +105,32 @@ class FaceOverlayView(context: Context) : View(context) {
             fill.color = Color.WHITE
             canvas.drawRect(r, fill)
         }
-        var y = 44f
-        warnings.take(3).forEach { text ->
-            canvas.drawText(text, 24f, y, textStroke)
-            canvas.drawText(text, 24f, y, textFill)
-            y += 42f
+        drawWarnings(canvas)
+    }
+
+    /** 提示位于时长显示器下方，水平居中；过宽时整体缩小以留在可选区宽度内。 */
+    private fun drawWarnings(canvas: Canvas) {
+        val lines = warnings.take(3)
+        if (lines.isEmpty()) return
+        val maxWidth = width - density * 24f
+        if (maxWidth <= 0f) return
+
+        textFill.textSize = warningTextSize
+        var widest = 0f
+        lines.forEach { widest = maxOf(widest, textFill.measureText(it)) }
+        val scale = if (widest > maxWidth) (maxWidth / widest).coerceAtLeast(0.6f) else 1f
+        val size = warningTextSize * scale
+        textFill.textSize = size
+        textStroke.textSize = size
+        textStroke.strokeWidth = density * 2f * scale
+
+        val centerX = width / 2f
+        var baseline = (if (warningsTop > 0f) warningsTop else density * 64f) + size
+        val lineHeight = size * 1.35f
+        lines.forEach { text ->
+            canvas.drawText(text, centerX, baseline, textStroke)
+            canvas.drawText(text, centerX, baseline, textFill)
+            baseline += lineHeight
         }
     }
 }
