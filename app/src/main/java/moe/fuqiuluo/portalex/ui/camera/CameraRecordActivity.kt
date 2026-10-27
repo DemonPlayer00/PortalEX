@@ -2,6 +2,8 @@ package moe.fuqiuluo.portalex.ui.camera
 
 import android.app.Activity
 import android.content.Context
+import android.hardware.camera2.CaptureRequest
+import android.util.Range
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -12,9 +14,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import android.hardware.camera2.CameraCharacteristics
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -70,6 +77,10 @@ class CameraRecordActivity : AppCompatActivity() {
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoCapture: VideoCapture<Recorder>? = null
+    private var previewUseCase: Preview? = null
+    private var analysisUseCase: ImageAnalysis? = null
+    private var cameraSelector: CameraSelector? = null
+    private var analysisBound = true
     private var recording: Recording? = null
 
     private var recordingActive = false
@@ -253,21 +264,6 @@ class CameraRecordActivity : AppCompatActivity() {
             runCatching {
                 val provider = providerFuture.get()
                 cameraProvider = provider
-                val preview = Preview.Builder()
-                    .setTargetAspectRatio(AspectRatio.RATIO_4_3)
-                    .build()
-                preview.setSurfaceProvider(binding.cameraPreview.surfaceProvider)
-
-                val quality = QualitySelector.fromOrderedList(
-                    listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD),
-                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
-                )
-                val recorder = Recorder.Builder()
-                    .setQualitySelector(quality)
-                    .build()
-                val capture = VideoCapture.withOutput(recorder)
-                videoCapture = capture
-
                 val selector = if (provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
                     usingFrontCamera = true
                     CameraSelector.DEFAULT_FRONT_CAMERA
@@ -276,13 +272,65 @@ class CameraRecordActivity : AppCompatActivity() {
                     CameraSelector.DEFAULT_BACK_CAMERA
                 }
                 provider.unbindAll()
+                val cameraInfo = provider.getCameraInfo(selector)
+
+                // 录制规格按机型能力取：目标 1920x1080，机型给不了就用它支持的最高档；
+                // 帧率同理 —— 目标 24fps，在 AE 支持范围里挑不超过 24 的最高档。
+                val supported = runCatching {
+                    Recorder.getVideoCapabilities(cameraInfo).getSupportedQualities(DynamicRange.SDR)
+                }.getOrNull().orEmpty()
+                val chosenQuality = listOf(Quality.FHD, Quality.HD, Quality.SD)
+                    .firstOrNull { it in supported } ?: supported.firstOrNull() ?: Quality.HD
+                val sixteenByNine = chosenQuality != Quality.SD
+                Log.i(TAG, "video qualities=$supported chosen=$chosenQuality")
+
+                val fpsRange = runCatching {
+                    val chars = Camera2CameraInfo.from(cameraInfo)
+                    @Suppress("UNCHECKED_CAST")
+                    val ranges = (chars.getCameraCharacteristic(
+                        CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES
+                    ) as? Array<Range<Int>>)?.toList().orEmpty()
+                    ranges.filter { it.upper <= 24 }.maxByOrNull { it.upper }
+                        ?: ranges.minByOrNull { it.upper }
+                }.getOrNull()
+                Log.i(TAG, "target fps range=$fpsRange")
+
+                val aspect = if (sixteenByNine) AspectRatio.RATIO_16_9 else AspectRatio.RATIO_4_3
+                val previewBuilder = Preview.Builder().setTargetAspectRatio(aspect)
+                if (fpsRange != null) {
+                    runCatching {
+                        Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(
+                            CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange
+                        )
+                    }.onFailure { Log.w(TAG, "set fps range failed", it) }
+                }
+                val preview = previewBuilder.build()
+                preview.setSurfaceProvider(binding.cameraPreview.surfaceProvider)
+
+                val quality = QualitySelector.from(
+                    chosenQuality,
+                    FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)
+                )
+                val recorder = Recorder.Builder()
+                    .setQualitySelector(quality)
+                    .build()
+                val capture = VideoCapture.withOutput(recorder)
+                videoCapture = capture
+
                 faceOverlay?.mirrorX = usingFrontCamera
-                // 分析流固定 640x480：YuNet 在这里推理，分辨率再高只是浪费算力。
+                // 分析流必须和预览同一个画幅：不同宽高比意味着不同的传感器裁切，
+                // 归一化人脸框按一种画幅算、却画在另一种画幅上，框就会和人脸对不上。
+                val analysisAspect = if (sixteenByNine) {
+                    AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+                } else {
+                    AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
+                }
                 val analysisResolution = ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(analysisAspect)
                     .setResolutionStrategy(
                         ResolutionStrategy(
-                            Size(640, 480),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                            if (sixteenByNine) Size(1280, 720) else Size(640, 480),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER
                         )
                     )
                     .build()
@@ -291,7 +339,12 @@ class CameraRecordActivity : AppCompatActivity() {
                     .setResolutionSelector(analysisResolution)
                     .build()
                 faceAnalysis.setAnalyzer(faceExecutor) { image -> analyzeFace(image) }
+                previewUseCase = preview
+                analysisUseCase = faceAnalysis
+                cameraSelector = selector
+                videoCapture = capture
                 provider.bindToLifecycle(this, selector, preview, capture, faceAnalysis)
+
                 CameraOccupancyGuard.start("record", OCCUPANCY_TIMEOUT_MS) {
                     onCameraOccupancyTimeout()
                 }
@@ -308,6 +361,30 @@ class CameraRecordActivity : AppCompatActivity() {
      * 点击后不立刻录：先启动融合定位，直到拿到第一个定位点才真正开始
      * VideoCapture。等待期间显示“准备中”，取消按钮仍可退出。
      */
+    /**
+     * 录制时解绑分析流：前置相机三路并发只能出 720p 视频，两路（预览 + 录像）才能到 1080p。
+     * 解绑期间人脸框没有数据源，因此清空叠加层，避免留下过期的框。
+     */
+    private fun setAnalysisBound(bound: Boolean) {
+        if (analysisBound == bound) return
+        val provider = cameraProvider ?: return
+        val selector = cameraSelector ?: return
+        val preview = previewUseCase ?: return
+        val capture = videoCapture ?: return
+        val analysis = analysisUseCase ?: return
+        runCatching {
+            if (bound) {
+                provider.bindToLifecycle(this, selector, preview, capture, analysis)
+            } else {
+                provider.unbind(analysis)
+                faceOverlay?.actual = null
+                faceOverlay?.warnings = emptyList()
+            }
+            analysisBound = bound
+            Log.i(TAG, "analysis bound=$bound")
+        }.onFailure { Log.w(TAG, "rebind analysis=$bound failed", it) }
+    }
+
     private fun prepareRecording() {
         if (cameraMockEnabled) {
             Toast.makeText(this, "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
@@ -321,6 +398,7 @@ class CameraRecordActivity : AppCompatActivity() {
 
         preparing = true
         firstLocation = null
+        setAnalysisBound(false)
         binding.cameraRecordButton.isEnabled = false
         binding.cameraRecordButton.setText("准备中…")
         binding.cameraRecordStatus.text = "准备中：等待第一个定位点…"
@@ -378,6 +456,7 @@ class CameraRecordActivity : AppCompatActivity() {
 
     private fun resetPreparing() {
         preparing = false
+        setAnalysisBound(true)
         firstLocation = null
         locationSampler?.stop()
         locationSampler = null
@@ -416,6 +495,7 @@ class CameraRecordActivity : AppCompatActivity() {
     private fun onRecordFinalized(event: VideoRecordEvent.Finalize) {
         recordingActive = false
         preparing = false
+        setAnalysisBound(true)
         mainHandler.removeCallbacks(ticker)
         locationSampler?.stop()
         locationSampler = null
@@ -485,6 +565,7 @@ class CameraRecordActivity : AppCompatActivity() {
     private fun cancelAndFinish() {
         recordingActive = false
         preparing = false
+        setAnalysisBound(true)
         mainHandler.removeCallbacks(ticker)
         locationSampler?.stop()
         locationSampler = null

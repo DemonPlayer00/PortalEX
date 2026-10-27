@@ -89,6 +89,18 @@ class FaceOverlayView(context: Context) : View(context) {
         return union > 0f && inter / union >= 0.25f
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        val c = contentRect()
+        android.util.Log.i(
+            "CameraFace",
+            "overlay size=" + w + "x" + h + " at=" + loc[0] + "," + loc[1] +
+                " aspect=" + sourceAspect + " content=" + c.left + "," + c.top + "," + c.right + "," + c.bottom
+        )
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val exp = expected
