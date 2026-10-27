@@ -71,7 +71,8 @@ object CameraFaceDetector {
     private var heldMean = 0.0
     private var heldStd = 0.0
     private var heldFrames = 0
-    private const val HELD_LIMIT = 18
+    // 缓存框最多撑 ~1.3 秒；再久就说明人走了，继续画旧框只会误导。
+    private const val HELD_LIMIT = 8
 
     data class Analysis(
         val face: RectF?,
@@ -164,7 +165,8 @@ object CameraFaceDetector {
         val fw = frame.cols().toFloat()
         val fh = frame.rows().toFloat()
         val box = Rect(best[0].toInt(), best[1].toInt(), best[2].toInt(), best[3].toInt())
-        val face = RectF(box.x / fw, box.y / fh, (box.x + box.width) / fw, (box.y + box.height) / fh)
+        val rawFace = RectF(box.x / fw, box.y / fh, (box.x + box.width) / fw, (box.y + box.height) / fh)
+        val face = smoothFace(rawFace)
 
         // YuNet 输出顺序：右眼、左眼、鼻尖、右嘴角、左嘴角（均为图像坐标）
         val rightEye = floatArrayOf(best[4], best[5])
@@ -289,6 +291,36 @@ object CameraFaceDetector {
         }
     }
 
+    private var smoothedFace: RectF? = null
+
+    /**
+     * 一阶平滑：压掉连续帧之间的小幅抖动。
+     * 位置或面积突变视为"重新捕获"（人移动了、换人了），直接采纳，避免框慢慢爬过去。
+     */
+    private fun smoothFace(raw: RectF): RectF {
+        val prev = smoothedFace
+        if (prev == null) {
+            smoothedFace = RectF(raw)
+            return raw
+        }
+        val dx = kotlin.math.abs(raw.centerX() - prev.centerX())
+        val dy = kotlin.math.abs(raw.centerY() - prev.centerY())
+        val prevArea = (prev.width() * prev.height()).coerceAtLeast(1e-6f)
+        val areaRatio = (raw.width() * raw.height()) / prevArea
+        if (dx > 0.12f || dy > 0.12f || areaRatio > 2.0f || areaRatio < 0.5f) {
+            prev.set(raw)
+            return raw
+        }
+        val k = 0.5f
+        prev.set(
+            prev.left + (raw.left - prev.left) * k,
+            prev.top + (raw.top - prev.top) * k,
+            prev.right + (raw.right - prev.right) * k,
+            prev.bottom + (raw.bottom - prev.bottom) * k
+        )
+        return RectF(prev)
+    }
+
     private fun holdEye(now: Boolean): Boolean {
         closedHold = if (now) 2 else (closedHold - 1).coerceAtLeast(0)
         return now || closedHold > 0
@@ -376,6 +408,7 @@ object CameraFaceDetector {
 
     /** 没有脸时按「未命中」喂一帧，让窗口自然衰减，而不是整段清空。 */
     private fun decayLatches() {
+        smoothedFace = null
         closedHold = 0
         oneEyeHold = 0
         occlusionLatch.update(false)
