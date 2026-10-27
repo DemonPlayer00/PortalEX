@@ -23,7 +23,7 @@
             android:title="@string/menu_gnss_mock" />
         <item
             android:id="@+id/nav_baseband"
-            android:icon="@android:drawable/ic_menu_compass"
+            android:icon="@drawable/ic_cell_tower_24"
             android:title="@string/menu_baseband" />
         <item
             android:id="@+id/nav_camera_mock"
@@ -31,7 +31,7 @@
             android:title="@string/menu_camera_mock" />
         <item
             android:id="@+id/nav_stamina"
-            android:icon="@drawable/baseline_directions_run_24"
+            android:icon="@drawable/ic_bolt_24"
             android:title="@string/menu_stamina" />
         <item
             android:id="@+id/nav_cadence"

@@ -3,9 +3,7 @@ package moe.fuqiuluo.portalex.ui.widget
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.DashPathEffect
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RectF
 import android.os.SystemClock
 import android.util.AttributeSet
@@ -36,6 +34,8 @@ class NavGuideRailView @JvmOverloads constructor(
     private var startTitle: String? = null
     private var endTitle: String? = null
     private var navView: NavigationView? = null
+    /** 二类功能（随路线模拟启动的那几项）：它们的支线末端画三角而不是圆点。 */
+    private var class2Titles: Set<String> = emptySet()
 
     /** 路线模拟是否已启用；决定线的颜色。 */
     var active: Boolean = false
@@ -51,12 +51,12 @@ class NavGuideRailView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val line = Path()
 
-    fun bind(nav: NavigationView, startItemId: Int, endItemId: Int) {
+    fun bind(nav: NavigationView, startItemId: Int, endItemId: Int, class2ItemIds: List<Int> = emptyList()) {
         navView = nav
         startTitle = nav.menu.findItem(startItemId)?.title?.toString()
         endTitle = nav.menu.findItem(endItemId)?.title?.toString()
+        class2Titles = class2ItemIds.mapNotNull { nav.menu.findItem(it)?.title?.toString() }.toSet()
         invalidate()
     }
 
@@ -104,7 +104,21 @@ class NavGuideRailView @JvmOverloads constructor(
         val from = rows.indexOfFirst { it.first == start }
         val to = rows.indexOfFirst { it.first == end }
         if (from < 0 || to < 0 || to < from) return emptyList()
+        anchorTitlesCache = rows.subList(from, to + 1).map { it.first }
         return rows.subList(from, to + 1).map { it.second }
+    }
+
+    /** 朝右的等边三角形：底边贴着支线末端，顶点在右侧。 */
+    private fun drawArrowHead(canvas: Canvas, x: Float, y: Float) {
+        val side = 4.6f * density
+        val half = side / 2f
+        val height = side * kotlin.math.sqrt(3f) / 2f
+        val path = android.graphics.Path()
+        path.moveTo(x, y - half)
+        path.lineTo(x, y + half)
+        path.lineTo(x + height, y)
+        path.close()
+        canvas.drawPath(path, dotPaint)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -114,41 +128,45 @@ class NavGuideRailView @JvmOverloads constructor(
 
         val color = if (active) COLOR_ACTIVE else COLOR_IDLE
         val railX = 6f * density
-        val stubEnd = 20f * density
+        val stubEnd = 13f * density
         val top = anchors.first().centerY()
         val bottom = anchors.last().centerY()
 
         railPaint.color = color
         dotPaint.color = color
-        // 蚂蚁线：虚线相位随时间推移，视觉上在“流动”
-        val period = 10f * density
-        // 相位递减 ⇒ 虚线从下往上流动（从「角度模拟」流向「路线模拟」）
-        val cycle = period * 2f
-        val phase = if (isShown) {
-            cycle - (SystemClock.uptimeMillis() % 1000L) / 1000f * cycle
-        } else {
-            0f
+        // 《传送门》式圆点：等距排开，同一时刻只隐藏一个点，缺口从下往上走
+        val step = 9f * density
+        val radius = 1.7f * density
+        val count = (((bottom - top) / step).toInt() + 1).coerceAtLeast(1)
+        val tick = SystemClock.uptimeMillis() / 140L
+        // 缺口从上往下走（与上一版相反）
+        val hidden = (tick % count).toInt()
+        for (i in 0 until count) {
+            if (i == hidden) continue
+            canvas.drawCircle(railX, top + i * step, radius, dotPaint)
         }
-        railPaint.pathEffect = DashPathEffect(floatArrayOf(period, period), phase)
-
-        line.reset()
-        line.moveTo(railX, top)
-        line.lineTo(railX, bottom)
-        canvas.drawPath(line, railPaint)
-
-        // 每个菜单项一条短支线 + 端点圆点
-        railPaint.pathEffect = null
-        for (anchor in anchors) {
-            val y = anchor.centerY()
-            canvas.drawLine(railX, y, stubEnd, y, railPaint)
-            canvas.drawCircle(stubEnd, y, 2.2f * density, dotPaint)
-        }
-
         if (isShown) postInvalidateOnAnimation()
+
+        // 每个菜单项一条短支线；端点：起点圆点，二类功能用朝右的等边三角形
+        val titles = anchorTitles()
+        anchors.forEachIndexed { index, anchor ->
+            val itemY = anchor.centerY()
+            canvas.drawLine(railX, itemY, stubEnd, itemY, railPaint)
+            val title = titles.getOrNull(index)
+            if (title != null && title in class2Titles) {
+                drawArrowHead(canvas, stubEnd, itemY)
+            } else {
+                canvas.drawCircle(stubEnd, itemY, 2.2f * density, dotPaint)
+            }
+        }
     }
+
+    private var anchorTitlesCache: List<String> = emptyList()
+
+    private fun anchorTitles(): List<String> = anchorTitlesCache
 
     private companion object {
         val COLOR_IDLE = Color.parseColor("#8A8A8A")
-        val COLOR_ACTIVE = Color.parseColor("#2F80ED")
+        val COLOR_ACTIVE = Color.parseColor("#8CBAF2")
     }
 }
