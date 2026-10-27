@@ -97,6 +97,7 @@ class CameraRecordActivity : AppCompatActivity() {
     private val faceSamples = Collections.synchronizedList(ArrayList<RectF>())
     private var faceCalibrationPending = false
     private var faceCalibrating = false
+    private var manualCalibrating = false
     private var faceFrameCount = 0
     private var analyzedWidth = 0
     private var analyzedHeight = 0
@@ -133,8 +134,10 @@ class CameraRecordActivity : AppCompatActivity() {
         overlay.isClickable = false
         overlay.isFocusable = false
         overlay.expected = CameraFaceCalibration.load(this)
+        overlay.hideLive = CameraFaceCalibration.isManual(this)
         faceOverlay = overlay
         binding.cameraFaceCalibrate.setOnClickListener { beginFaceCalibration() }
+        binding.cameraFaceManual.setOnClickListener { toggleManualCalibration() }
         binding.cameraRecordStatus.text = statusText(0L)
         keepStatusBelowStatusBar()
         alignWarningsBelowStatus()
@@ -195,8 +198,48 @@ class CameraRecordActivity : AppCompatActivity() {
         beginFaceCalibration()
     }
 
+    /**
+     * 手动校准：进入后隐藏实时框，标准框变黄、可拖动/双指缩放；
+     * 闭眼、朝向、遮挡等提示继续运行（它们来自分析流，与画框无关）。
+     */
+    private fun toggleManualCalibration() {
+        val overlay = faceOverlay ?: return
+        if (recordingActive || preparing) {
+            Toast.makeText(this, "录制中不能校准", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!manualCalibrating) {
+            if (overlay.expected == null) {
+                overlay.expected = overlay.actual?.let { RectF(it) }
+                    ?: RectF(0.3f, 0.22f, 0.7f, 0.78f)
+            }
+            manualCalibrating = true
+            overlay.editing = true
+            binding.cameraFaceManual.text = "保存校准"
+            binding.cameraRecordStatus.text = "手动校准：拖动移动，双指缩放，保存后生效"
+        } else {
+            manualCalibrating = false
+            overlay.editing = false
+            overlay.expected?.let {
+                CameraFaceCalibration.save(this, it, manual = true)
+                // 手动框是固定取景参考：隐藏实时检测框（检查照常运行）
+                overlay.hideLive = true
+            }
+            binding.cameraFaceManual.text = "手动校准"
+            binding.cameraRecordStatus.text = "手动校准已保存（已隐藏实时框）"
+        }
+    }
+
     private fun beginFaceCalibration() {
         if (faceCalibrating) return
+        // 自动校准与手动校准互斥
+        if (manualCalibrating) {
+            manualCalibrating = false
+            faceOverlay?.editing = false
+            binding.cameraFaceManual.text = "手动校准"
+        }
+        // 自动校准会重新接管实时框
+        faceOverlay?.hideLive = false
         faceCalibrationPending = true
         faceSamples.clear()
         binding.cameraRecordStatus.text = "人脸框校准：请移动到识别区，即将切到后台"
@@ -221,8 +264,9 @@ class CameraRecordActivity : AppCompatActivity() {
             binding.cameraRecordStatus.text = "校准失败：未采集到足够的人脸帧"
             Toast.makeText(this, "未识别到足够的人脸，请重试", Toast.LENGTH_LONG).show()
         } else {
-            CameraFaceCalibration.save(this, box)
+            CameraFaceCalibration.save(this, box, manual = false)
             faceOverlay?.expected = box
+            faceOverlay?.hideLive = false
             binding.cameraRecordStatus.text = "人脸框校准完成"
             Toast.makeText(this, "人脸框已校准", Toast.LENGTH_SHORT).show()
         }

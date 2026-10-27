@@ -47,38 +47,92 @@
         android:layout_gravity="bottom"
         android:gravity="center"
         android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         android:paddingBottom="28dp">
 
+        <!-- 四个按钮按权重分配宽度；文字自动缩放并强制单行，小屏（1080 宽）也不会折行 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/camera_record_button"
             style="@style/Widget.Material3.Button"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="52dp"
+            android:layout_weight="1.6"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:maxLines="1"
             android:text="@string/camera_record_start"
             android:textColor="?attr/colorOnPrimary"
+            android:textSize="12sp"
+            app:autoSizeMaxTextSize="12sp"
+            app:autoSizeMinTextSize="8sp"
+            app:autoSizeTextType="uniform"
             app:cornerRadius="26dp"
             app:icon="@drawable/rounded_play_arrow_24"
             app:iconGravity="textStart"
+            app:iconPadding="3dp"
+            app:iconSize="18dp"
             app:iconTint="?attr/colorOnPrimary" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/camera_face_calibrate"
             style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="52dp"
-            android:layout_marginStart="12dp"
+            android:layout_weight="1.1"
+            android:layout_marginStart="4dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:maxLines="1"
             android:text="人脸框校准"
             android:onClick="onFaceCalibrate"
-            android:textColor="@android:color/white" />
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            app:autoSizeMaxTextSize="12sp"
+            app:autoSizeMinTextSize="8sp"
+            app:autoSizeTextType="uniform" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/camera_face_manual"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="0dp"
+            android:layout_height="52dp"
+            android:layout_weight="1.05"
+            android:layout_marginStart="4dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:maxLines="1"
+            android:text="手动校准"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            app:autoSizeMaxTextSize="12sp"
+            app:autoSizeMinTextSize="8sp"
+            app:autoSizeTextType="uniform" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/camera_record_cancel"
             style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="52dp"
-            android:layout_marginStart="12dp"
+            android:layout_weight="0.8"
+            android:layout_marginStart="4dp"
+            android:insetLeft="0dp"
+            android:insetRight="0dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:maxLines="1"
             android:text="@string/cancel"
-            android:textColor="@android:color/white" />
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            app:autoSizeMaxTextSize="12sp"
+            app:autoSizeMinTextSize="8sp"
+            app:autoSizeTextType="uniform" />
 
     </LinearLayout>
 

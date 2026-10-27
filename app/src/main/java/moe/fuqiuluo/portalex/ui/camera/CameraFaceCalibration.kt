@@ -7,6 +7,7 @@ import android.graphics.RectF
 object CameraFaceCalibration {
     private const val PREFS = "portal"
     private const val KEY = "camera_face_box_v1"
+    private const val KEY_MANUAL = "camera_face_box_manual_v1"
 
     fun load(context: Context): RectF? {
         val s = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return null
@@ -16,10 +17,19 @@ object CameraFaceCalibration {
         }.getOrNull()
     }
 
-    fun save(context: Context, r: RectF) {
+    fun save(context: Context, r: RectF, manual: Boolean = false) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY, "${r.left},${r.top},${r.right},${r.bottom}").apply()
+            .putString(KEY, r.left.toString() + "," + r.top + "," + r.right + "," + r.bottom)
+            .putBoolean(KEY_MANUAL, manual)
+            .apply()
     }
+
+    /**
+     * 这个框是不是手动拖出来的。
+     * 手动框是"固定取景参考"，不跟随实时检测 —— 叠加层据此隐藏实时框并改用黄色。
+     */
+    fun isManual(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_MANUAL, false)
 
     /** 标准框允许的偏移比例：实时框略偏一点不算问题，超出容差才提示。 */
     private const val MIN_AREA_RATIO = 0.38f
