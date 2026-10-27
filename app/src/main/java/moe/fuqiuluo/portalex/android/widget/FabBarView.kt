@@ -42,8 +42,6 @@ class FabBarView @JvmOverloads constructor(
         val iconRes: Int,
         val contentDescription: String?,
         var active: Boolean = false,
-        /** 图标在 48dp 触控区内的目标尺寸；0 = 使用 View 默认（铺满）。放在 onClick 前，保持尾随 lambda 可用。 */
-        val iconSizeDp: Int = 0,
         val onClick: () -> Unit
     )
 
@@ -148,11 +146,6 @@ class FabBarView @JvmOverloads constructor(
                     background = rippleBackground()
                     setImageResource(action.iconRes)
                     imageTintList = actionTintList(action.active)
-                    // 触控区仍是 48dp，只缩小画出来的图标：四周留白 = (48 - 目标) / 2
-                    if (action.iconSizeDp in 1 until 48) {
-                        val pad = dp((48 - action.iconSizeDp) / 2)
-                        setPadding(pad, pad, pad, pad)
-                    }
                     setOnClickListener { action.onClick() }
                 }
             )
