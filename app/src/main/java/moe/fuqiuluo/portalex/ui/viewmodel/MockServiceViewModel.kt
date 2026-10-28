@@ -20,7 +20,6 @@ import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ui.mock.Rocker
-import moe.fuqiuluo.portalex.service.PortalLocationClient
 import moe.fuqiuluo.xposed.RemoteCommandHandler
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
@@ -502,12 +501,6 @@ class MockServiceViewModel : ViewModel() {
             "MockServiceViewModel",
             "motion lat=" + rely.getDouble(Key.LAT, Double.NaN) + " lon=" +
                 rely.getDouble(Key.LON, Double.NaN) + " playing=" + playing
-        )
-        // App 自己的地图：直接吃模块回读到的坐标（本进程的 LocationListener 可能收不到帧）
-        PortalLocationClient.injectFromModule(
-            rely.getDouble(Key.LAT, Double.NaN),
-            rely.getDouble(Key.LON, Double.NaN),
-            rely.getDouble(Key.BEARING, FakeLoc.bearing).toFloat(),
         )
         // 坐标镜像：App 侧显示（地图/坐标栏）读的是本进程的 FakeLoc
         RemoteCommandHandler.applySyncedCoordinate(
