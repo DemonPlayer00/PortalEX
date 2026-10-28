@@ -253,6 +253,11 @@ class DebugCommandActivity : Activity() {
 
         val counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
         fun bump(key: String) { counts[key] = (counts[key] ?: 0) + 1 }
+        // 回调必须投递到**非主线程**的 looper：本方法在主线程上 sleep 等结果，
+        // 用主线程 looper 收帧会被自己的 sleep 卡住（第一次测出的 callbacks={} 就是这个假阴性）。
+        val callbackThread = android.os.HandlerThread("api-test")
+        callbackThread.start()
+        val callbackLooper = callbackThread.looper
         val multiListener = object : LocationListener {
             override fun onLocationChanged(location: Location) { bump("multi") }
             override fun onProviderEnabled(provider: String) {}
@@ -261,7 +266,7 @@ class DebugCommandActivity : Activity() {
         }
         providers.forEach { p ->
             val ok = runCatching {
-                lm.requestLocationUpdates(p, 200L, 0f, multiListener, android.os.Looper.getMainLooper())
+                lm.requestLocationUpdates(p, 200L, 0f, multiListener, callbackLooper)
             }.isSuccess
             out.appendLine("requestUpdates[" + p + "]=" + ok)
         }
@@ -273,7 +278,7 @@ class DebugCommandActivity : Activity() {
             @Deprecated("平台已废弃") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         }
         val singleOk = runCatching {
-            lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, singleListener, android.os.Looper.getMainLooper())
+            lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, singleListener, callbackLooper)
         }.isSuccess
         out.appendLine("requestSingleUpdate[gps]=" + singleOk)
 
@@ -317,6 +322,7 @@ class DebugCommandActivity : Activity() {
         runCatching { lm.removeUpdates(singleListener) }
         runCatching { fused?.removeLocationUpdates(object : com.google.android.gms.location.LocationCallback() {}) }
         out.appendLine("callbacks=" + counts)
+        callbackThread.quitSafely()
         return out.toString()
     }
 

@@ -24,6 +24,7 @@ import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.nmea.LocationNMEAHook
 import moe.fuqiuluo.xposed.hooks.provider.LocationProviderManagerHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
+import moe.fuqiuluo.xposed.utils.LocConfig
 import moe.fuqiuluo.xposed.utils.FeatureGate
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.BinderUtils
@@ -569,9 +570,15 @@ internal object LocationServiceHook: BaseLocationHook() {
         val cpu1 = if (timing) android.os.Debug.threadCpuTimeNanos() else 0L
 
         var delivered = 0
+        // 模拟期间的投递由本链**负责到底**：按上报间隔逐帧推给所有注册，
+        // 不再用 1.2s 的"饿死"阈值判断 —— 实测（Android 16）持续订阅
+        // （requestLocationUpdates / registerLocationListener）注册成功却一帧都收不到，
+        // 因为框架真投递被我们放行的同时并没有位置源（室内无星），
+        // 1.2s 的等待窗口把"补帧"拖成了"永远没有第一帧"。
+        val minGapNanos = LocConfig.reportDurationMs.coerceIn(20L, 2000L) * 1_000_000L
         locationListeners.forEach { reg ->
-            val starved = nowNanos - reg.lastDeliveryNanos.get() >= FRAME_STARVATION_NANOS
-            val shouldPush = force || starved
+            val due = nowNanos - reg.lastDeliveryNanos.get() >= minGapNanos
+            val shouldPush = force || due
             if (!shouldPush) return@forEach
             if (deliverFrame(reg.listener, frame)) {
                 reg.lastDeliveryNanos.set(nowNanos)
@@ -662,13 +669,12 @@ internal object LocationServiceHook: BaseLocationHook() {
         kotlin.concurrent.thread(name = "LocationKeepAlive", isDaemon = true, start = true) {
             while (true) {
                 try {
-                    Thread.sleep(KEEP_ALIVE_TICK_MS)
+                    // 节拍跟着上报间隔走：模拟期间持续订阅的帧就由这条链提供，
+                    // 全局"饿死"门会把它拖成 1.2s 一次（实测应用端等同没有帧）。
+                    Thread.sleep(LocConfig.reportDurationMs.coerceIn(50L, KEEP_ALIVE_TICK_MS))
                     if (!FakeLoc.enable) continue
                     if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) continue
-                    val now = SystemClock.elapsedRealtimeNanos()
-                    if (now - lastDeliveryNanosGlobal >= FRAME_STARVATION_NANOS) {
-                        callOnLocationChanged()
-                    }
+                    callOnLocationChanged()
                 } catch (_: InterruptedException) {
                     break
                 } catch (t: Throwable) {
