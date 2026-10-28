@@ -523,6 +523,8 @@ object BinderSensorMock {
                 } else 0L
                 val sleepMs = when {
                     !nextDueAvailable -> PUMP_FALLBACK_SLEEP_MS
+                    // 0 = 当前没有任何到点源，不是"现在就到点"；按已到点处理会退化成 1ms 自旋
+                    due == 0L -> PUMP_MAX_SLEEP_MS
                     due <= now -> PUMP_MIN_SLEEP_MS
                     else -> ((due - now) / 1_000_000L).coerceIn(PUMP_MIN_SLEEP_MS, PUMP_MAX_SLEEP_MS)
                 }
