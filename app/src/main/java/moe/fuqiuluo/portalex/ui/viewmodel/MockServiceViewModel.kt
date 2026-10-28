@@ -139,6 +139,27 @@ class MockServiceViewModel : ViewModel() {
      * 不会重新播放 —— 界面看起来就永远停在上一段的终点。这里把自动播放重新打开，
      * 顺带清掉上传/播放标记，让遥控循环下一拍按新路线重新走一遍。
      */
+    /**
+     * 新一轮会话（启动/重启模拟）：路线与播放标记全部作废。
+     *
+     * 语义（用户裁决）：暂停→继续保留进度；任何**路线切换**（含重启模拟、
+     * 重新点当前路线）都回到起点重放。
+     */
+    private fun onSessionStarted() {
+        routeUploaded = false
+        routePlayingPushed = false
+        lastPushedActive = false
+        lastPushedBearing = Double.NaN
+        routeSelectedAt = android.os.SystemClock.elapsedRealtime()
+        // 会话刚起来就把当前路线重新下发：模块侧会清进度，并在未播放时把位置对齐到起点
+        val lm = locationManager
+        if (lm != null && selectedRoute != null && pathPoints.size >= 2) {
+            val (lats, lons) = buildUpload()
+            routeUploaded = MockServiceHelper.setRoute(lm, lats, lons)
+        }
+        Log.i("MockServiceViewModel", "新一轮会话：路线进度已重置")
+    }
+
     fun startAutoPlayIfPossible(): Boolean {
         if (!::rocker.isInitialized) return false
         routeUploaded = false
@@ -292,6 +313,8 @@ class MockServiceViewModel : ViewModel() {
             field = value
             if (value != null) {
                 MockServiceHelper.tryInitService(value)
+                // 会话启停（启动/重启模拟）⇒ 路线进度作废，从头开始
+                MockServiceHelper.onSessionChanged = { started -> if (started) onSessionStarted() }
                 // 实验性开关跨重启恢复：服务握手成功后把当前偏好同步给系统侧。
                 // 启动恢复：开关 + 噪声档 + 体力参数 + 上报间隔一次下发（唯一出口，见 ConfigSync）
                 ConfigSync.restoreAfterHandshake(Portal.appContext, value)

@@ -172,6 +172,15 @@ object MockServiceHelper {
         return locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
     }
 
+    /**
+     * 会话启停回调（参数为 true 表示刚开始一轮新会话）。
+     *
+     * 路线播放进度只在“新一轮会话”时作废；单纯的暂停/继续不应清空 —— 那属于
+     * MockServiceViewModel 的状态机职责。
+     */
+    @Volatile
+    var onSessionChanged: ((Boolean) -> Unit)? = null
+
     fun tryOpenMock(
         locationManager: LocationManager,
         speed: Double,
@@ -194,7 +203,9 @@ object MockServiceHelper {
         // 保活只服务"无人值守的**收尾**"（播完的提示音/状态收回），由遥控循环按需起停
         // （见 MockServiceViewModel.syncBackgroundKeepAlive）：空闲占前台/持锁属于无谓耗电。
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
-            isMockStart(locationManager)
+            val started = isMockStart(locationManager)
+            if (started) onSessionChanged?.invoke(true)
+            started
         } else {
             false
         }
@@ -215,7 +226,9 @@ object MockServiceHelper {
             CameraMockLifecycle.stopForLocationMockOff(it)
         }
         if (locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
-            return !isMockStart(locationManager)
+            val stopped = !isMockStart(locationManager)
+            if (stopped) onSessionChanged?.invoke(false)
+            return stopped
         }
         return false
     }
