@@ -436,7 +436,7 @@ object BinderSensorMock {
         if (pumpThread != null) return
         synchronized(this) {
             if (pumpThread != null) return
-            if (!SystemRuntimeChannel.startDelivery()) return
+            // 先起泵：载体可能因开机时序暂时不可用，泵线程会在循环里重试 [SystemRuntimeChannel.ensureDelivery]。
             pumpThread = Thread({ pumpLoop() }, "PortalSensorPump").apply {
                 isDaemon = true
                 start()
@@ -459,6 +459,11 @@ object BinderSensorMock {
         try {
             while (!Thread.currentThread().isInterrupted) {
                 if (!FakeLoc.anySensorMockEnabled || !FakeLoc.enable || !nativeReady) return
+                if (!SystemRuntimeChannel.ensureDelivery()) {
+                    // 载体还没就绪（开机时序）：保持泵存活并退避重试，而不是让整个功能静默缺失
+                    synchronized(pumpLock) { pumpLock.wait(100L) }
+                    continue
+                }
                 val now = SystemClock.elapsedRealtimeNanos()
                 // 状态必须先于取帧：泵的每次唤醒就是"世界状态推进"的事件源
                 beforePump(now)

@@ -491,6 +491,16 @@ internal object SystemRuntimeChannel {
         }.getOrDefault(false)
     }
 
+    /**
+     * 幂等启动：载体可能因为开机时序（`ptr-pending`）暂时不可用。
+     * 泵线程每轮用它重试，而不是"启动时失败就永远没有泵"。
+     */
+    fun ensureDelivery(): Boolean {
+        if (delivering) return true
+        if (ensureCarrier() == 0) return false
+        return startDelivery()
+    }
+
     /** 停投递并**立刻**把节拍交回 poll 路径（顺序不能反：先停泵再切时钟）。 */
     fun stopDelivery() {
         if (!delivering) return
