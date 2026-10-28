@@ -252,6 +252,14 @@ internal object BinderSensorNative {
     external fun enableRequests(): String
 
     /**
+     * 订阅集合自上次查询以来是否变化（native `enableDisable` 置位，读取即清）。
+     *
+     * 用途：替代"每 2s dump 一次 sensorservice"的轮询。旧 .so 没有这个符号时调用会抛
+     * `UnsatisfiedLinkError`，调用方必须 runCatching 并退回周期 dump。
+     */
+    external fun takeSubscriptionDirty(): Boolean
+
+    /**
      * 「按应用期望出数据」：把框架观测到的**采用速率**与**活跃状态**灌进栅格通道。
      *
      * 真机模型：HAL 按所有请求里最快那个（框架 dump 的 `selected`）出力，框架把每条事件
