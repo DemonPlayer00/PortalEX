@@ -554,61 +554,58 @@ class CalibrationFragment : Fragment() {
     /** 无定位权限/无定位时系统给的占位 BSSID：不应该被写进配置 */
     private val PLACEHOLDER_BSSID = "02:00:00:00:00:00"
 
-    private fun autoFillWifi() {
-        val ctx = requireContext()
-        // Android 9+：Wi-Fi 扫描结果与 SSID 都受**定位开关**约束。
-        // 定位没开时 scanResults 恒为空、SSID 恒为 <unknown ssid>、BSSID 是 02:00:… 占位，
-        // 直接采会写出 "|02:00:00:00:00:00" 这种畸形条目 —— 所以先拦一道。
+    /**
+     * 采集 Wi-Fi 列表：窗口与传感器采集相同（SensorNoiseCalibrator.DURATION_MS），
+     * 由调用方以 async 启动，因此两者同时开始、同时结束。
+     * 纯采集，不写偏好、不弹提示 —— 写入统一在 applyWifiEntries 里做。
+     */
+    private fun collectWifiEntries(ctx: android.content.Context): List<String> {
         val locationOn = runCatching {
             (ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager).isLocationEnabled
         }.getOrDefault(false)
-        if (!locationOn) {
-            showToast("定位未开启：Wi-Fi 扫描与 SSID 不可见，请先打开定位再校准")
-            return
-        }
+        if (!locationOn) return emptyList()
+        val entries = LinkedHashSet<String>()
         runCatching {
             val wm = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
             @Suppress("DEPRECATION")
             val info = wm.connectionInfo
-            val entries = LinkedHashSet<String>()
             val ssid = info?.ssid?.trim('"').orEmpty().takeIf { it != "<unknown ssid>" }.orEmpty()
             val bssid = info?.bssid.orEmpty().takeIf { it != PLACEHOLDER_BSSID }.orEmpty()
-            if (ssid.isNotBlank() || bssid.isNotBlank()) entries += "$ssid|$bssid"
-            // 扫描是**异步**的：startScan 立刻返回，结果要等系统回调/下次读取。
-            // 旧实现在同一个瞬间就读 scanResults，几乎必然是空的（只能拿到"当前连接"那一条）。
+            if (ssid.isNotBlank() || bssid.isNotBlank()) entries += ssid + "|" + bssid
             runCatching { wm.startScan() }
-            var scans: List<android.net.wifi.ScanResult> = emptyList()
-            val deadline = System.currentTimeMillis() + 8_000L
+            val deadline = System.currentTimeMillis() + SensorNoiseCalibrator.DURATION_MS
             while (System.currentTimeMillis() < deadline) {
                 @Suppress("DEPRECATION", "MissingPermission")
-                scans = runCatching { wm.scanResults }.getOrNull().orEmpty()
-                if (scans.isNotEmpty()) break
+                val scans = runCatching { wm.scanResults }.getOrNull().orEmpty()
+                if (scans.isNotEmpty()) {
+                    scans.take(16).forEach { ap ->
+                        val s = ap.SSID.orEmpty()
+                        val b = ap.BSSID.orEmpty()
+                        if (b == PLACEHOLDER_BSSID) return@forEach
+                        if (s.isNotBlank() && s != "<unknown ssid>") entries += s + "|" + b
+                        else if (b.isNotBlank()) entries += s + "|" + b
+                    }
+                    break
+                }
                 Thread.sleep(300)
             }
-            scans.take(16).forEach { ap ->
-                val s = ap.SSID.orEmpty()
-                val b = ap.BSSID.orEmpty()
-                if (b == PLACEHOLDER_BSSID) return@forEach
-                if (s.isNotBlank() && s != "<unknown ssid>") entries += "$s|$b"
-                else if (b.isNotBlank()) entries += "$s|$b"
-            }
-            if (entries.isEmpty()) {
-                showToast(getString(R.string.calibration_auto_no_wifi))
-                return
-            }
-            // 只有一条且扫描为空：多半是定位没开（Wi-Fi 扫描/SSID 都依赖定位权限与开关）
-            if (scans.isEmpty() && entries.size <= 1) {
-                showToast("只拿到当前连接：附近扫描需要定位已开启（Wi-Fi 扫描依赖定位权限）")
-            }
-            val list = entries.toList()
-            ctx.wifiEntries = list
-            val first = list.first().split("|", limit = 2)
-            val v1 = first.getOrNull(0).orEmpty()
-            val v2 = first.getOrNull(1).orEmpty()
-            ctx.sharedPrefs.edit().putString("sim_wifi_v1", v1).putString("sim_wifi_v2", v2).apply()
-            sendSim("wifi", v1, v2, list)
-            showToast(getString(R.string.calibration_wifi_collected, list.size))
-        }.onFailure { showToast(it.message ?: "Wi-Fi") }
+        }
+        return entries.toList()
+    }
+
+    /** 把采集到的 Wi-Fi 列表写入配置并下发；空列表 = 不覆盖旧值，只提示原因。 */
+    private fun applyWifiEntries(ctx: android.content.Context, list: List<String>) {
+        if (list.isEmpty()) {
+            showToast("未采集到 Wi-Fi：请确认定位已开启（Wi-Fi 扫描与 SSID 都依赖定位）")
+            return
+        }
+        ctx.wifiEntries = list
+        val first = list.first().split("|", limit = 2)
+        val v1 = first.getOrNull(0).orEmpty()
+        val v2 = first.getOrNull(1).orEmpty()
+        ctx.sharedPrefs.edit().putString("sim_wifi_v1", v1).putString("sim_wifi_v2", v2).apply()
+        sendSim("wifi", v1, v2, list)
+        showToast(getString(R.string.calibration_wifi_collected, list.size))
     }
 
     private fun sendSim(kind: String, v1: String, v2: String, list: List<String>? = null) {
@@ -705,6 +702,10 @@ class CalibrationFragment : Fragment() {
                         )
                     }
             } else null
+            // Wi-Fi 列表采集与传感器采集**同时开始**：窗口同为 DURATION_MS（8 秒）
+            val wifiDeferred = if (doBaseband) async(Dispatchers.IO) {
+                runCatching { collectWifiEntries(ctx) }.getOrDefault(emptyList())
+            } else null
             val result = if (doSensor) withContext(Dispatchers.IO) {
                 runCatching {
                     SensorNoiseCalibrator.collect(
@@ -750,11 +751,9 @@ class CalibrationFragment : Fragment() {
                 locationDeferred?.let { applyLocationAccuracy(ctx, it.await()) }
             }
             if (doBaseband) {
-                // 扫描结果需要等待广播/轮询，放到 IO 线程，避免阻塞主线程
-                withContext(Dispatchers.IO) {
-                    autoFillCell()
-                    autoFillWifi()
-                }
+                // 小区信息读取很快；Wi-Fi 已在上面与传感器同时开始采集，这里只等结果并写入
+                withContext(Dispatchers.IO) { autoFillCell() }
+                applyWifiEntries(ctx, wifiDeferred?.await().orEmpty())
             }
         }
     }
