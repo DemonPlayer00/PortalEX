@@ -363,6 +363,16 @@ var Context.cadenceMock: Boolean
         putBoolean(PortalProtocol.Pref.CADENCE_MOCK, value)
     }
 
+/**
+ * GNSS 模拟的**用户意图**（二类功能允许伪启动）。
+ *
+ * 开关状态以这里为准：模块此刻能不能真接管（路线模拟没开、注入层未就绪）由系统侧
+ * FeatureGate 决定，不该反过来把用户刚打开的开关弹回去。
+ */
+var Context.gnssMockIntent: Boolean
+    get() = sharedPrefs.getBoolean("gnss_mock_intent", false)
+    set(value) = sharedPrefs.edit { putBoolean("gnss_mock_intent", value) }
+
 var Context.orientationMock: Boolean
     get() = sharedPrefs.getBoolean(PortalProtocol.Pref.ORIENTATION_MOCK, true)
     set(value) = sharedPrefs.edit {
