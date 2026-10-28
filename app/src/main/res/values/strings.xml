@@ -126,7 +126,7 @@
     <string name="stamina_health_no_slowdown">Stamina health no slowdown</string>
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
-    <string name="calibration_hint">Adjust simulated sensor jitter. Tap Calibrate and keep the phone still.</string>
+    <string name="calibration_hint">Adjust simulated sensor jitter. Tap Calibrate to measure; movement only skips the sensor part, GPS and baseband are still measured.</string>
     <string name="calibration_run">Calibrate</string>
     <string name="calibration_reset">Restore defaults</string>
     <string name="calibration_satellite_count">Simulated satellites</string>

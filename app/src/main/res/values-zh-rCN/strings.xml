@@ -137,7 +137,7 @@
     <string name="stamina_health_no_slowdown">⚠ 疲劳时速度不低于跑动速度，疲劳等于没降速（把「疲劳时速度」调低）</string>
     <string name="menu_test">测试</string>
     <string name="menu_calibration">校准</string>
-    <string name="calibration_hint">在这里调整模拟传感器的抖动。可点“一键校准”自动测量；校准时请保持手机静止。</string>
+    <string name="calibration_hint">在这里调整模拟传感器的抖动。可点“一键校准”自动测量；检测到移动只会跳过传感器检测，GPS / 基带仍照常测量。</string>
     <string name="calibration_run">一键校准</string>
     <string name="calibration_reset">恢复默认</string>
     <string name="calibration_satellite_count">模拟卫星数</string>
