@@ -104,10 +104,10 @@ internal object SensorRateProbe {
         }
     }
 
-    /** 订阅集合变了（由框架侧钩子调用）：任何线程可调，只做一次原子写 + 唤醒监督线程 */
+    /** 订阅集合变了（由框架侧钩子调用）：任何线程可调，只做一次原子写 + 唤醒投递泵 */
     fun requestRefresh() {
         refreshRequestedNanos = android.os.SystemClock.elapsedRealtimeNanos()
-        BinderSensorMock.wakeSupervisor()
+        BinderSensorMock.wakePump()
     }
 
     /** 该不该重新取一次（监督线程每拍问一次；事件驱动为主，兜底周期为辅） */
