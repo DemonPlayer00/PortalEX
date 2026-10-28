@@ -77,6 +77,24 @@ var Context.mapUpdateInterval: Int
         putInt("mapUpdateInterval", value)
     }
 
+/**
+ * **多条目**：基站 "mcc/mnc|cid/tac"、Wi-Fi "ssid|bssid"，每行一条。
+ * 空 = 只用单条字段（[reportDuration] 那一套旧输入框）；非空时列表优先，首条为"当前连接"。
+ */
+var Context.cellEntries: List<String>
+    get() = sharedPrefs.getString("sim_cell_list", "").orEmpty()
+        .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    set(value) = sharedPrefs.edit {
+        putString("sim_cell_list", value.joinToString("\n"))
+    }
+
+var Context.wifiEntries: List<String>
+    get() = sharedPrefs.getString("sim_wifi_list", "").orEmpty()
+        .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    set(value) = sharedPrefs.edit {
+        putString("sim_wifi_list", value.joinToString("\n"))
+    }
+
 var Context.minSatelliteCount: Int
     get() = sharedPrefs.getInt("minSatelliteCount", 12)
     set(value) = sharedPrefs.edit {

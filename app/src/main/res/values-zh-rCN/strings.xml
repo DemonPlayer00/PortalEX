@@ -337,6 +337,10 @@
     <string name="calibration_auto_wifi">Wi-Fi</string>
     <string name="calibration_auto_done">已自动填入</string>
     <string name="calibration_auto_no_fix">没有最近 GPS 定位</string>
+    <string name="baseband_collected_summary">已收集 %1$d 个小区 / %2$d 个 Wi-Fi（长按开关可清空）</string>
+    <string name="baseband_collection_cleared">已清空收集列表，改用手填的单条配置</string>
+    <string name="calibration_cell_collected">已收集 %d 个小区</string>
+    <string name="calibration_wifi_collected">已收集 %d 个 Wi-Fi</string>
     <string name="calibration_auto_no_cell">没有可用 CellInfo</string>
     <string name="calibration_auto_no_wifi">未连接 Wi-Fi</string>
     <string name="calibration_group_sensor">传感器</string>
