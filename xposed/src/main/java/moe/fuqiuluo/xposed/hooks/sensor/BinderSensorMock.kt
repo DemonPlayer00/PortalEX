@@ -162,10 +162,7 @@ object BinderSensorMock {
             Logger.info("BinderSensorMock: 开关已开但会话未启动 —— 不装载（等会话启动）")
             return true
         }
-        val ok = load()
-        // 刚改完配置：先推一次状态，避免第一批事件仍按旧速度/朝向生成
-        if (ok) beforePump(SystemClock.elapsedRealtimeNanos())
-        return ok
+        return load()
     }
 
     /**
@@ -204,7 +201,7 @@ object BinderSensorMock {
         // 会话启停都要叫醒泵：开启 ⇒ 立刻开始推流；停止 ⇒ 醒来收尾
         wakePump()
         if (FakeLoc.anySensorMockEnabled && FakeLoc.enable) {
-            if (load()) beforePump(SystemClock.elapsedRealtimeNanos())
+            load()
         } else {
             // 会话停止（或两侧开关都关）：收尾并停泵；下次会话重新装载/复用
             deactivate()
@@ -499,11 +496,12 @@ object BinderSensorMock {
     }
 
     /**
-     * 状态推进：由**取帧需求**驱动（投递泵每轮调用一次），不再有独立监督线程。
-     * 生命周期入口（[onSimulationChanged] / [onConfigChanged]）也会主动调一次，
-     * 保证"刚开会话/刚改配置、但还没有帧要出"时原生世界拿到的是新状态。
+     * 状态推进：**只由投递泵线程调用**（单写者），会话/配置入口只负责装载与叫醒泵。
+     *
+     * 刻意不加锁：旧版监督线程是唯一写者；移除线程后泵是唯一写者，生命周期线程不再
+     * 直接推进状态。这样 `pushHints()`（sensor service dump，binder 调用）不会在持有
+     * BinderSensorMock 监视器时执行，避免与等这把锁的 binder 线程形成跨线程等待。
      */
-    @Synchronized
     private fun beforePump(now: Long) {
         val dt = if (lastTickNanos == 0L) 0.0 else (now - lastTickNanos) / 1e9
         lastTickNanos = now
