@@ -90,7 +90,10 @@ object PortalLocationClient {
             accuracy = sp.getFloat("accuracy", 0f),
             provider = sp.getString("provider", "cache").orEmpty(),
             timeMillis = sp.getLong("time", 0L),
-            elapsedRealtimeNanos = sp.getLong("elapsed", 0L),
+            // 缓存只用于"先把点画出来"。它可能来自上一次开机，elapsedRealtimeNanos 与
+            // 本次开机不可比（重启后 uptime 归零）——拿它参与 deliver() 的"新帧是否更旧"
+            // 判断，会把重启后收到的**所有**帧都当成旧帧丢掉，表现就是点永远停在缓存位置。
+            elapsedRealtimeNanos = 0L,
         )
     }.getOrNull()
 
@@ -286,7 +289,11 @@ object PortalLocationClient {
         // 逐帧落盘（仅在调试日志打开时；见 FrameRecorder）：配速尖峰一类问题只能靠
         // "逐帧时间序列"定位，而这份序列必须来自客户端真正收到的那一份帧
         FrameRecorder.record(fix)
-        Log.i(TAG, "fix provider=" + fix.provider + " " + fix.lat + "," + fix.lon)
+        // 每 50 帧留一行：既能在日志里确认"帧还在来"，又不会把 logcat 刷满
+        if (frameCount % 50L == 1L) {
+            Log.i(TAG, "fix provider=" + fix.provider + " " + fix.lat + "," + fix.lon +
+                " frames=" + frameCount)
+        }
         // 回调在主线程（Looper.getMainLooper()），订阅者直接改 UI/地图
         subscribers.values.toList().forEach { it(fix) }
     }
