@@ -73,7 +73,10 @@ import com.baidu.mapapi.search.sug.SuggestionSearch
 import com.baidu.mapapi.search.sug.SuggestionSearchOption
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.navigation.NavigationView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.android.permission.RequestPermissions
 import moe.fuqiuluo.portalex.android.widget.FabBarView
 import moe.fuqiuluo.portalex.android.window.OverlayUtils
@@ -109,6 +112,7 @@ class MainActivity : AppCompatActivity() {
     private var mSuggestionSearch: SuggestionSearch? = null
     private val baiduMapViewModel by viewModels<BaiduMapViewModel>()
     private val mockServiceViewModel by viewModels<MockServiceViewModel>()
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private fun getRequiredPermissions(): MutableSet<String> {
         val permissions = mutableSetOf(
@@ -291,11 +295,15 @@ class MainActivity : AppCompatActivity() {
                         R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass
                     )
                 )
-                binding.navGuideRail.active = moe.fuqiuluo.xposed.utils.FakeLoc.enable
+                refreshGuideRail()
                 drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
                     override fun onDrawerOpened(drawerView: android.view.View) {
-                        binding.navGuideRail.active = moe.fuqiuluo.xposed.utils.FakeLoc.enable
-                        binding.navGuideRail.invalidate()
+                        refreshGuideRail()
+                        startGuideRailPolling()
+                    }
+
+                    override fun onDrawerClosed(drawerView: android.view.View) {
+                        stopGuideRailPolling()
                     }
                 })
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
@@ -391,6 +399,41 @@ class MainActivity : AppCompatActivity() {
      * 定位方式：按**标题**匹配（presenter 的 adapter 里额外占了一个 header 槽位，
      * 按下标推算错一位就会把线画到上一项上 —— 实测踩过）。
      */
+    /**
+     * 引导线颜色只反映**系统侧**的真实激活状态：
+     * 用 is_start 命令回读（MockServiceHelper.isMockStart），
+     * 不看 App 自己的任何开关镜像 —— 状态切换不在这里实现。
+     */
+    private fun refreshGuideRail() {
+        val lm = mockServiceViewModel.locationManager
+        if (lm == null) {
+            binding.navGuideRail.active = false
+            return
+        }
+        lifecycleScope.launch {
+            val active = withContext(Dispatchers.IO) {
+                runCatching { MockServiceHelper.isMockStart(lm) }.getOrDefault(false)
+            }
+            binding.navGuideRail.active = active
+        }
+    }
+
+    private val guideRailPoller = object : Runnable {
+        override fun run() {
+            refreshGuideRail()
+            uiHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun startGuideRailPolling() {
+        uiHandler.removeCallbacks(guideRailPoller)
+        uiHandler.postDelayed(guideRailPoller, 1000L)
+    }
+
+    private fun stopGuideRailPolling() {
+        uiHandler.removeCallbacks(guideRailPoller)
+    }
+
     private fun attachDrawerGroupDivider(navView: NavigationView, itemId: Int) {
         val title = navView.menu.findItem(itemId)?.title ?: return
         val menuView = (0 until navView.childCount)
