@@ -56,6 +56,8 @@ object MotionClock {
      */
     private const val IDLE_RECHECK_MS = 5_000L
 
+    // 读方是任意 binder/诊断线程（elapsedSinceBeatNanos），写方是时钟线程
+    @Volatile
     private var lastBeatNanos = 0L
     private var lastDeliverNanos = 0L
 
@@ -131,14 +133,21 @@ object MotionClock {
      *    空闲时的稳态开销从 0.33% 单核降到 ~0；
      *  · 有意图（摇杆按住 / 路线在播）→ 50ms 一拍推进世界并投递。
      *
+     * **绝对截止时刻**：每拍以"上一次截止 + 50ms"为准，而不是"干完活再睡 50ms"。
+     * 后者的实际周期是 50ms + 本拍耗时（交付可达 5~6ms），于是 dt 与出帧节拍都带着
+     * 这段系统性漂移；前者把周期误差压到调度器精度。单拍超时（GC/交付阻塞）时从
+     * 当前时刻重新对齐，宁可少拍也不补拍 —— 补拍会在应用侧变成一串配速尖峰。
+     *
      * 停摆期间**体力照旧要回**：恢复是连续过程，所以醒来时用
      * [StaminaRuntime.reconcileNow] 把停摆这段一次性补上（读取路径也会补，见 writeStatus）。
      */
     private fun loop() {
+        var nextBeatMs = 0L
         try {
             while (!Thread.currentThread().isInterrupted) {
                 if (!FakeLoc.enable) {
                     lastBeatNanos = 0L
+                    nextBeatMs = 0L
                     if (!park()) return
                     // 醒来（多半是 start 命令）：先把停摆这段的空闲恢复补上，再决定下一步
                     StaminaRuntime.reconcileNow()
@@ -147,12 +156,22 @@ object MotionClock {
                 if (MotionEngine.mode() == MotionEngine.Mode.IDLE) {
                     StaminaRuntime.reconcileNow()
                     lastBeatNanos = 0L
+                    nextBeatMs = 0L
                     if (!park()) return
                     StaminaRuntime.reconcileNow()
                     continue
                 }
-                Thread.sleep(BEAT_MS)
+                val now = SystemClock.elapsedRealtime()
+                // 刚醒、或停摆太久：从当前时刻重新起拍，不补拍
+                if (nextBeatMs == 0L || now - nextBeatMs > BEAT_MS * 4) {
+                    nextBeatMs = now + BEAT_MS
+                }
+                val wait = nextBeatMs - now
+                if (wait > 0) Thread.sleep(wait)
                 beat()
+                nextBeatMs += BEAT_MS
+                val after = SystemClock.elapsedRealtime()
+                if (nextBeatMs <= after) nextBeatMs = after + BEAT_MS
             }
         } catch (_: InterruptedException) {
             // 正常停止路径（stop 会 interrupt）
