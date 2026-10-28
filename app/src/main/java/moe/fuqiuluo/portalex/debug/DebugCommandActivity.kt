@@ -2,6 +2,8 @@ package moe.fuqiuluo.portalex.debug
 
 import android.app.Activity
 import android.content.Context
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -44,6 +46,7 @@ class DebugCommandActivity : Activity() {
                 "route" -> routeTest()
                 "point" -> pointTest()
                 "rocker" -> rockerTest()
+                "apis" -> apiTest()
                 "help" -> HELP
                 else -> status()
             }
@@ -219,6 +222,102 @@ class DebugCommandActivity : Activity() {
         val after = MockServiceHelper.getLocation(lm)
         MockServiceHelper.setRocker(lm, false, bearing)
         return "started=$started setRocker=$ok bearing=$bearing before=$before after=$after"
+    }
+
+    /**
+     * 各类系统定位 API 的并列测试：看哪条路径能拿到（模拟）位置。
+     * 覆盖：getLastKnownLocation / requestLocationUpdates（多 provider）/ requestSingleUpdate /
+     * getCurrentLocation（API 30+）/ FusedLocationProviderClient（Play Services）。
+     */
+    private fun apiTest(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val out = StringBuilder("=== location apis ===\n")
+        out.appendLine("sdk=" + android.os.Build.VERSION.SDK_INT)
+        out.appendLine("mock_start=" + runCatching { MockServiceHelper.isMockStart(lm) }.getOrDefault(false))
+        out.appendLine("providers=" + runCatching { lm.allProviders }.getOrDefault(emptyList<Any>()))
+        val providers = buildList {
+            add(LocationManager.GPS_PROVIDER)
+            add(LocationManager.NETWORK_PROVIDER)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                add(LocationManager.FUSED_PROVIDER)
+            }
+            add(LocationManager.PASSIVE_PROVIDER)
+        }
+        providers.forEach { p ->
+            out.appendLine("enabled[" + p + "]=" + runCatching { lm.isProviderEnabled(p) }.getOrDefault(false))
+            out.appendLine("lastKnown[" + p + "]=" + runCatching { lm.getLastKnownLocation(p) }
+                .getOrNull()?.let { it.latitude.toString() + "," + it.longitude })
+        }
+
+        val counts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+        fun bump(key: String) { counts[key] = (counts[key] ?: 0) + 1 }
+        val multiListener = object : LocationListener {
+            override fun onLocationChanged(location: Location) { bump("multi") }
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("平台已废弃") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        providers.forEach { p ->
+            val ok = runCatching {
+                lm.requestLocationUpdates(p, 200L, 0f, multiListener, android.os.Looper.getMainLooper())
+            }.isSuccess
+            out.appendLine("requestUpdates[" + p + "]=" + ok)
+        }
+
+        val singleListener = object : LocationListener {
+            override fun onLocationChanged(location: Location) { bump("single") }
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("平台已废弃") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        val singleOk = runCatching {
+            lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, singleListener, android.os.Looper.getMainLooper())
+        }.isSuccess
+        out.appendLine("requestSingleUpdate[gps]=" + singleOk)
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val currentOk = runCatching {
+                lm.getCurrentLocation(LocationManager.GPS_PROVIDER, null,
+                    java.util.concurrent.Executors.newSingleThreadExecutor()) { location ->
+                    if (location != null) bump("getCurrentLocation")
+                }
+            }.isSuccess
+            out.appendLine("getCurrentLocation[gps]=" + currentOk)
+        }
+
+        val fused = runCatching {
+            com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(this)
+        }.getOrNull()
+        if (fused != null) {
+            runCatching {
+                fused.lastLocation.addOnSuccessListener { location ->
+                    out.appendLine("fused.lastLocation=" + (location?.let { it.latitude.toString() + "," + it.longitude }))
+                }
+            }
+            runCatching {
+                fused.requestLocationUpdates(
+                    com.google.android.gms.location.LocationRequest.create()
+                        .setInterval(200L).setPriority(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY),
+                    object : com.google.android.gms.location.LocationCallback() {
+                        override fun onLocationResult(result: com.google.android.gms.location.LocationResult) {
+                            if (result.lastLocation != null) bump("fused")
+                        }
+                    },
+                    android.os.Looper.getMainLooper()
+                )
+            }
+        } else {
+            out.appendLine("fused_client=null")
+        }
+
+        Thread.sleep(4000)
+        runCatching { lm.removeUpdates(multiListener) }
+        runCatching { lm.removeUpdates(singleListener) }
+        runCatching { fused?.removeLocationUpdates(object : com.google.android.gms.location.LocationCallback() {}) }
+        out.appendLine("callbacks=" + counts)
+        return out.toString()
     }
 
     private fun routeTest(): String {
