@@ -160,7 +160,9 @@ class CalibrationFragment : Fragment() {
                 }
             },
             Item(getString(R.string.calibration_speed_amplitude), getString(R.string.calibration_speed_amplitude_desc)) {
-                editScalar("速度波动", ctx.speedAmplitude, 0.0, 100.0) { v ->
+                editMeasured("速度波动", ctx.speedAmplitude, 0.0, 100.0,
+                    measure = { locResult().speedSigma?.toDouble() }
+                ) { v ->
                     ctx.speedAmplitude = v
                 }
             },
@@ -196,7 +198,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_gps_accuracy),
             getString(R.string.calibration_gps_accuracy_desc),
         ) {
-            editScalar("GPS 定位精度", ctx.gpsAccuracyMeasured.toDouble(), 0.0, 1000.0) { v ->
+            editMeasured("GPS 定位精度", ctx.gpsAccuracyMeasured.toDouble(), 0.0, 1000.0,
+                measure = { locResult().gpsAccuracyMeters?.toDouble() }
+            ) { v ->
                 ctx.gpsAccuracyMeasured = v.toFloat()
                 ctx.accuracy = v.toFloat()
             }
@@ -254,7 +258,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_max_cn0),
             getString(R.string.calibration_max_cn0_desc),
         ) {
-            editScalar("最大 C/N0", ctx.maxCn0Measured.toDouble(), 0.0, 100.0) { v ->
+            editMeasured("最大 C/N0", ctx.maxCn0Measured.toDouble(), 0.0, 100.0,
+                measure = { locResult().maxCn0?.toDouble() }
+            ) { v ->
                 ctx.maxCn0Measured = v.toFloat()
             }
         }
@@ -262,7 +268,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_mean_cn0),
             getString(R.string.calibration_mean_cn0_desc),
         ) {
-            editScalar("平均 C/N0", ctx.meanCn0Measured.toDouble(), 0.0, 100.0) { v ->
+            editMeasured("平均 C/N0", ctx.meanCn0Measured.toDouble(), 0.0, 100.0,
+                measure = { locResult().meanCn0?.toDouble() }
+            ) { v ->
                 ctx.meanCn0Measured = v.toFloat()
             }
         }
@@ -433,13 +441,19 @@ class CalibrationFragment : Fragment() {
 
     private fun editSatellite(ctx: android.content.Context) {
         val currentCount = ctx.satellitesMeasured.takeIf { it > 0f } ?: ctx.minSatelliteCount.toFloat()
-        showInputDialog("模拟卫星数", "%.0f".format(currentCount)) { countText ->
+        showInputDialog(
+            "模拟卫星数", "%.0f".format(currentCount),
+            measure = { locResult().satellites?.let { "%.0f".format(it) } }
+        ) { countText ->
             val count = countText.toIntOrNull()
             if (count == null || count < 0 || count > FakeLoc.MAX_SATELLITES) {
                 showToast("请输入 0 ~ ${FakeLoc.MAX_SATELLITES} 之间的卫星数")
                 return@showInputDialog
             }
-            showInputDialog("卫星数波动", "%.1f".format(ctx.satelliteJitter)) { jitterText ->
+            showInputDialog(
+                "卫星数波动", "%.1f".format(ctx.satelliteJitter),
+                measure = { locResult().satellitesJitter?.let { "%.1f".format(it) } }
+            ) { jitterText ->
                 val jitter = jitterText.toDoubleOrNull()
                 if (jitter == null || jitter < 0.0 || jitter > FakeLoc.MAX_SATELLITES.toDouble()) {
                     showToast("请输入 0 ~ ${FakeLoc.MAX_SATELLITES} 之间的波动值")
@@ -514,10 +528,31 @@ class CalibrationFragment : Fragment() {
         }
     }
 
+    /** 传感器噪声测量结果的短时缓存（每次 8 秒，对话框里点多次不必重复等） */
+    private var cachedNoise: Pair<Long, SensorNoiseCalibrator.Result>? = null
+
+    private suspend fun noiseResult(force: Boolean = false): SensorNoiseCalibrator.Result {
+        val now = System.currentTimeMillis()
+        cachedNoise?.let { (at, r) -> if (!force && now - at < 60_000L) return r }
+        val base = requireContext().sensorNoise
+        val fresh = withContext(Dispatchers.IO) {
+            runCatching { SensorNoiseCalibrator.collect(requireContext(), base) }.getOrElse {
+                SensorNoiseCalibrator.Result(base, "", false, "采集异常：" + it.message)
+            }
+        }
+        cachedNoise = now to fresh
+        return fresh
+    }
     private fun editRow(index: Int) {
         val item = SensorNoise.ITEMS[index]
         val current = requireContext().sensorNoise
-        showInputDialog(item.title, SensorNoise.formatItem(item, current)) { text ->
+        showInputDialog(
+            item.title, SensorNoise.formatItem(item, current),
+            measure = {
+                val r = noiseResult()
+                if (!r.ok) null else SensorNoise.formatItem(item, r.values)
+            }
+        ) { text ->
             val parsed = SensorNoise.parseItem(item, text).getOrElse {
                 showToast(it.message ?: "输入不合法")
                 return@showInputDialog
