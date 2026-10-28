@@ -61,6 +61,13 @@ object MotionClock {
 
     val isRunning: Boolean get() = thread != null
 
+    /** 距上一次推进（拍）过去了多少纳秒；供"立即取位"按时间采样。 */
+    fun elapsedSinceBeatNanos(): Long {
+        val last = lastBeatNanos
+        if (last == 0L) return 0L
+        return (SystemClock.elapsedRealtimeNanos() - last).coerceAtLeast(0L)
+    }
+
     /** 会话启动（`start` 命令）：起拍。幂等 */
     fun start() {
         if (!FakeLoc.isSystemServerProcess) return

@@ -296,7 +296,12 @@ object RemoteCommandHandler {
                 // 路线数据（展开后的播放路径点）：App 只上传，不推进
                 val lat = rely.getDoubleArray(Key.ROUTE_LAT)
                 val lon = rely.getDoubleArray(Key.ROUTE_LON)
-                val points = MotionEngine.setRoute(lat, lon)
+                // 平滑标志（每段一个）：有它就在系统侧展开贝塞尔，App 只传端点
+                val smooth = rely.getBooleanArray(Key.ROUTE_SMOOTH)
+                val points = MotionEngine.setRoute(lat, lon, smooth)
+                if (smooth != null) {
+                    Logger.info("路线已展开（系统侧）：端点=" + (lat?.size ?: 0) + " 采样点=" + points)
+                }
                 // 上传后播放一定是关的（setRoute 会清 playing）：此时把位置对齐到新路线起点，
                 // 否则界面还停在上一段播放的终点，看起来像"选了路线没生效"。
                 if (points >= 2 && !MotionEngine.status().playing) {

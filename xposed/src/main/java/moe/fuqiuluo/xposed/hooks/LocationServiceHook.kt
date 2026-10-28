@@ -25,6 +25,8 @@ import moe.fuqiuluo.xposed.hooks.nmea.LocationNMEAHook
 import moe.fuqiuluo.xposed.hooks.provider.LocationProviderManagerHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.LocConfig
+import moe.fuqiuluo.xposed.utils.MotionEngine
+import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import moe.fuqiuluo.xposed.utils.FeatureGate
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.BinderUtils
@@ -1092,7 +1094,21 @@ internal object LocationServiceHook: BaseLocationHook() {
                     Logger.debug("onLocation(getCurrentLocation): injected!")
                 }
 
-                args[0] = injectLocation(location)
+                // 一次性取位：**按调用时刻现算**，而不是回放上一帧。
+                // 时间基准取模块时钟的上一次推进（拍 50ms），因此频率再高也不会拿到旧点。
+                val fresh = MotionEngine.positionAhead(
+                    MotionClock.elapsedSinceBeatNanos() / 1e9,
+                    FakeLoc.speed,
+                    StaminaRuntime.multiplier(),
+                )
+                val injected = injectLocation(location)
+                if (fresh.moved) {
+                    injected.latitude = fresh.lat
+                    injected.longitude = fresh.lon
+                    injected.elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                    fresh.bearing?.let { injected.bearing = it.toFloat() }
+                }
+                args[0] = injected
             })
             oneShotCallbacks.removeIf { it.callback.asBinder() == callback.asBinder() }
             oneShotCallbacks.add(OneShotCallback(callback, SystemClock.elapsedRealtimeNanos()))

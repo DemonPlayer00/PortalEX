@@ -322,11 +322,18 @@ object MockServiceHelper {
      * 上传路线播放路径（`set_route`）：**展开后的采样点**（平滑段已由路线编辑器展开）。
      * 空的/少于 2 点视为清空路线。上传不启动播放（见 [setRoutePlaying]）。
      */
-    fun setRoute(locationManager: LocationManager, lats: DoubleArray, lons: DoubleArray): Boolean {
+    fun setRoute(
+        locationManager: LocationManager,
+        lats: DoubleArray,
+        lons: DoubleArray,
+        smooth: BooleanArray? = null,
+    ): Boolean {
         val rely = Bundle()
         rely.putString(Key.COMMAND_ID, Cmd.SET_ROUTE)
         rely.putDoubleArray(Key.ROUTE_LAT, lats)
         rely.putDoubleArray(Key.ROUTE_LON, lons)
+        // 平滑标志：给了就由系统侧展开贝塞尔（每段一个，长度 = 点数 - 1）
+        if (smooth != null) rely.putBooleanArray(Key.ROUTE_SMOOTH, smooth)
         return send(locationManager, rely)
     }
 

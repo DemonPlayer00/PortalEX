@@ -184,7 +184,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                         mockServiceViewModel.stopAutoPlay()
                         val lats = route.route.map { it.first }.toDoubleArray()
                         val lons = route.route.map { it.second }.toDoubleArray()
-                        if (MockServiceHelper.setRoute(lm, lats, lons)) {
+                        val smooth = BooleanArray(maxOf(0, route.route.size - 1)) { route.isSmooth(it) }
+                        if (MockServiceHelper.setRoute(lm, lats, lons, smooth)) {
                             Toast.makeText(requireContext(), "位置已更新到路线起点", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(requireContext(), "更新位置失败", Toast.LENGTH_SHORT).show()
