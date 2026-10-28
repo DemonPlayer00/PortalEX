@@ -274,6 +274,16 @@ object RemoteCommandHandler {
                 val lat = rely.getDoubleArray(Key.ROUTE_LAT)
                 val lon = rely.getDoubleArray(Key.ROUTE_LON)
                 val points = MotionEngine.setRoute(lat, lon)
+                // 上传后播放一定是关的（setRoute 会清 playing）：此时把位置对齐到新路线起点，
+                // 否则界面还停在上一段播放的终点，看起来像"选了路线没生效"。
+                if (points >= 2 && !MotionEngine.status().playing) {
+                    MotionEngine.routeStart()?.let { (a, o) ->
+                        updateCoordinate(a, o, updateBearing = false)
+                        if (FakeLoc.isSystemServerProcess) {
+                            LocationServiceHook.callOnLocationChanged(force = true)
+                        }
+                    }
+                }
                 // 单点路线不是"空路线"：清掉播放路径，但立刻把坐标落到该点。
                 // 页面点击历史坐标/单点路线时依赖这一步，否则 App 收到成功但地图不动。
                 if (points == 0 && lat?.size == 1 && lon?.size == 1 &&
