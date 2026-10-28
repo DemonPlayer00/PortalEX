@@ -175,18 +175,17 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
 
                 val lm = mockServiceViewModel.locationManager
                 if (lm != null && MockServiceHelper.isMockStart(lm)) {
-                    // 切换路线**不**自动开始播放：是否播放由用户按播放键决定。
-                    // 选中只负责把新路线下发下去（模块据此清进度、对齐起点）。
+                    // 切路线：先彻底退出自动播放，再无条件下发新路线。
+                    // 模块收到 set_route 会清零进度并把坐标对齐到起点；是否播放由播放键决定。
+                    // （旧实现按 isAutoPlaying 分支跳过下发，结果位置停在上一段终点。）
                     if (route.route.isEmpty()) {
                         Toast.makeText(requireContext(), "路线端点不足，无法定位", Toast.LENGTH_SHORT).show()
-                    } else if (mockServiceViewModel.isAutoPlaying) {
-                        // 自动播放中：交给遥控循环接管。这里若再下发 set_route + 停播，
-                        // 会把循环刚拉起的播放掐断，位置就停在**上一条路线的终点**不动了。
                     } else {
+                        mockServiceViewModel.stopAutoPlay()
                         val lats = route.route.map { it.first }.toDoubleArray()
                         val lons = route.route.map { it.second }.toDoubleArray()
                         if (MockServiceHelper.setRoute(lm, lats, lons)) {
-                            Toast.makeText(requireContext(), "位置更新成功", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(requireContext(), "位置已更新到路线起点", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(requireContext(), "更新位置失败", Toast.LENGTH_SHORT).show()
                         }
