@@ -1,0 +1,171 @@
+# 并发原语与性能：审计与优化方案
+
+> 口径沿用 [`perf-audit.md`](perf-audit.md)：**先量后改**。本文回答两个问题：
+> ① 现有并发原语里哪些是必要的、哪些是过度设计；② 在不改变交付语义的前提下，
+> 哪些改动真的能降 CPU / 降抖动。没有频率与量级依据的"优化"不列入实施项。
+
+## 0. 结论先行
+
+1. **原语数量不是问题，锁的持有范围才是。** 全仓 `@Volatile` 约 220 处、`synchronized` 约 105 处，
+   但 system_server 侧只有 3 条模块线程（`PortalMotionClock`、`PortalSensorSupervisor`、
+   `PortalSensorPump`）加若干 binder 回调线程。低竞争场景下，`synchronized` 的重量级路径
+   （偏向锁撤销后的一次 CAS）远比一次位置投递便宜。
+2. **当前最大的成本不在锁**。分段实测（`perf-audit.md` §6）显示：移动时每帧约 5~6 ms CPU，
+   其中"监听器循环"约 5.2 ms；推进、体力、落点合计不到 0.3 ms。**先去交付路径省钱，
+   再谈换锁。**
+3. **最值得改的三处**（按收益/风险排序）：
+   - `MotionClock` 的固定 `sleep(50ms)` 改成**绝对截止时刻**调度（消除累积漂移与配速尖峰，低风险）；
+   - `MotionEngine.setRoute` 把**路线展开/全长计算移出锁**（长路线时锁内可达毫秒级，会阻塞拍子，低风险）；
+   - `VirtualWorld` 的朝向/速度生成器改成**单写者 + 快照**（消除 `processedBearing()` 的跨线程
+     读改写竞争，中风险，收益是可观测的一致性）。
+4. **不建议**为了"减少原语数量"把 `@Volatile` 降级成普通字段，或把 `synchronized` 换成
+   `AtomicReference` 却仍在锁内做重活 —— 那只会把可见性问题变成偶发 bug。
+
+## 1. 线程与数据归属
+
+| 线程 | 频率 | 写什么 | 读什么 |
+|---|---|---|---|
+| `PortalMotionClock` | 50ms/拍，空闲停摆 | 世界坐标、`MotionEngine` 进度、体力 | 配置、路线、摇杆意图 |
+| `PortalSensorSupervisor` | 20Hz，空闲停摆 | 步数积分、传感器状态、`processedBearing()` 的摆动/微抖 | 世界坐标/速度、配置、朝向 |
+| `PortalSensorPump` | 事件驱动（`nextDueNs`） | 运行时传感器事件队列 | native 通道状态 |
+| binder 回调（多条） | 命令/查询时 | `LocConfig`、路线、会话开关、`randomKey` | 状态回读、门禁 |
+| 相机线程 | 仅相机模拟期间 | 帧/录制状态 | 选择器状态 |
+
+共享对象只有四个：`LocConfig`（配置）、`VirtualWorld`（世界 + 生成器）、`MotionEngine`（路线推进）、
+`NetworkSimConfig`/`StaminaRuntime`（低频配置）。**锁应围着"状态所有者"设计，而不是围着字段设计。**
+
+## 2. 现状逐项判定
+
+### 2.1 `MotionEngine`：16 处 `synchronized`，但不是热点
+
+- 所有入口共用一把 `lock`。锁内除了推进数学，还包括 `setRoute` 的
+  `computeTotalMeters()` + `ensureExpandedTo(0.0)`，以及 `beat()` 的按需展开
+  （`ensureExpandedTo` + `indexAt` 二分 + 插值）。
+- 实测推进本身 **58 µs/拍**（`perf-audit.md` §6.1），所以常规拍子的锁竞争可以忽略。
+- **真正的风险在长路线**：`setRoute` 在锁内做全长估算（平滑段按 16 点采样），
+  一条几十公里的路线可能达到毫秒级；这段时间 `beat()` 与 App 的 `get_motion` 都会等锁。
+  表现不是"慢"，而是**一次可观测的配速台阶**。
+- `status()` / `travelled()` / `takeCompleted()` 每次回读都进锁；App 4Hz + 命令回包，
+  频率低，不构成问题。
+
+**结论**：这里的目标不是"去锁"，而是"**锁内只做状态变更，不做几何展开**"。
+可选终态是单写者模型（见 §3.1），但收益主要是可推理性，不是 CPU。
+
+### 2.2 `VirtualWorld`：`@Volatile` 很多，但部分状态根本没被保护
+
+这是全仓**唯一一处既有性能形态问题、又有正确性风险**的地方：
+
+- 世界坐标/速度/朝向目标用 `@Volatile`，单字段读没问题；但**多字段一致性**没有保证
+  （一帧里可能读到新纬度 + 旧经度），目前靠"50ms 才变一次、误差在米级"兜着。
+- `processedBearing()` 对 `centerBearing` / `microOffset` / `lastBearingSampleNanos` 做
+  **读-改-写**，而它同时被位置投递线程（约 10Hz）与传感器监督线程（20Hz，经
+  `sampleBearingJitter()` 读 `microOffset`）调用；`advanceSway()` 还一次性改 5 个字段。
+  这是**数据竞争**（不是性能问题）：极端时序下会丢更新或让摆动相位跳变。
+- `speedFloorSample()` 的 `speedFloorSmoothed/Target/lastNanos` 是普通字段，无锁、无 volatile；
+  `speedOffsetSample()` 只锁了 `speedFastOffset`，`lastSpeedNoiseNanos`/`speedBiasFactor` 在锁外。
+- `moveSamples` 的锁是对的（`averageSpeedOverWindow` / `recordCoordinateChange` 都进
+  `synchronized(moveSamples)`），这里不用动。
+
+**结论**：把生成器状态**收敛到一个所有者**（建议：世界推进线程），其他线程只读快照；
+或退而求其次，给 `processedBearing()`/`speedFloorSample()` 加同一把私有锁。
+后者实现最小，代价是每帧一次无竞争锁（几十纳秒），相对 5ms 的交付成本可忽略。
+
+### 2.3 `LocConfig` / `NetworkSimConfig`：18 + 15 个 `@Volatile`
+
+- 读频率是"每帧 × 若干字段"，写频率是"用户改设置/握手"。
+- 单次 volatile 读在 ARM64 上就是一次 `ldar`，**不是**性能瓶颈；真正的问题是
+  **一次计算里读了配置的不同版本**（例如速度用了新值、体力倍率用了旧值）。
+- 若要做一致性，正确形态是**不可变配置快照 + `AtomicReference`**：写入方构造新对象，
+  读方每帧取一次引用。字段访问从 N 次 volatile 读变成 1 次；语义从"逐字段最新"
+  变成"每帧一致" —— 后者才是模拟器想要的。
+
+### 2.4 集合与命令通道
+
+- `RemoteCommandHandler.proxyBinders` 用 `Collections.synchronizedList`、
+  `warnedDeniedUids` 用 `Collections.synchronizedSet`：写入是"注册代理/首次拒绝"级别，
+  读多写少，`CopyOnWriteArrayList` / `ConcurrentHashMap.newKeySet()` 更合适，
+  但收益是代码意图清晰，不是吞吐。
+- `randomKey` 原先缺 `@Volatile`（写于 `exchange_key` 的 binder 线程、读于门禁线程），
+  已在本轮补上；这是**可见性 bug**，不是性能项。
+- `StepProbe` / `StepTickProbe`（App 侧）各有 11~12 处 `synchronized`，但只在诊断页
+  采样期间运行，不影响主路径。
+
+### 2.5 native `virtual_world.c`
+
+- 一把 `g_lock` 覆盖生成器、通道表、延迟队列；锁区间从几行到整段 `vw_generate` 不等。
+  目前没有锁竞争的实测证据（sensor poll 与运行时泵的节拍都受控）。
+- 若将来要拆：优先把**只读的世界快照**（坐标/朝向/速度）改成 seqlock 或双缓冲，
+  让 poll 出口不必拿世界锁；写侧仍单写者。**在拿到 `perf`/`simpleperf` 的 futex
+  等待数据前不做。**
+
+### 2.6 定时与唤醒
+
+- `MotionClock` / `SensorSupervisor` 已经做到"空闲停摆、意图唤醒"，这是正确的形态；
+  不要为了"统一"再引入 `ScheduledExecutorService`（多一条线程 + 队列）。
+- `MotionClock.loop()` 目前是 `Thread.sleep(BEAT_MS)` 后再算 `dt`。**每拍的实际周期 =
+  50ms + 本拍工作耗时**，于是 `dt` 在 50~56ms 之间漂移；`beat()` 按真实 `dt` 补位移，
+  位置是对的，但**出帧节拍**和体力结算会带着这段抖动。绝对截止时刻调度可以把
+  周期误差压到调度器精度（通常 <1ms），且不改变任何语义。
+
+## 3. 建议的实施顺序
+
+### P1（低风险，先做）
+
+1. **`MotionClock` 绝对截止时刻**
+   ```kotlin
+   var next = SystemClock.elapsedRealtime() + BEAT_MS
+   while (...) {
+       val wait = next - SystemClock.elapsedRealtime()
+       if (wait > 0) Thread.sleep(wait)
+       beat()
+       next += BEAT_MS
+       if (next < now) next = now + BEAT_MS   // 长暂停后不补拍，避免爆发
+   }
+   ```
+   验收：`dtMaxNanos`/`late300` 计数下降；配速曲线尖峰减少（用 Test 页的 `motion` 行）。
+2. **`MotionEngine.setRoute` 锁外展开**
+   - 在锁内只做参数校验与数组拷贝，把 `computeTotalMeters()` 与首段展开放到锁外，
+     用"版本号 + 二次检查"发布；或直接改成不可变 `Route` 对象整体替换。
+   - 验收：长路线（>10km，含平滑段）`setRoute` 期间的 `get_motion` 延迟不再出现毫秒级尖峰。
+3. **`proxyBinders` / `warnedDeniedUids` 换并发集合**（纯清理）。
+
+### P2（中风险，需要真机验证）
+
+4. **世界状态快照**
+   - 新增 `data class WorldFrame(lat, lon, alt, speed, bearing, atNanos)`；
+     `beat()` 末尾 `AtomicReference.set(frame)`；传感器/位置读取一次引用。
+   - `processedBearing()` / `advanceSway()` / `speedFloorSample()` 的状态收敛到
+     `MotionClock` 线程（或加私有锁作为过渡）。
+   - 验收：`processedBearing` 在位置帧与传感器事件上的差值连续；长时间跑动无相位跳变；
+     这段改动**不应**让 CPU 变差（用 `perf-audit` 同一窗口对比）。
+5. **配置快照**
+   - `LocConfig` 的 18 个字段打包成不可变 `Config`；setter 构造新对象并原子发布。
+   - 过渡期可保留 `FakeLoc.xxx` 门面，避免全仓改调用点。
+6. **交付路径（最大收益，但需用户裁决语义）**
+   - 事实：每帧 5~6ms CPU，随监听器数量线性增长；用户已裁决"投递保持同步"。
+   - 在不改同步语义的前提下可做：每拍只 `buildFrame()` 一次并复用（现在是否每监听器重建
+     需先量）、跳过已死亡/重复注册的监听器、缓存 `makeComplete` 的 Method（`perf-audit` P0 已做）。
+   - 若将来允许异步投递：有界队列 + 独立投递线程 + 慢客户端超时剔除；这会改变应用看到的
+     时序，**必须先问**。
+
+### P3（等数据）
+
+7. **native 世界锁拆分**：先跑 `simpleperf`/`perfetto` 看 `g_lock` 的 futex 等待；
+   没有数据不动。
+8. **JMH/host 基准**：给 `MotionEngine.beat`、`VirtualWorld` 的纯函数加微基准，
+   防止"优化"把 58µs 变成 80µs；host 侧已有 `xposed/src/main/cpp/test` 的框架可复用。
+
+## 4. 不该做的事
+
+- 不要把 `@Volatile` 当性能问题批量删除：可见性错误的代价是"偶发不生效"，比几纳秒贵得多。
+- 不要把 `synchronized` 换成 `AtomicReference` 却仍在 CAS 循环里做路线展开/几何计算。
+- 不要在 `MotionClock` 每拍里加新定时器、`Handler.postDelayed` 或 `Executors`；
+  现有"停摆 + 唤醒"已经是最低唤醒成本形态。
+- 不要为了"看起来并发"把单写者状态拆成多线程写；这个模块的正确性依赖"世界只有一个推进者"。
+
+## 5. 验收口径（沿用 perf-audit）
+
+- 线程 CPU：`/proc/<pid>/task/<tid>/stat` 的 utime+stime，30s 窗口；
+- 每拍分段：Test 页 `motion` 行的 `推进/体力/落点/投递` 与 `dtMax`/`late*`；
+- 交付：`监听器` 段的 CPU 时间（`Debug.threadCpuTimeNanos`），不是墙钟；
+- 行为：`sh scripts/test-all.sh` 全绿 + 真机 30 分钟跑动无位置断流/相位跳变。
