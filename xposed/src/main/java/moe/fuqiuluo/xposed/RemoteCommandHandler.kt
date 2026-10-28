@@ -446,6 +446,7 @@ object RemoteCommandHandler {
                 val altitude = rely.numberOr("altitude", FakeLoc.altitude)
                 val altitudeJitter = rely.numberOr("altitude_jitter", FakeLoc.altitudeJitter).coerceAtLeast(0.0)
                 val accuracy = rely.numberOr("accuracy", FakeLoc.accuracy.toDouble()).toFloat()
+                val accuracyJitter = rely.numberOr("accuracy_jitter", FakeLoc.accuracyJitter.toDouble()).toFloat()
                 val speedAmplitude = rely.numberOr("speed_amplitude", FakeLoc.speedAmplitude).coerceAtLeast(0.0)
                 val enableDebugLog = rely.getBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)
                 // 融合处置三态：新键优先；旧 App 只发布尔键 ⇒ 兜底映射（true=拒绝 / false=伪装）
@@ -495,6 +496,7 @@ object RemoteCommandHandler {
                 FakeLoc.altitude = altitude
                 FakeLoc.altitudeJitter = altitudeJitter
                 FakeLoc.accuracy = accuracy
+                FakeLoc.accuracyJitter = accuracyJitter.coerceAtLeast(0f)
                 FakeLoc.speedAmplitude = speedAmplitude
                 FakeLoc.enableDebugLog = enableDebugLog
                 FakeLoc.fusedMode = fusedMode

@@ -38,6 +38,7 @@ import moe.fuqiuluo.portalex.ext.maxCn0Measured
 import moe.fuqiuluo.portalex.ext.meanCn0Measured
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.satelliteJitter
+import moe.fuqiuluo.portalex.ext.accuracyJitter
 import moe.fuqiuluo.portalex.ext.cellEntries
 import moe.fuqiuluo.portalex.ext.gnssFlags
 import moe.fuqiuluo.portalex.ext.reportDuration
@@ -138,12 +139,23 @@ class CalibrationFragment : Fragment() {
         data class Item(val title: String, val desc: String, val action: () -> Unit)
         val items = listOf(
             Item(getString(R.string.accuracy), getString(R.string.calibration_accuracy_desc)) {
-                editScalar("定位精度", ctx.accuracy.toDouble(), 0.0, 1000.0) { v ->
+                editMeasured("定位精度", ctx.accuracy.toDouble(), 0.0, 1000.0,
+                    measure = { locResult().gpsAccuracyMeters?.toDouble() }
+                ) { v ->
                     ctx.accuracy = v.toFloat()
                 }
             },
+            Item(getString(R.string.calibration_accuracy_jitter), getString(R.string.calibration_accuracy_jitter_desc)) {
+                editMeasured("精度波动", ctx.accuracyJitter.toDouble(), 0.0, 100.0,
+                    measure = { locResult().accuracySigma?.toDouble() }
+                ) { v ->
+                    ctx.accuracyJitter = v.toFloat()
+                }
+            },
             Item(getString(R.string.calibration_altitude_jitter), getString(R.string.calibration_altitude_jitter_desc)) {
-                editScalar("海拔波动", ctx.altitudeJitter, 0.0, 100.0) { v ->
+                editMeasured("海拔波动", ctx.altitudeJitter, 0.0, 100.0,
+                    measure = { locResult().altitudeSigma?.toDouble() }
+                ) { v ->
                     ctx.altitudeJitter = v
                 }
             },
@@ -193,7 +205,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_altitude),
             getString(R.string.calibration_altitude_desc),
         ) {
-            editScalar("海拔高度", ctx.altitude, -500.0, 10_000.0) { v ->
+            editMeasured("海拔高度", ctx.altitude, -500.0, 10_000.0,
+                measure = { locResult().altitudeMeters }
+            ) { v ->
                 ctx.altitude = v
                 altitudeValue?.text = "%.1f m".format(v)
             }
@@ -203,7 +217,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_fused_accuracy),
             getString(R.string.calibration_fused_accuracy_desc),
         ) {
-            editScalar("fused 定位精度", ctx.fusedAccuracyMeasured.toDouble(), 0.0, 1000.0) { v ->
+            editMeasured("fused 定位精度", ctx.fusedAccuracyMeasured.toDouble(), 0.0, 1000.0,
+                measure = { locResult().fusedAccuracyMeters?.toDouble() }
+            ) { v ->
                 ctx.fusedAccuracyMeasured = v.toFloat()
             }
         }
@@ -211,7 +227,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_fused_delay),
             getString(R.string.calibration_fused_delay_desc),
         ) {
-            editScalar("fused 时间差", ctx.fusedDelayMeasured.toDouble(), 0.0, 10_000.0) { v ->
+            editMeasured("fused 时间差", ctx.fusedDelayMeasured.toDouble(), 0.0, 10_000.0,
+                measure = { locResult().fusedDelayMs?.toDouble() }
+            ) { v ->
                 ctx.fusedDelayMeasured = v.toFloat()
             }
         }
@@ -219,7 +237,9 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_gps_interval),
             getString(R.string.calibration_gps_interval_desc),
         ) {
-            editScalar("GPS 上报间隔", ctx.gpsIntervalMeasured.toDouble(), 200.0, 2_000.0) { v ->
+            editMeasured("GPS 上报间隔", ctx.gpsIntervalMeasured.toDouble(), 200.0, 2_000.0,
+                measure = { locResult().gpsIntervalMs?.toDouble() }
+            ) { v ->
                 ctx.gpsIntervalMeasured = v.toFloat()
                 ctx.reportDuration = v.toInt()
             }
@@ -251,7 +271,10 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_gps_flags),
             getString(R.string.calibration_gps_flags_desc),
         ) {
-            editLines("卫星状态（每行一颗：E/A/U/F/B[,C/N0]）", requireContext().gnssFlags) { lines ->
+            editLines(
+                "卫星状态（每行一颗：E/A/U/F/B[,C/N0]）", requireContext().gnssFlags,
+                measure = { collectGnssFlags(requireContext()).ifEmpty { listOf("EAUBF") } }
+            ) { lines ->
                 requireContext().gnssFlags = lines
                 renderFluctuation()
                 sendSim(
@@ -265,7 +288,10 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_cell_list),
             getString(R.string.calibration_cell_list_desc),
         ) {
-            editLines("基站列表（每行 mcc/mnc|cid/tac）", requireContext().cellEntries) { lines ->
+            editLines(
+                "基站列表（每行 mcc/mnc|cid/tac）", requireContext().cellEntries,
+                measure = { collectCells(requireContext()) }
+            ) { lines ->
                 requireContext().cellEntries = lines
                 renderFluctuation()
                 sendSim("cell", lines.firstOrNull()?.substringBefore("|").orEmpty(),
@@ -276,7 +302,10 @@ class CalibrationFragment : Fragment() {
             getString(R.string.calibration_wifi_list),
             getString(R.string.calibration_wifi_list_desc),
         ) {
-            editLines("Wi-Fi 列表（每行 ssid|bssid）", requireContext().wifiEntries) { lines ->
+            editLines(
+                "Wi-Fi 列表（每行 ssid|bssid）", requireContext().wifiEntries,
+                measure = { collectWifiEntries(requireContext()) }
+            ) { lines ->
                 requireContext().wifiEntries = lines
                 renderFluctuation()
                 sendSim("wifi", lines.firstOrNull()?.substringBefore("|").orEmpty(),
@@ -332,6 +361,9 @@ class CalibrationFragment : Fragment() {
             altitudeValue?.text = "%.1f m".format(it)
         }
         result.fusedAccuracyMeters?.let { ctx.fusedAccuracyMeasured = it }
+        // 波动类：用实测标准差回填（精度波动 / 海拔波动）
+        result.accuracySigma?.let { ctx.accuracyJitter = it }
+        result.altitudeSigma?.let { ctx.altitudeJitter = it.toDouble() }
         result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }
         result.gpsIntervalMs?.let {
             ctx.gpsIntervalMeasured = it
@@ -354,7 +386,12 @@ class CalibrationFragment : Fragment() {
     }
 
     /** 多行编辑：每行一条（卫星状态 / 基站列表 / Wi-Fi 列表共用） */
-    private fun editLines(title: String, initial: List<String>, save: (List<String>) -> Unit) {
+    private fun editLines(
+        title: String,
+        initial: List<String>,
+        measure: (suspend () -> List<String>)? = null,
+        save: (List<String>) -> Unit,
+    ) {
         val view = layoutInflater.inflate(R.layout.dialog_input, null)
         view.findViewById<TextView>(R.id.title).text = title
         val value = view.findViewById<android.widget.EditText>(R.id.value)
@@ -368,7 +405,7 @@ class CalibrationFragment : Fragment() {
         value.gravity = android.view.Gravity.TOP or android.view.Gravity.START
         value.minLines = 4
         value.maxLines = 10
-        MaterialAlertDialogBuilder(requireContext())
+        val dialog = MaterialAlertDialogBuilder(requireContext())
             .setView(view)
             .setPositiveButton(R.string.save) { _, _ ->
                 val lines = (value.text?.toString() ?: "")
@@ -376,7 +413,22 @@ class CalibrationFragment : Fragment() {
                 save(lines)
             }
             .setNegativeButton(R.string.cancel, null)
+            .setNeutralButton(if (measure != null) "校准" else null, null)
             .show()
+        if (measure != null) {
+            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener { button ->
+                button.isEnabled = false
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val lines = runCatching { measure() }.getOrNull()
+                    button.isEnabled = true
+                    if (lines.isNullOrEmpty()) {
+                        showToast("未采集到有效数据")
+                    } else {
+                        value.setText(lines.joinToString("\n"))
+                    }
+                }
+            }
+        }
     }
 
     private fun editSatellite(ctx: android.content.Context) {
@@ -402,6 +454,47 @@ class CalibrationFragment : Fragment() {
         }
     }
 
+    /** 位置类测量结果的短时缓存：一个对话框里点多次「校准」不必每次都等 10 秒 */
+    private var cachedLocation: Pair<Long, LocationAccuracyCalibrator.Result>? = null
+
+    private suspend fun locResult(force: Boolean = false): LocationAccuracyCalibrator.Result {
+        val now = System.currentTimeMillis()
+        cachedLocation?.let { (at, r) -> if (!force && now - at < 60_000L) return r }
+        val fresh = withContext(Dispatchers.IO) {
+            runCatching { LocationAccuracyCalibrator.collect(requireContext()) }.getOrElse {
+                LocationAccuracyCalibrator.Result(
+                    gpsAccuracyMeters = null, fusedAccuracyMeters = null, fusedDelayMs = null,
+                    gpsIntervalMs = null, satellites = null, maxCn0 = null, meanCn0 = null,
+                    gpsSamples = 0, fusedSamples = 0, ok = false,
+                    message = "采集异常：" + it.message,
+                )
+            }
+        }
+        cachedLocation = now to fresh
+        return fresh
+    }
+
+    /** 与 editScalar 相同，但对话框里多一个「校准」按钮，点了现场测量并填入。 */
+    private fun editMeasured(
+        title: String,
+        current: Double,
+        min: Double,
+        max: Double,
+        measure: suspend () -> Double?,
+        save: (Double) -> Unit,
+    ) {
+        showInputDialog(title, "%.3f".format(current), measure = {
+            val v = measure()
+            if (v == null) null else "%.3f".format(v)
+        }) { text ->
+            val value = text.toDoubleOrNull()
+            if (value == null || value < min || value > max) {
+                showToast("请输入 $min ~ $max 之间的数值")
+                return@showInputDialog
+            }
+            save(value)
+        }
+    }
     private fun editScalar(title: String, current: Double, min: Double, max: Double, save: (Double) -> Unit) {
         showInputDialog(title, "%.3f".format(current)) { text ->
             val value = text.toDoubleOrNull()
@@ -470,6 +563,27 @@ class CalibrationFragment : Fragment() {
             sendSim("gps", flags.firstOrNull() ?: "EAUBF", flags.size.toString(), flags)
             showToast(if (loc == null) getString(R.string.calibration_auto_no_fix) else getString(R.string.calibration_auto_done))
         }.onFailure { showToast(it.message ?: "GPS") }
+    }
+
+    /** 纯采集：可见小区 → 每行 mcc/mnc|cid/tac（不写配置、不弹提示） */
+    private fun collectCells(ctx: android.content.Context): List<String> {
+        val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return emptyList()
+        val entries = LinkedHashSet<String>()
+        tm.allCellInfo.orEmpty().sortedByDescending { it.isRegistered }.take(16).forEach { info ->
+            val id = info.cellIdentity
+            val mcc: String?
+            val mnc: String?
+            val cid: String?
+            val tac: String?
+            when (id) {
+                is CellIdentityLte -> { mcc = id.mccString; mnc = id.mncString; cid = id.ci.toString(); tac = id.tac.toString() }
+                is CellIdentityGsm -> { mcc = id.mccString; mnc = id.mncString; cid = id.cid.toString(); tac = id.lac.toString() }
+                is CellIdentityNr -> { mcc = id.mccString; mnc = id.mncString; cid = id.nci.toString(); tac = id.tac.toString() }
+                else -> { mcc = null; mnc = null; cid = null; tac = null }
+            }
+            if (mcc != null && cid != null) entries += "$mcc/$mnc|$cid/$tac"
+        }
+        return entries.toList()
     }
 
     /**
@@ -876,7 +990,12 @@ class CalibrationFragment : Fragment() {
     }
 
     @SuppressLint("MissingInflatedId")
-    private fun showInputDialog(titleText: String, valueText: String, handler: (String) -> Unit) {
+    private fun showInputDialog(
+        titleText: String,
+        valueText: String,
+        measure: (suspend () -> String?)? = null,
+        handler: (String) -> Unit,
+    ) {
         val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_input, null)
         dialogView.findViewById<TextView>(R.id.title).text = titleText
         val value = dialogView.findViewById<TextInputEditText>(R.id.value)
@@ -887,7 +1006,23 @@ class CalibrationFragment : Fragment() {
             .setView(dialogView)
             .setPositiveButton("保存") { _, _ -> handler(value.text.toString()) }
             .setNegativeButton("取消", null)
+            .setNeutralButton(if (measure != null) "校准" else null, null)
             .show()
+        // 第三颗按钮点了**不关闭**对话框：测量完把结果填进输入框，用户确认后再保存
+        if (measure != null) {
+            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                it.isEnabled = false
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val measured = runCatching { measure() }.getOrNull()
+                    it.isEnabled = true
+                    if (measured != null) {
+                        value.setText(measured)
+                    } else {
+                        showToast("未采集到有效数据")
+                    }
+                }
+            }
+        }
         dialog.shiftAboveIme(requireActivity().window.decorView)
     }
 

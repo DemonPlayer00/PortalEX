@@ -127,6 +127,8 @@
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
     <string name="calibration_hint">Adjust simulated sensor jitter. Tap Calibrate to measure; movement only skips the sensor part, GPS and baseband are still measured.</string>
+    <string name="calibration_accuracy_jitter">Accuracy jitter</string>
+    <string name="calibration_accuracy_jitter_desc">How much the reported accuracy floats per frame (metres); 0 keeps it fixed.</string>
     <string name="calibration_gps_flags">Satellite status</string>
     <string name="calibration_gps_flags_desc">One satellite per line: E ephemeris / A almanac / U used-in-fix / F carrier / B baseband C-N0, optionally followed by C/N0.</string>
     <string name="calibration_cell_list">Cell list</string>

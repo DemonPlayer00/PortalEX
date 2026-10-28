@@ -257,6 +257,9 @@ internal object LocConfig {
      */
     var reportDurationMs: Long = 100L
 
+    /** 精度波动（米）：帧里的 accuracy = 配置精度 ± 该值（不会低于 0.1） */
+    var accuracyJitter: Float = 0f
+
     /**
      * 模拟会话期间的速度保底（m/s）。
      *

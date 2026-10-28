@@ -185,6 +185,13 @@ var Context.meanCn0Measured: Float
     set(value) = sharedPrefs.edit { putFloat("meanCn0Measured", value) }
 
 /** 海拔波动幅度（米）：同时作为垂直精度来源。 */
+/** 精度波动（米）：帧里 accuracy = 配置精度 ± 该值 */
+var Context.accuracyJitter: Float
+    get() = sharedPrefs.getFloat("accuracyJitter", 0f)
+    set(value) = sharedPrefs.edit {
+        putFloat("accuracyJitter", value)
+    }
+
 var Context.altitudeJitter: Double
     get() = sharedPrefs.getFloat("altitudeJitter", FakeLoc.altitudeJitter.toFloat()).toDouble()
     set(value) = sharedPrefs.edit {
