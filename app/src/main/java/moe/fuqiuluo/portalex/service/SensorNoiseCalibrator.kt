@@ -162,6 +162,33 @@ object SensorNoiseCalibrator {
         /** 窗口是否已经开始（= 已经采到有效样本） */
         val started: Boolean get() = windowStartMs != UNSET
 
+        // ---- 暂停（检测到移动时不计时、不收样本）----
+        @Volatile private var pausedSinceMs: Long = UNSET
+        @Volatile private var pausedTotalMs: Long = 0L
+
+        /** 当前是否处于"移动中，暂停采集"状态 */
+        val paused: Boolean get() = pausedSinceMs != UNSET
+
+        /** 进入暂停：移动期间的时间**不计入**采集时长（和 GPS 没信号时一样在等） */
+        @Synchronized
+        fun pause(nowMs: Long) {
+            if (pausedSinceMs == UNSET) pausedSinceMs = nowMs
+        }
+
+        /** 退出暂停：把这段暂停时长从窗口里扣掉 */
+        @Synchronized
+        fun resume(nowMs: Long) {
+            if (pausedSinceMs == UNSET) return
+            pausedTotalMs += (nowMs - pausedSinceMs).coerceAtLeast(0L)
+            pausedSinceMs = UNSET
+        }
+
+        /** 收到的原始样本（即使被丢弃也要记一笔，避免把"在动"误判成"没数据"） */
+        @Synchronized
+        fun noteRawSample(nowMs: Long) {
+            if (firstSampleMs == UNSET) firstSampleMs = nowMs
+        }
+
         /**
          * 交给本窗口判定一个样本。
          * @return true = 该样本进入统计（已过建立期）；false = 丢掉（建立期内的陈旧值）
@@ -169,14 +196,19 @@ object SensorNoiseCalibrator {
         @Synchronized
         fun accept(nowMs: Long): Boolean {
             if (firstSampleMs == UNSET) firstSampleMs = nowMs
+            if (pausedSinceMs != UNSET) return false
             if (nowMs - firstSampleMs < warmupMs) return false
             if (windowStartMs == UNSET) windowStartMs = nowMs
             return true
         }
 
         /** 已采集毫秒数；窗口尚未开始时恒为 0（等待传感器的时间不算采集） */
-        fun elapsedMs(nowMs: Long): Long =
-            if (windowStartMs == UNSET) 0L else (nowMs - windowStartMs).coerceAtLeast(0L)
+        fun elapsedMs(nowMs: Long): Long {
+            if (windowStartMs == UNSET) return 0L
+            // 暂停期间时钟停住：用暂停起点代替"现在"
+            val effectiveNow = if (pausedSinceMs != UNSET) pausedSinceMs else nowMs
+            return (effectiveNow - windowStartMs - pausedTotalMs).coerceAtLeast(0L)
+        }
 
         /** 采集窗口是否已满 */
         fun finished(nowMs: Long): Boolean = elapsedMs(nowMs) >= durationMs
@@ -238,6 +270,52 @@ object SensorNoiseCalibrator {
         fun normSigma(): Double = sqrt(norm.variance())
     }
 
+    /**
+     * 实时移动判定：只看最近 [capacity] 个样本（约 0.5 秒），
+     * 移动即暂停采集 —— 不做"先收集再剔除"，和 GPS 没信号时一样在等。
+     */
+    private class MotionWatch(private val capacity: Int = 24) {
+        private val accel = ArrayDeque<DoubleArray>()
+        private val gyro = ArrayDeque<DoubleArray>()
+
+        fun onAccel(values: FloatArray) {
+            if (values.size < 3) return
+            if (accel.size >= capacity) accel.removeFirst()
+            accel.addLast(doubleArrayOf(values[0].toDouble(), values[1].toDouble(), values[2].toDouble()))
+        }
+
+        fun onGyro(values: FloatArray) {
+            if (values.size < 3) return
+            if (gyro.size >= capacity) gyro.removeFirst()
+            gyro.addLast(doubleArrayOf(values[0].toDouble(), values[1].toDouble(), values[2].toDouble()))
+        }
+
+        private fun sigma(get: (DoubleArray) -> Double): Double {
+            val n = accel.size
+            if (n < 4) return 0.0
+            val v = DoubleArray(n) { get(accel.elementAt(it)) }
+            val mean = v.average()
+            return sqrt(v.sumOf { (it - mean) * (it - mean) } / n)
+        }
+
+        fun accelMoving(): Boolean =
+            sigma { sqrt(it[0] * it[0] + it[1] * it[1] + it[2] * it[2]) } > MAX_ACCEL_NORM_SIGMA
+
+        fun gyroMoving(): Boolean {
+            if (gyro.size < 4) return false
+            var worst = 0.0
+            for (axis in 0 until 3) {
+                val v = DoubleArray(gyro.size) { gyro.elementAt(it)[axis] }
+                val mean = v.average()
+                val s = sqrt(v.sumOf { (it - mean) * (it - mean) } / v.size)
+                if (s > worst) worst = s
+            }
+            return worst > MAX_GYRO_SIGMA
+        }
+
+        fun moving(): Boolean = accelMoving() || gyroMoving()
+    }
+
     private fun sensorName(type: Int): String = when (type) {
         Sensor.TYPE_ACCELEROMETER -> "加速度计"
         Sensor.TYPE_GYROSCOPE -> "陀螺仪"
@@ -284,6 +362,7 @@ object SensorNoiseCalibrator {
         if (bufs.isEmpty()) return Result(base, "", false, "本机没有可用的加速度/陀螺/磁场传感器")
 
         val window = CollectWindow()
+        val motion = MotionWatch()
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 val e = event ?: return
@@ -291,6 +370,18 @@ object SensorNoiseCalibrator {
                 // 而传感器可能要几百毫秒才吐第一个值 —— 等待时间既不算采集，也不喂统计。
                 if (!window.accept(System.currentTimeMillis())) return
                 val nowMs = System.currentTimeMillis()
+                // 原始样本先记账（即便接下来被跳过）：避免把"在动"误判成"没数据"
+                window.noteRawSample(nowMs)
+                when (e.sensor.type) {
+                    Sensor.TYPE_ACCELEROMETER -> motion.onAccel(e.values)
+                    Sensor.TYPE_GYROSCOPE -> motion.onGyro(e.values)
+                }
+                if (motion.moving()) {
+                    // **移动中：暂停采集** —— 计时停住、样本不收（与 GPS 无信号时的等待一致）
+                    window.pause(nowMs)
+                    return
+                }
+                window.resume(nowMs)
                 if (window.elapsedMs(nowMs) == 0L) trace?.markStart()
                 raw[e.sensor.type]?.add(nowMs to e.values.clone())
                 trace?.push(e.sensor.type, e.values)
