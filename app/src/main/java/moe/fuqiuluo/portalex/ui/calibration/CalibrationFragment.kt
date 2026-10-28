@@ -21,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,6 +108,14 @@ class CalibrationFragment : Fragment() {
         _binding = FragmentCalibrationBinding.inflate(inflater, container, false)
         buildRows()
         buildFluctuationRows()
+        refreshCalibrationAvailability()
+        // 悬浮摇杆可能在页面开着时启动路线模拟：1 秒轮询一次，保证按钮及时变灰
+        viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                refreshCalibrationAvailability()
+                kotlinx.coroutines.delay(1_000)
+            }
+        }
         renderValues(requireContext().sensorNoise)
         renderFluctuation()
         binding.calibStatus.text = requireContext().sensorNoiseReport
@@ -118,6 +127,19 @@ class CalibrationFragment : Fragment() {
 
     // ---- 列表 ----
 
+    /** 模拟会话是否在跑：跑着的时候校准按钮全部置灰（采到的只会是我们自己注入的假数据） */
+    private fun mockRunning(): Boolean {
+        if (FakeLoc.enable) return true
+        val lm = mockServiceViewModel.locationManager ?: return false
+        return runCatching { MockServiceHelper.isMockStart(lm) }.getOrDefault(false)
+    }
+
+    /** 让「一键校准」跟随会话状态变灰；每项 dialog 里的「校准」在打开时再判一次 */
+    private fun refreshCalibrationAvailability() {
+        val running = mockRunning()
+        binding.calibRun.isEnabled = !running
+        binding.calibRun.alpha = if (running) 0.4f else 1.0f
+    }
     private fun buildRows() {
         val inflater = LayoutInflater.from(requireContext())
         val list: LinearLayout = binding.calibList
@@ -413,6 +435,7 @@ class CalibrationFragment : Fragment() {
         value.gravity = android.view.Gravity.TOP or android.view.Gravity.START
         value.minLines = 4
         value.maxLines = 10
+        val canCalibrate = measure != null && !mockRunning()
         val dialog = MaterialAlertDialogBuilder(requireContext())
             .setView(view)
             .setPositiveButton(R.string.save) { _, _ ->
@@ -424,7 +447,12 @@ class CalibrationFragment : Fragment() {
             .setNeutralButton(if (measure != null) "校准" else null, null)
             .show()
         if (measure != null) {
-            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener { button ->
+            val neutral = dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)
+            if (!canCalibrate) {
+                neutral.isEnabled = false
+                neutral.alpha = 0.4f
+            }
+            neutral.setOnClickListener { button ->
                 button.isEnabled = false
                 viewLifecycleOwner.lifecycleScope.launch {
                     val lines = runCatching { measure() }.getOrNull()
@@ -1035,6 +1063,7 @@ class CalibrationFragment : Fragment() {
         dialogView.findViewById<TextView>(R.id.title).text = titleText
         val value = dialogView.findViewById<TextInputEditText>(R.id.value)
         value.setText(valueText)
+        val canCalibrate = measure != null && !mockRunning()
         val dialog = MaterialAlertDialogBuilder(requireContext())
             .setTitle(null)
             .setCancelable(false)
@@ -1045,7 +1074,13 @@ class CalibrationFragment : Fragment() {
             .show()
         // 第三颗按钮点了**不关闭**对话框：测量完把结果填进输入框，用户确认后再保存
         if (measure != null) {
-            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            val neutral = dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)
+            if (!canCalibrate) {
+                // 模拟运行中：按钮保留但置灰，点了也不启动采集
+                neutral.isEnabled = false
+                neutral.alpha = 0.4f
+            }
+            neutral.setOnClickListener {
                 it.isEnabled = false
                 viewLifecycleOwner.lifecycleScope.launch {
                     val measured = runCatching { measure() }.getOrNull()
