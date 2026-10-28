@@ -200,97 +200,88 @@ object CameraMockSelectionEngine {
         nowMs: Long? = null,
     ): CameraMockSelection? {
         if (routes.isEmpty()) return null
-        data class Bucket(
+
+        // 候选粒度是**视频的每个轨迹点**，不是"整条录制的路线"。
+        // 旧实现先把路线按 min 距离聚成一个桶、再在桶内按时刻选视频 ——
+        // 只要路线覆盖了这片区域，min 距离永远≈0，"走到哪"就被抹平了：
+        // 无论路线模拟播到哪里，选出来的都是同一条视频。这也是本次修复的核心。
+        data class Cand(
             val route: CameraRoute,
-            val videos: List<CameraVideo>,
+            val video: CameraVideo,
+            val lat: Double,
+            val lon: Double,
+            val startMs: Long,
             val distanceM: Double,
             val timeMs: Long,
         )
 
-        val buckets = routes.mapNotNull { route ->
+        val candidates = ArrayList<Cand>()
+        routes.forEach { route ->
             val videos = route.videos.filter { matches(it.tags, tagFilter) }
-            if (videos.isEmpty()) return@mapNotNull null
-            val distance = if (lat == null || lon == null) -1.0 else {
-                var best = WorldMath.haversine(lat, lon, route.lat, route.lon)
-                videos.forEach { video ->
+            if (videos.isEmpty()) return@forEach
+            videos.forEach { video ->
+                val timeMs = if (video.recordedAt > 0L && nowMs != null) {
+                    timeOfDayDistanceMs(video.recordedAt, nowMs)
+                } else Long.MAX_VALUE
+                if (video.track.isNotEmpty()) {
                     video.track.forEach { tp ->
-                        val d = WorldMath.haversine(lat, lon, tp.lat, tp.lon)
-                        if (d < best) best = d
+                        val d = if (lat == null || lon == null) -1.0
+                        else WorldMath.haversine(lat, lon, tp.lat, tp.lon)
+                        candidates += Cand(route, video, tp.lat, tp.lon, tp.tMs, d, timeMs)
                     }
+                } else {
+                    val d = if (lat == null || lon == null) -1.0
+                    else WorldMath.haversine(lat, lon, route.lat, route.lon)
+                    candidates += Cand(route, video, route.lat, route.lon, 0L, d, timeMs)
                 }
-                best
             }
-            val timeMs = if (nowMs == null) Long.MAX_VALUE else {
-                videos.mapNotNull { v ->
-                    if (v.recordedAt > 0L) timeOfDayDistanceMs(v.recordedAt, nowMs) else null
-                }.minOrNull() ?: Long.MAX_VALUE
-            }
-            Bucket(route, videos, distance, timeMs)
         }
-        if (buckets.isEmpty()) return null
+        if (candidates.isEmpty()) return null
 
-        val chosenBucket = if (lat == null || lon == null) {
-            // 位置未知时没有“路线距离”语义：按时刻选，再回退随机。
-            val timed = buckets.filter { it.timeMs != Long.MAX_VALUE }
-            val pool = timed.ifEmpty { buckets }
+        val chosen = if (lat == null || lon == null) {
+            // 位置未知：按时刻选，再回退随机（与旧实现一致）。
+            val timed = candidates.filter { it.timeMs != Long.MAX_VALUE }
+            val pool = timed.ifEmpty { candidates }
             val minTime = pool.minOf { it.timeMs }
             val nearTime = pool.filter {
                 it.timeMs == Long.MAX_VALUE || it.timeMs <= minTime + 60_000L
             }
-            nearTime.randomOrNull(random) ?: pool.random(random)
+            (nearTime.ifEmpty { pool }).random(random)
         } else {
-            val minDistance = buckets.minOf { it.distanceM }
-            val samePlace = buckets.filter { it.distanceM <= minDistance + SAME_PLACE_RADIUS_M }
-            // 会话粘性：上次路线仍在同一地点范围内，就保持路线，避免在近似地点间抖动。
-            val stickyRoute = samePlace.firstOrNull { it.route.id == lastRouteId }
-            if (stickyRoute != null) {
-                stickyRoute
+            val minDistance = candidates.minOf { it.distanceM }
+            val samePlace = candidates.filter { it.distanceM <= minDistance + SAME_PLACE_RADIUS_M }
+            // 会话粘性：只在上次那条视频**当前位置仍然贴得很近**时保留（5m），
+            // 一旦沿路线走开就自然换片 —— 不再用 2 分钟时刻迟滞把选片钉死。
+            val sticky = lastVideoId?.let { id ->
+                samePlace.filter { it.video.id == id }.minByOrNull { it.distanceM }
+            }?.takeIf { it.distanceM <= minDistance + 5.0 }
+            val pool = if (sticky != null) listOf(sticky) else samePlace
+            // 同一位置内仍然优先时刻更接近的视频（时间只是轻量项，不再跨位置生效）。
+            val timed = pool.filter { it.timeMs != Long.MAX_VALUE }
+            if (timed.isEmpty()) {
+                pool.random(random)
             } else {
-                // 距离代价在 20m 后二次加速；时间只作为同量级轻量项。
-                buckets.minWithOrNull(
-                    compareBy<Bucket> { routeCost(it.distanceM, it.timeMs) }
-                        .thenBy { it.route.id }
-                )!!
+                val minTime = timed.minOf { it.timeMs }
+                val nearTime = timed.filter { it.timeMs <= minTime + 60_000L }
+                (nearTime.ifEmpty { timed }).random(random)
             }
         }
 
-        val videos = chosenBucket.videos
-        val now = nowMs ?: 0L
-        val timedVideos = if (nowMs == null) emptyList() else videos.filter { it.recordedAt > 0L }
-        val chosenVideo = if (timedVideos.isEmpty()) {
-            videos[random.nextInt(videos.size)]
+        val start = if (chosen.video.durationMs > 0L) {
+            chosen.startMs.coerceIn(0L, chosen.video.durationMs - 1)
         } else {
-            val minTime = timedVideos.minOf { timeOfDayDistanceMs(it.recordedAt, now) }
-            // 会话内的上次视频有 2 分钟时刻迟滞：同一段视频不会被 3 秒刷新轻易换掉。
-            val sticky = lastVideoId?.let { id -> videos.firstOrNull { it.id == id } }
-            if (sticky != null && sticky.recordedAt > 0L &&
-                timeOfDayDistanceMs(sticky.recordedAt, now) <= minTime + VIDEO_STICKY_TIME_MS
-            ) {
-                sticky
-            } else {
-                val near = timedVideos.filter {
-                    timeOfDayDistanceMs(it.recordedAt, now) <= minTime + 60_000L
-                }
-                val pool = near.ifEmpty { timedVideos }
-                pool[random.nextInt(pool.size)]
-            }
+            chosen.startMs.coerceAtLeast(0L)
         }
-
-        // 选定视频后只在其轨迹点内选距离最近的起播点；时刻已由视频级选择完成。
-        val candidates = ArrayList<Candidate>()
-        chosenVideo.track.forEach { tp ->
-            val distance = if (lat == null || lon == null) -1.0
-            else WorldMath.haversine(lat, lon, tp.lat, tp.lon)
-            candidates += Candidate(chosenBucket.route.id, chosenBucket.route.name,
-                chosenVideo, tp.tMs, distance)
-        }
-        if (candidates.isEmpty()) {
-            val distance = if (lat == null || lon == null) -1.0
-            else WorldMath.haversine(lat, lon, chosenBucket.route.lat, chosenBucket.route.lon)
-            candidates += Candidate(chosenBucket.route.id, chosenBucket.route.name,
-                chosenVideo, 0L, distance)
-        }
-        return choose(candidates, lat, lon, randomStart = false, random = random, nowMs = null)
+        return CameraMockSelection(
+            pointId = chosen.route.id,
+            pointName = chosen.route.name,
+            videoId = chosen.video.id,
+            videoName = chosen.video.name,
+            fileName = chosen.video.file,
+            durationMs = chosen.video.durationMs,
+            startMs = start,
+            distanceM = chosen.distanceM,
+        )
     }
 
     /** `[0, 时长)` 内的随机整秒；时长不足 1 秒返回 0。 */
