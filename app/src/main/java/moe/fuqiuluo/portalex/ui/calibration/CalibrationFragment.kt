@@ -670,7 +670,7 @@ class CalibrationFragment : Fragment() {
                 "正在等待传感器数据…（收到第一个样本才开始计时）"
         }
         return "请把手机放在平稳的表面（桌面），保持静止 ${total.toInt()} 秒。\n\n" +
-            "已采集 %.1f / %.1f 秒\n\n检测到移动会**暂停采集**（这段时间不计入），放稳后自动继续。".format(elapsedMs / 1000.0, total)
+            "已采集 %.1f / %.1f 秒\n\n检测到移动的那几秒会被跳过并剔除，静止数据仍会采用。".format(elapsedMs / 1000.0, total)
     }
 
     // ---- 下发与回读 ----
