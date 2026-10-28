@@ -149,6 +149,9 @@ jobs:
             echo "百度 AK 已注入（长度 ${#BAIDU_MAP_AK}）"
           fi
 
+      - name: Run Test Gate
+        run: sh scripts/test-all.sh
+
       - name: Build with Gradle
         run: |
           chmod +x ./gradlew

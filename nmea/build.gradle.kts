@@ -12,3 +12,7 @@ java {
         languageVersion.set(JavaLanguageVersion.of(17))
     }
 }
+
+dependencies {
+    testImplementation(libs.junit)
+}

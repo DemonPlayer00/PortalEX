@@ -103,6 +103,9 @@ jobs:
           path: ~/.android/debug.keystore
           key: portalex-debug-keystore-v1
 
+      - name: Run Test Gate
+        run: sh scripts/test-all.sh
+
       - name: Build with Gradle
         run: |
           chmod +x ./gradlew
