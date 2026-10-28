@@ -297,13 +297,6 @@ var Context.enableNMEA: Boolean
         FakeLoc.enableNMEA = value
     }
 
-var Context.disableWifiScan: Boolean
-    // 默认 false：旧实现默认取 FakeLoc.enableNMEA（复制粘贴的错键），开关初始状态会错乱
-    get() = sharedPrefs.getBoolean("disableWifiScan", false)
-    set(value) = sharedPrefs.edit {
-        putBoolean("disableWifiScan", value)
-        FakeLoc.enableMockWifi = value
-    }
 
 
 var Context.cadenceScale: Float

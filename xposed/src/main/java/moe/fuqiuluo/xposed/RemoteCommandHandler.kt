@@ -242,6 +242,9 @@ object RemoteCommandHandler {
                         NetworkSimConfig.wifiSsid = v1
                         NetworkSimConfig.wifiBssid = v2
                         if (list != null) NetworkSimConfig.wifiList = list
+                        // 基带页的 Wi-Fi 开关现在就是模拟开关本身（设置页那个独立开关已移除）。
+                        // 列表为空时 WlanHook 会清空扫描结果 —— 这正是"用空列表代替禁用扫描"的语义。
+                        FakeLoc.enableMockWifi = enabled
                     }
                 }
                 return true

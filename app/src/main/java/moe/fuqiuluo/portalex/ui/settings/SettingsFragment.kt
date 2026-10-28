@@ -29,7 +29,6 @@ import moe.fuqiuluo.portalex.ext.ORIENTATION_PORTRAIT
 import moe.fuqiuluo.portalex.ext.orientationMode
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
-import moe.fuqiuluo.portalex.ext.disableWifiScan
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
@@ -441,26 +440,6 @@ class SettingsFragment : Fragment() {
             }
         }
 
-        binding.disableWlanScanSwitch.isChecked = requireContext().disableWifiScan
-        binding.disableWlanScanSwitch.setOnCheckedChangeListener { _, isChecked ->
-            requireContext().disableWifiScan = isChecked
-            with(mockServiceViewModel) {
-                val lm = locationManager
-                if (lm == null) {
-                    showToast(getString(R.string.wifi_service_unavailable))
-                    return@setOnCheckedChangeListener
-                }
-                if (isChecked) {
-                    if(!MockServiceHelper.startWifiMock(lm)) {
-                        showToast(getString(R.string.wifi_disable_failed))
-                    }
-                } else {
-                    if(!MockServiceHelper.stopWifiMock(lm)) {
-                        showToast(getString(R.string.wifi_enable_failed))
-                    }
-                }
-            }
-        }
 
         refreshOrientationMode()
         binding.allowLandscapeLayout.setOnClickListener { showOrientationDialog() }

@@ -289,8 +289,6 @@
     <string name="anti_pullback_title">反定位拉回</string>
     <string name="anti_pullback_desc">按需强力回推位置，缓解被拉回；重启模拟生效。</string>
     <string name="battery_optimization_title">电池优化白名单</string>
-    <string name="disable_wifi_scan_title">禁用扫描WIFI列表</string>
-    <string name="disable_wifi_scan_desc">阻止应用扫描 Wi-Fi 列表，缓解位置被拉回。</string>
     <string name="fused_spoof">伪装</string>
     <string name="not_applicable">不适用</string>
     <string name="loading">读取中…</string>
