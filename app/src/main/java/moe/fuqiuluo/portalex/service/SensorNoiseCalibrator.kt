@@ -232,47 +232,6 @@ object SensorNoiseCalibrator {
         fun normSigma(): Double = sqrt(norm.variance())
     }
 
-    /**
-     * 录入阶段的移动检测：只看最近 24 个样本（50Hz 下约 0.5 秒）。
-     * 判定为"在动"就**跳过这次录入**，其余流程（计时、统计、静止自检）完全不变。
-     */
-    private class MotionWatch(private val capacity: Int = 24) {
-        private val accel = ArrayDeque<DoubleArray>()
-        private val gyro = ArrayDeque<DoubleArray>()
-
-        fun onAccel(values: FloatArray) {
-            if (values.size < 3) return
-            if (accel.size >= capacity) accel.removeFirst()
-            accel.addLast(doubleArrayOf(values[0].toDouble(), values[1].toDouble(), values[2].toDouble()))
-        }
-
-        fun onGyro(values: FloatArray) {
-            if (values.size < 3) return
-            if (gyro.size >= capacity) gyro.removeFirst()
-            gyro.addLast(doubleArrayOf(values[0].toDouble(), values[1].toDouble(), values[2].toDouble()))
-        }
-
-        private fun sigma(values: List<Double>): Double {
-            if (values.size < 4) return 0.0
-            val mean = values.average()
-            return sqrt(values.sumOf { (it - mean) * (it - mean) } / values.size)
-        }
-
-        fun moving(): Boolean {
-            if (accel.size >= 4) {
-                val norms = accel.map { sqrt(it[0] * it[0] + it[1] * it[1] + it[2] * it[2]) }
-                if (sigma(norms) > MAX_ACCEL_NORM_SIGMA) return true
-            }
-            if (gyro.size >= 4) {
-                for (axis in 0 until 3) {
-                    val v = gyro.map { it[axis] }
-                    if (sigma(v) > MAX_GYRO_SIGMA) return true
-                }
-            }
-            return false
-        }
-    }
-
     private fun sensorName(type: Int): String = when (type) {
         Sensor.TYPE_ACCELEROMETER -> "加速度计"
         Sensor.TYPE_GYROSCOPE -> "陀螺仪"
@@ -312,21 +271,13 @@ object SensorNoiseCalibrator {
         if (bufs.isEmpty()) return Result(base, "", false, "本机没有可用的加速度/陀螺/磁场传感器")
 
         val window = CollectWindow()
-        val motion = MotionWatch()
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 val e = event ?: return
                 // 建立期从**第一个样本**起算（不是注册时刻）：注册瞬间常带上一帧的陈旧值，
                 // 而传感器可能要几百毫秒才吐第一个值 —— 等待时间既不算采集，也不喂统计。
-                val nowMs = System.currentTimeMillis()
-                if (!window.accept(nowMs)) return
-                when (e.sensor.type) {
-                    Sensor.TYPE_ACCELEROMETER -> motion.onAccel(e.values)
-                    Sensor.TYPE_GYROSCOPE -> motion.onGyro(e.values)
-                }
-                // **录入阶段**发现移动：这一次不录入（计时与后续流程不受影响）
-                if (motion.moving()) return
-                if (window.elapsedMs(nowMs) == 0L) trace?.markStart()
+                if (!window.accept(System.currentTimeMillis())) return
+                if (window.elapsedMs(System.currentTimeMillis()) == 0L) trace?.markStart()
                 bufs[e.sensor.type]?.add(e.values)
                 trace?.push(e.sensor.type, e.values)
             }
