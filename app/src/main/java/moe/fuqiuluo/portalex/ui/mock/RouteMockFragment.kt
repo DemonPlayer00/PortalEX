@@ -175,9 +175,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
 
                 val lm = mockServiceViewModel.locationManager
                 if (lm != null && MockServiceHelper.isMockStart(lm)) {
-                    // 模拟已在跑：选中即开始播放。上一段播完后 autoStatus 已被关掉，
-                    // 不重新打开的话位置就会永远停在上一段的终点。
-                    if (route.route.isNotEmpty()) mockServiceViewModel.startAutoPlayIfPossible()
+                    // 切换路线**不**自动开始播放：是否播放由用户按播放键决定。
+                    // 选中只负责把新路线下发下去（模块据此清进度、对齐起点）。
                     if (route.route.isEmpty()) {
                         Toast.makeText(requireContext(), "路线端点不足，无法定位", Toast.LENGTH_SHORT).show()
                     } else if (mockServiceViewModel.isAutoPlaying) {
