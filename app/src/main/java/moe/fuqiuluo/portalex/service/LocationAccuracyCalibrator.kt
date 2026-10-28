@@ -130,6 +130,8 @@ object LocationAccuracyCalibrator {
                     lastGpsAtNanos = now
                     gpsValues += location.accuracy
                     if (location.hasSpeed()) speedValues += location.speed
+                    // 海拔：**之前这里漏了采样**，altitudeValues 永远是空的 ⇒ 海拔与海拔波动都采不到
+                    if (location.hasAltitude()) altitudeValues += location.altitude.toFloat()
                     collectExtras(location)?.let { (sat, maxCn0, meanCn0) ->
                         satelliteValues += sat
                         maxCn0Values += maxCn0
