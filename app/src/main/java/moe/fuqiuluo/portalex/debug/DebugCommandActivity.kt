@@ -14,6 +14,9 @@ import android.widget.Toast
 import moe.fuqiuluo.portalex.ext.allowLandscape
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.suPath
+import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.ext.mapUpdateInterval
+import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ext.jsonHistoricalRoutes
@@ -48,6 +51,7 @@ class DebugCommandActivity : Activity() {
                 "rocker" -> rockerTest()
                 "apis" -> apiTest()
                 "short" -> shortRouteTest()
+                "sync" -> syncConfig()
                 "help" -> HELP
                 else -> status()
             }
@@ -343,6 +347,15 @@ class DebugCommandActivity : Activity() {
         out.appendLine("callbacks=" + counts)
         callbackThread.quitSafely()
         return out.toString()
+    }
+
+    /** 把 App 侧配置（含最大上报间隔）下发给模块，用于验证设置是否真的生效。 */
+    private fun syncConfig(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val r = ConfigSync.push(this, lm)
+        return "sync=" + r.message(this) + " report=" + reportDuration + "ms map=" + mapUpdateInterval + "ms"
     }
 
     /** 边界测试：一条 ~11m 的短路线，跑到终点后验证「停在终点 + 回调一次」。 */

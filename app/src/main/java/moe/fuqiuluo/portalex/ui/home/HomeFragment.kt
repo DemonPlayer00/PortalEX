@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import com.baidu.location.BDAbstractLocationListener
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.service.PortalLocationClient
+import moe.fuqiuluo.portalex.ext.mapUpdateInterval
 import moe.fuqiuluo.portalex.ext.reportDuration
 import com.baidu.location.BDLocation
 import com.baidu.location.LocationClient
@@ -194,7 +195,10 @@ class HomeFragment : Fragment(), MapControlsHost {
 
         // **普通客户端视角**（迁移步骤③）：与任何第三方应用一样向框架订阅 ——
         // 收到的就是被注入链改写过的帧，所以"地图上的点"= "应用真正收到的点"（注入的自证）。
-        PortalLocationClient.subscribe(this, requireContext(), requireContext().reportDuration.toLong()) { fix ->
+        // 地图刷新间隔：设置页的「应用地图更新间隔」；0 = 跟随最大上报间隔
+        val mapInterval = requireContext().mapUpdateInterval.takeIf { it > 0 }?.toLong()
+            ?: requireContext().reportDuration.toLong()
+        PortalLocationClient.subscribe(this, requireContext(), mapInterval) { fix ->
             if (baiduMapViewModel.isExists) {
                 baiduMapViewModel.applyFix(fix.lat, fix.lon, fix.bearing, fix.accuracy)
                 // 路线/坐标点更新后模拟位置可能离当前视野很远；把地图跟过去，

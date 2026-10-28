@@ -314,6 +314,10 @@
     <string name="keepalive_off">已关闭后台保活（退后台可能被系统冻结）</string>
     <string name="battery_already_whitelisted">已在电池优化白名单中</string>
     <string name="battery_open_failed">无法打开电池优化设置：%1$s</string>
+    <string name="item_map_interval_title">应用地图更新间隔</string>
+    <string name="item_map_interval_desc">地图位置点刷新间隔（毫秒）；0 = 跟随最大位置上报间隔。</string>
+    <string name="item_map_interval_value">跟随上报间隔</string>
+    <string name="map_interval_warning">低于最大上报间隔，将限制在最大上报间隔。</string>
     <string name="report_invalid">最大位置上报间隔不合法</string>
     <string name="report_max">最大位置上报间隔不能大于1s</string>
     <string name="wifi_service_unavailable">定位服务加载异常，无法切换WLAN扫描</string>

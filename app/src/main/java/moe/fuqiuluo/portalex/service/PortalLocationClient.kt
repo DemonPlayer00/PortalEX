@@ -290,7 +290,7 @@ object PortalLocationClient {
         // "逐帧时间序列"定位，而这份序列必须来自客户端真正收到的那一份帧
         FrameRecorder.record(fix)
         // 每 50 帧留一行：既能在日志里确认"帧还在来"，又不会把 logcat 刷满
-        if (frameCount % 50L == 1L) {
+        if (frameCount % 20L == 1L) {
             Log.i(TAG, "fix provider=" + fix.provider + " " + fix.lat + "," + fix.lon +
                 " frames=" + frameCount)
         }
