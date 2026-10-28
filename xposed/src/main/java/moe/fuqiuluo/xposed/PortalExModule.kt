@@ -18,11 +18,11 @@ import moe.fuqiuluo.xposed.utils.ModuleRuntime
  * 入口从"实现 `IXposedHookLoadPackage` 的任意类"变成"继承 [XposedModule] 的类"，
  * 挂钩从 before/after 变成 `Hooker.intercept(Chain)` 单回调拦截器链。
  *
- * 迁移期两条入口并存（`assets/xposed_init` 与 `META-INF/xposed/java_init.list`），
- * 但**"装什么"只有一份实现** —— 都调到 [FakeLocation.install]：
- * 于是本类只负责"把框架给的进程信息翻译成 [FakeLocation.ProcessInfo]"，一行 hook 逻辑都不重复。
- * 重复触发由 `FakeLocation.injectedPackages` 挡掉（libxposed 的 `onPackageReady`
- * 对同一进程可能因多个包而多次回调）。
+ * 迁移已完成：**只有 libxposed 一条入口**（`META-INF/xposed/java_init.list`），
+ * 旧 `assets/xposed_init` 与 `IXposedHookLoadPackage` 已删除（见 docs/libxposed-migration.md）。
+ * 本类只负责"把框架给的进程信息翻译成 [FakeLocation.ProcessInfo]"，hook 逻辑全在
+ * [FakeLocation.install] 里；重复触发由 `FakeLocation.injectedPackages` 挡掉
+ * （libxposed 的 `onPackageReady` 对同一进程可能因多个包而多次回调）。
  *
  * ## 与旧入口的对应关系（迁移的等价性依据）
  *

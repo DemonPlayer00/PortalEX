@@ -145,8 +145,8 @@ object MotionEngine {
     }
 
     /**
-     * 播放/停止路线。开始播放时：**已经开始过就从头播**（播完后再点同样是重播），
-     * 与旧实现 `resetPlayback` 的语义一致（重选/重播都从头开始，不残留旧进度）。
+     * 播放/停止路线。**只有 [setRoute] 换路线时才归零进度、下一拍对齐新起点**；
+     * 中途停播再播接着走，播完后停在终点（2026-10-28 语义，见 85519e57）。
      */
     fun setPlaying(play: Boolean): Boolean {
         synchronized(lock) {
@@ -156,7 +156,6 @@ object MotionEngine {
             }
             // 判定用**原始端点**：展开数组是惰性的，播放开始时可能还是空的
             if (rawLat.size < 2) return false
-            // 只有"切换路线"（setRoute）才把进度归零、并让下一拍对齐起点。
             // 这里不动 snapped：播到最后一个点后停住，再点播放也仍停在终点，
             // 直到换一条路线才重新从起点开始。
             playing = true
