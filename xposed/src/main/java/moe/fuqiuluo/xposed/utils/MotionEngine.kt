@@ -160,6 +160,14 @@ object MotionEngine {
 
     fun distance(): Double = if (cum.isEmpty()) 0.0 else cum.last()
 
+    /**
+     * 路线起点。选中路线但**尚未播放**时，系统侧要把位置摆到起点，
+     * 否则界面停在上一段播放的终点，看起来像"选了没生效"。
+     */
+    fun routeStart(): Pair<Double, Double>? = synchronized(lock) {
+        if (lats.size < 2) null else lats[0] to lons[0]
+    }
+
     fun travelled(): Double = synchronized(lock) { travelled }
 
     /** 一次性读取"刚播完"（App 轮询到之后要放提示音/收尾，读一次即清） */

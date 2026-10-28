@@ -177,12 +177,13 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                 if (lm != null && MockServiceHelper.isMockStart(lm)) {
                     if (route.route.isEmpty()) {
                         Toast.makeText(requireContext(), "路线端点不足，无法定位", Toast.LENGTH_SHORT).show()
+                    } else if (mockServiceViewModel.isAutoPlaying) {
+                        // 自动播放中：交给遥控循环接管。这里若再下发 set_route + 停播，
+                        // 会把循环刚拉起的播放掐断，位置就停在**上一条路线的终点**不动了。
                     } else {
                         val lats = route.route.map { it.first }.toDoubleArray()
                         val lons = route.route.map { it.second }.toDoubleArray()
-                        if (MockServiceHelper.setRoute(lm, lats, lons) &&
-                            MockServiceHelper.setRoutePlaying(lm, false)
-                        ) {
+                        if (MockServiceHelper.setRoute(lm, lats, lons)) {
                             Toast.makeText(requireContext(), "位置更新成功", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(requireContext(), "更新位置失败", Toast.LENGTH_SHORT).show()
