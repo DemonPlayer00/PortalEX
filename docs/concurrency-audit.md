@@ -26,7 +26,7 @@
 | 线程 | 频率 | 写什么 | 读什么 |
 |---|---|---|---|
 | `PortalMotionClock` | 50ms/拍，空闲停摆 | 世界坐标、`MotionEngine` 进度、体力 | 配置、路线、摇杆意图 |
-| `PortalSensorSupervisor` | 20Hz，空闲停摆 | 步数积分、传感器状态、`processedBearing()` 的摆动/微抖 | 世界坐标/速度、配置、朝向 |
+| ~~`PortalSensorSupervisor`~~（已移除） | — | — | — |
 | `PortalSensorPump` | 事件驱动（`nextDueNs`） | 运行时传感器事件队列 | native 通道状态 |
 | binder 回调（多条） | 命令/查询时 | `LocConfig`、路线、会话开关、`randomKey` | 状态回读、门禁 |
 | 相机线程 | 仅相机模拟期间 | 帧/录制状态 | 选择器状态 |
@@ -103,7 +103,7 @@ happens-before，删掉了 13 个不再需要的 `@Volatile`（20 → 7），保
 
 ### 2.6 定时与唤醒
 
-- `MotionClock` / `SensorSupervisor` 已经做到"空闲停摆、意图唤醒"，这是正确的形态；
+- `MotionClock` 已经做到"空闲停摆、意图唤醒"；传感器侧也不再有自己的线程（见 P5）。
   不要为了"统一"再引入 `ScheduledExecutorService`（多一条线程 + 队列）。
 - `MotionClock.loop()` 原先睡满 50ms 再干活，**每拍的实际周期 = 50ms + 本拍工作耗时**，
   于是 `dt` 在 50~56ms 之间漂移。2026-10-28 改为**绝对截止时刻**：以"上次截止 + 50ms"
@@ -168,7 +168,7 @@ happens-before，删掉了 13 个不再需要的 `@Volatile`（20 → 7），保
 | P2 诊断页昂贵字段 | 已完成 | `privateTypes` / `gateSelfTest` 10s TTL；页面 2s 刷新 |
 | P3 日志开关 | 已完成 | `Logger.debug/info` 自行判定；debug 默认关 |
 | P4 位置投递降频 | **未改**（语义取舍） | 保持 100ms 与同步投递 |
-| P5 移除传感器监督线程 | **仅设计** | [`sensor-supervisor-removal.md`](sensor-supervisor-removal.md) |
+| P5 移除传感器监督线程 | 已实施（待真机） | 状态推进并入投递泵的 `beforePump`；见 [`sensor-supervisor-removal.md`](sensor-supervisor-removal.md) |
 | P6 KeepAlive / GNSS 常驻轮询 | 已完成 | 私有锁 + 事件唤醒 + 30s 兜底 |
 
 验证口径不变：`sh scripts/test-all.sh` 全绿；P1/P6 需要真机读数（dump 次数、线程唤醒数）确认。
