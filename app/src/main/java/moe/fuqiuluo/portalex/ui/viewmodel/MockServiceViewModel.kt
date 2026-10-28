@@ -167,6 +167,9 @@ class MockServiceViewModel : ViewModel() {
         routePlayingPushed = false
         lastPushedActive = false
         lastPushedBearing = Double.NaN
+        // 会话刚起来先同步一次配置：模块刚启动时用的是默认值（比如上报间隔 100ms），
+        // 不同步的话设置页里的「最大位置上报间隔」看起来永远不生效。
+        ConfigSync.push(Portal.appContext, locationManager)
         // 会话刚起来就把当前路线重新下发：模块侧会清进度，并在未播放时把位置对齐到起点
         val lm = locationManager
         if (lm != null && selectedRoute != null && pathPoints.size >= 2) {

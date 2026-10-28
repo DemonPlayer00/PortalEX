@@ -33,6 +33,7 @@ import moe.fuqiuluo.portalex.ext.disableWifiScan
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.needOpenSELinux
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
+import moe.fuqiuluo.portalex.ext.mapUpdateInterval
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.suPath
 
@@ -260,6 +261,7 @@ class SettingsFragment : Fragment() {
 
         binding.speedValue.text = getString(R.string.speed_format, context.speed)
         binding.reportDurationValue.text = "%dms".format(context.reportDuration)
+        binding.mapIntervalValue.text = formatMapInterval(context.mapUpdateInterval)
 
         binding.speedLayout.setOnClickListener {
             showDialog(getString(R.string.rocker_speed), binding.speedValue.text.toString().let { it.substring(0, it.length - 3) }) {
@@ -405,6 +407,37 @@ class SettingsFragment : Fragment() {
                 }
                 context.reportDuration = value
                 binding.reportDurationValue.text = "%dms".format(value)
+                // 立刻下发：否则模块仍按旧间隔出帧，"最大上报间隔"看起来不生效
+                val lm = requireContext().getSystemService(android.content.Context.LOCATION_SERVICE)
+                    as? android.location.LocationManager
+                ConfigSync.push(requireContext(), lm)
+            }
+        }
+
+        // 「应用地图更新间隔」：本进程地图订阅的频率；低于最大上报间隔会被系统侧钳住
+        binding.mapIntervalLayout.setOnClickListener {
+            val current = context.mapUpdateInterval
+            showDialog(
+                getString(R.string.item_map_interval_title),
+                if (current > 0) current.toString() else "0",
+                warningFor = { raw ->
+                    val v = raw.toIntOrNull()
+                    if (v == null || v <= 0) {
+                        null
+                    } else if (v < context.reportDuration) {
+                        getString(R.string.map_interval_warning)
+                    } else {
+                        null
+                    }
+                }
+            ) { raw ->
+                val value = raw.toIntOrNull()
+                if (value == null || value < 0 || value > 10000) {
+                    Toast.makeText(context, getString(R.string.report_invalid), Toast.LENGTH_SHORT).show()
+                    return@showDialog
+                }
+                context.mapUpdateInterval = value
+                binding.mapIntervalValue.text = formatMapInterval(value)
             }
         }
 
@@ -485,7 +518,22 @@ class SettingsFragment : Fragment() {
     }
 
     @SuppressLint("MissingInflatedId")
-    private fun showDialog(titleText: String, valueText: String, handler: (String) -> Unit) {
+    /** 0 表示跟随最大上报间隔，界面上不显示具体数字 */
+    private fun formatMapInterval(value: Int): String =
+        if (value > 0) "%dms".format(value) else getString(R.string.item_map_interval_value)
+
+    /**
+     * 输入对话框。
+     *
+     * [warningFor] 非空时，编辑框下方会出现一行提示（随输入实时刷新）——
+     * 用于「低于最大上报间隔，将限制在最大上报间隔」这类约束提示。
+     */
+    private fun showDialog(
+        titleText: String,
+        valueText: String,
+        warningFor: ((String) -> String?)? = null,
+        handler: (String) -> Unit
+    ) {
         val inflater = LayoutInflater.from(requireContext())
         val dialogView = inflater.inflate(R.layout.dialog_input, null)
 
@@ -494,6 +542,23 @@ class SettingsFragment : Fragment() {
 
         val value = dialogView.findViewById<TextInputEditText>(R.id.value)
         value.setText(valueText)
+
+        if (warningFor != null) {
+            val warning = dialogView.findViewById<TextView>(R.id.warning)
+            fun refreshWarning() {
+                val text = warningFor(value.text?.toString().orEmpty())
+                warning.text = text.orEmpty()
+                warning.visibility = if (text.isNullOrEmpty()) View.GONE else View.VISIBLE
+            }
+            value.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    refreshWarning()
+                }
+                override fun afterTextChanged(s: android.text.Editable?) {}
+            })
+            refreshWarning()
+        }
 
         val builder = MaterialAlertDialogBuilder(requireContext())
         builder.setTitle(null)

@@ -1385,7 +1385,12 @@ internal object LocationServiceHook: BaseLocationHook() {
             }
 
             if(FakeLoc.enableDebugLog) {
-                Logger.debug("registerLocationListener: injected! $listener, from ${BinderUtils.getUidPackageNames()}")
+                Logger.debug(
+                    "registerLocationListener: injected! provider=" + provider +
+                        " intervalMs=" + (requestedIntervalNanos(args.getOrNull(1)) / 1_000_000L) +
+                        " cap=" + LocConfig.reportDurationMs +
+                        " from " + BinderUtils.getUidPackageNames()
+                )
             }
 
             addLocationListenerInner(

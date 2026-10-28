@@ -301,6 +301,10 @@
     <string name="keepalive_off">Background keep-alive disabled</string>
     <string name="battery_already_whitelisted">Already whitelisted for battery optimization</string>
     <string name="battery_open_failed">Cannot open battery optimization settings: %1$s</string>
+    <string name="item_map_interval_title">App map update interval</string>
+    <string name="item_map_interval_desc">How often the map point refreshes (ms); 0 = follow the max report interval.</string>
+    <string name="item_map_interval_value">Follow report interval</string>
+    <string name="map_interval_warning">Below the max report interval, so it will be limited to that interval.</string>
     <string name="report_invalid">Invalid report interval</string>
     <string name="report_max">Report interval cannot exceed 1 s</string>
     <string name="wifi_service_unavailable">Location service unavailable; cannot change WLAN scan</string>

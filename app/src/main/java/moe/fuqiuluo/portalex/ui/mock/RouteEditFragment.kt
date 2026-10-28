@@ -18,6 +18,7 @@ import com.alibaba.fastjson2.JSON
 import com.alibaba.fastjson2.JSONObject
 import com.baidu.location.BDAbstractLocationListener
 import moe.fuqiuluo.portalex.service.PortalLocationClient
+import moe.fuqiuluo.portalex.ext.mapUpdateInterval
 import moe.fuqiuluo.portalex.ext.reportDuration
 import com.baidu.location.BDLocation
 import com.baidu.location.LocationClient
@@ -200,7 +201,9 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         mLocationClient.enableLocInForeground(1, baiduMapViewModel.mNotification)
         mLocationClient.start()
 
-        PortalLocationClient.subscribe(this, requireContext(), requireContext().reportDuration.toLong()) { fix ->
+        val mapInterval = requireContext().mapUpdateInterval.takeIf { it > 0 }?.toLong()
+            ?: requireContext().reportDuration.toLong()
+        PortalLocationClient.subscribe(this, requireContext(), mapInterval) { fix ->
             if (baiduMapViewModel.isExists) {
                 baiduMapViewModel.applyFix(fix.lat, fix.lon, fix.bearing, fix.accuracy)
             }

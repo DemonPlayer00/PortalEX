@@ -64,6 +64,19 @@ var Context.reportDuration: Int
         putInt("reportDuration", value)
     }
 
+
+/**
+ * **应用地图更新间隔**（毫秒）：本进程地图页向系统订阅位置的频率。
+ *
+ * - 0 表示「跟随最大位置上报间隔」（reportDuration）；
+ * - 若设置得比最大上报间隔更小，系统侧会把实际出帧钳到最大上报间隔 —— 设置页会给出警告。
+ */
+var Context.mapUpdateInterval: Int
+    get() = sharedPrefs.getInt("mapUpdateInterval", 0)
+    set(value) = sharedPrefs.edit {
+        putInt("mapUpdateInterval", value)
+    }
+
 var Context.minSatelliteCount: Int
     get() = sharedPrefs.getInt("minSatelliteCount", 12)
     set(value) = sharedPrefs.edit {
