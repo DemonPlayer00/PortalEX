@@ -108,7 +108,8 @@ class TestFragment : Fragment() {
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 refresh()
-                delay(1000)
+                // 2s：这些字符串是人读的，1s 刷新只会把 system_server 的诊断查询放大一倍。
+                delay(2000)
             }
         }
     }

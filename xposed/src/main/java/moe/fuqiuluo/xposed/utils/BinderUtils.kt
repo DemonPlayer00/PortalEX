@@ -120,7 +120,15 @@ object BinderUtils {
      * 期望只有模块自身为 ALLOW，shell/system/root/media 与 uid 未知一律 deny。
      * 系统 uid 不再默认放行、包名用全等（旧实现的两个洞见 [isLocationProviderEnabled]）。
      */
+    /** 门禁自检结论缓存：6 次 uid/包名判定，Test 页每秒刷新没必要重算 */
+    @Volatile private var selfTestAtNanos = 0L
+    @Volatile private var selfTestCached: String? = null
+
     internal fun gateSelfTest(): String {
+        val now = System.nanoTime()
+        selfTestCached?.let {
+            if (now - selfTestAtNanos < SELF_TEST_TTL_NANOS) return it
+        }
         val owner = moduleOwnerUid() ?: -1
         val rows = listOf(
             "owner($owner)" to gateAllows(owner),
@@ -130,8 +138,13 @@ object BinderUtils {
             "media(1013)" to gateAllows(1013),
             "unknown(-1)" to gateAllows(-1)
         )
-        return rows.joinToString(" ") { "${it.first}=${if (it.second) "ALLOW" else "deny"}" }
+        val text = rows.joinToString(" ") { "${it.first}=${if (it.second) "ALLOW" else "deny"}" }
+        selfTestCached = text
+        selfTestAtNanos = now
+        return text
     }
+
+    private const val SELF_TEST_TTL_NANOS = 10_000_000_000L
 
     /** 模块自身包的 uid（读不到返回 null —— 调用方按 fail-closed 处理） */
     internal fun moduleOwnerUid(): Int? {

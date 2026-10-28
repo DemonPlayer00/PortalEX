@@ -65,7 +65,27 @@ internal object SensorHandleMap {
      *
      * @return "33171034:pedometer_minute:0x1f4 ..."；不可用时为 null
      */
+    /**
+     * 厂商私有传感器清单的缓存。
+     *
+     * Test 页每秒刷新都会调 [privateTypes]；而 `getSensorList(TYPE_ALL)` 与逐传感器反射
+     * 在 system_server 里并不便宜。传感器列表是静态的，10s 的 TTL 足够，且不会掩盖
+     * "热插拔传感器"这种本机不存在的场景。
+     */
+    @Volatile private var privateTypesAtNanos = 0L
+    @Volatile private var privateTypesCached: String? = null
+
     fun privateTypes(): String? {
+        val now = System.nanoTime()
+        if (now - privateTypesAtNanos < PRIVATE_TYPES_TTL_NANOS) return privateTypesCached
+        privateTypesCached = collectPrivateTypes()
+        privateTypesAtNanos = now
+        return privateTypesCached
+    }
+
+    private const val PRIVATE_TYPES_TTL_NANOS = 10_000_000_000L
+
+    private fun collectPrivateTypes(): String? {
         return try {
             val ctx = BinderUtils.getSystemContext() ?: return null
             val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return null
