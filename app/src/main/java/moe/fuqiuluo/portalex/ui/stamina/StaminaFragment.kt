@@ -87,7 +87,7 @@ class StaminaFragment : Fragment() {
                 get = { it.resumeAtPercent },
                 set = { c, v -> c.copy(resumeAtPercent = v) },
                 format = { "%.0f %%".format(it) },
-                hint = "疲劳倒计时的**速率参考点**：体力低于它 ⇒ 倒计时变慢（最低 0.25x），" +
+                hint = "疲劳倒计时的速率参考点：体力低于它 ⇒ 倒计时变慢（最低 0.25x），" +
                         "达到/超过 ⇒ 变快（最多 3x），越远越快。必须高于疲劳体力值。默认 25%",
             ),
             Row(
@@ -96,7 +96,7 @@ class StaminaFragment : Fragment() {
                 get = { it.fatigueSec },
                 set = { c, v -> c.copy(fatigueSec = v) },
                 format = { "%.0f 秒".format(it) },
-                hint = "一次疲劳的**倒计时预算**：进疲劳按下这个秒数，倒完即开跑。" +
+                hint = "一次疲劳的倒计时预算：进疲劳按下这个秒数，倒完即开跑。" +
                         "实际时长通常更长（低于开跑阈值时倒得慢，默认约 2 倍），看下面结果行。默认 80 秒",
             ),
             Row(
@@ -154,7 +154,7 @@ class StaminaFragment : Fragment() {
                 get = { it.moveIgnoreSpeed },
                 set = { c, v -> c.copy(moveIgnoreSpeed = v) },
                 format = { "%.1f m/s".format(it) },
-                hint = "忽略阈值：表象移动**快于**它时本拍不计消耗（防瞬移/异常帧一瞬抽干体力）。默认 12 m/s",
+                hint = "忽略阈值：表象移动快于它时本拍不计消耗（防瞬移/异常帧一瞬抽干体力）。默认 12 m/s",
             ),
         )
 

@@ -279,7 +279,7 @@ object ImuProbe {
             val a = headingRing.copyOf(headingN); Arrays.sort(a); a[headingN / 2]
         }
         sb.append("%-8s %-26s |Δ|中位 %.3f 最大 %.3f（度）→ %s".format(
-            "罗盘角", "（**仅**由磁场方向 atan2 反算）", hMed, headingMax,
+            "罗盘角", "（仅由磁场方向 atan2 反算）", hMed, headingMax,
             when {
                 headingN < 10 -> "样本少"
                 hMed <= 0.9 && headingMax <= 9.0 -> "平滑 ✓"

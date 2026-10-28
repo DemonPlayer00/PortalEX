@@ -115,7 +115,7 @@ class MockServiceViewModel : ViewModel() {
      * 后台保活服务的当前状态。
      *
      * 迁移后它的理由变了：**不再需要"钉住 App 以维持推进"**（推进在 system_server，
-     * App 被冻结也照样走），留下它是为了"无人值守的**收尾**"—— 播完要放提示音/振动、
+     * App 被冻结也照样走），留下它是为了"无人值守的收尾"—— 播完要放提示音/振动、
      * 要把悬停按钮的状态收回来，那需要一个活着的观察者。
      */
     private var keepAliveOn = false
