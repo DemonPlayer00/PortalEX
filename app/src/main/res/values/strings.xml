@@ -276,8 +276,6 @@
     <string name="anti_pullback_title">Anti pull-back</string>
     <string name="anti_pullback_desc">Push the location again when it is pulled back. Restart mock to apply.</string>
     <string name="battery_optimization_title">Battery optimization whitelist</string>
-    <string name="disable_wifi_scan_title">Disable Wi-Fi scan</string>
-    <string name="disable_wifi_scan_desc">Block Wi-Fi scans to reduce location pull-back.</string>
     <string name="fused_spoof">Spoof</string>
     <string name="not_applicable">Not applicable</string>
     <string name="loading">Loading…</string>
