@@ -81,7 +81,10 @@ internal object CameraMockController {
         }
         if (!CameraMockClient.enabledFor(packageName)) return false
         val manifest = CameraMockClient.manifest()
-        val position = CameraMockClient.position()
+        // 收到摄像头调用：**现取一次坐标**再选片（主线程上不阻塞，退回缓存）。
+        // 原实现命中热缓存就直接用缓存坐标，选片会按"上一次"的位置算距离。
+        val onMainThread = Looper.myLooper() == Looper.getMainLooper()
+        val position = CameraMockClient.position(fresh = !onMainThread)
         val picked = CameraMockSelector.select(
             manifest, position?.first, position?.second,
             nowMs = System.currentTimeMillis(),
