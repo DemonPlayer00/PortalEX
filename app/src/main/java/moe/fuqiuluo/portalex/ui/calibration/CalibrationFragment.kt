@@ -90,6 +90,9 @@ class CalibrationFragment : Fragment() {
     private var satellitesValue: TextView? = null
     private var altitudeValue: TextView? = null
     private var maxCn0Value: TextView? = null
+    private var gnssFlagsValue: TextView? = null
+    private var cellListValue: TextView? = null
+    private var wifiListValue: TextView? = null
     private var meanCn0Value: TextView? = null
 
     /** 一次校准的令牌：作废的采集（用户取消/页面销毁）不许回写 */
@@ -243,6 +246,43 @@ class CalibrationFragment : Fragment() {
                 ctx.meanCn0Measured = v.toFloat()
             }
         }
+        // 与「一键校准」的 GPS / 基带两组一一对应：列出的就是会被采集/下发的那些数据
+        gnssFlagsValue = measurementRow(
+            getString(R.string.calibration_gps_flags),
+            getString(R.string.calibration_gps_flags_desc),
+        ) {
+            editLines("卫星状态（每行一颗：E/A/U/F/B[,C/N0]）", requireContext().gnssFlags) { lines ->
+                requireContext().gnssFlags = lines
+                renderFluctuation()
+                sendSim(
+                    "gps", lines.firstOrNull().orEmpty(),
+                    requireContext().sharedPrefs.getString("sim_gps_v2", "12").orEmpty(),
+                    lines.ifEmpty { null }
+                )
+            }
+        }
+        cellListValue = measurementRow(
+            getString(R.string.calibration_cell_list),
+            getString(R.string.calibration_cell_list_desc),
+        ) {
+            editLines("基站列表（每行 mcc/mnc|cid/tac）", requireContext().cellEntries) { lines ->
+                requireContext().cellEntries = lines
+                renderFluctuation()
+                sendSim("cell", lines.firstOrNull()?.substringBefore("|").orEmpty(),
+                    lines.firstOrNull()?.substringAfter("|").orEmpty(), lines.ifEmpty { null })
+            }
+        }
+        wifiListValue = measurementRow(
+            getString(R.string.calibration_wifi_list),
+            getString(R.string.calibration_wifi_list_desc),
+        ) {
+            editLines("Wi-Fi 列表（每行 ssid|bssid）", requireContext().wifiEntries) { lines ->
+                requireContext().wifiEntries = lines
+                renderFluctuation()
+                sendSim("wifi", lines.firstOrNull()?.substringBefore("|").orEmpty(),
+                    lines.firstOrNull()?.substringAfter("|").orEmpty(), lines.ifEmpty { null })
+            }
+        }
     }
 
     private fun renderFluctuation() {
@@ -271,6 +311,9 @@ class CalibrationFragment : Fragment() {
         meanCn0Value?.text = ctx.meanCn0Measured.let {
             if (it > 0f) "%.1fdB-Hz".format(it) else "未采集"
         }
+        gnssFlagsValue?.text = ctx.gnssFlags.size.let { if (it > 0) "$it 条" else "未设置" }
+        cellListValue?.text = ctx.cellEntries.size.let { if (it > 0) "$it 条" else "未设置" }
+        wifiListValue?.text = ctx.wifiEntries.size.let { if (it > 0) "$it 条" else "未设置" }
     }
 
     private fun applyLocationAccuracy(ctx: android.content.Context, result: LocationAccuracyCalibrator.Result) {
@@ -308,6 +351,27 @@ class CalibrationFragment : Fragment() {
         renderFluctuation()
         pushConfig()
         showToast(result.message)
+    }
+
+    /** 多行编辑：每行一条（卫星状态 / 基站列表 / Wi-Fi 列表共用） */
+    private fun editLines(title: String, initial: List<String>, save: (List<String>) -> Unit) {
+        val view = layoutInflater.inflate(R.layout.dialog_input, null)
+        view.findViewById<TextView>(R.id.title).text = title
+        val value = view.findViewById<android.widget.EditText>(R.id.value)
+        value.setText(initial.joinToString("\n"))
+        value.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        value.minLines = 4
+        value.maxLines = 10
+        MaterialAlertDialogBuilder(requireContext())
+            .setView(view)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val lines = (value.text?.toString() ?: "")
+                    .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                save(lines)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun editSatellite(ctx: android.content.Context) {

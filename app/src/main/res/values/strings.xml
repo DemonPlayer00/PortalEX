@@ -127,6 +127,12 @@
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
     <string name="calibration_hint">Adjust simulated sensor jitter. Tap Calibrate to measure; movement only skips the sensor part, GPS and baseband are still measured.</string>
+    <string name="calibration_gps_flags">Satellite status</string>
+    <string name="calibration_gps_flags_desc">One satellite per line: E ephemeris / A almanac / U used-in-fix / F carrier / B baseband C-N0, optionally followed by C/N0.</string>
+    <string name="calibration_cell_list">Cell list</string>
+    <string name="calibration_cell_list_desc">One per line: mcc/mnc|cid/tac; filled from visible cells when calibrating.</string>
+    <string name="calibration_wifi_list">Wi-Fi list</string>
+    <string name="calibration_wifi_list_desc">One per line: ssid|bssid; filled from the current connection and scan results when calibrating.</string>
     <string name="calibration_run">Calibrate</string>
     <string name="calibration_reset">Restore defaults</string>
     <string name="calibration_satellite_count">Simulated satellites</string>

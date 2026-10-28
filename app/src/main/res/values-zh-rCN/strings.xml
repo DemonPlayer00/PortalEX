@@ -138,6 +138,12 @@
     <string name="menu_test">测试</string>
     <string name="menu_calibration">校准</string>
     <string name="calibration_hint">在这里调整模拟传感器的抖动。可点“一键校准”自动测量；检测到移动只会跳过传感器检测，GPS / 基带仍照常测量。</string>
+    <string name="calibration_gps_flags">卫星状态</string>
+    <string name="calibration_gps_flags_desc">每行一颗卫星：E 星历 / A 年历 / U 参与定位 / F 载波 / B 基带 C-N0，可跟 C/N0。</string>
+    <string name="calibration_cell_list">基站列表</string>
+    <string name="calibration_cell_list_desc">每行一条：mcc/mnc|cid/tac；校准时按可见小区自动填充。</string>
+    <string name="calibration_wifi_list">Wi-Fi 列表</string>
+    <string name="calibration_wifi_list_desc">每行一条：ssid|bssid；校准时按当前连接与扫描结果自动填充。</string>
     <string name="calibration_run">一键校准</string>
     <string name="calibration_reset">恢复默认</string>
     <string name="calibration_satellite_count">模拟卫星数</string>
