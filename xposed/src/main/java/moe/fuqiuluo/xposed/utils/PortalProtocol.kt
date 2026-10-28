@@ -64,6 +64,8 @@ object PortalProtocol {
     /** Bundle 键名：extras 与回包里的字段 */
     object Key {
         const val ACCURACY                  = "accuracy"
+        /** 精度波动（米）：每帧在 accuracy 上叠加 ±该值 */
+        const val ACCURACY_JITTER           = "accuracy_jitter"
         const val ALTITUDE                  = "altitude"
         const val ALTITUDE_JITTER           = "altitude_jitter"
         const val FUSED_ACCURACY            = "fused_accuracy"

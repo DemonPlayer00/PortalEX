@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Bundle as AndroidBundle
 import android.util.Log
 import moe.fuqiuluo.portalex.ext.altitude
+import moe.fuqiuluo.portalex.ext.accuracyJitter
 import moe.fuqiuluo.portalex.ext.altitudeJitter
 import moe.fuqiuluo.portalex.ext.speedAmplitude
 import moe.fuqiuluo.portalex.ext.cadenceMock
@@ -85,6 +86,7 @@ object ConfigSync {
     fun mirrorLocal(context: Context) {
         FakeLoc.altitude = context.altitude
         FakeLoc.altitudeJitter = context.altitudeJitter
+        FakeLoc.accuracyJitter = context.accuracyJitter
         FakeLoc.speed = context.speed
         FakeLoc.speedAmplitude = context.speedAmplitude
         FakeLoc.enableDebugLog = context.debug
@@ -121,6 +123,7 @@ object ConfigSync {
         rely.putString(Key.COMMAND_ID, Cmd.PUT_CONFIG)
         rely.putDouble(Key.ALTITUDE, FakeLoc.altitude)
         rely.putDouble(Key.ALTITUDE_JITTER, FakeLoc.altitudeJitter)
+        rely.putFloat(Key.ACCURACY_JITTER, FakeLoc.accuracyJitter)
         rely.putDouble(Key.SPEED, FakeLoc.speed)
         rely.putDouble(Key.SPEED_AMPLITUDE, FakeLoc.speedAmplitude)
         rely.putBoolean(Key.ENABLE_DEBUG_LOG, FakeLoc.enableDebugLog)

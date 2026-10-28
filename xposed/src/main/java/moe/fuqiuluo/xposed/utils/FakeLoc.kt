@@ -159,6 +159,10 @@ object FakeLoc {
         get() = LocConfig.accuracy
         set(value) { LocConfig.accuracy = value }
 
+    var accuracyJitter: Float
+        get() = LocConfig.accuracyJitter
+        set(value) { LocConfig.accuracyJitter = value }
+
     /** 海拔波动幅度（米）；同时作为垂直精度数据源。 */
     var altitudeJitter: Double
         get() = LocConfig.altitudeJitter

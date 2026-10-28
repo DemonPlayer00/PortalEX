@@ -61,7 +61,14 @@ abstract class BaseLocationHook: BaseDivineService() {
         }
 
         val location = Location(originLocation.provider ?: LocationManager.GPS_PROVIDER)
-        location.accuracy = if (FakeLoc.accuracy != 0.0f) FakeLoc.accuracy else originLocation.accuracy
+        // 精度波动：配置精度 ± jitter（每帧独立），下限 0.1m 避免出现 0 精度
+        val baseAccuracy = if (FakeLoc.accuracy != 0.0f) FakeLoc.accuracy else originLocation.accuracy
+        val jitterAccuracy = FakeLoc.accuracyJitter
+        location.accuracy = if (jitterAccuracy > 0f) {
+            (baseAccuracy + (kotlin.random.Random.nextFloat() * 2f - 1f) * jitterAccuracy).coerceAtLeast(0.1f)
+        } else {
+            baseAccuracy
+        }
         val jitterLat = FakeLoc.jitterLocation()
         location.latitude = jitterLat.first
         location.longitude = jitterLat.second

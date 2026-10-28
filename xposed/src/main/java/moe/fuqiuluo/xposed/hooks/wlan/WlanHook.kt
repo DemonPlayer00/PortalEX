@@ -107,12 +107,15 @@ object WlanHook {
             ) {
                 val wifiInfo = WifiInfo::class.java.getConstructor().newInstance()
                 XposedHelpers.callMethod(wifiInfo, "setMacAddress", "02:00:00:00:00:00")
-                XposedHelpers.callMethod(wifiInfo, "setBSSID", NetworkSimConfig.wifiBssid)
+                // 设定为空（列表与单值都没填）⇒ 返回空，而不是把系统真实连接原样透传
+                val (cfgSsid, cfgBssid) = NetworkSimConfig.firstWifi()
+                val blank = cfgSsid.isBlank() && cfgBssid.isBlank()
+                XposedHelpers.callMethod(wifiInfo, "setBSSID", if (blank) "" else cfgBssid)
                 // Android 15 的 setSSID 参数类型已改为 WifiSsid；失败不影响其它字段。
                 runCatching {
                     val wifiSsid = Class.forName("android.net.wifi.WifiSsid")
                     val value = wifiSsid.getMethod("fromString", String::class.java)
-                        .invoke(null, NetworkSimConfig.wifiSsid)
+                        .invoke(null, if (blank) "" else cfgSsid)
                     XposedHelpers.callMethod(wifiInfo, "setSSID", value)
                 }
                 XposedHelpers.callMethod(wifiInfo, "setNetworkId", 1)

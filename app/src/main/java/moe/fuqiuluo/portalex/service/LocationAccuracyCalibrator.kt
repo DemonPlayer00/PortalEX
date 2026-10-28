@@ -51,6 +51,10 @@ object LocationAccuracyCalibrator {
         val fusedRegistered: Boolean = false,
         /** GPS 实测海拔中位数（米）；无有效 altitude 时为 null。 */
         val altitudeMeters: Double? = null,
+        /** GPS accuracy 的实测标准差（米）：作为"精度波动"的参考值。 */
+        val accuracySigma: Float? = null,
+        /** GPS 海拔的实测标准差（米）：作为"海拔波动"的参考值。 */
+        val altitudeSigma: Float? = null,
     )
 
     private const val TAG = "PortalLocationCalib"
@@ -211,6 +215,8 @@ object LocationAccuracyCalibrator {
                     fusedRegistered = fusedRegistered,
                     satellitesJitter = satJitter,
                     altitudeMeters = altitudeMedian,
+                    accuracySigma = sigmaOf(gpsValues),
+                    altitudeSigma = sigmaOf(altitudeValues),
                     detail = buildString {
                         append("GPS accuracy median=%.2fm".format(gpsMedian))
                         fusedMedian?.let { append("；GPS-fused 水平差 median=%.2fm".format(it)) }
@@ -242,6 +248,13 @@ object LocationAccuracyCalibrator {
         val dx = (a.longitude - b.longitude) * 111_320.0 * kotlin.math.cos(lat)
         val dy = (a.latitude - b.latitude) * 111_320.0
         return hypot(dx, dy).toFloat()
+    }
+
+    /** 标准差（不足两个样本返回 null，避免把"没数据"报成 0） */
+    private fun sigmaOf(values: List<Float>): Float? {
+        if (values.size < 2) return null
+        val mean = values.average()
+        return kotlin.math.sqrt(values.sumOf { (it - mean) * (it - mean) } / values.size).toFloat()
     }
 
     private fun median(values: List<Float>): Float {

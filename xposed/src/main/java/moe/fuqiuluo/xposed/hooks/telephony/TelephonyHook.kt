@@ -130,6 +130,13 @@ object TelephonyHook: BaseTelephonyHook() {
                     // 多条目：列表里有几个就下发几个（首条为"已注册"）
                     val wanted = if (NetworkSimConfig.cellList.isEmpty()) 1
                     else NetworkSimConfig.cellList.size.coerceIn(1, 8)
+                    // 设定为空 ⇒ 返回空列表（不把真实小区透传出去）
+                    if (NetworkSimConfig.cellList.isEmpty() &&
+                        NetworkSimConfig.cellMcc.isBlank() && NetworkSimConfig.cellCid.isBlank()
+                    ) {
+                        result = emptyList<CellInfo>()
+                        return@afterHook
+                    }
                     val cResult = arrayListOf<CellInfo>()
                     repeat(wanted) { idx ->
                     val cellInfo = kotlin.runCatching {

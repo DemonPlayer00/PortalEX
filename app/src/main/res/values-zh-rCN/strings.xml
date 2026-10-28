@@ -138,6 +138,8 @@
     <string name="menu_test">测试</string>
     <string name="menu_calibration">校准</string>
     <string name="calibration_hint">在这里调整模拟传感器的抖动。可点“一键校准”自动测量；检测到移动只会跳过传感器检测，GPS / 基带仍照常测量。</string>
+    <string name="calibration_accuracy_jitter">精度波动</string>
+    <string name="calibration_accuracy_jitter_desc">每帧上报精度的浮动范围（米），0 = 固定不变。</string>
     <string name="calibration_gps_flags">卫星状态</string>
     <string name="calibration_gps_flags_desc">每行一颗卫星：E 星历 / A 年历 / U 参与定位 / F 载波 / B 基带 C-N0，可跟 C/N0。</string>
     <string name="calibration_cell_list">基站列表</string>
