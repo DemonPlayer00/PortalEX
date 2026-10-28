@@ -708,10 +708,13 @@ object BinderSensorMock {
         /*
          * 「按应用期望出数据」：把框架观测到的**采用速率**与**活跃状态**灌给原生层。
          * 真机 HAL 按"所有请求里最快那个"出力、框架原样广播 ⇒ 我们照同一模型走；
-         * 没人订阅的类型随之静默。dump 有缓存（2s）且**解析结果没变就不下发**（见 pushHints），
-         * 所以这里静止时放到 10s：没人走路时速率提示不急，别为它每 2s 拉一次 40KB 的 dump。
+         * 没人订阅的类型随之静默。刷新由 native 订阅脏位驱动（本机 Java 侧钩子装不上），
+         * 60s 周期只作兜底 —— 没有订阅变化时一次 40KB dump 都不做。
          */
-        // 速率提示：**订阅变化驱动**（钩子在 SensorRateProbe 里），周期只作兜底 ——
+        if (nativeReady && SensorRateProbe.consumeNativeDirty()) {
+            SensorRateProbe.requestRefresh()
+        }
+        // 速率提示：**订阅变化驱动**（native 脏位 + Java 钩子），周期只作兜底 ——
         // 一次 dump 20~30ms，靠轮询做就是白烧（实测移动时 2s 一次 ≈1~1.5% 单核）
         if (SensorRateProbe.dueForRefresh(now, moving)) {
             SensorRateProbe.markRefreshed(now)

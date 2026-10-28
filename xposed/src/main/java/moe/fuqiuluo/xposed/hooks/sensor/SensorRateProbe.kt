@@ -34,8 +34,8 @@ import moe.fuqiuluo.xposed.utils.MethodHookParam
 
 internal object SensorRateProbe {
 
-    /** dump 有点重（本机约 40KB 文本），缓存住，别让 UI 每秒都去拉一次 */
-    private const val CACHE_NANOS = 2_000_000_000L
+    /** dump 解析结果的缓存；诊断页 2s 刷新时直接复用，不重复解析 40KB 文本 */
+    private const val CACHE_NANOS = 10_000_000_000L
 
     // ------------------------------------------------------------------
     // 「订阅变化驱动」：把 40KB 的 dump 从"每 2s 轮询"改成"订阅变了才取"
@@ -61,9 +61,48 @@ internal object SensorRateProbe {
     /** 钩子装上了以后的兜底周期：只防"漏事件"，可以很长 */
     private const val FALLBACK_HOOKED_NANOS = 60_000_000_000L
 
+    /**
+     * native 脏位可用时的兜底周期。
+     *
+     * 订阅变化由 `SensorEventConnection::enableDisable` 的 vtable 钩子置脏位并即时唤醒，
+     * 正常情况下一次周期 dump 都不需要；60s 只是防"脏位置位丢了"的保险。
+     */
+    private const val FALLBACK_NATIVE_DIRTY_NANOS = 60_000_000_000L
+
     @Volatile private var refreshRequestedNanos = 0L
     @Volatile private var lastRefreshNanos = 0L
     @Volatile private var hooksInstalled = false
+
+    /**
+     * native 脏位可用性。
+     *
+     * `probed=false` 时还不知道（老 .so 可能没有符号）；第一次调用后才有结论。
+     * 只有确认可用才把兜底周期拉到 60s，否则保持旧的 2s/10s 轮询。
+     */
+    @Volatile private var nativeDirtyProbed = false
+    @Volatile private var nativeDirtyUsable = false
+
+    /**
+     * 读取并清除 native 订阅脏位。老 .so 没有 `takeSubscriptionDirty` 时抛
+     * `UnsatisfiedLinkError`——只降级一次，之后不再调用。
+     */
+    fun consumeNativeDirty(): Boolean {
+        if (nativeDirtyProbed && !nativeDirtyUsable) return false
+        return try {
+            val dirty = BinderSensorNative.takeSubscriptionDirty()
+            nativeDirtyProbed = true
+            nativeDirtyUsable = true
+            dirty
+        } catch (t: Throwable) {
+            nativeDirtyProbed = true
+            nativeDirtyUsable = false
+            Logger.warn(
+                "SensorRateProbe: native 脏位不可用（${t::class.java.simpleName}），" +
+                        "退回周期 dump"
+            )
+            false
+        }
+    }
 
     /** 订阅集合变了（由框架侧钩子调用）：任何线程可调，只做一次原子写 + 唤醒监督线程 */
     fun requestRefresh() {
@@ -80,6 +119,7 @@ internal object SensorRateProbe {
         }
         val fallback = when {
             hooksInstalled -> FALLBACK_HOOKED_NANOS
+            nativeDirtyProbed && nativeDirtyUsable -> FALLBACK_NATIVE_DIRTY_NANOS
             moving -> FALLBACK_UNHOOKED_MOVING_NANOS
             else -> FALLBACK_UNHOOKED_IDLE_NANOS
         }
@@ -125,8 +165,8 @@ internal object SensorRateProbe {
         hooksInstalled = hooked > 0
         Logger.info(
             "SensorRateProbe: 订阅变化钩子 hooked=$hooked（候选 ${targets.size}）—— " +
-                    "速率提示改为事件驱动，兜底周期 " +
-                    "${if (hooksInstalled) FALLBACK_HOOKED_NANOS / 1_000_000_000 else FALLBACK_UNHOOKED_MOVING_NANOS / 1_000_000_000}s(移动)/" +
+                    "速率提示事件驱动：native 脏位优先，无脏位时退回 " +
+                    "${FALLBACK_UNHOOKED_MOVING_NANOS / 1_000_000_000}s(移动)/" +
                     "${FALLBACK_UNHOOKED_IDLE_NANOS / 1_000_000_000}s(静止)"
         )
     }
@@ -153,15 +193,17 @@ internal object SensorRateProbe {
     // ------------------------------------------------------------------
 
     @Volatile private var cachedText: String? = null
-    @Volatile private var cachedTextAtNanos = 0L
 
-    /** 带缓存的 dump 文本（[status] 与 [pushHints] 共用；拉取失败时沿用旧缓存） */
-    private fun dumpCached(): String? {
-        val now = System.nanoTime()
-        cachedText?.let { if (now - cachedTextAtNanos < CACHE_NANOS) return it }
+    /**
+     * 诊断读取：**不主动 dump**。有缓存就用缓存；第一次才拉一次。
+     * 刷新由订阅脏位/兜底周期驱动（见 [pushHints]），诊断页不再成为 dump 的触发源。
+     */
+    private fun dumpCached(): String? = cachedText ?: dumpFresh()
+
+    /** 真正去拉一次 dump，并更新共享缓存；只在订阅变化/兜底周期时调用 */
+    private fun dumpFresh(): String? {
         val fresh = dumpSensorService() ?: return cachedText
         cachedText = fresh
-        cachedTextAtNanos = now
         return fresh
     }
 
@@ -181,7 +223,7 @@ internal object SensorRateProbe {
     private var lastPushed: Map<Int, Pair<Long, Long>>? = null
 
     fun pushHints(): Boolean {
-        val text = dumpCached() ?: return false
+        val text = dumpFresh() ?: return false
         val active = activeHandles(text)
         val byHandle = handleToType()
         // 清空前必须先确认"灌得回去"：拿不到类型表就放弃本轮更新，保持现状

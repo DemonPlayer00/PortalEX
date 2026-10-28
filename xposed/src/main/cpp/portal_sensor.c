@@ -114,6 +114,11 @@ static int g_en_req_total = 0;  /* 累计条数（诊断） */
 static ps_enable_fn g_en_orig = NULL;
 static int g_en_hooked = 0;
 static pthread_mutex_t g_en_lock = PTHREAD_MUTEX_INITIALIZER;
+/*
+ * 订阅集合脏位：每次 enableDisable（注册/退订/改速率）置 1，Java 侧读取即清。
+ * 它替代了"每 2s dump 一次 40KB sensorservice"的轮询——没有订阅变化时一次 dump 都不做。
+ */
+static volatile int g_en_dirty = 0;
 
 /**
  * 打开 libbinder 拿 `IPCThreadState`（为了知道"谁"在请求采样率）。
@@ -197,6 +202,7 @@ static void ps_record_enable(int handle, int enabled, long long period_ns, long 
     if (g_en_req_count < EN_REQ_CAP) g_en_req_count++;
     g_en_req_total++;
     pthread_mutex_unlock(&g_en_lock);
+    g_en_dirty = 1;
 }
 
 static int hook_enable_disable(void *self, int handle, int enabled, long long period_ns,
@@ -689,6 +695,18 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_enableRequests(JNIEnv *
     }
     pthread_mutex_unlock(&g_en_lock);
     return (*env)->NewStringUTF(env, buf);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_takeSubscriptionDirty(
+        JNIEnv *env, jobject thiz) {
+    (void) env;
+    (void) thiz;
+    if (g_en_dirty) {
+        g_en_dirty = 0;
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
