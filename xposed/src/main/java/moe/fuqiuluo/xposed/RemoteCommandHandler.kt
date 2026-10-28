@@ -629,7 +629,9 @@ object RemoteCommandHandler {
         rely.putBoolean(Key.MOTION_COMPLETED, st.completed)
         rely.putDouble(Key.ROUTE_TRAVELLED, st.travelledMeters)
         rely.putDouble(Key.ROUTE_DISTANCE, st.distanceMeters)
+        // route_points = 已展开的采样点（惰性展开进度）；route_endpoints = 上传的端点数
         rely.putInt(Key.ROUTE_POINTS, st.points)
+        rely.putInt(Key.ROUTE_ENDPOINTS, st.endpoints)
         StaminaRuntime.writeStatus(rely)
     }
 

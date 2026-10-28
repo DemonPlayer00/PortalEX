@@ -47,6 +47,7 @@ class DebugCommandActivity : Activity() {
                 "point" -> pointTest()
                 "rocker" -> rockerTest()
                 "apis" -> apiTest()
+                "short" -> shortRouteTest()
                 "help" -> HELP
                 else -> status()
             }
@@ -342,6 +343,27 @@ class DebugCommandActivity : Activity() {
         out.appendLine("callbacks=" + counts)
         callbackThread.quitSafely()
         return out.toString()
+    }
+
+    /** 边界测试：一条 ~11m 的短路线，跑到终点后验证「停在终点 + 回调一次」。 */
+    private fun shortRouteTest(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val started = runCatching { MockServiceHelper.tryOpenMock(lm, 3.05, 80.0, 25f) }.getOrDefault(false)
+        val lat = 23.52517
+        val lon = 113.60646
+        val lats = doubleArrayOf(lat, lat + 0.0001)
+        val lons = doubleArrayOf(lon, lon + 0.0001)
+        val uploaded = MockServiceHelper.setRoute(lm, lats, lons, booleanArrayOf(false))
+        MockServiceHelper.setRoutePlaying(lm, true)
+        Thread.sleep(6000)
+        val loc = MockServiceHelper.getLocation(lm)
+        val motion = MockServiceHelper.getMotion(lm)
+        val text = motion?.let { b ->
+            b.keySet().sorted().joinToString(" ") { k -> k + "=" + (b.get(k) ?: "null") }
+        } ?: "null"
+        return "short started=$started uploaded=$uploaded loc=$loc motion=$text"
     }
 
     private fun routeTest(): String {

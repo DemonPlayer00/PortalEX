@@ -235,6 +235,7 @@ object MotionClock {
 
         // 1) 推进：位移 = 速度 × 体力倍率 × Δt（缩放就在这一处发生）
         val t0 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
+        val playingBefore = MotionEngine.status().playing
         val step = MotionEngine.beat(
             dtSec = dt,
             speed = FakeLoc.speed,
@@ -244,13 +245,22 @@ object MotionClock {
         )
         val t1 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
-        // 播到终点：主动回调 App 关闭自动播放（不再让 App 轮询去猜）
+        // 边界：播到终点 —— 位置**钳在终点**，并只在这一拍回调一次 App 关闭自动播放。
+        // 用「上一拍还在播、这一拍不播了」判定，避免终点静止时每拍重复回调。
         runCatching {
             val st = MotionEngine.status()
-            if (!st.playing && st.distanceMeters > 0.0 &&
+            val reachedEnd = st.distanceMeters > 0.0 &&
                 st.travelledMeters >= st.distanceMeters - 1e-6
-            ) {
+            if (playingBefore && !st.playing && reachedEnd) {
+                // 终点那一帧立即推给订阅者（不等下一个上报节拍），地图才停在终点而不是差一帧
+                if (FakeLoc.isSystemServerProcess) {
+                    LocationServiceHook.callOnLocationChanged(force = true)
+                }
                 RemoteCommandHandler.notifyRouteCompleted()
+                Logger.info(
+                    "路线播放完成：停在终点 %.5f, %.5f（全程 %.1fm）"
+                        .format(FakeLoc.latitude, FakeLoc.longitude, st.distanceMeters)
+                )
             }
         }
 
