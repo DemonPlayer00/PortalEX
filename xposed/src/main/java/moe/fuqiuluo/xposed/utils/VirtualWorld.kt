@@ -79,6 +79,7 @@ internal object VirtualWorld {
     // ---- 保底速度的平滑器（低通 + 慢随机游走）----
     // 真机静止时 GPS 报的速度是**时间相关**的噪声（慢随机游走），不是逐帧白噪声：
     // 逐帧独立跳变在频谱上偏高，几次采样就能看出"每秒都在换一个完全无关的值"。
+    private val speedFloorLock = Any()
     private var speedFloorSmoothed = 0.0
     private var speedFloorTarget = 0.0
     private var lastSpeedFloorNanos = 0L
@@ -86,8 +87,11 @@ internal object VirtualWorld {
     private const val SPEED_FLOOR_RETARGET_TAU = 1.5 // 目标重选时间常数(s)：慢游走
     private const val SPEED_FLOOR_SMOOTH_TAU = 0.5   // 一阶低通时间常数(s)
 
-    /** 取一次"静止保底速度"：慢随机游走目标 + 一阶低通（只在静止帧被调用） */
-    fun speedFloorSample(): Double {
+    /**
+     * 取一次"静止保底速度"：慢随机游走目标 + 一阶低通（只在静止帧被调用）。
+     * 三个字段是一个整体，调用方可能来自不同投递线程 ⇒ 整段串行化。
+     */
+    fun speedFloorSample(): Double = synchronized(speedFloorLock) {
         val now = System.nanoTime()
         val dt = if (lastSpeedFloorNanos == 0L) 0.0
         else ((now - lastSpeedFloorNanos) / 1e9).coerceIn(0.0, 1.0)
@@ -102,7 +106,7 @@ internal object VirtualWorld {
             speedFloorTarget = LocConfig.speedFloor
             speedFloorSmoothed = LocConfig.speedFloor
         }
-        return speedFloorSmoothed
+        speedFloorSmoothed
     }
 
     fun cadenceForSpeed(speed: Double): Int {
@@ -130,7 +134,7 @@ internal object VirtualWorld {
 
     private val speedNoiseLock = Any()
     private val speedNoiseGauss = java.util.Random()
-    @Volatile private var speedBiasFactor = 0.0
+    private var speedBiasFactor = 0.0
     private var speedFastOffset = 0.0
     private var lastSpeedNoiseNanos = 0L
     private var lastEnableSeen = false
@@ -138,8 +142,11 @@ internal object VirtualWorld {
     /**
      * 取一次运动期的速度偏移（m/s）。语义与旧版一致：**绝对值不超过 [amplitude]**，
      * 但把"逐帧独立"换成了"整段会话一个偏置 + 秒级小抖动"。
+     *
+     * 会话沿、时间戳、两个偏移量是一个状态机：整段进锁，否则并发投递线程会看到
+     * "偏置已重抽、时间戳还是旧的"这种半更新状态。
      */
-    fun speedOffsetSample(amplitude: Double): Double {
+    fun speedOffsetSample(amplitude: Double): Double = synchronized(speedNoiseLock) {
         // 会话开关的 false→true 沿 = 新的一次会话 ⇒ 重抽偏置。
         // 抽的是 [-0.5,0.5] 的**因子**而非绝对值 ⇒ 用户改设置时立刻按新幅度生效。
         val on = LocConfig.enable
@@ -150,7 +157,7 @@ internal object VirtualWorld {
         }
         lastEnableSeen = on
         val a = amplitude.coerceAtLeast(0.0)
-        if (a <= 0.0) return 0.0
+        if (a <= 0.0) return@synchronized 0.0
         val now = System.nanoTime()
         val dt = if (lastSpeedNoiseNanos == 0L) 0.0
         else ((now - lastSpeedNoiseNanos) / 1e9).coerceIn(0.0, 5.0)
@@ -160,14 +167,12 @@ internal object VirtualWorld {
             val dec = exp(-dt / SPEED_FAST_TAU)
             val sigma = SPEED_FAST_SIGMA * a
             val sd = sigma * sqrt(SPEED_FAST_TAU / 2.0 * (1.0 - dec * dec))
-            synchronized(speedNoiseLock) {
-                speedFastOffset = speedFastOffset * dec + speedNoiseGauss.nextGaussian() * sd
-                val lim = SPEED_FAST_CLAMP * a
-                if (speedFastOffset > lim) speedFastOffset = lim
-                if (speedFastOffset < -lim) speedFastOffset = -lim
-            }
+            speedFastOffset = speedFastOffset * dec + speedNoiseGauss.nextGaussian() * sd
+            val lim = SPEED_FAST_CLAMP * a
+            if (speedFastOffset > lim) speedFastOffset = lim
+            if (speedFastOffset < -lim) speedFastOffset = -lim
         }
-        return (speedBiasFactor * a + speedFastOffset).coerceIn(-a, a)
+        (speedBiasFactor * a + speedFastOffset).coerceIn(-a, a)
     }
 
     // ---- 朝向生成器（**唯一所有者 = 位置端**；app 端只跟随，不做任何加工）----
@@ -196,20 +201,29 @@ internal object VirtualWorld {
     private const val MICRO_JITTER_AMP = 0.6     // 高频微抖（±度）
     private const val MICRO_JITTER_TAU = 0.12    // 微抖时间常数（s）
 
+    /**
+     * 朝向生成器的状态锁。
+     *
+     * `processedBearing()`（位置投递线程）与 `sampleBearingJitter()`（传感器线程）
+     * 都会读改写同一组字段；没有这把锁时，多字段更新会出现"中轴已更新、微抖还是旧值"
+     * 的半更新状态，表现为时间轴上偶发的相位跳变。锁内只有几十条浮点运算，无嵌套。
+     */
+    private val bearingLock = Any()
+
     /** 平滑后的中轴（跟随 [bearing]） */
-    @Volatile private var centerBearing = bearing
-    @Volatile private var lastBearingSampleNanos = 0L
+    private var centerBearing = bearing
+    private var lastBearingSampleNanos = 0L
 
     // 随机往复摆动状态：swayFrom → swayTo 为**半个周期**，换边时起点 = 上一次终点
     // （值与斜率都连续），并在新的一侧随机取幅值——中轴不因此移动。
-    @Volatile private var swayPhaseStartNanos = 0L
-    @Volatile private var swayHalfPeriodNanos = 500_000_000L
-    @Volatile private var swayFrom = 0.0
-    @Volatile private var swayTo = 0.0
-    @Volatile private var swaySide = 1.0
+    private var swayPhaseStartNanos = 0L
+    private var swayHalfPeriodNanos = 500_000_000L
+    private var swayFrom = 0.0
+    private var swayTo = 0.0
+    private var swaySide = 1.0
 
-    @Volatile private var microTarget = 0.0
-    @Volatile private var microOffset = 0.0
+    private var microTarget = 0.0
+    private var microOffset = 0.0
     private val driftPhase1 = Random.nextDouble(0.0, Math.PI * 2)
     private val driftPhase2 = Random.nextDouble(0.0, Math.PI * 2)
 
@@ -252,7 +266,7 @@ internal object VirtualWorld {
      * 真机 GPS course 也不含这种步态分量。摆动由传感器端按**事件率采样同一生成器**
      * （见 [sampleBearingJitter]）——生成器与状态仍在位置端，传感器端只是取采样点。
      */
-    fun processedBearing(): Double {
+    fun processedBearing(): Double = synchronized(bearingLock) {
         val now = System.nanoTime()
         val dt = if (lastBearingSampleNanos == 0L) 0.0
         else ((now - lastBearingSampleNanos) / 1e9).coerceIn(0.0, 1.0)
@@ -276,7 +290,7 @@ internal object VirtualWorld {
             DRIFT_AMP_SECONDARY * sin(2.0 * Math.PI * DRIFT_HZ_SECONDARY * tSec + driftPhase2)
 
         val value = centerBearing + drift
-        return (value % 360.0 + 360.0) % 360.0
+        (value % 360.0 + 360.0) % 360.0
     }
 
     /**
@@ -287,7 +301,9 @@ internal object VirtualWorld {
      * 要么混叠成"跳一次锁一秒"，要么被低通滤掉。生成器与状态仍在位置端，
      * 传感器侧只是按事件率取采样点。
      */
-    fun sampleBearingJitter(): Double = advanceSway(System.nanoTime()) + microOffset
+    fun sampleBearingJitter(): Double = synchronized(bearingLock) {
+        advanceSway(System.nanoTime()) + microOffset
+    }
 
     /** 最短角差（-180, 180]：方位角是环形量，跨 0/360 必须走最短弧） */
     private fun shortestAngleDelta(target: Double, current: Double): Double {
@@ -413,10 +429,11 @@ internal object VirtualWorld {
     private const val POSITION_JITTER_SIGMA = 0.18  // 每 √s 的扩散步长（m）
     private val positionJitterLock = Any()
     private val jitterGauss = java.util.Random()
-    @Volatile private var jitterEastM = 0.0
-    @Volatile private var jitterNorthM = 0.0
-    @Volatile private var lastJitterNanos = 0L
+    private var jitterEastM = 0.0
+    private var jitterNorthM = 0.0
+    private var lastJitterNanos = 0L
 
+    /** 调用方必须持有 [positionJitterLock]，否则时间戳与两个偏移量会撕裂 */
     private fun advancePositionJitter() {
         val now = System.nanoTime()
         val dt = if (lastJitterNanos == 0L) 0.0
@@ -425,10 +442,8 @@ internal object VirtualWorld {
         if (dt <= 0.0) return
         val decay = exp(-dt / POSITION_JITTER_TAU)
         val kick = POSITION_JITTER_SIGMA * sqrt(dt)
-        synchronized(positionJitterLock) {
-            jitterEastM = jitterEastM * decay + jitterGauss.nextGaussian() * kick
-            jitterNorthM = jitterNorthM * decay + jitterGauss.nextGaussian() * kick
-        }
+        jitterEastM = jitterEastM * decay + jitterGauss.nextGaussian() * kick
+        jitterNorthM = jitterNorthM * decay + jitterGauss.nextGaussian() * kick
     }
 
     /**
@@ -442,14 +457,14 @@ internal object VirtualWorld {
         lon: Double,
         n: Double,
         angle: Double,
-    ): Pair<Double, Double> {
+    ): Pair<Double, Double> = synchronized(positionJitterLock) {
         advancePositionJitter()
         val bound = n.coerceAtLeast(0.0)
         val east = jitterEastM.coerceIn(-bound, bound)
         val north = jitterNorthM.coerceIn(-bound, bound)
         val dLat = north / 111320.0
         val dLon = east / (111320.0 * cos(Math.toRadians(lat)))
-        return Pair(lat + dLat, lon + dLon)
+        Pair(lat + dLat, lon + dLon)
     }
 
     fun moveLocation(lat: Double, lon: Double, n: Double, angle: Double): Pair<Double, Double> {

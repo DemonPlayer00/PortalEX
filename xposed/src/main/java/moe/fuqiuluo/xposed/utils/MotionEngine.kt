@@ -108,39 +108,46 @@ object MotionEngine {
         pointsLon: DoubleArray?,
         smooth: BooleanArray? = null,
     ): Int {
+        // 校验、拷贝与**全长计算**都在锁外：平滑段要按 16 点采样估弧长，
+        // 一条长路线可能耗掉毫秒级；这段时间不该挡住 50ms 的推进拍。
+        val n = minOf(pointsLat?.size ?: 0, pointsLon?.size ?: 0)
+        val la = ArrayList<Double>(n)
+        val lo = ArrayList<Double>(n)
+        for (i in 0 until n) {
+            val a = pointsLat!![i]
+            val o = pointsLon!![i]
+            if (!a.isFinite() || !o.isFinite()) continue
+            if (a < -90.0 || a > 90.0 || o < -180.0 || o > 180.0) continue
+            la.add(a)
+            lo.add(o)
+        }
+        if (la.size < 2) {
+            synchronized(lock) { clearRouteLocked() }
+            return 0
+        }
+        val newLat = la.toDoubleArray()
+        val newLon = lo.toDoubleArray()
+        val newSmooth = BooleanArray(maxOf(0, newLat.size - 1)) { smooth?.getOrElse(it) { false } ?: false }
+        val newTotal = computeTotalMeters(newLat, newLon, newSmooth)
+
         synchronized(lock) {
-            val n = minOf(pointsLat?.size ?: 0, pointsLon?.size ?: 0)
-            val la = ArrayList<Double>(n)
-            val lo = ArrayList<Double>(n)
-            for (i in 0 until n) {
-                val a = pointsLat!![i]
-                val o = pointsLon!![i]
-                if (!a.isFinite() || !o.isFinite()) continue
-                if (a < -90.0 || a > 90.0 || o < -180.0 || o > 180.0) continue
-                la.add(a)
-                lo.add(o)
-            }
-            if (la.size < 2) {
-                clearRouteLocked()
-                return 0
-            }
             // 只保存端点 + 逐段平滑标志；**不在这里展开采样点**。
             // 展开是按需的：播放/取位每走一步才把「刚走过的那一段」算出来，
             // 所以一条 60 公里的路线也不会在上传瞬间生成六万个点。
-            rawLat = la.toDoubleArray()
-            rawLon = lo.toDoubleArray()
-            rawSmooth = BooleanArray(maxOf(0, rawLat.size - 1)) { smooth?.getOrElse(it) { false } ?: false }
+            rawLat = newLat
+            rawLon = newLon
+            rawSmooth = newSmooth
             lats = DoubleArray(0)
             lons = DoubleArray(0)
             cum = DoubleArray(0)
             expandedSeg = 0
-            totalMeters = computeTotalMeters()
-            ensureExpandedTo(0.0)
+            totalMeters = newTotal
+            ensureExpandedTo(0.0)   // 只放起点，代价与路线长度无关
             travelled = 0.0
             completed = false
             playing = false
             snapped = false
-            return rawLat.size
+            return newLat.size
         }
     }
 
@@ -222,27 +229,27 @@ object MotionEngine {
 
     // ---- 按需展开：只算「刚走过的那一段」 ----
 
-    /** 路线全长：各段长度之和（平滑段用 16 点采样估算弧长） */
-    private fun computeTotalMeters(): Double {
+    /** 路线全长：各段长度之和（平滑段用 16 点采样估算弧长）。纯函数，可在锁外跑。 */
+    private fun computeTotalMeters(lat: DoubleArray, lon: DoubleArray, smooth: BooleanArray): Double {
         var sum = 0.0
-        for (i in 0 until rawLat.size - 1) {
-            sum += segmentLength(i)
+        for (i in 0 until lat.size - 1) {
+            sum += segmentLength(lat, lon, smooth, i)
         }
         return sum
     }
 
-    private fun segmentLength(i: Int): Double {
-        val sLat = rawLat[i]
-        val sLon = rawLon[i]
-        val eLat = rawLat[i + 1]
-        val eLon = rawLon[i + 1]
+    private fun segmentLength(lat: DoubleArray, lon: DoubleArray, smooth: BooleanArray, i: Int): Double {
+        val sLat = lat[i]
+        val sLon = lon[i]
+        val eLat = lat[i + 1]
+        val eLon = lon[i + 1]
         val chord = WorldMath.haversine(sLat, sLon, eLat, eLon)
-        if (!rawSmooth.getOrElse(i) { false } || chord < 2.0) return chord
+        if (!smooth.getOrElse(i) { false } || chord < 2.0) return chord
         var len = 0.0
         var pLat = sLat
         var pLon = sLon
         for (k in 1..16) {
-            val (a, o) = bezierPoint(i, k / 16.0)
+            val (a, o) = bezierPoint(lat, lon, i, k / 16.0)
             len += WorldMath.haversine(pLat, pLon, a, o)
             pLat = a
             pLon = o
@@ -251,15 +258,15 @@ object MotionEngine {
     }
 
     /** 贝塞尔上的点：控制点由相邻直线方位给出（切线 C1 连续） */
-    private fun bezierPoint(i: Int, t: Double): Pair<Double, Double> {
-        val sLat = rawLat[i]
-        val sLon = rawLon[i]
-        val eLat = rawLat[i + 1]
-        val eLon = rawLon[i + 1]
+    private fun bezierPoint(lat: DoubleArray, lon: DoubleArray, i: Int, t: Double): Pair<Double, Double> {
+        val sLat = lat[i]
+        val sLon = lon[i]
+        val eLat = lat[i + 1]
+        val eLon = lon[i + 1]
         val own = WorldMath.calculateBearing(sLat, sLon, eLat, eLon)
-        val aziIn = if (i > 0) WorldMath.calculateBearing(rawLat[i - 1], rawLon[i - 1], sLat, sLon) else own
-        val aziOut = if (i + 1 < rawLat.size - 1) {
-            WorldMath.calculateBearing(eLat, eLon, rawLat[i + 2], rawLon[i + 2])
+        val aziIn = if (i > 0) WorldMath.calculateBearing(lat[i - 1], lon[i - 1], sLat, sLon) else own
+        val aziOut = if (i + 1 < lat.size - 1) {
+            WorldMath.calculateBearing(eLat, eLon, lat[i + 2], lon[i + 2])
         } else {
             own
         }
@@ -267,9 +274,9 @@ object MotionEngine {
         val c1 = direct(sLat, sLon, chord / 3.0, aziIn)
         val c2 = direct(eLat, eLon, chord / 3.0, (aziOut + 180.0) % 360.0)
         val u = 1.0 - t
-        val lat = u * u * u * sLat + 3 * u * u * t * c1.first + 3 * u * t * t * c2.first + t * t * t * eLat
-        val lon = u * u * u * sLon + 3 * u * u * t * c1.second + 3 * u * t * t * c2.second + t * t * t * eLon
-        return lat to lon
+        val outLat = u * u * u * sLat + 3 * u * u * t * c1.first + 3 * u * t * t * c2.first + t * t * t * eLat
+        val outLon = u * u * u * sLon + 3 * u * u * t * c1.second + 3 * u * t * t * c2.second + t * t * t * eLon
+        return outLat to outLon
     }
 
     /** 把展开前缀补到 [target] 米：每次只算「还没走过的那一段」，不预生成整条路线 */
@@ -283,10 +290,11 @@ object MotionEngine {
             val eLat = rawLat[i + 1]
             val eLon = rawLon[i + 1]
             if (rawSmooth.getOrElse(i) { false } && WorldMath.haversine(sLat, sLon, eLat, eLon) >= 2.0) {
-                val len = segmentLength(i)
+                val len = segmentLength(rawLat, rawLon, rawSmooth, i)
                 val n = maxOf(4, len.toInt())
                 for (k in 1 until n) {
-                    appendPoint(bezierPoint(i, k.toDouble() / n).first, bezierPoint(i, k.toDouble() / n).second)
+                    val p = bezierPoint(rawLat, rawLon, i, k.toDouble() / n)
+                    appendPoint(p.first, p.second)
                 }
             }
             appendPoint(eLat, eLon)

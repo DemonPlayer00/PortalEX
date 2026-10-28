@@ -13,11 +13,11 @@
 2. **当前最大的成本不在锁**。分段实测（`perf-audit.md` §6）显示：移动时每帧约 5~6 ms CPU，
    其中"监听器循环"约 5.2 ms；推进、体力、落点合计不到 0.3 ms。**先去交付路径省钱，
    再谈换锁。**
-3. **最值得改的三处**（按收益/风险排序）：
+3. **最值得改的三处**（按收益/风险排序，2026-10-28 已落地前两项 + 生成器锁）：
    - `MotionClock` 的固定 `sleep(50ms)` 改成**绝对截止时刻**调度（消除累积漂移与配速尖峰，低风险）；
    - `MotionEngine.setRoute` 把**路线展开/全长计算移出锁**（长路线时锁内可达毫秒级，会阻塞拍子，低风险）；
-   - `VirtualWorld` 的朝向/速度生成器改成**单写者 + 快照**（消除 `processedBearing()` 的跨线程
-     读改写竞争，中风险，收益是可观测的一致性）。
+   - `VirtualWorld` 的朝向/速度/位置抖动生成器**整段进锁**（消除 `processedBearing()` 的跨线程
+     读改写竞争），并删除 13 个随之冗余的 `@Volatile`；单写者快照仍是后续可选项。
 4. **不建议**为了"减少原语数量"把 `@Volatile` 降级成普通字段，或把 `synchronized` 换成
    `AtomicReference` 却仍在锁内做重活 —— 那只会把可见性问题变成偶发 bug。
 
@@ -49,9 +49,10 @@
   频率低，不构成问题。
 
 **结论**：这里的目标不是"去锁"，而是"**锁内只做状态变更，不做几何展开**"。
-可选终态是单写者模型（见 §3.1），但收益主要是可推理性，不是 CPU。
+2026-10-28 已把校验、副本构造、`computeTotalMeters()` 移到锁外；锁内只剩
+数组发布与"放起点"（代价与路线长度无关）。可选终态是单写者模型，收益主要是可推理性，不是 CPU。
 
-### 2.2 `VirtualWorld`：`@Volatile` 很多，但部分状态根本没被保护
+### 2.2 `VirtualWorld`：生成器曾有多字段读改写竞争（已修）
 
 这是全仓**唯一一处既有性能形态问题、又有正确性风险**的地方：
 
@@ -66,9 +67,11 @@
 - `moveSamples` 的锁是对的（`averageSpeedOverWindow` / `recordCoordinateChange` 都进
   `synchronized(moveSamples)`），这里不用动。
 
-**结论**：把生成器状态**收敛到一个所有者**（建议：世界推进线程），其他线程只读快照；
-或退而求其次，给 `processedBearing()`/`speedFloorSample()` 加同一把私有锁。
-后者实现最小，代价是每帧一次无竞争锁（几十纳秒），相对 5ms 的交付成本可忽略。
+**处理（2026-10-28）**：三组生成器（朝向、保底速度、位置抖动）各用一把私有锁包住
+完整的读改写；`speedOffsetSample()` 的会话沿/时间戳/偏移量整段进锁。随锁提供的
+happens-before，删掉了 13 个不再需要的 `@Volatile`（20 → 7），保留的 7 个都是
+真正跨线程、且不共享同一把锁的世界坐标/速度/朝向目标字段。
+世界坐标的"多字段一致快照"仍是后续项（要改调用面，收益是语义一致性，不是 CPU）。
 
 ### 2.3 `LocConfig` / `NetworkSimConfig`：18 + 15 个 `@Volatile`
 
@@ -102,42 +105,29 @@
 
 - `MotionClock` / `SensorSupervisor` 已经做到"空闲停摆、意图唤醒"，这是正确的形态；
   不要为了"统一"再引入 `ScheduledExecutorService`（多一条线程 + 队列）。
-- `MotionClock.loop()` 目前是 `Thread.sleep(BEAT_MS)` 后再算 `dt`。**每拍的实际周期 =
-  50ms + 本拍工作耗时**，于是 `dt` 在 50~56ms 之间漂移；`beat()` 按真实 `dt` 补位移，
-  位置是对的，但**出帧节拍**和体力结算会带着这段抖动。绝对截止时刻调度可以把
-  周期误差压到调度器精度（通常 <1ms），且不改变任何语义。
+- `MotionClock.loop()` 原先睡满 50ms 再干活，**每拍的实际周期 = 50ms + 本拍工作耗时**，
+  于是 `dt` 在 50~56ms 之间漂移。2026-10-28 改为**绝对截止时刻**：以"上次截止 + 50ms"
+  为下一拍，睡到截止再 `beat()`；单拍超时则从当前时刻重新对齐，宁可少拍也不补拍。
+  这不会改变任何推进语义（`beat()` 仍按真实 `dt` 结算），只是把周期误差压到调度器精度。
 
-## 3. 建议的实施顺序
+## 3. 实施顺序与状态
 
-### P1（低风险，先做）
+### P1（低风险）—— 已完成（2026-10-28）
 
-1. **`MotionClock` 绝对截止时刻**
-   ```kotlin
-   var next = SystemClock.elapsedRealtime() + BEAT_MS
-   while (...) {
-       val wait = next - SystemClock.elapsedRealtime()
-       if (wait > 0) Thread.sleep(wait)
-       beat()
-       next += BEAT_MS
-       if (next < now) next = now + BEAT_MS   // 长暂停后不补拍，避免爆发
-   }
-   ```
+1. **`MotionClock` 绝对截止时刻**：已落地，见 `MotionClock.loop()` 与 §2.6。
    验收：`dtMaxNanos`/`late300` 计数下降；配速曲线尖峰减少（用 Test 页的 `motion` 行）。
-2. **`MotionEngine.setRoute` 锁外展开**
-   - 在锁内只做参数校验与数组拷贝，把 `computeTotalMeters()` 与首段展开放到锁外，
-     用"版本号 + 二次检查"发布；或直接改成不可变 `Route` 对象整体替换。
-   - 验收：长路线（>10km，含平滑段）`setRoute` 期间的 `get_motion` 延迟不再出现毫秒级尖峰。
-3. **`proxyBinders` / `warnedDeniedUids` 换并发集合**（纯清理）。
+2. **`MotionEngine.setRoute` 锁外展开**：校验、数组拷贝、`computeTotalMeters()`（含平滑段
+   16 点采样）已移到锁外，锁内只发布数组与放起点。
+   验收：长路线（>10km，含平滑段）`setRoute` 期间的 `get_motion` 延迟不再出现毫秒级尖峰。
+3. **`proxyBinders` / `warnedDeniedUids` 换并发集合**：未做（纯清理，收益只在可读性）。
 
 ### P2（中风险，需要真机验证）
 
-4. **世界状态快照**
-   - 新增 `data class WorldFrame(lat, lon, alt, speed, bearing, atNanos)`；
-     `beat()` 末尾 `AtomicReference.set(frame)`；传感器/位置读取一次引用。
-   - `processedBearing()` / `advanceSway()` / `speedFloorSample()` 的状态收敛到
-     `MotionClock` 线程（或加私有锁作为过渡）。
-   - 验收：`processedBearing` 在位置帧与传感器事件上的差值连续；长时间跑动无相位跳变；
-     这段改动**不应**让 CPU 变差（用 `perf-audit` 同一窗口对比）。
+4. **世界状态快照**（部分完成）
+   - 生成器（朝向/保底速度/位置抖动）已改为整段加锁，竞争与相位跳变已消除。
+   - 仍未做：`data class WorldFrame(lat, lon, alt, speed, bearing, atNanos)` +
+     `AtomicReference` 发布——它要改 `FakeLoc` 的全部读取面。收益是"一帧内多字段一致"，
+     不是 CPU；等有真机需求再做。
 5. **配置快照**
    - `LocConfig` 的 18 个字段打包成不可变 `Config`；setter 构造新对象并原子发布。
    - 过渡期可保留 `FakeLoc.xxx` 门面，避免全仓改调用点。
