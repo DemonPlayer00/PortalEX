@@ -176,6 +176,13 @@ class MockServiceViewModel : ViewModel() {
         Log.i("MockServiceViewModel", "新一轮会话：路线进度已重置")
     }
 
+    /** 切路线时强制退出自动播放：位置归零、等用户按播放。 */
+    fun stopAutoPlay() {
+        if (::rocker.isInitialized) rocker.autoStatus = false
+        routePlayingPushed = false
+        lastPushedActive = false
+    }
+
     fun startAutoPlayIfPossible(): Boolean {
         if (!::rocker.isInitialized) return false
         routeUploaded = false
