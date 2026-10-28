@@ -631,6 +631,8 @@ object RemoteCommandHandler {
         rely.putDouble(Key.ROUTE_DISTANCE, st.distanceMeters)
         // route_points = 已展开的采样点（惰性展开进度）；route_endpoints = 上传的端点数
         rely.putInt(Key.ROUTE_POINTS, st.points)
+        // 模块当前生效的"最大位置上报间隔"：排查"设置不生效"时唯一可信的读数
+        rely.putLong(Key.REPORT_DURATION, moe.fuqiuluo.xposed.utils.LocConfig.reportDurationMs)
         rely.putInt(Key.ROUTE_ENDPOINTS, st.endpoints)
         StaminaRuntime.writeStatus(rely)
     }

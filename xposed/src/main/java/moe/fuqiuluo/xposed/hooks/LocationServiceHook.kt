@@ -486,22 +486,16 @@ internal object LocationServiceHook: BaseLocationHook() {
         return ms.coerceAtLeast(0L) * 1_000_000L
     }
 
-    /**
-     * 单个订阅实际出帧间隔：**默认按应用期望的频率**，但不会慢于设置里的
-     * 「最大位置上报间隔」（那是上限，防止应用自己把节奏压得过慢）。
-     */
-    private fun effectiveIntervalNanos(reg: ListenerRegistration): Long {
-        val cap = LocConfig.reportDurationMs.coerceIn(20L, 2_000L) * 1_000_000L
-        val requested = reg.intervalNanos
-        return if (requested > 0L) minOf(requested, cap) else cap
-    }
+    /** 「最大位置上报间隔」：**所有**持续订阅一律按它出帧（应用自己的期望频率不再放大帧率）。 */
+    private fun reportIntervalNanos(): Long =
+        LocConfig.reportDurationMs.coerceIn(20L, 2_000L) * 1_000_000L
 
-    /** 全局节拍：多个不同期望频率的订阅并存时，按**最高频率**（最小间隔）出帧。 */
-    private fun globalTickNanos(): Long {
-        val cap = LocConfig.reportDurationMs.coerceIn(20L, 2_000L) * 1_000_000L
-        val fastest = locationListeners.minOfOrNull { effectiveIntervalNanos(it) } ?: cap
-        return fastest.coerceIn(20L * 1_000_000L, KEEP_ALIVE_TICK_MS * 1_000_000L)
-    }
+    /** 订阅出帧间隔 = 最大上报间隔（getCurrentLocation 不受此限，走一次性路径）。 */
+    private fun effectiveIntervalNanos(): Long = reportIntervalNanos()
+
+    /** 全局节拍：与订阅无关，恒等于最大上报间隔。 */
+    private fun globalTickNanos(): Long =
+        reportIntervalNanos().coerceIn(20L * 1_000_000L, KEEP_ALIVE_TICK_MS * 1_000_000L)
 
     private fun removeLocationListenerInner(listener: IInterface) {
         removeLocationListenerByBinder(listener.asBinder())
@@ -611,7 +605,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         // 因为框架真投递被我们放行的同时并没有位置源（室内无星），
         // 1.2s 的等待窗口把"补帧"拖成了"永远没有第一帧"。
         locationListeners.forEach { reg ->
-            val due = nowNanos - reg.lastDeliveryNanos.get() >= effectiveIntervalNanos(reg)
+            val due = nowNanos - reg.lastDeliveryNanos.get() >= effectiveIntervalNanos()
             val shouldPush = force || due
             if (!shouldPush) return@forEach
             if (deliverFrame(reg.listener, frame)) {
