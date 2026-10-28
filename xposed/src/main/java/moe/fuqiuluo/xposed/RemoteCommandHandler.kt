@@ -225,7 +225,12 @@ object RemoteCommandHandler {
                 // 多条目列表（可选）：给了就以列表为准，单值字段保留为兼容/兜底
                 val list = rely.getStringArray(Key.SIM_LIST)?.toList()
                 when (kind) {
-                    "gps" -> { NetworkSimConfig.gpsEnabled = enabled; NetworkSimConfig.gpsCode = v1; NetworkSimConfig.gpsSatellites = v2 }
+                    "gps" -> {
+                        NetworkSimConfig.gpsEnabled = enabled
+                        NetworkSimConfig.gpsCode = v1
+                        NetworkSimConfig.gpsSatellites = v2
+                        if (list != null) NetworkSimConfig.gnssFlags = list
+                    }
                     "cell" -> {
                         NetworkSimConfig.cellEnabled = enabled
                         NetworkSimConfig.cellMcc = v1

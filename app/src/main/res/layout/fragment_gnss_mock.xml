@@ -415,7 +415,10 @@
                             android:id="@+id/gnss_gps_status_code"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:inputType="number" />
+                            android:minLines="3"
+                            android:maxLines="8"
+                            android:gravity="top|start"
+                            android:inputType="textMultiLine|textNoSuggestions|textVisiblePassword" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout

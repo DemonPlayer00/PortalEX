@@ -334,7 +334,7 @@
     <string name="calibration_group_location">GPS / fused</string>
     <string name="calibration_group_baseband">Cell / Wi-Fi baseband</string>
     <string name="calibration_nothing_selected">Nothing selected</string>
-    <string name="gnss_gps_status_code">GPS status code</string>
+    <string name="gnss_gps_status_code">Satellite status (one per line: E/A/U/F/B[,C/N0])</string>
     <string name="gnss_gps_satellites">Satellite count</string>
     <string name="gnss_gps_params">GPS status params</string>
     <string name="menu_baseband">Baseband Mock</string>

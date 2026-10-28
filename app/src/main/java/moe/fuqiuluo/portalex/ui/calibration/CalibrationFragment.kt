@@ -39,6 +39,7 @@ import moe.fuqiuluo.portalex.ext.meanCn0Measured
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.satelliteJitter
 import moe.fuqiuluo.portalex.ext.cellEntries
+import moe.fuqiuluo.portalex.ext.gnssFlags
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.wifiEntries
 import moe.fuqiuluo.portalex.ext.satellitesMeasured
@@ -389,10 +390,12 @@ class CalibrationFragment : Fragment() {
             val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
             val satellites = loc?.extras?.getInt("satellites", 0) ?: 0
             ctx.sharedPrefs.edit()
-                .putString("sim_gps_v1", "3")
+                .putString("sim_gps_v1", "EAUBF")
                 .putString("sim_gps_v2", satellites.takeIf { it > 0 }?.toString() ?: "0")
                 .apply()
-            sendSim("gps", "3", satellites.takeIf { it > 0 }?.toString() ?: "0")
+            // 逐星状态：一颗"全绿"的卫星，其余交给模块随机
+            requireContext().gnssFlags = listOf("EAUBF")
+            sendSim("gps", "EAUBF", satellites.takeIf { it > 0 }?.toString() ?: "0", listOf("EAUBF"))
             showToast(if (loc == null) getString(R.string.calibration_auto_no_fix) else getString(R.string.calibration_auto_done))
         }.onFailure { showToast(it.message ?: "GPS") }
     }

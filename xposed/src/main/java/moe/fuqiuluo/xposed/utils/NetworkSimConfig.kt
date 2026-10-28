@@ -19,6 +19,12 @@ object NetworkSimConfig {
      * 多条目：基站 "mcc/mnc|cid/tac"，Wi-Fi "ssid|bssid"。
      * 空列表 = 只用上面的单条字段；非空时**列表优先**，首条即"当前连接"的那一条。
      */
+    /**
+     * 逐星状态：每行 "EAUB,cn0"（字母 = 星历/年历/参与定位/载波/基带 C/N0）。
+     * 第 i 行覆盖第 i 颗卫星；不足的继续随机。
+     */
+    @Volatile var gnssFlags: List<String> = emptyList()
+
     @Volatile var cellList: List<String> = emptyList()
     @Volatile var wifiList: List<String> = emptyList()
 

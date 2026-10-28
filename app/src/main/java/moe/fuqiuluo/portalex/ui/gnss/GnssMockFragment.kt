@@ -29,6 +29,7 @@ import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
+import moe.fuqiuluo.portalex.ext.gnssFlags
 import moe.fuqiuluo.portalex.ext.gnssMockIntent
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
@@ -114,7 +115,11 @@ class GnssMockFragment : Fragment() {
             // 直接退出返回根布局，接下来的操作将不会执行！
             return root
         }
-        binding.gnssGpsStatusCode.setText(requireContext().sharedPrefs.getString("sim_gps_v1", "3"))
+        // 逐星状态：多行文本，一行一颗卫星；空 = 全部交给模块随机
+        binding.gnssGpsStatusCode.setText(
+            requireContext().gnssFlags.joinToString("\n")
+                .ifBlank { requireContext().sharedPrefs.getString("sim_gps_v1", "").orEmpty() }
+        )
         binding.gnssGpsSatellites.setText(requireContext().sharedPrefs.getString("sim_gps_v2", "12"))
         refreshGnssButton()
         binding.switchGnssMock.setOnClickListener {
@@ -158,10 +163,13 @@ class GnssMockFragment : Fragment() {
                 // 无论模块此刻是否接管，用户打开了就是打开了
                 updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
                 if (started) {
-                    val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                    val flags = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                        .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                    val code = flags.firstOrNull() ?: ""
                     val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
+                    requireContext().gnssFlags = flags
                     requireContext().sharedPrefs.edit().putString("sim_gps_v1", code).putString("sim_gps_v2", sats).apply()
-                    MockServiceHelper.setSimConfig(locationManager, "gps", true, code, sats)
+                    MockServiceHelper.setSimConfig(locationManager, "gps", true, code, sats, flags.ifEmpty { null })
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流
                     restartGpsProvider()
                 } else {
@@ -247,9 +255,11 @@ class GnssMockFragment : Fragment() {
                     }
 
                     if (MockServiceHelper.stopGnssMock(locationManager)) {
-                            val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                        val flags = binding.gnssGpsStatusCode.text?.toString().orEmpty()
+                            .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                        val code = flags.firstOrNull() ?: ""
                         val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
-                        MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats)
+                        MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats, flags.ifEmpty { null })
                         updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
