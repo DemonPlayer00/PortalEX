@@ -1,6 +1,0 @@
-id=portalex-camera-hal
-name=PortalEX Camera HAL Shim
-version=0.5.0-M4
-versionCode=1
-author=PortalEX
-description=把 vendor 摄像头 HAL 换成 PortalEX 包装层：摄像头模拟的数据面（预览/录像/拍照的虚拟帧，应用零注入）。一个包同时支持 MI6(msm8998/32位) 与一加 ACE5(pineapple/64位 AIDL)；安装时按 ro.board.platform 自动选载荷并生成开关。停用本模块即可完全回退。
