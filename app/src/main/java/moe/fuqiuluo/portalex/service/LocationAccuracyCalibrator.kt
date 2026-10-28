@@ -55,6 +55,8 @@ object LocationAccuracyCalibrator {
         val accuracySigma: Float? = null,
         /** GPS 海拔的实测标准差（米）：作为"海拔波动"的参考值。 */
         val altitudeSigma: Float? = null,
+        /** GPS 速度的实测标准差（m/s）：作为"速度波动"的参考值。 */
+        val speedSigma: Float? = null,
     )
 
     private const val TAG = "PortalLocationCalib"
@@ -91,6 +93,7 @@ object LocationAccuracyCalibrator {
         val maxCn0Values = ArrayList<Float>()
         val meanCn0Values = ArrayList<Float>()
         val altitudeValues = ArrayList<Float>()
+        val speedValues = ArrayList<Float>()
         var lastGps: Location? = null
         var lastFused: Location? = null
         var lastGpsAtNanos = 0L
@@ -126,6 +129,7 @@ object LocationAccuracyCalibrator {
                     }
                     lastGpsAtNanos = now
                     gpsValues += location.accuracy
+                    if (location.hasSpeed()) speedValues += location.speed
                     collectExtras(location)?.let { (sat, maxCn0, meanCn0) ->
                         satelliteValues += sat
                         maxCn0Values += maxCn0
@@ -217,6 +221,7 @@ object LocationAccuracyCalibrator {
                     altitudeMeters = altitudeMedian,
                     accuracySigma = sigmaOf(gpsValues),
                     altitudeSigma = sigmaOf(altitudeValues),
+                    speedSigma = sigmaOf(speedValues),
                     detail = buildString {
                         append("GPS accuracy median=%.2fm".format(gpsMedian))
                         fusedMedian?.let { append("；GPS-fused 水平差 median=%.2fm".format(it)) }
