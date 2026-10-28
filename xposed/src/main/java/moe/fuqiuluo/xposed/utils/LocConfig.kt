@@ -22,9 +22,13 @@ internal object LocConfig {
     var enableLog = true
 
     /**
-     * 是否允许打印调试日志
+     * 是否允许打印调试日志。
+     *
+     * 默认关闭：debug 级日志位于每帧 hook 与投递路径上，开启后会以 ~800 行/秒的速率
+     * 写 logd，既污染测量也抬高 CPU。需要排查时在设置页打开。
      */
-    var enableDebugLog = true
+    @Volatile
+    var enableDebugLog = false
 
     /**
      * 模拟定位服务开关
