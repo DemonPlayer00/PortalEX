@@ -30,6 +30,24 @@ import kotlin.random.Random
 
 object RemoteCommandHandler {
 
+    /** App 注册的播放完成回调（见 Cmd.SET_MOTION_LISTENER） */
+    @Volatile
+    private var motionListener: android.os.IBinder? = null
+
+    /** 路线播到终点时由 MotionClock 调用；App 收到后关闭自动播放。 */
+    fun notifyRouteCompleted() {
+        val binder = motionListener ?: return
+        runCatching {
+            val data = android.os.Parcel.obtain()
+            try {
+                data.writeInterfaceToken("moe.fuqiuluo.portalex.MotionListener")
+                binder.transact(1, data, null, 0)
+            } finally {
+                data.recycle()
+            }
+        }.onFailure { Logger.warn("notifyRouteCompleted 失败：${it.message}") }
+    }
+
     /**
      * 命令通道的两个入口。门禁不同，必须区分，不能靠默认值糊过去：
      *  - [PROVIDER]：`LocationManagerService.sendExtraCommand("portal", …)`——**任何应用都能打**，
@@ -267,6 +285,11 @@ object RemoteCommandHandler {
                     lastBearingPushNanos = nowNanos
                     LocationServiceHook.callOnLocationChanged(force = true)
                 }
+                return true
+            }
+            Cmd.SET_MOTION_LISTENER -> {
+                // App 注册“播放结束”回调：播到终点时直接叫它关掉自动播放，不靠轮询去猜
+                motionListener = rely.getBinder(Key.MOTION_LISTENER)
                 return true
             }
             Cmd.SET_ROUTE -> {

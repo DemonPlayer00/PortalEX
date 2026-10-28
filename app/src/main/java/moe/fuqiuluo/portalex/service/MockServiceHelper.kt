@@ -330,6 +330,14 @@ object MockServiceHelper {
         return send(locationManager, rely)
     }
 
+    /** 注册播放完成回调：模块播到终点时直接 transact 回来 */
+    fun setMotionListener(locationManager: LocationManager, binder: android.os.IBinder): Boolean {
+        val rely = Bundle()
+        rely.putString(Key.COMMAND_ID, Cmd.SET_MOTION_LISTENER)
+        rely.putBinder(Key.MOTION_LISTENER, binder)
+        return send(locationManager, rely)
+    }
+
     /** 路线播放开关（`route_control`）：起点对齐、终点判定、播完收尾都在系统侧 */
     fun setRoutePlaying(locationManager: LocationManager, play: Boolean): Boolean {
         val rely = Bundle()

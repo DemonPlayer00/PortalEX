@@ -251,6 +251,35 @@ object PortalLocationClient {
     }
 
     /**
+     * 用**模块回读到的坐标**合成一帧，投给本进程订阅者（App 自己的地图用）。
+     *
+     * 为什么需要它：App 的地图走的是普通 LocationManager 订阅，一旦本进程这一路
+     * 收不到注入帧（实测高德等第三方应用正常、PortalEX 自己的地图不动），
+     * 地图就会停在上一个点。模块每 250ms 都会回读一次真实坐标，直接用它兜底，
+     * 让"App 看到的位置"和"系统侧世界"始终一致。
+     */
+    fun injectFromModule(lat: Double, lon: Double, bearing: Float) {
+        if (!lat.isFinite() || !lon.isFinite()) return
+        if (lat == 0.0 && lon == 0.0) return
+        val previous = lastFix
+        if (previous != null &&
+            kotlin.math.abs(previous.lat - lat) < 1e-7 &&
+            kotlin.math.abs(previous.lon - lon) < 1e-7
+        ) {
+            return
+        }
+        val location = android.location.Location("portal-module").apply {
+            latitude = lat
+            longitude = lon
+            this.bearing = bearing
+            accuracy = 5f
+            time = System.currentTimeMillis()
+            elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+        }
+        deliver(location)
+    }
+
+    /**
      * 调试用：**自持一个订阅**并开始逐帧记录（`debug` 打开时由 [moe.fuqiuluo.portalex.Portal] 调用）。
      *
      * 为什么不用"等某个页面订阅时顺手记"：自动播放经常在**页面没打开**的状态下进行

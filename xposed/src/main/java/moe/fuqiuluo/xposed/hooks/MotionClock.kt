@@ -237,6 +237,16 @@ object MotionClock {
         )
         val t1 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
+        // 播到终点：主动回调 App 关闭自动播放（不再让 App 轮询去猜）
+        runCatching {
+            val st = MotionEngine.status()
+            if (!st.playing && st.distanceMeters > 0.0 &&
+                st.travelledMeters >= st.distanceMeters - 1e-6
+            ) {
+                RemoteCommandHandler.notifyRouteCompleted()
+            }
+        }
+
         // 2) 体力：用**本拍真实推进的位移**结算（不是名义值）——旧实现同一口径
         StaminaRuntime.tick(FakeLoc.speed, step.meters)
         val t2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
