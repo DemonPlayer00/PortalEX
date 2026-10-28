@@ -202,7 +202,7 @@ object MockServiceHelper {
         // 撑住框架的传感器轮询（见 startSensorPollKeepAlive 的注释）
         runCatching { Portal.appContext }.getOrNull()?.let { startSensorPollKeepAlive(it) }
         // 注意：**不在这里起后台保活**。迁移后推进在 system_server（App 被冻结也照样走），
-        // 保活只服务"无人值守的**收尾**"（播完的提示音/状态收回），由遥控循环按需起停
+        // 保活只服务"无人值守的收尾"（播完的提示音/状态收回），由遥控循环按需起停
         // （见 MockServiceViewModel.syncBackgroundKeepAlive）：空闲占前台/持锁属于无谓耗电。
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
             val started = isMockStart(locationManager)
