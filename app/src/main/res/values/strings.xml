@@ -324,6 +324,10 @@
     <string name="calibration_auto_wifi">Wi-Fi</string>
     <string name="calibration_auto_done">Auto-fill done</string>
     <string name="calibration_auto_no_fix">No recent GPS fix</string>
+    <string name="baseband_collected_summary">%1$d cells / %2$d Wi-Fi collected (long-press the switch to clear)</string>
+    <string name="baseband_collection_cleared">Collection cleared, using the manual single entry</string>
+    <string name="calibration_cell_collected">Collected %d cells</string>
+    <string name="calibration_wifi_collected">Collected %d Wi-Fi networks</string>
     <string name="calibration_auto_no_cell">No CellInfo available</string>
     <string name="calibration_auto_no_wifi">No Wi-Fi connection</string>
     <string name="calibration_group_sensor">Sensor</string>

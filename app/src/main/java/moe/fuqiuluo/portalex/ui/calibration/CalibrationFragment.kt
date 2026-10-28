@@ -38,7 +38,9 @@ import moe.fuqiuluo.portalex.ext.maxCn0Measured
 import moe.fuqiuluo.portalex.ext.meanCn0Measured
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.satelliteJitter
+import moe.fuqiuluo.portalex.ext.cellEntries
 import moe.fuqiuluo.portalex.ext.reportDuration
+import moe.fuqiuluo.portalex.ext.wifiEntries
 import moe.fuqiuluo.portalex.ext.satellitesMeasured
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ext.speedAmplitude
@@ -395,63 +397,87 @@ class CalibrationFragment : Fragment() {
         }.onFailure { showToast(it.message ?: "GPS") }
     }
 
+    /**
+     * 收集**全部**小区（已注册排最前），一条一项：mcc/mnc|cid/tac。
+     * 列表非空时模块以列表为准，首条即"当前连接"。
+     */
     private fun autoFillCell() {
         val ctx = requireContext()
         runCatching {
             val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-            val cell = tm.allCellInfo?.firstOrNull { it.isRegistered } ?: tm.allCellInfo?.firstOrNull()
-            val id = cell?.cellIdentity
-            val mcc: String?
-            val mnc: String?
-            val cid: String?
-            val tac: String?
-            when (id) {
-                is CellIdentityLte -> {
-                    mcc = id.mccString; mnc = id.mncString; cid = id.ci.toString(); tac = id.tac.toString()
+            val all = tm.allCellInfo.orEmpty().sortedByDescending { it.isRegistered }
+            val entries = LinkedHashSet<String>()
+            all.take(16).forEach { info ->
+                val id = info.cellIdentity
+                val mcc: String?
+                val mnc: String?
+                val cid: String?
+                val tac: String?
+                when (id) {
+                    is CellIdentityLte -> { mcc = id.mccString; mnc = id.mncString; cid = id.ci.toString(); tac = id.tac.toString() }
+                    is CellIdentityGsm -> { mcc = id.mccString; mnc = id.mncString; cid = id.cid.toString(); tac = id.lac.toString() }
+                    is CellIdentityNr -> { mcc = id.mccString; mnc = id.mncString; cid = id.nci.toString(); tac = id.tac.toString() }
+                    else -> { mcc = null; mnc = null; cid = null; tac = null }
                 }
-                is CellIdentityGsm -> {
-                    mcc = id.mccString; mnc = id.mncString; cid = id.cid.toString(); tac = id.lac.toString()
-                }
-                is CellIdentityNr -> {
-                    mcc = id.mccString; mnc = id.mncString; cid = id.nci.toString(); tac = id.tac.toString()
-                }
-                else -> { mcc = null; mnc = null; cid = null; tac = null }
+                if (mcc != null && cid != null) entries += "$mcc/$mnc|$cid/$tac"
             }
-            if (mcc == null || cid == null) {
+            if (entries.isEmpty()) {
                 showToast(getString(R.string.calibration_auto_no_cell))
                 return
             }
-            val v1 = "$mcc/$mnc"
-            val v2 = "$cid/$tac"
+            val list = entries.toList()
+            ctx.cellEntries = list
+            val first = list.first().split("|", limit = 2)
+            val v1 = first.getOrNull(0).orEmpty()
+            val v2 = first.getOrNull(1).orEmpty()
             ctx.sharedPrefs.edit().putString("sim_cell_v1", v1).putString("sim_cell_v2", v2).apply()
-            sendSim("cell", v1, v2)
-            showToast(getString(R.string.calibration_auto_done))
+            sendSim("cell", v1, v2, list)
+            showToast(getString(R.string.calibration_cell_collected, list.size))
         }.onFailure { showToast(it.message ?: "Cell") }
     }
 
+    /**
+     * 收集当前连接 + 附近扫描到的 AP：一条一项 ssid|bssid。
+     * 首条是当前连接，模块据此把它当作"已连接"的那一个。
+     */
     private fun autoFillWifi() {
         val ctx = requireContext()
         runCatching {
             val wm = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
             @Suppress("DEPRECATION")
             val info = wm.connectionInfo
+            val entries = LinkedHashSet<String>()
             val ssid = info?.ssid?.trim('"').orEmpty()
             val bssid = info?.bssid.orEmpty()
-            if (ssid.isBlank() && bssid.isBlank()) {
+            if (ssid.isNotBlank() || bssid.isNotBlank()) entries += "$ssid|$bssid"
+            runCatching { wm.startScan() }
+            @Suppress("DEPRECATION", "MissingPermission")
+            val scans = wm.scanResults.orEmpty()
+            scans.take(16).forEach { ap ->
+                val s = ap.SSID.orEmpty()
+                val b = ap.BSSID.orEmpty()
+                if (s.isNotBlank() || b.isNotBlank()) entries += "$s|$b"
+            }
+            if (entries.isEmpty()) {
                 showToast(getString(R.string.calibration_auto_no_wifi))
                 return
             }
-            ctx.sharedPrefs.edit().putString("sim_wifi_v1", ssid).putString("sim_wifi_v2", bssid).apply()
-            sendSim("wifi", ssid, bssid)
-            showToast(getString(R.string.calibration_auto_done))
+            val list = entries.toList()
+            ctx.wifiEntries = list
+            val first = list.first().split("|", limit = 2)
+            val v1 = first.getOrNull(0).orEmpty()
+            val v2 = first.getOrNull(1).orEmpty()
+            ctx.sharedPrefs.edit().putString("sim_wifi_v1", v1).putString("sim_wifi_v2", v2).apply()
+            sendSim("wifi", v1, v2, list)
+            showToast(getString(R.string.calibration_wifi_collected, list.size))
         }.onFailure { showToast(it.message ?: "Wi-Fi") }
     }
 
-    private fun sendSim(kind: String, v1: String, v2: String) {
+    private fun sendSim(kind: String, v1: String, v2: String, list: List<String>? = null) {
         val lm = mockServiceViewModel.locationManager ?: return
         val enabled = requireContext().sharedPrefs.getBoolean("sim_${kind}_enabled", false)
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            runCatching { MockServiceHelper.setSimConfig(lm, kind, enabled, v1, v2) }
+            runCatching { MockServiceHelper.setSimConfig(lm, kind, enabled, v1, v2, list) }
         }
     }
 

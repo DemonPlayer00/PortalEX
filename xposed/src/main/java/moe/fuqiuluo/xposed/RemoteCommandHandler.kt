@@ -222,10 +222,22 @@ object RemoteCommandHandler {
                 val enabled = rely.getBoolean(Key.SIM_ENABLED, false)
                 val v1 = rely.getString(Key.SIM_VALUE1).orEmpty()
                 val v2 = rely.getString(Key.SIM_VALUE2).orEmpty()
+                // 多条目列表（可选）：给了就以列表为准，单值字段保留为兼容/兜底
+                val list = rely.getStringArray(Key.SIM_LIST)?.toList()
                 when (kind) {
                     "gps" -> { NetworkSimConfig.gpsEnabled = enabled; NetworkSimConfig.gpsCode = v1; NetworkSimConfig.gpsSatellites = v2 }
-                    "cell" -> { NetworkSimConfig.cellEnabled = enabled; NetworkSimConfig.cellMcc = v1; NetworkSimConfig.cellMnc = v2 }
-                    "wifi" -> { NetworkSimConfig.wifiEnabled = enabled; NetworkSimConfig.wifiSsid = v1; NetworkSimConfig.wifiBssid = v2 }
+                    "cell" -> {
+                        NetworkSimConfig.cellEnabled = enabled
+                        NetworkSimConfig.cellMcc = v1
+                        NetworkSimConfig.cellMnc = v2
+                        if (list != null) NetworkSimConfig.cellList = list
+                    }
+                    "wifi" -> {
+                        NetworkSimConfig.wifiEnabled = enabled
+                        NetworkSimConfig.wifiSsid = v1
+                        NetworkSimConfig.wifiBssid = v2
+                        if (list != null) NetworkSimConfig.wifiList = list
+                    }
                 }
                 return true
             }

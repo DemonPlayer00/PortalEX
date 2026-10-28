@@ -59,6 +59,38 @@ object WlanHook {
         }
     }
 
+    /**
+     * 按配置的 Wi-Fi 条目改写**真实扫描到的** ScanResult（SSID/BSSID）。
+     *
+     * 为什么不自己构造 ScanResult：它的构造器是隐藏 API，字段随版本变化（13+ 的 SSID 变成
+     * WifiSsid 对象）；改写现成对象的字段既稳定，又保留本机真实的信号强度/频段。
+     *
+     * @return true = 至少改写了一条（调用方据此决定是否清空列表）
+     */
+    private fun applyWifiEntries(items: List<Any>): Boolean {
+        val entries = NetworkSimConfig.wifiList
+        if (entries.isEmpty() || items.isEmpty()) return false
+        var applied = 0
+        items.forEachIndexed { i, item ->
+            val parts = entries[i % entries.size].split("|", limit = 2)
+            val ssid = parts.getOrNull(0).orEmpty()
+            val bssid = parts.getOrNull(1).orEmpty()
+            runCatching {
+                val wifiSsidField = runCatching { item.javaClass.getField("wifiSsid") }.getOrNull()
+                if (wifiSsidField != null) {
+                    val cls = Class.forName("android.net.wifi.WifiSsid")
+                    val value = cls.getMethod("fromString", String::class.java).invoke(null, ssid)
+                    wifiSsidField.set(item, value)
+                } else {
+                    item.javaClass.getField("SSID").set(item, "\"" + ssid + "\"")
+                }
+                if (bssid.isNotBlank()) item.javaClass.getField("BSSID").set(item, bssid)
+                applied++
+            }
+        }
+        return applied > 0
+    }
+
     private fun hookWifiServiceImpl(wifiClazz: Class<*>) {
         if (!FakeLoc.hookWifi) return
 
@@ -108,12 +140,15 @@ object WlanHook {
                 }
                 
                 if (result is List<*>) {
-                    result = arrayListOf<Any>()
+                    // 配了 Wi-Fi 条目就改写真实扫描列表（数量与信号沿用本机扫描），否则按旧行为清空
+                    val items = (result as List<*>).filterNotNull()
+                    if (!applyWifiEntries(items)) result = arrayListOf<Any>()
                     return@afterHook
                 } // 针对小米系列机型的wifi扫描返回
 
                 if (result is Array<*>) {
-                    result = arrayOf<Any>()
+                    val items = (result as Array<*>).filterNotNull()
+                    if (!applyWifiEntries(items)) result = arrayOf<Any>()
                     return@afterHook
                 } // 针对一加系列机型的wifi扫描返回
 
@@ -122,6 +157,11 @@ object WlanHook {
                 // 这里针对一个普通的版本进行一个修复
                 val resultClass = result.javaClass
                 if (resultClass.name.contains("ParceledListSlice")) runCatching {
+                    // Android 10+：列表被包成 ParceledListSlice，就地改写其中的 ScanResult
+                    runCatching {
+                        val list = resultClass.getMethod("getList").invoke(result) as? List<*>
+                        if (list != null && applyWifiEntries(list.filterNotNull())) return@afterHook
+                    }
                     val constructor = resultClass.getConstructor(List::class.java)
                     if (!constructor.isAccessible) {
                         constructor.isAccessible = true

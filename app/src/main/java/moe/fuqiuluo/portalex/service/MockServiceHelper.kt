@@ -119,6 +119,7 @@ object MockServiceHelper {
         enabled: Boolean,
         value1: String,
         value2: String,
+        list: List<String>? = null,
     ): Boolean {
         if (!::randomKey.isInitialized) {
             runCatching { tryInitService(locationManager) }
@@ -130,6 +131,7 @@ object MockServiceHelper {
         rely.putBoolean(Key.SIM_ENABLED, enabled)
         rely.putString(Key.SIM_VALUE1, value1)
         rely.putString(Key.SIM_VALUE2, value2)
+        if (list != null) rely.putStringArray(Key.SIM_LIST, list.toTypedArray())
         return runCatching {
             locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)
         }.getOrDefault(false)

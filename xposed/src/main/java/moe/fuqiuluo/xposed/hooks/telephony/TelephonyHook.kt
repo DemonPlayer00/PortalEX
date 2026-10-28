@@ -127,7 +127,11 @@ object TelephonyHook: BaseTelephonyHook() {
                     NetworkSimConfig.cellEnabled &&
                     !BinderUtils.isSystemAppsCall()
                 ) {
+                    // 多条目：列表里有几个就下发几个（首条为"已注册"）
+                    val wanted = if (NetworkSimConfig.cellList.isEmpty()) 1
+                    else NetworkSimConfig.cellList.size.coerceIn(1, 8)
                     val cResult = arrayListOf<CellInfo>()
+                    repeat(wanted) { idx ->
                     val cellInfo = kotlin.runCatching {
                         CellInfoCdma::class.java.getConstructor().newInstance().also {
                             XposedHelpers.callMethod(it, "setRegistered", true)
@@ -141,9 +145,11 @@ object TelephonyHook: BaseTelephonyHook() {
                             Long::class.java,
                             CellIdentityCdma::class.java,
                             CellSignalStrengthCdma::class.java
-                        ).newInstance(0, true, System.nanoTime(), CellIdentityCdma::class.java.newInstance(), CellSignalStrengthCdma::class.java.newInstance())
+                        ).newInstance(idx + 1, idx == 0, System.nanoTime(), CellIdentityCdma::class.java.newInstance(), CellSignalStrengthCdma::class.java.newInstance())
                     }
+                    if (idx > 0) runCatching { XposedHelpers.callMethod(cellInfo, "setRegistered", false) }
                     cResult.add(cellInfo)
+                    }
                     result = cResult
                 }
             }

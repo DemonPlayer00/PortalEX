@@ -77,6 +77,8 @@ object PortalProtocol {
         const val SIM_VALUE1                = "sim_value1"
         const val SIM_VALUE2                = "sim_value2"
         const val SIM_VALUE3                = "sim_value3"
+        /** 多条目列表（StringArray）：cell 为 "mcc/mnc|cid/tac"，wifi 为 "ssid|bssid" */
+        const val SIM_LIST                  = "sim_list"
         /** 步频侧外周传感器模拟：接管 TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR */
         const val CADENCE_MOCK              = "cadence_mock"
 

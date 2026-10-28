@@ -12,7 +12,9 @@ import kotlinx.coroutines.launch
 import androidx.lifecycle.lifecycleScope
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.databinding.FragmentBasebandMockBinding
+import moe.fuqiuluo.portalex.ext.cellEntries
 import moe.fuqiuluo.portalex.ext.sharedPrefs
+import moe.fuqiuluo.portalex.ext.wifiEntries
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 /** 基站 + Wi-Fi 合并后的基带模拟页。 */
@@ -33,7 +35,29 @@ class BasebandMockFragment : Fragment() {
         binding.basebandBssid.setText(prefs.getString("sim_wifi_v2", "02:00:00:00:00:00"))
         binding.basebandSwitch.isChecked = prefs.getBoolean("sim_baseband_enabled", false)
         binding.basebandSwitch.setOnCheckedChangeListener { _, on -> push(on) }
+        // 长按开关 = 清空「校准收集」的多条目列表，回到手填的单条配置
+        binding.basebandSwitch.setOnLongClickListener {
+            requireContext().cellEntries = emptyList()
+            requireContext().wifiEntries = emptyList()
+            android.widget.Toast.makeText(
+                requireContext(), getString(R.string.baseband_collection_cleared), android.widget.Toast.LENGTH_SHORT
+            ).show()
+            true
+        }
         return binding.root
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val cells = requireContext().cellEntries
+        val wifis = requireContext().wifiEntries
+        if (cells.isNotEmpty() || wifis.isNotEmpty()) {
+            android.widget.Toast.makeText(
+                requireContext(),
+                getString(R.string.baseband_collected_summary, cells.size, wifis.size),
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun push(enabled: Boolean) {
@@ -56,8 +80,17 @@ class BasebandMockFragment : Fragment() {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
-                MockServiceHelper.setSimConfig(lm, "cell", enabled, "$mcc/$mnc", "$cid/$tac")
-                MockServiceHelper.setSimConfig(lm, "wifi", enabled, ssid, bssid)
+                // 收集过列表就带上（列表优先，首条是"当前连接"），否则发手填的单条
+                val cells = ctx.cellEntries
+                val wifis = ctx.wifiEntries
+                MockServiceHelper.setSimConfig(
+                    lm, "cell", enabled, "$mcc/$mnc", "$cid/$tac",
+                    cells.ifEmpty { null }
+                )
+                MockServiceHelper.setSimConfig(
+                    lm, "wifi", enabled, ssid, bssid,
+                    wifis.ifEmpty { null }
+                )
             }
         }
     }
