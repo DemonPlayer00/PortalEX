@@ -66,8 +66,18 @@ object MotionEngine {
     private var lats = DoubleArray(0)
     private var lons = DoubleArray(0)
 
-    /** 每个路径点的累计弧长（米），[cum].last() = 路线全长 */
+    /** 每个路径点的累计弧长（米），[cum].last() = 已展开部分的长度 */
     private var cum = DoubleArray(0)
+
+    // ---- 按需展开（lazy）----
+    /** 原始端点与逐段平滑标志：**不在上传时展开**，只在播放/取位走到时算下一段 */
+    private var rawLat = DoubleArray(0)
+    private var rawLon = DoubleArray(0)
+    private var rawSmooth = BooleanArray(0)
+    /** 已经展开到第几段 */
+    private var expandedSeg = 0
+    /** 路线全长（各段长度之和，平滑段按贝塞尔弧长估算） */
+    private var totalMeters = 0.0
 
     private var travelled = 0.0
     private var playing = false
@@ -90,7 +100,11 @@ object MotionEngine {
      *
      * @return 实际接受的点数（0 = 已清空）
      */
-    fun setRoute(pointsLat: DoubleArray?, pointsLon: DoubleArray?): Int {
+    fun setRoute(
+        pointsLat: DoubleArray?,
+        pointsLon: DoubleArray?,
+        smooth: BooleanArray? = null,
+    ): Int {
         synchronized(lock) {
             val n = minOf(pointsLat?.size ?: 0, pointsLon?.size ?: 0)
             val la = ArrayList<Double>(n)
@@ -107,17 +121,23 @@ object MotionEngine {
                 clearRouteLocked()
                 return 0
             }
-            lats = la.toDoubleArray()
-            lons = lo.toDoubleArray()
-            cum = DoubleArray(lats.size)
-            for (i in 1 until lats.size) {
-                cum[i] = cum[i - 1] + WorldMath.haversine(lats[i - 1], lons[i - 1], lats[i], lons[i])
-            }
+            // 只保存端点 + 逐段平滑标志；**不在这里展开采样点**。
+            // 展开是按需的：播放/取位每走一步才把「刚走过的那一段」算出来，
+            // 所以一条 60 公里的路线也不会在上传瞬间生成六万个点。
+            rawLat = la.toDoubleArray()
+            rawLon = lo.toDoubleArray()
+            rawSmooth = BooleanArray(maxOf(0, rawLat.size - 1)) { smooth?.getOrElse(it) { false } ?: false }
+            lats = DoubleArray(0)
+            lons = DoubleArray(0)
+            cum = DoubleArray(0)
+            expandedSeg = 0
+            totalMeters = computeTotalMeters()
+            ensureExpandedTo(0.0)
             travelled = 0.0
             completed = false
             playing = false
             snapped = false
-            return lats.size
+            return rawLat.size
         }
     }
 
@@ -131,7 +151,8 @@ object MotionEngine {
                 playing = false
                 return true
             }
-            if (lats.size < 2) return false
+            // 判定用**原始端点**：展开数组是惰性的，播放开始时可能还是空的
+            if (rawLat.size < 2) return false
             // 只有"切换路线"（setRoute）才把进度归零、并让下一拍对齐起点。
             // 这里不动 snapped：播到最后一个点后停住，再点播放也仍停在终点，
             // 直到换一条路线才重新从起点开始。
@@ -153,17 +174,18 @@ object MotionEngine {
     }
 
     fun status(): Status = synchronized(lock) {
-        Status(mode(), playing, completed, travelled, distance(), lats.size)
+        Status(mode(), playing, completed, travelled, distance(), rawLat.size)
     }
 
-    fun distance(): Double = if (cum.isEmpty()) 0.0 else cum.last()
+    /** 路线全长：各段长度之和（与"已展开到哪"无关） */
+    fun distance(): Double = totalMeters
 
     /**
      * 路线起点。选中路线但**尚未播放**时，系统侧要把位置摆到起点，
      * 否则界面停在上一段播放的终点，看起来像"选了没生效"。
      */
     fun routeStart(): Pair<Double, Double>? = synchronized(lock) {
-        if (lats.size < 2) null else lats[0] to lons[0]
+        if (rawLat.size < 2) null else rawLat[0] to rawLon[0]
     }
 
     fun travelled(): Double = synchronized(lock) { travelled }
@@ -196,10 +218,121 @@ object MotionEngine {
         rockerActive = false
     }
 
+    // ---- 按需展开：只算「刚走过的那一段」 ----
+
+    /** 路线全长：各段长度之和（平滑段用 16 点采样估算弧长） */
+    private fun computeTotalMeters(): Double {
+        var sum = 0.0
+        for (i in 0 until rawLat.size - 1) {
+            sum += segmentLength(i)
+        }
+        return sum
+    }
+
+    private fun segmentLength(i: Int): Double {
+        val sLat = rawLat[i]
+        val sLon = rawLon[i]
+        val eLat = rawLat[i + 1]
+        val eLon = rawLon[i + 1]
+        val chord = WorldMath.haversine(sLat, sLon, eLat, eLon)
+        if (!rawSmooth.getOrElse(i) { false } || chord < 2.0) return chord
+        var len = 0.0
+        var pLat = sLat
+        var pLon = sLon
+        for (k in 1..16) {
+            val (a, o) = bezierPoint(i, k / 16.0)
+            len += WorldMath.haversine(pLat, pLon, a, o)
+            pLat = a
+            pLon = o
+        }
+        return len
+    }
+
+    /** 贝塞尔上的点：控制点由相邻直线方位给出（切线 C1 连续） */
+    private fun bezierPoint(i: Int, t: Double): Pair<Double, Double> {
+        val sLat = rawLat[i]
+        val sLon = rawLon[i]
+        val eLat = rawLat[i + 1]
+        val eLon = rawLon[i + 1]
+        val own = WorldMath.calculateBearing(sLat, sLon, eLat, eLon)
+        val aziIn = if (i > 0) WorldMath.calculateBearing(rawLat[i - 1], rawLon[i - 1], sLat, sLon) else own
+        val aziOut = if (i + 1 < rawLat.size - 1) {
+            WorldMath.calculateBearing(eLat, eLon, rawLat[i + 2], rawLon[i + 2])
+        } else {
+            own
+        }
+        val chord = WorldMath.haversine(sLat, sLon, eLat, eLon)
+        val c1 = direct(sLat, sLon, chord / 3.0, aziIn)
+        val c2 = direct(eLat, eLon, chord / 3.0, (aziOut + 180.0) % 360.0)
+        val u = 1.0 - t
+        val lat = u * u * u * sLat + 3 * u * u * t * c1.first + 3 * u * t * t * c2.first + t * t * t * eLat
+        val lon = u * u * u * sLon + 3 * u * u * t * c1.second + 3 * u * t * t * c2.second + t * t * t * eLon
+        return lat to lon
+    }
+
+    /** 把展开前缀补到 [target] 米：每次只算「还没走过的那一段」，不预生成整条路线 */
+    private fun ensureExpandedTo(target: Double) {
+        if (rawLat.size < 2) return
+        if (cum.isEmpty()) appendPoint(rawLat[0], rawLon[0])
+        while (expandedSeg < rawLat.size - 1 && cum.last() < target) {
+            val i = expandedSeg
+            val sLat = rawLat[i]
+            val sLon = rawLon[i]
+            val eLat = rawLat[i + 1]
+            val eLon = rawLon[i + 1]
+            if (rawSmooth.getOrElse(i) { false } && WorldMath.haversine(sLat, sLon, eLat, eLon) >= 2.0) {
+                val len = segmentLength(i)
+                val n = maxOf(4, len.toInt())
+                for (k in 1 until n) {
+                    appendPoint(bezierPoint(i, k.toDouble() / n).first, bezierPoint(i, k.toDouble() / n).second)
+                }
+            }
+            appendPoint(eLat, eLon)
+            expandedSeg = i + 1
+        }
+        if (expandedSeg >= rawLat.size - 1) {
+            val lastLat = rawLat.last()
+            val lastLon = rawLon.last()
+            if (WorldMath.haversine(lats.last(), lons.last(), lastLat, lastLon) > 0.01) {
+                appendPoint(lastLat, lastLon)
+            }
+        }
+    }
+
+    private fun appendPoint(lat: Double, lon: Double) {
+        val prevLat = lats.lastOrNull() ?: lat
+        val prevLon = lons.lastOrNull() ?: lon
+        val d = if (lats.isEmpty()) 0.0 else WorldMath.haversine(prevLat, prevLon, lat, lon)
+        lats = lats.copyOf(lats.size + 1).also { it[it.size - 1] = lat }
+        lons = lons.copyOf(lons.size + 1).also { it[it.size - 1] = lon }
+        val lastCum = cum.lastOrNull() ?: 0.0
+        cum = cum.copyOf(cum.size + 1).also { it[it.size - 1] = lastCum + d }
+    }
+
+    /**
+     * **按时间采样**：从上一拍（[dtSec] 秒前）推进到现在应该在的位置。
+     * 纯函数，不改状态——供 getCurrentLocation 之类的"立即取位"用。
+     */
+    fun positionAhead(dtSec: Double, speed: Double, multiplier: Double): Step = synchronized(lock) {
+        if (!playing || rawLat.size < 2) return@synchronized Step(false, 0.0, 0.0, 0.0, null)
+        val m = if (multiplier.isFinite() && multiplier > 0.0) multiplier else 1.0
+        val dt = dtSec.coerceIn(0.0, 5.0)
+        val meters = (travelled + speed * m * dt).coerceIn(0.0, distance())
+        // 只把「走到过的这一段」补出来；再远的部分保持未展开
+        ensureExpandedTo(meters + 1.0)
+        val p = interpolateAt(indexAt(meters), meters)
+        Step(true, meters - travelled, p.first, p.second, bearingAt(meters))
+    }
+
     private fun clearRouteLocked() {
         lats = DoubleArray(0)
         lons = DoubleArray(0)
         cum = DoubleArray(0)
+        rawLat = DoubleArray(0)
+        rawLon = DoubleArray(0)
+        rawSmooth = BooleanArray(0)
+        expandedSeg = 0
+        totalMeters = 0.0
         travelled = 0.0
         playing = false
         completed = false
@@ -230,11 +363,14 @@ object MotionEngine {
             // 对齐那一拍：把位置摆到路线起点（只给坐标，不计位移 —— 否则会凭空消耗体力）
             if (!snapped) {
                 snapped = true
+                ensureExpandedTo(1.0)
                 val p = interpolateAt(indexAt(0.0), 0.0)
                 return@synchronized Step(true, 0.0, p.first, p.second, bearingAt(0.0))
             }
             if (wantMeters <= 0.0) return@synchronized Step(false, 0.0, curLat, curLon, null)
             val total = distance()
+            // 按需展开：只把「本拍走到的地方」算出来
+            ensureExpandedTo((travelled + wantMeters).coerceAtMost(total) + 1.0)
             val before = travelled
             travelled = (travelled + wantMeters).coerceAtMost(total)
             val actual = travelled - before
@@ -285,7 +421,7 @@ object MotionEngine {
 
     /** 在区间 [index-1, index] 内按累计弧长插值 */
     private fun interpolateAt(index: Int, dist: Double): Pair<Double, Double> {
-        if (lats.size < 2) return Pair(lats.firstOrNull() ?: 0.0, lons.firstOrNull() ?: 0.0)
+        if (lats.size < 2) return Pair(rawLat.firstOrNull() ?: 0.0, rawLon.firstOrNull() ?: 0.0)
         val i = index.coerceIn(1, lats.size - 1)
         val segLen = cum[i] - cum[i - 1]
         val t = if (segLen <= 1e-9) 0.0 else ((dist - cum[i - 1]) / segLen).coerceIn(0.0, 1.0)
@@ -300,9 +436,10 @@ object MotionEngine {
      * （与旧 App 实现同一口径 —— 朝向由位置显式下发，不走位移推算）。
      */
     private fun bearingAt(dist: Double): Double {
-        if (lats.size < 2) return rockerBearing
+        if (rawLat.size < 2) return rockerBearing
         val total = distance()
         val ahead = (dist + TANGENT_LOOKAHEAD_M).coerceAtMost(total)
+        ensureExpandedTo(ahead + 0.5)
         val a = interpolateAt(indexAt(dist), dist)
         val b = interpolateAt(indexAt(ahead), ahead)
         if (WorldMath.haversine(a.first, a.second, b.first, b.second) < 1e-6) {

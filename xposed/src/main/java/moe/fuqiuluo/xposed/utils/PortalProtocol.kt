@@ -154,6 +154,8 @@ object PortalProtocol {
         const val MOTION_LISTENER           = "motion_listener"
         /** 定位上报间隔（毫秒）：App 的设置项，迁移后由模块时钟按它出帧 */
         const val REPORT_DURATION           = "report_duration"
+        /** 每段是否平滑（可选）：有它时由系统侧展开贝塞尔，App 只传端点 */
+        const val ROUTE_SMOOTH              = "route_smooth"
         /** 路线播放路径点（展开后的采样点，见 `MotionEngine.setRoute`） */
         const val ROUTE_LAT                 = "route_lat"
         const val ROUTE_LON                 = "route_lon"

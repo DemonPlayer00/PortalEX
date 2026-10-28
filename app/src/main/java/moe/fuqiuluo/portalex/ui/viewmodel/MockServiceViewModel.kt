@@ -170,8 +170,8 @@ class MockServiceViewModel : ViewModel() {
         // 会话刚起来就把当前路线重新下发：模块侧会清进度，并在未播放时把位置对齐到起点
         val lm = locationManager
         if (lm != null && selectedRoute != null && pathPoints.size >= 2) {
-            val (lats, lons) = buildUpload()
-            routeUploaded = MockServiceHelper.setRoute(lm, lats, lons)
+            val (lats, lons, smooth) = buildUpload()
+            routeUploaded = MockServiceHelper.setRoute(lm, lats, lons, smooth)
         }
         Log.i("MockServiceViewModel", "新一轮会话：路线进度已重置")
     }
@@ -240,95 +240,38 @@ class MockServiceViewModel : ViewModel() {
     }
 
     /**
-     * 展开路线为播放路径点序列：
-     * - 普通段：端点直连（段起点加入，相邻段共享端点）
-     * - 平滑段：整段替换为三次贝塞尔曲线采样（起点切线 = 前段直线方位，终点切线 = 后段
-     *   直线方位；首/末段缺失的一侧用自身方位），采样间距 ~1 米——方向变化平缓，
-     *   角度计指针自然转动，无突发曲率变化。
+     * 播放路径 = **原始端点**（不再在本进程展开贝塞尔）。
+     *
+     * 平滑采样已迁到 system_server（`MotionEngine.setRoute(..., smooth)`）：
+     * 采样密度与播放时钟同源，App 只负责把端点连同「每段是否平滑」下发出去。
+     * 这里的 `cum` 只用于界面显示全程长度，与实际播放用的弧长可能有零点几米差异。
      */
     private fun buildPath(route: HistoricalRoute): List<PathPoint> {
         val points = route.route
-        // 端点不足 2 个构不成任何线段（脏数据/未绘制路线）→ 返回空路径；
-        // 调用方对空路径一律按「不可播放」处理，绝不抛异常。
         if (points.size < 2) return emptyList()
         val path = mutableListOf<PathPoint>()
-        fun append(p: Pair<Double, Double>) {
-            val prev = path.lastOrNull()
-            val spacing = if (prev == null) {
-                0.0
-            } else {
-                Geodesic.WGS84.Inverse(prev.lat, prev.lon, p.first, p.second).s12
+        var cum = 0.0
+        points.forEachIndexed { i, p ->
+            val spacing = if (i == 0) 0.0 else {
+                val prev = points[i - 1]
+                Geodesic.WGS84.Inverse(prev.first, prev.second, p.first, p.second).s12
             }
-            path.add(PathPoint(p.first, p.second, spacing, (prev?.cum ?: 0.0) + spacing))
+            cum += spacing
+            path.add(PathPoint(p.first, p.second, spacing, cum))
         }
-        for (i in 0 until points.size - 1) {
-            if (route.isSmooth(i)) {
-                sampleBezier(points, i).forEach { append(it) }
-            } else {
-                append(points[i])
-            }
-        }
-        // 末段终点（与最后一段共享 segment 索引）
-        append(points.last())
         return path
     }
-
     /**
-     * 三次贝塞尔采样（**包含起点、不含终点**：起点 = 端点本身，保证曲线穿过所有端点；
-     * 终点由下一段（或末段）加入，相邻段共享端点）。
-     * 控制点距离 = 段长 / 3（Hermite 张力：C1 连续、曲率平缓无突变）；
-     * 参照角 = 相邻原始直线的无平滑几何方位（平滑段之间不互相耦合）。
+     * 上传用的数据：**原始端点 + 每段是否平滑**。
+     * 平滑采样（贝塞尔展开）已迁到系统侧，这里不再展开，也不需要抽稀。
      */
-    private fun sampleBezier(points: List<Pair<Double, Double>>, i: Int): List<Pair<Double, Double>> {
-        val s = points[i]
-        val e = points[i + 1]
-        val ownAzi = azimuthOf(s, e)
-        // 起点切线 = 前段直线方位（首段无前段 → 自身方位）
-        val aziIn = if (i > 0) azimuthOf(points[i - 1], s) else ownAzi
-        // 终点切线 = 后段直线方位（末段无后段 → 自身方位）
-        val aziOut = if (i + 1 < points.size - 1) azimuthOf(e, points[i + 2]) else ownAzi
-        val len = Geodesic.WGS84.Inverse(s.first, s.second, e.first, e.second).s12
-        val p1 = Geodesic.WGS84.Direct(s.first, s.second, aziIn, len / 3.0)
-        // 终点控制点位于终点之前（沿后段方位的反方向）
-        val p2 = Geodesic.WGS84.Direct(e.first, e.second, (aziOut + 180.0) % 360.0, len / 3.0)
-        // ~1 米/采样点，至少 4 段（保证曲线形状与方向渐变）
-        val n = maxOf(4, (len / 1.0).toInt())
-        return (0 until n).map { k ->
-            val t = k.toDouble() / n
-            Pair(
-                bezier(s.first, p1.lat2, p2.lat2, e.first, t),
-                bezier(s.second, p1.lon2, p2.lon2, e.second, t)
-            )
-        }
-    }
-
-    /** 三次贝塞尔分量（u = 1 - t） */
-    private fun bezier(a: Double, b: Double, c: Double, d: Double, t: Double): Double {
-        val u = 1.0 - t
-        return u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
-    }
-
-    /** 无平滑直线方位（0..360） */
-    private fun azimuthOf(a: Pair<Double, Double>, b: Pair<Double, Double>): Double {
-        val az = Geodesic.WGS84.Inverse(a.first, a.second, b.first, b.second).azi1
-        return if (az < 0) az + 360.0 else az
-    }
-
-    /** 上传用的坐标数组（点数超限时按 stride 抽稀；抽稀后至少保留首末两点） */
-    private fun buildUpload(): Pair<DoubleArray, DoubleArray> {
-        val stride = maxOf(1, (pathPoints.size + MAX_UPLOAD_POINTS - 1) / MAX_UPLOAD_POINTS)
-        if (stride == 1) {
-            return Pair(
-                DoubleArray(pathPoints.size) { pathPoints[it].lat },
-                DoubleArray(pathPoints.size) { pathPoints[it].lon },
-            )
-        }
-        val idx = (pathPoints.indices step stride).toMutableList()
-        if (idx.last() != pathPoints.size - 1) idx.add(pathPoints.size - 1)
-        return Pair(
-            DoubleArray(idx.size) { pathPoints[idx[it]].lat },
-            DoubleArray(idx.size) { pathPoints[idx[it]].lon },
-        )
+    private fun buildUpload(): Triple<DoubleArray, DoubleArray, BooleanArray> {
+        val route = selectedRoute
+        val points = route?.route ?: emptyList()
+        val lats = DoubleArray(points.size) { points[it].first }
+        val lons = DoubleArray(points.size) { points[it].second }
+        val smooth = BooleanArray(maxOf(0, points.size - 1)) { route?.isSmooth(it) ?: false }
+        return Triple(lats, lons, smooth)
     }
 
     var locationManager: LocationManager? = null
@@ -448,8 +391,8 @@ class MockServiceViewModel : ViewModel() {
         if (auto && selectedRoute != null && pathPoints.size >= 2) {
             // 自动播放：路线数据先上传（一次），再打开播放；摇杆意图关掉（方向由切线接管）
             if (!routeUploaded) {
-                val (lats, lons) = buildUpload()
-                routeUploaded = MockServiceHelper.setRoute(lm, lats, lons)
+                val (lats, lons, smooth) = buildUpload()
+                routeUploaded = MockServiceHelper.setRoute(lm, lats, lons, smooth)
                 if (!routeUploaded) {
                     Log.e("MockServiceViewModel", "路线上传失败（服务未就绪？），下拍重试")
                 }

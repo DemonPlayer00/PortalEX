@@ -203,7 +203,7 @@ class DebugCommandActivity : Activity() {
         val uploaded = MockServiceHelper.setRoute(lm, doubleArrayOf(lat), doubleArrayOf(lon))
         Thread.sleep(800)
         val loc = MockServiceHelper.getLocation(lm)
-        val motion = MockServiceHelper.getSensorStatus(lm)?.getBundle("motion")
+        val motion = MockServiceHelper.getMotion(lm)
         return "started=$started uploaded=$uploaded target=$lat,$lon loc=$loc motion=$motion"
     }
 
@@ -355,13 +355,17 @@ class DebugCommandActivity : Activity() {
         if (!started) return "start=false"
         val lats = route.route.map { it.first }.toDoubleArray()
         val lons = route.route.map { it.second }.toDoubleArray()
-        val uploaded = MockServiceHelper.setRoute(lm, lats, lons)
+        val smooth = BooleanArray(maxOf(0, route.route.size - 1)) { route.isSmooth(it) }
+        val uploaded = MockServiceHelper.setRoute(lm, lats, lons, smooth)
         val playing = MockServiceHelper.setRoutePlaying(lm, true)
         Thread.sleep(1500)
         val loc = MockServiceHelper.getLocation(lm)
-        val motion = MockServiceHelper.getSensorStatus(lm)?.getBundle("motion")
+        val motion = MockServiceHelper.getMotion(lm)
         MockServiceHelper.setRoutePlaying(lm, false)
-        return "route=${route.name} points=${lats.size} uploaded=$uploaded playing=$playing loc=$loc motion=$motion"
+        val motionText = motion?.let { b ->
+            b.keySet().sorted().joinToString(" ") { k -> k + "=" + (b.get(k) ?: "null") }
+        } ?: "null"
+        return "route=${route.name} raw=${lats.size} uploaded=$uploaded playing=$playing loc=$loc motion=$motionText"
     }
 
     companion object {
