@@ -160,7 +160,10 @@ object PortalProtocol {
         const val ROUTE_LAT                 = "route_lat"
         const val ROUTE_LON                 = "route_lon"
         const val ROUTE_DISTANCE            = "route_distance"
+        /** 已展开的采样点数（惰性展开的进度，见 MotionEngine.Status.points） */
         const val ROUTE_POINTS              = "route_points"
+        /** 原始端点数（App 上传的数组长度） */
+        const val ROUTE_ENDPOINTS           = "route_endpoints"
         const val ROUTE_TRAVELLED           = "route_travelled"
         const val LISTENER_SIZE             = "size"
         const val SPEED                     = "speed"

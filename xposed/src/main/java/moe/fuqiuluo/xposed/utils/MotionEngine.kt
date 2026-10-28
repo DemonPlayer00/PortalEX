@@ -43,7 +43,10 @@ object MotionEngine {
         val completed: Boolean,
         val travelledMeters: Double,
         val distanceMeters: Double,
+        /** **已展开的采样点数**（惰性展开：随播放推进增长，不是端点数） */
         val points: Int,
+        /** 原始端点数（App 上传的那个数组的长度） */
+        val endpoints: Int,
     )
 
     /**
@@ -174,7 +177,7 @@ object MotionEngine {
     }
 
     fun status(): Status = synchronized(lock) {
-        Status(mode(), playing, completed, travelled, distance(), rawLat.size)
+        Status(mode(), playing, completed, travelled, distance(), lats.size, rawLat.size)
     }
 
     /** 路线全长：各段长度之和（与"已展开到哪"无关） */
