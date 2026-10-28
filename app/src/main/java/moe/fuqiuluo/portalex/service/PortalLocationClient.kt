@@ -194,8 +194,46 @@ object PortalLocationClient {
         manager = lm
         listener = l
         this.intervalMs = interval
-        Log.i(TAG, "已订阅 ${providers.joinToString("+")}（间隔 ${interval}ms）—— 普通客户端视角")
+        // API 30+ 追加「一次性取位轮询」：本机实测持续订阅（requestLocationUpdates）在
+        // 模拟会话期间收不到任何帧，而 getCurrentLocation 能稳定拿到 —— 两个通道并存，
+        // 谁先到用谁（都是标准系统 API）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            startOneShotPolling(lm, interval)
+        }
+        Log.i(TAG, "已订阅 " + providers.joinToString("+") + "（间隔 " + interval + "ms）—— 普通客户端视角")
         return true
+    }
+
+    private var oneShotHandler: android.os.Handler? = null
+    private var oneShotExecutor: java.util.concurrent.ExecutorService? = null
+
+    /** 用 getCurrentLocation 周期性取位（标准 API；持续订阅不可用时的主力通道）。 */
+    private fun startOneShotPolling(lm: LocationManager, interval: Long) {
+        stopOneShotPolling()
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        oneShotHandler = handler
+        oneShotExecutor = executor
+        val tick = object : Runnable {
+            override fun run() {
+                if (subscribers.isEmpty()) return
+                runCatching {
+                    @Suppress("MissingPermission")
+                    lm.getCurrentLocation(LocationManager.GPS_PROVIDER, null, executor) { location ->
+                        if (location != null) deliver(location)
+                    }
+                }
+                handler.postDelayed(this, interval.coerceAtLeast(MIN_INTERVAL_MS))
+            }
+        }
+        handler.post(tick)
+    }
+
+    private fun stopOneShotPolling() {
+        oneShotHandler?.removeCallbacksAndMessages(null)
+        oneShotHandler = null
+        oneShotExecutor?.shutdownNow()
+        oneShotExecutor = null
     }
 
     /** 退订（owner 粒度；最后一个退订时才真正移除框架注册） */
@@ -220,6 +258,7 @@ object PortalLocationClient {
                 .onFailure { Log.w(TAG, "removeUpdates 失败：${it.message}") }
             Log.i(TAG, "已退订 LocationManager（本次共收 $frameCount 帧）")
         }
+        stopOneShotPolling()
         manager = null
         requestedProviders.clear()
     }
