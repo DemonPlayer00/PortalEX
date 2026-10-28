@@ -359,8 +359,13 @@ class CalibrationFragment : Fragment() {
         view.findViewById<TextView>(R.id.title).text = title
         val value = view.findViewById<android.widget.EditText>(R.id.value)
         value.setText(initial.joinToString("\n"))
+        // 布局里是 singleLine + actionNext：不清掉的话回车会被当成"下一步"，
+        // 多行内容会被压成一行（这就是"三项都只有一条"的直接原因）
+        value.setSingleLine(false)
+        value.imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_ENTER_ACTION
         value.inputType = android.text.InputType.TYPE_CLASS_TEXT or
             android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        value.gravity = android.view.Gravity.TOP or android.view.Gravity.START
         value.minLines = 4
         value.maxLines = 10
         MaterialAlertDialogBuilder(requireContext())
@@ -457,9 +462,12 @@ class CalibrationFragment : Fragment() {
                 .putString("sim_gps_v1", "EAUBF")
                 .putString("sim_gps_v2", satellites.takeIf { it > 0 }?.toString() ?: "0")
                 .apply()
-            // 逐星状态：一颗"全绿"的卫星，其余交给模块随机
-            requireContext().gnssFlags = listOf("EAUBF")
-            sendSim("gps", "EAUBF", satellites.takeIf { it > 0 }?.toString() ?: "0", listOf("EAUBF"))
+            // 逐星状态：按本次可见卫星数生成**一行一颗**（全部"全绿"），
+            // 让列表内容与模块实际下发的卫星数量一致，而不是只有孤零零一条
+            val starCount = (satellites.takeIf { it > 0 } ?: ctx.minSatelliteCount).coerceIn(1, 64)
+            val flags = List(starCount) { "EAUBF" }
+            requireContext().gnssFlags = flags
+            sendSim("gps", "EAUBF", starCount.toString(), flags)
             showToast(if (loc == null) getString(R.string.calibration_auto_no_fix) else getString(R.string.calibration_auto_done))
         }.onFailure { showToast(it.message ?: "GPS") }
     }
@@ -514,20 +522,33 @@ class CalibrationFragment : Fragment() {
             @Suppress("DEPRECATION")
             val info = wm.connectionInfo
             val entries = LinkedHashSet<String>()
-            val ssid = info?.ssid?.trim('"').orEmpty()
+            val ssid = info?.ssid?.trim('"').orEmpty().takeIf { it != "<unknown ssid>" }.orEmpty()
             val bssid = info?.bssid.orEmpty()
             if (ssid.isNotBlank() || bssid.isNotBlank()) entries += "$ssid|$bssid"
+            // 扫描是**异步**的：startScan 立刻返回，结果要等系统回调/下次读取。
+            // 旧实现在同一个瞬间就读 scanResults，几乎必然是空的（只能拿到"当前连接"那一条）。
             runCatching { wm.startScan() }
-            @Suppress("DEPRECATION", "MissingPermission")
-            val scans = wm.scanResults.orEmpty()
+            var scans: List<android.net.wifi.ScanResult> = emptyList()
+            val deadline = System.currentTimeMillis() + 8_000L
+            while (System.currentTimeMillis() < deadline) {
+                @Suppress("DEPRECATION", "MissingPermission")
+                scans = runCatching { wm.scanResults }.getOrNull().orEmpty()
+                if (scans.isNotEmpty()) break
+                Thread.sleep(300)
+            }
             scans.take(16).forEach { ap ->
                 val s = ap.SSID.orEmpty()
                 val b = ap.BSSID.orEmpty()
-                if (s.isNotBlank() || b.isNotBlank()) entries += "$s|$b"
+                if (s.isNotBlank() && s != "<unknown ssid>") entries += "$s|$b"
+                else if (b.isNotBlank()) entries += "$s|$b"
             }
             if (entries.isEmpty()) {
                 showToast(getString(R.string.calibration_auto_no_wifi))
                 return
+            }
+            // 只有一条且扫描为空：多半是定位没开（Wi-Fi 扫描/SSID 都依赖定位权限与开关）
+            if (scans.isEmpty() && entries.size <= 1) {
+                showToast("只拿到当前连接：附近扫描需要定位已开启（Wi-Fi 扫描依赖定位权限）")
             }
             val list = entries.toList()
             ctx.wifiEntries = list
@@ -678,8 +699,11 @@ class CalibrationFragment : Fragment() {
                 locationDeferred?.let { applyLocationAccuracy(ctx, it.await()) }
             }
             if (doBaseband) {
-                autoFillCell()
-                autoFillWifi()
+                // 扫描结果需要等待广播/轮询，放到 IO 线程，避免阻塞主线程
+                withContext(Dispatchers.IO) {
+                    autoFillCell()
+                    autoFillWifi()
+                }
             }
         }
     }
