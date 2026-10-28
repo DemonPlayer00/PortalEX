@@ -462,12 +462,12 @@ class CalibrationFragment : Fragment() {
                 .putString("sim_gps_v1", "EAUBF")
                 .putString("sim_gps_v2", satellites.takeIf { it > 0 }?.toString() ?: "0")
                 .apply()
-            // 逐星状态：按本次可见卫星数生成**一行一颗**（全部"全绿"），
-            // 让列表内容与模块实际下发的卫星数量一致，而不是只有孤零零一条
-            val starCount = (satellites.takeIf { it > 0 } ?: ctx.minSatelliteCount).coerceIn(1, 64)
-            val flags = List(starCount) { "EAUBF" }
+            // 逐星状态：**有 GNSS 信号就按真实卫星采集**（一行一颗），
+            // 没信号（拿不到 GnssStatus）才退回一条 EAUBF。
+            val collected = collectGnssFlags(ctx)
+            val flags = if (collected.isEmpty()) listOf("EAUBF") else collected
             requireContext().gnssFlags = flags
-            sendSim("gps", "EAUBF", starCount.toString(), flags)
+            sendSim("gps", flags.firstOrNull() ?: "EAUBF", flags.size.toString(), flags)
             showToast(if (loc == null) getString(R.string.calibration_auto_no_fix) else getString(R.string.calibration_auto_done))
         }.onFailure { showToast(it.message ?: "GPS") }
     }
@@ -476,6 +476,42 @@ class CalibrationFragment : Fragment() {
      * 收集**全部**小区（已注册排最前），一条一项：mcc/mnc|cid/tac。
      * 列表非空时模块以列表为准，首条即"当前连接"。
      */
+    /**
+     * 订阅一次 GNSS 状态，把真实卫星的状态翻译成本项目的行格式：
+     * E 星历 / A 年历 / U 参与定位 / F 载波 / B 基带 C/N0，逗号后跟 C/N0。
+     *
+     * 最多等 timeoutMs：没有回调（无信号 / 无 GNSS 硬件）就返回空列表，由调用方回退 EAUBF。
+     */
+    private fun collectGnssFlags(ctx: android.content.Context, timeoutMs: Long = 3_000L): List<String> {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return emptyList()
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return emptyList()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val holder = java.util.concurrent.atomic.AtomicReference<android.location.GnssStatus?>(null)
+        val callback = object : android.location.GnssStatus.Callback() {
+            override fun onSatelliteStatusChanged(gnssStatus: android.location.GnssStatus) {
+                holder.set(gnssStatus)
+                latch.countDown()
+            }
+        }
+        return runCatching {
+            lm.registerGnssStatusCallback(callback, android.os.Handler(android.os.Looper.getMainLooper()))
+            latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val s = holder.get() ?: return emptyList()
+            if (s.satelliteCount <= 0) return emptyList()
+            (0 until s.satelliteCount).map { i ->
+                val letters = StringBuilder()
+                if (s.hasEphemerisData(i)) letters.append('E')
+                if (s.hasAlmanacData(i)) letters.append('A')
+                if (s.usedInFix(i)) letters.append('U')
+                if (s.getCarrierFrequencyHz(i) > 0f) letters.append('F')
+                if (s.hasBasebandCn0DbHz(i)) letters.append('B')
+                "%s,%.1f".format(letters.toString(), s.getCn0DbHz(i))
+            }
+        }.getOrElse { emptyList() }.also {
+            runCatching { lm.unregisterGnssStatusCallback(callback) }
+        }
+    }
+
     private fun autoFillCell() {
         val ctx = requireContext()
         runCatching {
@@ -695,7 +731,8 @@ class CalibrationFragment : Fragment() {
                 }
             }
             if (doLocation) {
-                autoFillGps()
+                // GNSS 状态要等回调（最多 3 秒），不能堵在主线程上
+                withContext(Dispatchers.IO) { autoFillGps() }
                 locationDeferred?.let { applyLocationAccuracy(ctx, it.await()) }
             }
             if (doBaseband) {
