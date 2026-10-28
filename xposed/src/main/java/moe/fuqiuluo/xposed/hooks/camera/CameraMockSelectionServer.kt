@@ -198,8 +198,10 @@ internal object CameraMockSelectionServer {
             reply(client, "ERR\tno-simulated-position")
             return
         }
-        val lat = reqLat ?: simulated?.latitude
-        val lon = reqLon ?: simulated?.longitude
+        // **优先用此刻的表象位置**：请求里的 lat/lon 由 native 侧在打开相机那一刻带上，
+        // 路线播放过程中早就过期了；拿过期坐标选片，等于"走到哪都挑同一个点"。
+        val lat = simulated?.latitude ?: reqLat
+        val lon = simulated?.longitude ?: reqLon
         Logger.info("选片服务：select lat=$lat lon=$lon tags=$tags")
         val selected = CameraMockServerStore.select(lat, lon, now, tags, session)
         Logger.info("选片服务：select result=${selected?.videoId}")
