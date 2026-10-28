@@ -76,8 +76,6 @@ class MockServiceViewModel : ViewModel() {
     @Volatile private var routeUploaded = false
     @Volatile private var routePlayingPushed = false
 
-    /** 最近一次选中路线的时刻：用来丢弃"上一段播完"的迟到回调 */
-    @Volatile private var routeSelectedAt = 0L
 
     /** 摇杆意图（App 采集、系统侧执行） */
     @Volatile private var rockerBearing = 0.0
@@ -124,7 +122,6 @@ class MockServiceViewModel : ViewModel() {
     /** 选中路线：展开成播放路径并标记"待上传"（真正的上传在遥控循环里，失败会自动重试） */
     fun selectRouteForPlayback(route: HistoricalRoute) {
         selectedRoute = route
-        routeSelectedAt = android.os.SystemClock.elapsedRealtime()
         cachedRoute = route
         pathPoints = buildPath(route)
         routeDistance = pathPoints.lastOrNull()?.cum ?: 0.0
@@ -150,7 +147,6 @@ class MockServiceViewModel : ViewModel() {
         routePlayingPushed = false
         lastPushedActive = false
         lastPushedBearing = Double.NaN
-        routeSelectedAt = android.os.SystemClock.elapsedRealtime()
         // 会话刚起来就把当前路线重新下发：模块侧会清进度，并在未播放时把位置对齐到起点
         val lm = locationManager
         if (lm != null && selectedRoute != null && pathPoints.size >= 2) {
@@ -468,8 +464,22 @@ class MockServiceViewModel : ViewModel() {
     /** 回读推进状态：进度、播完（一次性）、坐标镜像。读不到就保持上次的值，不猜 */
     private fun pollMotion(lm: LocationManager) {
         val rely = MockServiceHelper.getMotion(lm) ?: return
+        // 路线播到终点：系统侧已自行停下（playing=false，进度=全程）。
+        // App 只需把「自动播放」这个界面态收回来，否则下一次按播放/拖摇杆都会被当成自动模式。
         val playing = rely.getBoolean(Key.MOTION_PLAYING, false)
-        val completed = rely.getBoolean(Key.MOTION_COMPLETED, false)
+        val distance = rely.getDouble(Key.ROUTE_DISTANCE, 0.0)
+        val travelled = rely.getDouble(Key.ROUTE_TRAVELLED, 0.0)
+        if (isAutoPlaying && !playing && distance > 0.0 && travelled >= distance - 1e-6) {
+            if (::rocker.isInitialized) rocker.autoStatus = false
+            routePlayingPushed = false
+            lastPushedActive = false
+            Log.i("MockServiceViewModel", "路线已到终点：退出自动播放")
+        }
+        Log.i(
+            "MockServiceViewModel",
+            "motion lat=" + rely.getDouble(Key.LAT, Double.NaN) + " lon=" +
+                rely.getDouble(Key.LON, Double.NaN) + " playing=" + playing
+        )
         // 坐标镜像：App 侧显示（地图/坐标栏）读的是本进程的 FakeLoc
         RemoteCommandHandler.applySyncedCoordinate(
             rely.getDouble(Key.LAT, FakeLoc.latitude),
@@ -478,29 +488,8 @@ class MockServiceViewModel : ViewModel() {
         FakeLoc.bearing = rely.getDouble(Key.BEARING, FakeLoc.bearing)
         FakeLoc.hasBearings = true
 
-        if (isAutoPlaying && (completed || (!playing && rely.getDouble(Key.ROUTE_DISTANCE, 0.0) > 0.0 &&
-                    rely.getDouble(Key.ROUTE_TRAVELLED, 0.0) >= rely.getDouble(Key.ROUTE_DISTANCE, 0.0) - 1e-6))
-        ) {
-            onRouteCompleted()
-        }
     }
 
-    /** 播完收尾：停自动播放（下一拍会把停止下发给系统侧）、提示音 + 振动 */
-    private fun onRouteCompleted() {
-        // 刚切换路线时，轮询可能还带着上一条路线的"已完成"状态：
-        // 此时收尾会把刚打开的播放关掉，表现就是"选中新路线却停在旧终点"。
-        if (android.os.SystemClock.elapsedRealtime() - routeSelectedAt < 1500L) {
-            Log.i("MockServiceViewModel", "忽略过期的完成回调（刚切换路线）")
-            return
-        }
-        Log.i("MockServiceViewModel", "路线播放完成（系统侧进度已到终点）")
-        if (::rocker.isInitialized) {
-            rocker.autoStatus = false
-        }
-        routePlayingPushed = false
-        lastPushedActive = false
-        playCompletionSound(Portal.appContext)
-    }
 
     /**
      * 手动模式：摇杆按下/松开的**意图**（推进在系统侧，这里只改状态）。
@@ -509,6 +498,11 @@ class MockServiceViewModel : ViewModel() {
      * 循环继续转——否则「松开摇杆（暂停）→ 启动自动播放」会卡死。
      */
     fun onRockerStarted() {
+        // 用户按住摇杆 = 接管方向：自动播放立即让位，否则摇杆会被"自动模式"忽略
+        if (::rocker.isInitialized && rocker.autoStatus) {
+            rocker.autoStatus = false
+            routePlayingPushed = false
+        }
         joystickTouched = true
         rockerCoroutineController.resume()
     }
@@ -537,27 +531,6 @@ class MockServiceViewModel : ViewModel() {
         if (want) MockKeepAliveService.start(ctx) else MockKeepAliveService.stop(ctx)
     }
 
-    private fun playCompletionSound(context: android.content.Context) {
-        try {
-            val ringtoneUri = android.provider.Settings.System.DEFAULT_NOTIFICATION_URI
-            val mediaPlayer = android.media.MediaPlayer.create(context, ringtoneUri)
-            mediaPlayer.setOnCompletionListener { it.release() }
-            mediaPlayer.start()
-
-            val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
-            if (vibrator.hasVibrator()) {
-                val pattern = longArrayOf(0, 500, 300, 500) // 等待0ms，振动500ms，暂停300ms，再振动500ms
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(pattern, -1)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("MockServiceViewModel", "播放提示音或振动失败", e)
-        }
-    }
 
     fun isServiceStart(): Boolean {
         return locationManager != null && MockServiceHelper.isServiceInit() && MockServiceHelper.isMockStart(

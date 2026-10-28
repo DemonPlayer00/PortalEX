@@ -42,6 +42,8 @@ class DebugCommandActivity : Activity() {
                 "stop" -> stopMock()
                 "set" -> setCommand()
                 "route" -> routeTest()
+                "point" -> pointTest()
+                "rocker" -> rockerTest()
                 "help" -> HELP
                 else -> status()
             }
@@ -181,6 +183,42 @@ class DebugCommandActivity : Activity() {
             out.appendLine("ssid=$ssid")
         }
         return out.toString()
+    }
+
+    /**
+     * 单点测试：把一个坐标当作「单点路线」下发，验证位置通道是否还活着。
+     * 单点在模块侧会走 updateCoordinate 分支（不依赖播放），所以它能区分
+     * 「命令通道坏了」和「路线推进坏了」。
+     */
+    private fun pointTest(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val started = runCatching { MockServiceHelper.tryOpenMock(lm, 3.05, 80.0, 25f) }.getOrDefault(false)
+        val lat = intent.getStringExtra("lat")?.toDoubleOrNull() ?: 23.52517
+        val lon = intent.getStringExtra("lon")?.toDoubleOrNull() ?: 113.60646
+        val uploaded = MockServiceHelper.setRoute(lm, doubleArrayOf(lat), doubleArrayOf(lon))
+        Thread.sleep(800)
+        val loc = MockServiceHelper.getLocation(lm)
+        val motion = MockServiceHelper.getSensorStatus(lm)?.getBundle("motion")
+        return "started=$started uploaded=$uploaded target=$lat,$lon loc=$loc motion=$motion"
+    }
+
+    /**
+     * 摇杆测试：按住某个方位 2 秒，看模块是否真的在推进（排查“摇杆无效”）。
+     */
+    private fun rockerTest(): String {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return "location_manager=null"
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        val started = runCatching { MockServiceHelper.tryOpenMock(lm, 3.05, 80.0, 25f) }.getOrDefault(false)
+        val bearing = intent.getStringExtra("bearing")?.toDoubleOrNull() ?: 90.0
+        val before = MockServiceHelper.getLocation(lm)
+        val ok = MockServiceHelper.setRocker(lm, true, bearing)
+        Thread.sleep(2000)
+        val after = MockServiceHelper.getLocation(lm)
+        MockServiceHelper.setRocker(lm, false, bearing)
+        return "started=$started setRocker=$ok bearing=$bearing before=$before after=$after"
     }
 
     private fun routeTest(): String {

@@ -132,11 +132,9 @@ object MotionEngine {
                 return true
             }
             if (lats.size < 2) return false
-            if (completed || travelled >= cum.last() - 1e-6) {
-                travelled = 0.0
-                completed = false
-            }
-            snapped = false
+            // 只有"切换路线"（setRoute）才把进度归零、并让下一拍对齐起点。
+            // 这里不动 snapped：播到最后一个点后停住，再点播放也仍停在终点，
+            // 直到换一条路线才重新从起点开始。
             playing = true
             return true
         }
