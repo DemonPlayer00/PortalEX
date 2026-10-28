@@ -44,6 +44,7 @@ object PortalProtocol {
         const val SET_ALTITUDE       = "set_altitude"
         const val SET_BEARING        = "set_bearing"
         const val SET_PROXY          = "set_proxy"
+        const val SET_MOTION_LISTENER = "set_motion_listener"
         const val SET_ROUTE          = "set_route"
         const val SET_ROCKER         = "set_rocker"
         const val SET_SENSOR_MOCK    = "set_sensor_mock"
@@ -149,6 +150,8 @@ object PortalProtocol {
         const val NEED_DOWNGRADE_TO_2G      = "need_downgrade_to_2g"
         const val NOISE_PROFILE             = "noise_profile"
         const val PROXY_BINDER              = "proxy"
+        /** App 注册的播放完成回调（IBinder） */
+        const val MOTION_LISTENER           = "motion_listener"
         /** 定位上报间隔（毫秒）：App 的设置项，迁移后由模块时钟按它出帧 */
         const val REPORT_DURATION           = "report_duration"
         /** 路线播放路径点（展开后的采样点，见 `MotionEngine.setRoute`） */

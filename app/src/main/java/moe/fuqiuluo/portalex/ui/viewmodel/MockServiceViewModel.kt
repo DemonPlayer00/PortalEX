@@ -20,6 +20,7 @@ import moe.fuqiuluo.portalex.service.StaminaController
 import moe.fuqiuluo.portalex.ui.mock.HistoricalLocation
 import moe.fuqiuluo.portalex.ui.mock.HistoricalRoute
 import moe.fuqiuluo.portalex.ui.mock.Rocker
+import moe.fuqiuluo.portalex.service.PortalLocationClient
 import moe.fuqiuluo.xposed.RemoteCommandHandler
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
@@ -45,6 +46,26 @@ import kotlin.math.abs
  * 而"上报间隔"仍由 App 的设置项决定（[moe.fuqiuluo.portalex.ext.reportDuration] 会下发）。
  */
 class MockServiceViewModel : ViewModel() {
+
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** system_server → App 的「播放结束」回调（见 Cmd.SET_MOTION_LISTENER）。 */
+    private val motionCallback = object : android.os.Binder() {
+        override fun onTransact(code: Int, data: android.os.Parcel, reply: android.os.Parcel?, flags: Int): Boolean {
+            if (code == 1) {
+                mainHandler.post { onRouteCompletedByModule() }
+                return true
+            }
+            return super.onTransact(code, data, reply, flags)
+        }
+    }
+
+    private fun onRouteCompletedByModule() {
+        if (::rocker.isInitialized) rocker.autoStatus = false
+        routePlayingPushed = false
+        lastPushedActive = false
+        Log.i("MockServiceViewModel", "收到模块完成回调：自动播放已关闭")
+    }
 
     lateinit var rocker: Rocker
 
@@ -309,6 +330,8 @@ class MockServiceViewModel : ViewModel() {
             field = value
             if (value != null) {
                 MockServiceHelper.tryInitService(value)
+                // 注册"播放结束"回调：模块播到终点会直接叫回来，不用轮询猜
+                runCatching { MockServiceHelper.setMotionListener(value, motionCallback) }
                 // 会话启停（启动/重启模拟）⇒ 路线进度作废，从头开始
                 MockServiceHelper.onSessionChanged = { started -> if (started) onSessionStarted() }
                 // 实验性开关跨重启恢复：服务握手成功后把当前偏好同步给系统侧。
@@ -479,6 +502,12 @@ class MockServiceViewModel : ViewModel() {
             "MockServiceViewModel",
             "motion lat=" + rely.getDouble(Key.LAT, Double.NaN) + " lon=" +
                 rely.getDouble(Key.LON, Double.NaN) + " playing=" + playing
+        )
+        // App 自己的地图：直接吃模块回读到的坐标（本进程的 LocationListener 可能收不到帧）
+        PortalLocationClient.injectFromModule(
+            rely.getDouble(Key.LAT, Double.NaN),
+            rely.getDouble(Key.LON, Double.NaN),
+            rely.getDouble(Key.BEARING, FakeLoc.bearing).toFloat(),
         )
         // 坐标镜像：App 侧显示（地图/坐标栏）读的是本进程的 FakeLoc
         RemoteCommandHandler.applySyncedCoordinate(
