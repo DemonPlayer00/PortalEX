@@ -17,3 +17,10 @@ local.properties
 apk-keys
 app/google-services.json
 /.idea/
+
+# 本地 agent 工作区（测试文件已迁出仓库，见 AGENTS 纪律）
+agent/
+
+# 根目录的 uiautomator dump 与临时探针文件（调试产物，不入库）
+/ui*.xml
+/.probe_write
