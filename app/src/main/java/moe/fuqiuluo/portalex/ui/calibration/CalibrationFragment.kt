@@ -346,9 +346,12 @@ class CalibrationFragment : Fragment() {
 
     private fun renderFluctuation() {
         val ctx = requireContext()
+        // 顺序必须与 buildFluctuationRows 的 items 一致（插入「精度波动」后曾错位一格，
+        // 表现为：改了海拔波动/速度波动，列表里的数值不更新或显示成别人的值）
         fluctuationValues.getOrNull(0)?.text = "%.2f米".format(ctx.accuracy)
-        fluctuationValues.getOrNull(1)?.text = "%.2f米".format(ctx.altitudeJitter)
-        fluctuationValues.getOrNull(2)?.text = "%.2f米/秒".format(ctx.speedAmplitude)
+        fluctuationValues.getOrNull(1)?.text = "%.2f米".format(ctx.accuracyJitter)
+        fluctuationValues.getOrNull(2)?.text = "%.2f米".format(ctx.altitudeJitter)
+        fluctuationValues.getOrNull(3)?.text = "%.2f米/秒".format(ctx.speedAmplitude)
         gpsAccuracyValue?.text = ctx.gpsAccuracyMeasured.let {
             if (it > 0f) "%.2f米".format(it) else "未采集"
         }
@@ -394,6 +397,8 @@ class CalibrationFragment : Fragment() {
         // 波动类：用实测标准差回填（精度波动 / 海拔波动）
         result.accuracySigma?.let { ctx.accuracyJitter = it }
         result.altitudeSigma?.let { ctx.altitudeJitter = it.toDouble() }
+        result.speedSigma?.let { ctx.speedAmplitude = it.toDouble() }
+        renderFluctuation()
         result.fusedDelayMs?.let { ctx.fusedDelayMeasured = it }
         result.gpsIntervalMs?.let {
             ctx.gpsIntervalMeasured = it
@@ -535,6 +540,9 @@ class CalibrationFragment : Fragment() {
                 return@showInputDialog
             }
             save(value)
+            // 之前这里只写了配置：列表里的旧数值要等下次重进页面才刷新
+            renderFluctuation()
+            pushConfig()
         }
     }
     private fun editScalar(title: String, current: Double, min: Double, max: Double, save: (Double) -> Unit) {
@@ -932,6 +940,10 @@ class CalibrationFragment : Fragment() {
                 withContext(Dispatchers.IO) { autoFillCell() }
                 applyWifiEntries(ctx, wifiDeferred?.await().orEmpty())
             }
+            // 收尾统一刷新一遍：位置/基带写的是 prefs，列表里显示的是快照，
+            // 不重渲染就会一直显示改之前的值（"部分列表旧数据更新不及时"）
+            renderFluctuation()
+            _binding?.let { renderValues(requireContext().sensorNoise) }
         }
     }
 
