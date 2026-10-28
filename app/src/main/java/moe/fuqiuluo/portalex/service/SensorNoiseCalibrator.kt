@@ -47,12 +47,6 @@ object SensorNoiseCalibrator {
 
     /** 静止判定：加速度模长的 σ（m/s²）。静止真机 ≈0.008，走起来 >1 */
     const val MAX_ACCEL_NORM_SIGMA = 0.25
-    /** 移动剔除的窗口长度：按 1 秒分段判断，移动的段整段丢掉，而不是作废整次采集 */
-    private const val SKIP_WINDOW_MS = 1000L
-
-    /** 可保留样本的最低比例：低于它说明全程在动，没有可用的静止数据 */
-    private const val MIN_KEPT_RATIO = 0.5
-
     /** 静止判定：陀螺单轴 σ（rad/s）。静止真机 ≈0.001，转动 >0.05 */
     const val MAX_GYRO_SIGMA = 0.05
     /** 每个传感器至少要有的样本数（50Hz × 7.4s ≈ 370） */
@@ -264,8 +258,6 @@ object SensorNoiseCalibrator {
             ?: return Result(base, "", false, "取不到 SensorManager")
         val main = Handler(Looper.getMainLooper())
         val bufs = LinkedHashMap<Int, SensorBuf>()
-        // 原始样本（带时间戳）：采集结束后按 1 秒窗口剔除"移动中"的那几段
-        val raw = LinkedHashMap<Int, ArrayList<Pair<Long, FloatArray>>>()
         val missing = mutableListOf<String>()
         for (type in listOf(
             Sensor.TYPE_ACCELEROMETER,
@@ -274,12 +266,7 @@ object SensorNoiseCalibrator {
             Sensor.TYPE_GRAVITY,
             Sensor.TYPE_LINEAR_ACCELERATION,
         )) {
-            if (sm.getDefaultSensor(type) == null) {
-                missing.add(sensorName(type))
-            } else {
-                bufs[type] = SensorBuf()
-                raw[type] = ArrayList()
-            }
+            if (sm.getDefaultSensor(type) == null) missing.add(sensorName(type)) else bufs[type] = SensorBuf()
         }
         if (bufs.isEmpty()) return Result(base, "", false, "本机没有可用的加速度/陀螺/磁场传感器")
 
@@ -290,9 +277,8 @@ object SensorNoiseCalibrator {
                 // 建立期从**第一个样本**起算（不是注册时刻）：注册瞬间常带上一帧的陈旧值，
                 // 而传感器可能要几百毫秒才吐第一个值 —— 等待时间既不算采集，也不喂统计。
                 if (!window.accept(System.currentTimeMillis())) return
-                val nowMs = System.currentTimeMillis()
-                if (window.elapsedMs(nowMs) == 0L) trace?.markStart()
-                raw[e.sensor.type]?.add(nowMs to e.values.clone())
+                if (window.elapsedMs(System.currentTimeMillis()) == 0L) trace?.markStart()
+                bufs[e.sensor.type]?.add(e.values)
                 trace?.push(e.sensor.type, e.values)
             }
 
@@ -324,88 +310,25 @@ object SensorNoiseCalibrator {
             runCatching { sm.unregisterListener(listener) }
         }
 
-        var skippedNote = ""
-        // ---- 按 1 秒窗口剔除"移动中"的数据 ----
-        // 策略：移动的那几秒**整段跳过**，剩下的静止样本继续用 —— 不再因为一次移动就作废整次采集。
-        // 只有当可保留的样本少于 MIN_KEPT_RATIO 时才算失败（那说明几乎全程都在动）。
-        val startMs = raw.values.firstOrNull()?.firstOrNull()?.first ?: 0L
-        fun windowIndexOf(t: Long): Long = (t - startMs) / SKIP_WINDOW_MS
-        fun windowSigma(type: Int, items: List<Pair<Long, FloatArray>>): Double {
-            val probe = SensorBuf()
-            items.forEach { probe.add(it.second) }
-            return if (type == Sensor.TYPE_ACCELEROMETER) probe.normSigma() else probe.sigmas().max()
-        }
-        val badWindows = HashSet<Long>()
-        fun applyFilter() {
-            for ((type, list) in raw) {
-                val fresh = SensorBuf()
-                list.forEach { (t, v) -> if (!badWindows.contains(windowIndexOf(t))) fresh.add(v) }
-                bufs[type] = fresh
-            }
-        }
-        fun keptRatio(): Double {
-            val total = raw.values.sumOf { it.size }
-            if (total == 0) return 0.0
-            return bufs.values.sumOf { it.count() }.toDouble() / total
-        }
-
-        // 第一轮：逐窗口判"这一段是不是在动"
-        for ((type, list) in raw) {
-            if (type != Sensor.TYPE_ACCELEROMETER && type != Sensor.TYPE_GYROSCOPE) continue
-            list.groupBy { windowIndexOf(it.first) }.forEach { (w, items) ->
-                val moving = if (type == Sensor.TYPE_ACCELEROMETER) {
-                    windowSigma(type, items) > MAX_ACCEL_NORM_SIGMA
-                } else {
-                    windowSigma(type, items) > MAX_GYRO_SIGMA
+        // ---- 静止自检 ----
+        val accel = bufs[Sensor.TYPE_ACCELEROMETER]
+        val gyro = bufs[Sensor.TYPE_GYROSCOPE]
+        val accelNormSigma = accel?.normSigma() ?: 0.0
+        val gyroSigma = gyro?.sigmas()?.max() ?: 0.0
+        if (accelNormSigma > MAX_ACCEL_NORM_SIGMA || gyroSigma > MAX_GYRO_SIGMA) {
+            val why = buildString {
+                if (accelNormSigma > MAX_ACCEL_NORM_SIGMA) {
+                    append("加速度波动 σ=%.3f m/s²".format(accelNormSigma))
                 }
-                if (moving) badWindows += w
-            }
-        }
-        applyFilter()
-
-        // 第一轮后仍超阈值 = 慢漂（各窗口均值不同导致的聚合增大）：继续丢**最差**的那一段，
-        // 直到通过或者可用数据已经不够 —— 仍然是"跳过"，不是"拒绝"。
-        var guard = 0
-        while (guard++ < 12) {
-            val aSig = bufs[Sensor.TYPE_ACCELEROMETER]?.normSigma() ?: 0.0
-            val gSig = bufs[Sensor.TYPE_GYROSCOPE]?.sigmas()?.max() ?: 0.0
-            if (aSig <= MAX_ACCEL_NORM_SIGMA && gSig <= MAX_GYRO_SIGMA) break
-            var worstWindow = -1L
-            var worstScore = 0.0
-            for ((type, list) in raw) {
-                if (type != Sensor.TYPE_ACCELEROMETER && type != Sensor.TYPE_GYROSCOPE) continue
-                val scale = if (type == Sensor.TYPE_ACCELEROMETER) MAX_ACCEL_NORM_SIGMA else MAX_GYRO_SIGMA
-                list.groupBy { windowIndexOf(it.first) }.forEach { (w, items) ->
-                    if (badWindows.contains(w)) return@forEach
-                    val score = windowSigma(type, items) / scale
-                    if (score > worstScore) {
-                        worstScore = score
-                        worstWindow = w
-                    }
+                if (gyroSigma > MAX_GYRO_SIGMA) {
+                    if (isNotEmpty()) append("、")
+                    append("陀螺波动 σ=%.3f rad/s".format(gyroSigma))
                 }
             }
-            if (worstWindow < 0) break
-            badWindows += worstWindow
-            applyFilter()
-            if (keptRatio() < MIN_KEPT_RATIO) break
-        }
-
-        val kept = keptRatio()
-        if (raw.values.sumOf { it.size } > 0 && kept < MIN_KEPT_RATIO) {
-            return Result(
-                base, "", false,
-                "检测到持续移动（已跳过 %d 段、占 %d%% 数据），静止数据不足，请把手机放稳后重试".format(
-                    badWindows.size, ((1 - kept) * 100).toInt().coerceIn(0, 100)
-                )
-            )
-        }
-        if (badWindows.isNotEmpty()) {
-            skippedNote = "已跳过 %d 段移动数据（%.0f%%）".format(badWindows.size, (1 - kept) * 100)
+            return Result(base, "", false, "检测到移动（$why），请把手机放稳后重试")
         }
 
         // ---- 中位数 + 方差 → 注入档 ----
-        val accel = bufs[Sensor.TYPE_ACCELEROMETER]
-        val gyro = bufs[Sensor.TYPE_GYROSCOPE]
         val out = SensorNoise.sanitize(base)
         val report = StringBuilder()
         var measured = 0
@@ -482,7 +405,6 @@ object SensorNoiseCalibrator {
                 DURATION_MS / 1000.0, registered,
             )
         )
-        if (skippedNote.isNotEmpty()) report.append(skippedNote).append('\n')
         Log.i(TAG, "calibrated: ${SensorNoise.encode(out)}")
         return Result(out, report.toString(), true, "校准完成（更新 $measured 个噪声项）")
     }
