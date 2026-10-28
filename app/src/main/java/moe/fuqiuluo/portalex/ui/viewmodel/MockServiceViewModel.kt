@@ -76,6 +76,9 @@ class MockServiceViewModel : ViewModel() {
     @Volatile private var routeUploaded = false
     @Volatile private var routePlayingPushed = false
 
+    /** 最近一次选中路线的时刻：用来丢弃"上一段播完"的迟到回调 */
+    @Volatile private var routeSelectedAt = 0L
+
     /** 摇杆意图（App 采集、系统侧执行） */
     @Volatile private var rockerBearing = 0.0
     @Volatile private var lastPushedBearing = Double.NaN
@@ -121,11 +124,27 @@ class MockServiceViewModel : ViewModel() {
     /** 选中路线：展开成播放路径并标记"待上传"（真正的上传在遥控循环里，失败会自动重试） */
     fun selectRouteForPlayback(route: HistoricalRoute) {
         selectedRoute = route
+        routeSelectedAt = android.os.SystemClock.elapsedRealtime()
         cachedRoute = route
         pathPoints = buildPath(route)
         routeDistance = pathPoints.lastOrNull()?.cum ?: 0.0
         routeUploaded = false
         routePlayingPushed = false
+    }
+
+    /**
+     * 选中路线后立刻开始播放（模拟已在运行时用）。
+     *
+     * 播完一次之后 onRouteCompleted 会把 autoStatus 关掉，于是「再点一条路线」只会换数据、
+     * 不会重新播放 —— 界面看起来就永远停在上一段的终点。这里把自动播放重新打开，
+     * 顺带清掉上传/播放标记，让遥控循环下一拍按新路线重新走一遍。
+     */
+    fun startAutoPlayIfPossible(): Boolean {
+        if (!::rocker.isInitialized) return false
+        routeUploaded = false
+        routePlayingPushed = false
+        rocker.autoStatus = true
+        return true
     }
 
     /**
@@ -445,6 +464,12 @@ class MockServiceViewModel : ViewModel() {
 
     /** 播完收尾：停自动播放（下一拍会把停止下发给系统侧）、提示音 + 振动 */
     private fun onRouteCompleted() {
+        // 刚切换路线时，轮询可能还带着上一条路线的"已完成"状态：
+        // 此时收尾会把刚打开的播放关掉，表现就是"选中新路线却停在旧终点"。
+        if (android.os.SystemClock.elapsedRealtime() - routeSelectedAt < 1500L) {
+            Log.i("MockServiceViewModel", "忽略过期的完成回调（刚切换路线）")
+            return
+        }
         Log.i("MockServiceViewModel", "路线播放完成（系统侧进度已到终点）")
         if (::rocker.isInitialized) {
             rocker.autoStatus = false

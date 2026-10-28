@@ -29,6 +29,7 @@ import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
+import moe.fuqiuluo.portalex.ext.gnssMockIntent
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -117,9 +118,12 @@ class GnssMockFragment : Fragment() {
         binding.gnssGpsSatellites.setText(requireContext().sharedPrefs.getString("sim_gps_v2", "12"))
         refreshGnssButton()
         binding.switchGnssMock.setOnClickListener {
-            if (MockServiceHelper.isGnssMockStart(locationManager)) {
+            val ctx = requireContext()
+            if (ctx.gnssMockIntent) {
+                ctx.gnssMockIntent = false
                 tryCloseService(it as MaterialButton)
             } else {
+                ctx.gnssMockIntent = true
                 tryOpenService(it as MaterialButton)
             }
         }
@@ -127,14 +131,22 @@ class GnssMockFragment : Fragment() {
         return root
     }
 
+    /**
+     * 打开 GNSS 模拟。
+     *
+     * 二类功能允许**伪启动**：用户意图（[moe.fuqiuluo.portalex.ext.gnssMockIntent]）
+     * 一旦置位，按钮就保持"停用"态，哪怕这一刻模块还不能真正接管（路线模拟没开、
+     * 注入层未就绪、悬浮窗权限缺失）。真正生效由系统侧 FeatureGate 判定，
+     * 这里只负责把意图留住并在下次进入页面时补发。
+     */
     private fun tryOpenService(button: MaterialButton) {
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
-            showToast(getString(R.string.gnss_overlay_required))
+            keepIntentOn(button, getString(R.string.gnss_overlay_required))
             return
         }
 
         if (!MockServiceHelper.isServiceInit()) {
-            showToast(getString(R.string.gnss_injection_failed))
+            keepIntentOn(button, getString(R.string.gnss_injection_failed))
             return
         }
 
@@ -142,22 +154,29 @@ class GnssMockFragment : Fragment() {
             button.isClickable = false
             try {
                 ConfigSync.push(requireContext(), locationManager)
-                if (MockServiceHelper.startGnssMock(locationManager)) {
+                val started = MockServiceHelper.startGnssMock(locationManager)
+                // 无论模块此刻是否接管，用户打开了就是打开了
+                updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
+                if (started) {
                     val code = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                     val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                     requireContext().sharedPrefs.edit().putString("sim_gps_v1", code).putString("sim_gps_v2", sats).apply()
                     MockServiceHelper.setSimConfig(locationManager, "gps", true, code, sats)
-                    updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
                     // 启动成功后自动重启GPS provider，稳定NMEA数据流
                     restartGpsProvider()
                 } else {
-                    showToast(getString(R.string.gnss_start_failed))
-                    return@launch
+                    showToast("已记住：开启路线模拟后生效")
                 }
             } finally {
                 button.isClickable = true
             }
         }
+    }
+
+    /** 意图已置位但暂时起不来：按钮保持"停用"态，只提示原因。 */
+    private fun keepIntentOn(button: MaterialButton, reason: String) {
+        updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
+        showToast(reason + "（已记住，条件满足后生效）")
     }
 
     /**
@@ -212,6 +231,7 @@ class GnssMockFragment : Fragment() {
 
     private fun tryCloseService(button: MaterialButton) {
         if (!MockServiceHelper.isServiceInit()) {
+            updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
             showToast(getString(R.string.gnss_injection_failed))
             return
         }
@@ -221,7 +241,8 @@ class GnssMockFragment : Fragment() {
             try {
                 withContext(Dispatchers.IO) {
                     if (!MockServiceHelper.isGnssMockStart(locationManager)) {
-                        showToast(getString(R.string.gnss_not_running))
+                        // 本来就没在跑：意图已清，按钮直接复位
+                        updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
                         return@withContext false
                     }
 
@@ -247,8 +268,10 @@ class GnssMockFragment : Fragment() {
     }
 
     private fun refreshGnssButton() {
+        // 以用户意图为准：模块侧暂时没接管（路线模拟未开等）也不把开关弹回去
+        val intent = requireContext().gnssMockIntent
         val running = ::locationManager.isInitialized && MockServiceHelper.isGnssMockStart(locationManager)
-        val on = running
+        val on = intent || running
         binding.switchGnssMock.text = getString(if (on) R.string.gnss_stop_mock else R.string.gnss_start_mock)
         ContextCompat.getDrawable(
             requireContext(),
@@ -346,7 +369,17 @@ class GnssMockFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (_binding != null) refreshGnssButton()
+        if (_binding != null) {
+            refreshGnssButton()
+            // 意图在、模块没接管（上次失败或期间路线模拟重开过）→ 静默补发一次
+            if (requireContext().gnssMockIntent &&
+                ::locationManager.isInitialized &&
+                !MockServiceHelper.isGnssMockStart(locationManager) &&
+                MockServiceHelper.isServiceInit()
+            ) {
+                runCatching { MockServiceHelper.startGnssMock(locationManager) }
+            }
+        }
     }
 
     override fun onDestroy() {
