@@ -277,6 +277,22 @@ class DebugCommandActivity : Activity() {
             override fun onProviderDisabled(provider: String) {}
             @Deprecated("平台已废弃") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         }
+        // 频率策略验证：同一 provider 上两个不同期望间隔的订阅
+        val fastListener = object : LocationListener {
+            override fun onLocationChanged(location: Location) { bump("fast50") }
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("平台已废弃") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        val slowListener = object : LocationListener {
+            override fun onLocationChanged(location: Location) { bump("slow2000") }
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("平台已废弃") override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        runCatching { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 50L, 0f, fastListener, callbackLooper) }
+        runCatching { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, slowListener, callbackLooper) }
+
         val singleOk = runCatching {
             lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, singleListener, callbackLooper)
         }.isSuccess
@@ -320,6 +336,8 @@ class DebugCommandActivity : Activity() {
         Thread.sleep(4000)
         runCatching { lm.removeUpdates(multiListener) }
         runCatching { lm.removeUpdates(singleListener) }
+        runCatching { lm.removeUpdates(fastListener) }
+        runCatching { lm.removeUpdates(slowListener) }
         runCatching { fused?.removeLocationUpdates(object : com.google.android.gms.location.LocationCallback() {}) }
         out.appendLine("callbacks=" + counts)
         callbackThread.quitSafely()

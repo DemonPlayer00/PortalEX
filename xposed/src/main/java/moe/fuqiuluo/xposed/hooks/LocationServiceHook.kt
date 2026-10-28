@@ -178,7 +178,9 @@ internal object LocationServiceHook: BaseLocationHook() {
     class ListenerRegistration(
         val provider: String,
         val listener: IInterface,
-        val blocked: Boolean
+        val blocked: Boolean,
+        /** 应用期望的间隔（纳秒）；0 = 应用没给（按配置值发） */
+        val intervalNanos: Long = 0L
     ) {
         /** 最近一次收到位置的时刻（框架投递到达、或我们推送成功时刷新） */
         val lastDeliveryNanos = AtomicLong(0L)
@@ -454,7 +456,12 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
     }
 
-    private fun addLocationListenerInner(provider: String, listener: IInterface, blocked: Boolean) {
+    private fun addLocationListenerInner(
+        provider: String,
+        listener: IInterface,
+        blocked: Boolean,
+        intervalNanos: Long = 0L
+    ) {
         val mDeathRecipient = object: IBinder.DeathRecipient {
             override fun binderDied() {}
             override fun binderDied(who: IBinder) {
@@ -464,8 +471,34 @@ internal object LocationServiceHook: BaseLocationHook() {
         }
         listener.asBinder().linkToDeath(mDeathRecipient, 0)
         locationListeners.removeIf { it.listener.asBinder() == listener.asBinder() }
-        locationListeners.add(ListenerRegistration(provider, listener, blocked))
+        locationListeners.add(ListenerRegistration(provider, listener, blocked, intervalNanos))
         hookILocationListener(listener)
+    }
+
+    /** 从 LocationRequest 上取应用期望的间隔（纳秒）；取不到返回 0（按配置值发）。 */
+    private fun requestedIntervalNanos(request: Any?): Long {
+        if (request == null) return 0L
+        val ms = runCatching {
+            XposedHelpers.callMethod(request, "getIntervalMillis") as? Long
+        }.getOrNull() ?: return 0L
+        return ms.coerceAtLeast(0L) * 1_000_000L
+    }
+
+    /**
+     * 单个订阅实际出帧间隔：**默认按应用期望的频率**，但不会慢于设置里的
+     * 「最大位置上报间隔」（那是上限，防止应用自己把节奏压得过慢）。
+     */
+    private fun effectiveIntervalNanos(reg: ListenerRegistration): Long {
+        val cap = LocConfig.reportDurationMs.coerceIn(20L, 2_000L) * 1_000_000L
+        val requested = reg.intervalNanos
+        return if (requested > 0L) minOf(requested, cap) else cap
+    }
+
+    /** 全局节拍：多个不同期望频率的订阅并存时，按**最高频率**（最小间隔）出帧。 */
+    private fun globalTickNanos(): Long {
+        val cap = LocConfig.reportDurationMs.coerceIn(20L, 2_000L) * 1_000_000L
+        val fastest = locationListeners.minOfOrNull { effectiveIntervalNanos(it) } ?: cap
+        return fastest.coerceIn(20L * 1_000_000L, KEEP_ALIVE_TICK_MS * 1_000_000L)
     }
 
     private fun removeLocationListenerInner(listener: IInterface) {
@@ -575,9 +608,8 @@ internal object LocationServiceHook: BaseLocationHook() {
         // （requestLocationUpdates / registerLocationListener）注册成功却一帧都收不到，
         // 因为框架真投递被我们放行的同时并没有位置源（室内无星），
         // 1.2s 的等待窗口把"补帧"拖成了"永远没有第一帧"。
-        val minGapNanos = LocConfig.reportDurationMs.coerceIn(20L, 2000L) * 1_000_000L
         locationListeners.forEach { reg ->
-            val due = nowNanos - reg.lastDeliveryNanos.get() >= minGapNanos
+            val due = nowNanos - reg.lastDeliveryNanos.get() >= effectiveIntervalNanos(reg)
             val shouldPush = force || due
             if (!shouldPush) return@forEach
             if (deliverFrame(reg.listener, frame)) {
@@ -671,7 +703,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                 try {
                     // 节拍跟着上报间隔走：模拟期间持续订阅的帧就由这条链提供，
                     // 全局"饿死"门会把它拖成 1.2s 一次（实测应用端等同没有帧）。
-                    Thread.sleep(LocConfig.reportDurationMs.coerceIn(50L, KEEP_ALIVE_TICK_MS))
+                    Thread.sleep(globalTickNanos() / 1_000_000L)
                     if (!FakeLoc.enable) continue
                     if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) continue
                     callOnLocationChanged()
@@ -1283,7 +1315,11 @@ internal object LocationServiceHook: BaseLocationHook() {
             // 被吞掉（blocked=true）的注册框架不会回调 → 必须由推送链供帧。
             // （旧实现在此之后还有一段 `disableFusedLocation && provider=="fused"` 分支，
             //   由于上面 FakeLoc.enable 分支已 return，实际不可达——已删除。）
-            addLocationListenerInner(provider, listener, blocked = FakeLoc.enable)
+            addLocationListenerInner(
+                provider, listener,
+                blocked = FakeLoc.enable,
+                intervalNanos = requestedIntervalNanos(args.getOrNull(0))
+            )
 
             if (FakeLoc.enable) {
                 result = null
@@ -1336,7 +1372,11 @@ internal object LocationServiceHook: BaseLocationHook() {
                 Logger.debug("registerLocationListener: injected! $listener, from ${BinderUtils.getUidPackageNames()}")
             }
 
-            addLocationListenerInner(provider, listener, blocked = false)
+            addLocationListenerInner(
+                provider, listener,
+                blocked = false,
+                intervalNanos = requestedIntervalNanos(args.getOrNull(1))
+            )
 
             // 持续注册同样**不拦**（语义已定：允许并注入）：放行真实注册，帧在
             // 各注入关口被改为模拟值，并由推送链（callOnLocationChanged）持续供帧。
