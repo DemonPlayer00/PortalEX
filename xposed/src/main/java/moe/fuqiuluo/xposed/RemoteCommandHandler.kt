@@ -66,6 +66,9 @@ object RemoteCommandHandler {
     // 由 BaseDivineService 的 exchange_key 在 client 进程同步为系统侧 key（两进程同一把钥匙）；
     // 旧实现各进程 lazy 生成各自的随机值，系统转发来的指令永远通不过校验（配置不传播的根因）
     // SecureRandom（旧实现用 java.util.Random：种子可枚举，钥匙不该赌这个）
+    // @Volatile：写发生在一条 binder 线程（exchange_key），读发生在另一条（门禁校验），
+    // 不加就可能让新钥匙对后续命令不可见 —— 表现为"握手成功但指令全被拒"。
+    @Volatile
     internal var randomKey: String = newKey()
 
     private fun newKey(): String {
