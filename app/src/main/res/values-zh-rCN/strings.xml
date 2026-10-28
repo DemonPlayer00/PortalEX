@@ -347,7 +347,7 @@
     <string name="calibration_group_location">GPS 与 fused</string>
     <string name="calibration_group_baseband">基站与 Wi-Fi 等基带参数</string>
     <string name="calibration_nothing_selected">未选择任何项目</string>
-    <string name="gnss_gps_status_code">GPS 状态码</string>
+    <string name="gnss_gps_status_code">卫星状态（每行一颗：E/A/U/F/B[,C/N0]）</string>
     <string name="gnss_gps_satellites">卫星数量</string>
     <string name="gnss_gps_params">GPS 状态参数</string>
     <string name="menu_baseband">基带模拟</string>

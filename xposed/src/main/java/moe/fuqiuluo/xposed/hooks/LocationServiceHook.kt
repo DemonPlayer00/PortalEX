@@ -25,6 +25,7 @@ import moe.fuqiuluo.xposed.hooks.nmea.LocationNMEAHook
 import moe.fuqiuluo.xposed.hooks.provider.LocationProviderManagerHook
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.LocConfig
+import moe.fuqiuluo.xposed.utils.NetworkSimConfig
 import moe.fuqiuluo.xposed.utils.MotionEngine
 import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import moe.fuqiuluo.xposed.utils.FeatureGate
@@ -724,6 +725,8 @@ internal object LocationServiceHook: BaseLocationHook() {
         val satelliteJitter: Double,
         val maxCn0: Double,
         val meanCn0: Double,
+        /** 逐星状态配置（改了就得重建，否则缓存会一直用旧 flags） */
+        val flags: String,
     )
 
     /** 1000 星时每帧数组很大；按时间桶缓存，避免 extras/状态推送各自重建。 */
@@ -737,6 +740,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         val key = MockGnssCacheKey(
             bucket, FakeLoc.minSatellites, FakeLoc.satelliteJitter,
             FakeLoc.gnssMaxCn0, FakeLoc.gnssMeanCn0,
+            NetworkSimConfig.gnssFlags.joinToString(";"),
         )
         synchronized(mockGnssDataCache) { mockGnssDataCache[key]?.let { return it } }
 
@@ -758,28 +762,44 @@ internal object LocationServiceHook: BaseLocationHook() {
                 satelliteList.getOrNull(index)
                     ?: BDSSatellite(prn = 1000 + index, type = OrbitType.MEO)
             }
+            val configuredFlags = NetworkSimConfig.gnssFlags
             selectedSatellites.forEachIndexed { index, sat ->
                 svidWithFlags[index] = 0
 
-                val hasEphemeris = Random.nextFloat() > 0.1f    // 90%概率有星历
-                val hasAlmanac = Random.nextFloat() > 0.05f     // 95%概率有年历
-                val usedInFix = Random.nextFloat() > 0.3f       // 70%概率用于定位
-                val hasCarrierFreq = true                       // 总是有载波频率
-                val hasBasebandCn0 = true                       // 总是有基带载噪比
-
+                // 逐星状态：配了第 i 条就用配置，否则回退随机。
+                // 配置格式 "EAUB,42"：E 星历 / A 年历 / U 参与定位 / F 载波 / B 基带 C/N0，逗号后是 C/N0。
+                val configured: String? = configuredFlags.getOrNull(index)
+                val configuredCn0: Float?
                 var flags = GnssFlags.SVID_FLAGS_NONE
-                if (hasEphemeris) flags = flags or GnssFlags.SVID_FLAGS_HAS_EPHEMERIS_DATA
-                if (hasAlmanac) flags = flags or GnssFlags.SVID_FLAGS_HAS_ALMANAC_DATA
-                if (usedInFix) flags = flags or GnssFlags.SVID_FLAGS_USED_IN_FIX
-                if (hasCarrierFreq) flags = flags or GnssFlags.SVID_FLAGS_HAS_CARRIER_FREQUENCY
-                if (hasBasebandCn0) flags = flags or GnssFlags.SVID_FLAGS_HAS_BASEBAND_CN0
+                if (configured != null) {
+                    val parts = configured.split(",", limit = 2)
+                    var letters = parts[0].trim().uppercase()
+                    // 兼容旧输入（纯数字，如 "3"）：没有可识别字母时按"全是"处理
+                    if (letters.none { it in "EAUFB" }) letters = "EAUFB"
+                    if ('E' in letters) flags = flags or GnssFlags.SVID_FLAGS_HAS_EPHEMERIS_DATA
+                    if ('A' in letters) flags = flags or GnssFlags.SVID_FLAGS_HAS_ALMANAC_DATA
+                    if ('U' in letters) flags = flags or GnssFlags.SVID_FLAGS_USED_IN_FIX
+                    if ('F' in letters) flags = flags or GnssFlags.SVID_FLAGS_HAS_CARRIER_FREQUENCY
+                    if ('B' in letters) flags = flags or GnssFlags.SVID_FLAGS_HAS_BASEBAND_CN0
+                    configuredCn0 = parts.getOrNull(1)?.trim()?.toFloatOrNull()
+                } else {
+                    val hasEphemeris = Random.nextFloat() > 0.1f    // 90%概率有星历
+                    val hasAlmanac = Random.nextFloat() > 0.05f     // 95%概率有年历
+                    val usedInFix = Random.nextFloat() > 0.3f       // 70%概率用于定位
+                    if (hasEphemeris) flags = flags or GnssFlags.SVID_FLAGS_HAS_EPHEMERIS_DATA
+                    if (hasAlmanac) flags = flags or GnssFlags.SVID_FLAGS_HAS_ALMANAC_DATA
+                    if (usedInFix) flags = flags or GnssFlags.SVID_FLAGS_USED_IN_FIX
+                    // 载波与基带 C/N0 总是有（保持原行为）
+                    flags = flags or GnssFlags.SVID_FLAGS_HAS_CARRIER_FREQUENCY or GnssFlags.SVID_FLAGS_HAS_BASEBAND_CN0
+                    configuredCn0 = null
+                }
 
                 svidWithFlags[index] = (sat.prn shl GnssFlags.SVID_SHIFT_WIDTH) or
                         ((GnssFlags.CONSTELLATION_BEIDOU and GnssFlags.CONSTELLATION_TYPE_MASK) shl GnssFlags.CONSTELLATION_TYPE_SHIFT_WIDTH) or
                         flags
 
                 // C/N0 来自快照（同一时间桶内所有进程/通道一致），不再各掷一次骰子
-                cn0s[index] = snapshot.cn0s[index].toFloat()
+                cn0s[index] = configuredCn0 ?: snapshot.cn0s[index].toFloat()
                 elevations[index] = Random.nextFloat(sat.type.elevationRange.start, sat.type.elevationRange.endInclusive)
                 azimuths[index] = Random.nextFloat(0f, 360f)
                 carrierFreqs[index] = when (Random.nextInt(3)) {
