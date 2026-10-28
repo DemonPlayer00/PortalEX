@@ -114,6 +114,10 @@ class MainActivity : AppCompatActivity() {
     private val mockServiceViewModel by viewModels<MockServiceViewModel>()
     private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
+    /** 最近一次向 system_server 回读到的激活状态（只做绘制用的最近值，不是状态源）。 */
+    private var railActive = false
+    private var railQueriedAt = 0L
+
     private fun getRequiredPermissions(): MutableSet<String> {
         val permissions = mutableSetOf(
             ACCESS_FINE_LOCATION,
@@ -295,17 +299,16 @@ class MainActivity : AppCompatActivity() {
                         R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass
                     )
                 )
-                refreshGuideRail()
-                drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
-                    override fun onDrawerOpened(drawerView: android.view.View) {
+                // 颜色由视图在每次绘制时向这里要；这里再向 system_server 回读（节流 700ms）。
+                binding.navGuideRail.activeProvider = {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - railQueriedAt >= 700L) {
+                        railQueriedAt = now
                         refreshGuideRail()
-                        startGuideRailPolling()
                     }
-
-                    override fun onDrawerClosed(drawerView: android.view.View) {
-                        stopGuideRailPolling()
-                    }
-                })
+                    railActive
+                }
+                refreshGuideRail()
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
                 attachDrawerGroupDivider(navView, R.id.nav_gnss_mock)
                 attachDrawerGroupDivider(navView, R.id.nav_settings)
@@ -407,32 +410,20 @@ class MainActivity : AppCompatActivity() {
     private fun refreshGuideRail() {
         val lm = mockServiceViewModel.locationManager
         if (lm == null) {
-            binding.navGuideRail.active = false
+            railActive = false
             return
         }
         lifecycleScope.launch {
             val active = withContext(Dispatchers.IO) {
                 runCatching { MockServiceHelper.isMockStart(lm) }.getOrDefault(false)
             }
-            binding.navGuideRail.active = active
+            if (railActive != active) {
+                railActive = active
+                binding.navGuideRail.invalidate()
+            }
         }
     }
 
-    private val guideRailPoller = object : Runnable {
-        override fun run() {
-            refreshGuideRail()
-            uiHandler.postDelayed(this, 1000L)
-        }
-    }
-
-    private fun startGuideRailPolling() {
-        uiHandler.removeCallbacks(guideRailPoller)
-        uiHandler.postDelayed(guideRailPoller, 1000L)
-    }
-
-    private fun stopGuideRailPolling() {
-        uiHandler.removeCallbacks(guideRailPoller)
-    }
 
     private fun attachDrawerGroupDivider(navView: NavigationView, itemId: Int) {
         val title = navView.menu.findItem(itemId)?.title ?: return

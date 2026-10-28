@@ -37,13 +37,13 @@ class NavGuideRailView @JvmOverloads constructor(
     /** 二类功能（随路线模拟启动的那几项）：它们的支线末端画三角而不是圆点。 */
     private var class2Titles: Set<String> = emptySet()
 
-    /** 路线模拟是否已启用；决定线的颜色。 */
-    var active: Boolean = false
-        set(value) {
-            if (field == value) return
-            field = value
-            invalidate()
-        }
+    /**
+     * 每次绘制都问一次「现在到底激活没有」。
+     *
+     * 视图自己不保存状态：真实状态在 system_server，宿主在这里向它回读
+     * （实现内做节流并异步刷新），视图只负责把结果画成颜色。
+     */
+    var activeProvider: (() -> Boolean)? = null
 
     private val railPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -126,7 +126,7 @@ class NavGuideRailView @JvmOverloads constructor(
         val anchors = collectAnchors()
         if (anchors.isEmpty()) return
 
-        val color = if (active) COLOR_ACTIVE else COLOR_IDLE
+        val color = if (activeProvider?.invoke() == true) COLOR_ACTIVE else COLOR_IDLE
         val railX = 6f * density
         val stubEnd = 13f * density
 
