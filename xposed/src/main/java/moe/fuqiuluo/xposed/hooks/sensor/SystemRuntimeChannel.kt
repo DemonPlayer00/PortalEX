@@ -528,8 +528,12 @@ internal object SystemRuntimeChannel {
             if (handle == 0) continue
             val values = scratchFor(count)
             System.arraycopy(frameValues, i * 16, values, 0, count)
-            if (send(handle, type, ts, values)) sent++ else sendFails++
+            if (send(handle, type, ts, values)) {
+                sent++
+            } else {
+                sendFails++
                 PortalDiag.fail(PortalDiag.Area.RT_SEND)
+            }
         }
         pumpEvents += sent
         return sent
