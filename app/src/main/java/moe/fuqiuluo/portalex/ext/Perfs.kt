@@ -98,7 +98,9 @@ var Context.cellEntries: List<String>
 
 var Context.wifiEntries: List<String>
     get() = sharedPrefs.getString("sim_wifi_list", "").orEmpty()
-        .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        .split("\n").map { it.trim() }
+        // 过滤历史脏数据：无 SSID + 占位 BSSID（定位关闭时采到的形态）
+        .filter { it.isNotEmpty() && it != "|02:00:00:00:00:00" }
     set(value) = sharedPrefs.edit {
         putString("sim_wifi_list", value.joinToString("\n"))
     }

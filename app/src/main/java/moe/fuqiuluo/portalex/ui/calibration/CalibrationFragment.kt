@@ -551,15 +551,28 @@ class CalibrationFragment : Fragment() {
      * 收集当前连接 + 附近扫描到的 AP：一条一项 ssid|bssid。
      * 首条是当前连接，模块据此把它当作"已连接"的那一个。
      */
+    /** 无定位权限/无定位时系统给的占位 BSSID：不应该被写进配置 */
+    private val PLACEHOLDER_BSSID = "02:00:00:00:00:00"
+
     private fun autoFillWifi() {
         val ctx = requireContext()
+        // Android 9+：Wi-Fi 扫描结果与 SSID 都受**定位开关**约束。
+        // 定位没开时 scanResults 恒为空、SSID 恒为 <unknown ssid>、BSSID 是 02:00:… 占位，
+        // 直接采会写出 "|02:00:00:00:00:00" 这种畸形条目 —— 所以先拦一道。
+        val locationOn = runCatching {
+            (ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager).isLocationEnabled
+        }.getOrDefault(false)
+        if (!locationOn) {
+            showToast("定位未开启：Wi-Fi 扫描与 SSID 不可见，请先打开定位再校准")
+            return
+        }
         runCatching {
             val wm = ctx.getSystemService(Context.WIFI_SERVICE) as WifiManager
             @Suppress("DEPRECATION")
             val info = wm.connectionInfo
             val entries = LinkedHashSet<String>()
             val ssid = info?.ssid?.trim('"').orEmpty().takeIf { it != "<unknown ssid>" }.orEmpty()
-            val bssid = info?.bssid.orEmpty()
+            val bssid = info?.bssid.orEmpty().takeIf { it != PLACEHOLDER_BSSID }.orEmpty()
             if (ssid.isNotBlank() || bssid.isNotBlank()) entries += "$ssid|$bssid"
             // 扫描是**异步**的：startScan 立刻返回，结果要等系统回调/下次读取。
             // 旧实现在同一个瞬间就读 scanResults，几乎必然是空的（只能拿到"当前连接"那一条）。
@@ -575,6 +588,7 @@ class CalibrationFragment : Fragment() {
             scans.take(16).forEach { ap ->
                 val s = ap.SSID.orEmpty()
                 val b = ap.BSSID.orEmpty()
+                if (b == PLACEHOLDER_BSSID) return@forEach
                 if (s.isNotBlank() && s != "<unknown ssid>") entries += "$s|$b"
                 else if (b.isNotBlank()) entries += "$s|$b"
             }
