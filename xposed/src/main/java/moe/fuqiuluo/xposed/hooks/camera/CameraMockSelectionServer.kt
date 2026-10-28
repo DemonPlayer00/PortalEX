@@ -1,6 +1,7 @@
 package moe.fuqiuluo.xposed.hooks.camera
 
 import android.net.LocalServerSocket
+import moe.fuqiuluo.xposed.utils.BinderUtils
 import android.net.LocalSocket
 import moe.fuqiuluo.xposed.camera.CameraMockSelection
 import moe.fuqiuluo.xposed.camera.CameraMockServerStore
@@ -133,8 +134,34 @@ internal object CameraMockSelectionServer {
         }.onFailure { Logger.warn("选片服务：写 selection 文件失败 ${it.message}") }
     }
 
+    /**
+     * 对端 uid 白名单。抽象命名空间的 LocalServerSocket 是**全机可见**的，
+     * 不校验对端就等于把"库清单 / 视频 fd / 选片结果"开放给任何本机应用。
+     *
+     * 允许：root、system、模块自身、media 与 cameraserver（native cammock 跑在相机 provider 进程里）。
+     */
+    /** AID_MEDIA：camera provider 进程；AID_CAMERASERVER：原生相机服务 */
+    private const val AID_MEDIA = 1013
+    private const val AID_CAMERASERVER = 1047
+
+    private fun peerUidOf(client: LocalSocket): Int =
+        runCatching { client.peerCredentials?.uid ?: -1 }.getOrDefault(-1)
+
+    private fun peerAllowed(uid: Int): Boolean {
+        if (uid < 0) return false
+        if (uid == 0 || uid == android.os.Process.SYSTEM_UID) return true
+        if (uid == BinderUtils.moduleOwnerUid()) return true
+        return uid == AID_MEDIA || uid == AID_CAMERASERVER
+    }
+
     private fun handle(client: LocalSocket) {
-        Logger.info("选片服务：handle start")
+        val peerUid = peerUidOf(client)
+        if (!peerAllowed(peerUid)) {
+            Logger.warn("选片服务：拒绝 uid=$peerUid 的连接（不在白名单内）")
+            runCatching { reply(client, "ERR\tdenied") }
+            return
+        }
+        Logger.info("选片服务：handle start (uid=$peerUid)")
         // app 是唯一数据源：每次选片前比对 app 库，只有变化时才导入/拷贝。
         syncAppLibrary()
         Logger.info("选片服务：sync done")
