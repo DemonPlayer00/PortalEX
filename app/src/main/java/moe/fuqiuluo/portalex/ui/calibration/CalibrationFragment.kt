@@ -594,18 +594,20 @@ class CalibrationFragment : Fragment() {
                 return@launch
             }
             runCatching { progress.dismiss() }
-            if (doSensor && !result.ok) {
-                _binding?.calibStatus?.text = result.message
-                showToast(result.message)
-                return@launch
-            }
+            // 三组数据**互相独立**：传感器这一组失败（例如检测到移动）只影响它自己，
+            // 后面的 GPS / 基带照常测量并写入 —— 不再早退把其它组一起废掉。
             if (doSensor) {
-                ctx.sensorNoise = result.values
-                ctx.sensorNoiseReport = result.report
-                renderValues(ctx.sensorNoise)
-                _binding?.calibStatus?.text = result.report
-                showToast(result.message)
-                pushConfig()
+                if (result.ok) {
+                    ctx.sensorNoise = result.values
+                    ctx.sensorNoiseReport = result.report
+                    renderValues(ctx.sensorNoise)
+                    _binding?.calibStatus?.text = result.report
+                    showToast(result.message)
+                    pushConfig()
+                } else {
+                    _binding?.calibStatus?.text = result.message
+                    showToast(result.message)
+                }
             }
             if (doLocation) {
                 autoFillGps()
