@@ -73,6 +73,7 @@ class HomeFragment : Fragment(), MapControlsHost {
     ): View {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         val root: View = binding.root
+        android.util.Log.i("HomeFragment", "onCreateView enter")
 
         with(baiduMapViewModel) {
             isExists = true
@@ -194,6 +195,7 @@ class HomeFragment : Fragment(), MapControlsHost {
 
         // **普通客户端视角**（迁移步骤③）：与任何第三方应用一样向框架订阅 ——
         // 收到的就是被注入链改写过的帧，所以"地图上的点"= "应用真正收到的点"（注入的自证）。
+        android.util.Log.i("HomeFragment", "subscribing location client")
         PortalLocationClient.subscribe(this, requireContext(), requireContext().reportDuration.toLong()) { fix ->
             if (baiduMapViewModel.isExists) {
                 baiduMapViewModel.applyFix(fix.lat, fix.lon, fix.bearing, fix.accuracy)
