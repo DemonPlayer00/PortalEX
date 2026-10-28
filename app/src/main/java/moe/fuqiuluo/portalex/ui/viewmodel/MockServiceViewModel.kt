@@ -456,12 +456,15 @@ class MockServiceViewModel : ViewModel() {
             }
             if (routeUploaded && !routePlayingPushed) {
                 routePlayingPushed = MockServiceHelper.setRoutePlaying(lm, true)
+                Log.i("MockServiceViewModel", "route play pushed=" + routePlayingPushed +
+                    " points=" + pathPoints.size + " auto=" + auto)
             }
             pushRockerIntent(lm, active = false)
         } else {
             if (routePlayingPushed) {
                 MockServiceHelper.setRoutePlaying(lm, false)
                 routePlayingPushed = false
+                Log.i("MockServiceViewModel", "route stop pushed")
             }
             // 摇杆意图：暂停门开着（手指按住或锁定后继续走）才算"在走"
             pushRockerIntent(lm, active = !paused)
