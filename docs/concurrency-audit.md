@@ -159,3 +159,16 @@ happens-before，删掉了 13 个不再需要的 `@Volatile`（20 → 7），保
 - 每拍分段：Test 页 `motion` 行的 `推进/体力/落点/投递` 与 `dtMax`/`late*`；
 - 交付：`监听器` 段的 CPU 时间（`Debug.threadCpuTimeNanos`），不是墙钟；
 - 行为：`sh scripts/test-all.sh` 全绿 + 真机 30 分钟跑动无位置断流/相位跳变。
+
+## 6. 2026-10-28 落地记录
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| P1 sensor service dump 轮询 | 已完成（待真机） | native `g_en_dirty` + `takeSubscriptionDirty`；Java 只在脏时 dump |
+| P2 诊断页昂贵字段 | 已完成 | `privateTypes` / `gateSelfTest` 10s TTL；页面 2s 刷新 |
+| P3 日志开关 | 已完成 | `Logger.debug/info` 自行判定；debug 默认关 |
+| P4 位置投递降频 | **未改**（语义取舍） | 保持 100ms 与同步投递 |
+| P5 移除传感器监督线程 | **仅设计** | [`sensor-supervisor-removal.md`](sensor-supervisor-removal.md) |
+| P6 KeepAlive / GNSS 常驻轮询 | 已完成 | 私有锁 + 事件唤醒 + 30s 兜底 |
+
+验证口径不变：`sh scripts/test-all.sh` 全绿；P1/P6 需要真机读数（dump 次数、线程唤醒数）确认。
