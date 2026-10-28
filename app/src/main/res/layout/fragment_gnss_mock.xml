@@ -418,7 +418,7 @@
                             android:minLines="3"
                             android:maxLines="8"
                             android:gravity="top|start"
-                            android:inputType="textMultiLine|textNoSuggestions|textVisiblePassword" />
+                            android:inputType="textMultiLine" />
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
