@@ -173,6 +173,8 @@ object RemoteCommandHandler {
 
                 // 系统侧推进时钟：会话启动即起拍 —— 推进与体力都在这一侧（见 MotionClock）
                 MotionClock.start()
+                // 保活线程空闲时停在 wait，会话开启要叫醒它（否则第一帧要等 30s 兜底）
+                LocationServiceHook.wakeKeepAlive()
 
                 // 实验性：Binder 外周传感器模拟随会话开始推流（开关关闭时无动作）
                 BinderSensorMock.onSimulationChanged()
@@ -188,6 +190,8 @@ object RemoteCommandHandler {
                 // 停拍：路线/摇杆意图都不跨会话残留（体力**保留** —— 状态在系统侧，App 重启不回满）
                 MotionClock.stop()
                 BinderSensorMock.onSimulationChanged()
+                // 叫醒保活线程，让它看到"没有会话"后停摆，而不是继续按 100ms 空转
+                LocationServiceHook.wakeKeepAlive()
                 return true
             }
             Cmd.IS_START -> {
@@ -198,10 +202,12 @@ object RemoteCommandHandler {
                 FakeLoc.enableMockGnss = true
                 // 立即主动推送一次模拟卫星数据：雷达无需等待系统 GNSS 引擎上报
                 LocationServiceHook.pushGnssStatus()
+                LocationServiceHook.wakeGnssPusher()
                 return true
             }
             Cmd.STOP_GNSS_MOCK -> {
                 FakeLoc.enableMockGnss = false
+                LocationServiceHook.wakeGnssPusher()
                 return true
             }
             Cmd.IS_GNSS_START -> {
@@ -548,6 +554,8 @@ object RemoteCommandHandler {
                     Logger.error("Binder 外周传感器模拟：原生注入层不可用（详见 logcat PortalSensor）")
                     return false
                 }
+                // 上报间隔可能刚改过：让保活线程按新节拍重算等待时间
+                LocationServiceHook.wakeKeepAlive()
                 return true
             }
             Cmd.SYNC_CONFIG -> {
