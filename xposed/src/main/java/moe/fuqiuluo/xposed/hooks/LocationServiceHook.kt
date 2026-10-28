@@ -224,6 +224,12 @@ internal object LocationServiceHook: BaseLocationHook() {
     private const val KEEP_ALIVE_TICK_MS = 500L
 
     private val keepAliveStarted = AtomicBoolean(false)
+    private val keepAliveLock = Object()
+
+    /** 叫醒保活线程：会话开关、注册表、上报间隔变化时调用（空闲时它停在 wait，不轮询） */
+    fun wakeKeepAlive() {
+        synchronized(keepAliveLock) { keepAliveLock.notifyAll() }
+    }
 
     /**
      * 构造一帧模拟位置：注入链 + 当前时刻时间戳（模块自己生成的新帧，不是转发的旧帧）。
@@ -475,6 +481,7 @@ internal object LocationServiceHook: BaseLocationHook() {
         listener.asBinder().linkToDeath(mDeathRecipient, 0)
         locationListeners.removeIf { it.listener.asBinder() == listener.asBinder() }
         locationListeners.add(ListenerRegistration(provider, listener, blocked, intervalNanos))
+        wakeKeepAlive()
         hookILocationListener(listener)
     }
 
@@ -504,6 +511,7 @@ internal object LocationServiceHook: BaseLocationHook() {
 
     private fun removeLocationListenerByBinder(binder: IBinder) {
         locationListeners.removeIf { it.listener.asBinder() == binder }
+        wakeKeepAlive()
     }
 
     // ------------------------------------------------------------------
@@ -697,18 +705,36 @@ internal object LocationServiceHook: BaseLocationHook() {
         if (!keepAliveStarted.compareAndSet(false, true)) return
         kotlin.concurrent.thread(name = "LocationKeepAlive", isDaemon = true, start = true) {
             while (true) {
-                try {
-                    // 节拍跟着上报间隔走：模拟期间持续订阅的帧就由这条链提供，
-                    // 全局"饿死"门会把它拖成 1.2s 一次（实测应用端等同没有帧）。
-                    Thread.sleep(globalTickNanos() / 1_000_000L)
-                    if (!FakeLoc.enable) continue
-                    if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) continue
-                    callOnLocationChanged()
+                val deliver = try {
+                    synchronized(keepAliveLock) {
+                        val active = FakeLoc.enable &&
+                                (locationListeners.isNotEmpty() || oneShotCallbacks.isNotEmpty())
+                        if (!active) {
+                            // 没有会话/没有消费者：不轮询，等到被叫醒或 30s 兜底自检
+                            keepAliveLock.wait(30_000L)
+                            false
+                        } else {
+                            // 会话期间这是投递节拍（跟随上报间隔），不是空转
+                            keepAliveLock.wait(globalTickNanos() / 1_000_000L)
+                            true
+                        }
+                    }
                 } catch (_: InterruptedException) {
                     break
+                }
+                if (!deliver) continue
+                if (!FakeLoc.enable) continue
+                if (locationListeners.isEmpty() && oneShotCallbacks.isEmpty()) continue
+                try {
+                    callOnLocationChanged()
                 } catch (t: Throwable) {
                     Logger.error("LocationKeepAlive", t)
-                    Thread.sleep(1000)
+                    // 异常后短暂退避，避免坏客户端把线程打成忙循环
+                    try {
+                        Thread.sleep(1000)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
                 }
             }
         }
@@ -718,6 +744,12 @@ internal object LocationServiceHook: BaseLocationHook() {
     /** 已注册的 GNSS 状态回调（system_server 侧代理对象） */
     private val gnssStatusListeners = LinkedBlockingQueue<IInterface>()
     private val gnssPusherStarted = AtomicBoolean(false)
+    private val gnssPusherLock = Object()
+
+    /** 叫醒 GNSS 推送线程：GNSS 开关或回调注册表变化时调用（空闲时它停在 wait） */
+    fun wakeGnssPusher() {
+        synchronized(gnssPusherLock) { gnssPusherLock.notifyAll() }
+    }
 
     private data class MockGnssCacheKey(
         val bucketSec: Long,
@@ -867,18 +899,25 @@ internal object LocationServiceHook: BaseLocationHook() {
         if (!gnssPusherStarted.compareAndSet(false, true)) return
         kotlin.concurrent.thread(name = "GnssStatusPusher", isDaemon = true, start = true) {
             while (true) {
+                val active = FeatureGate.isGnssHookActive() && gnssStatusListeners.isNotEmpty()
                 try {
-                    if (FeatureGate.isGnssHookActive() && gnssStatusListeners.isNotEmpty()) {
-                        pushGnssStatus()
-                        Thread.sleep(1000)
-                    } else {
-                        Thread.sleep(500)
+                    synchronized(gnssPusherLock) {
+                        // 激活时 1s 一推；关着/没人订阅就停摆，等开关或注册事件叫醒
+                        gnssPusherLock.wait(if (active) 1000L else 30_000L)
                     }
-                } catch (e: InterruptedException) {
+                } catch (_: InterruptedException) {
                     break
+                }
+                if (!FeatureGate.isGnssHookActive() || gnssStatusListeners.isEmpty()) continue
+                try {
+                    pushGnssStatus()
                 } catch (t: Throwable) {
                     Logger.error("GnssStatusPusher", t)
-                    Thread.sleep(1000)
+                    try {
+                        Thread.sleep(1000)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
                 }
             }
         }
@@ -1126,6 +1165,7 @@ internal object LocationServiceHook: BaseLocationHook() {
             })
             oneShotCallbacks.removeIf { it.callback.asBinder() == callback.asBinder() }
             oneShotCallbacks.add(OneShotCallback(callback, SystemClock.elapsedRealtimeNanos()))
+            wakeKeepAlive()
         })
 
         // ===== 段 7 · 命令通道（sendExtraCommand → portal provider 分发）=====
@@ -1597,6 +1637,7 @@ internal object LocationServiceHook: BaseLocationHook() {
                         }
                         kotlin.runCatching { listener.asBinder().linkToDeath(mDeathRecipient, 0) }
                         gnssStatusListeners.add(listener)
+                        wakeGnssPusher()
                     }
 
                     hookGnssStatusListener(cIGnssStatusListener)
