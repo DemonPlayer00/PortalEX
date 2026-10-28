@@ -142,8 +142,10 @@ internal object CameraMockClient {
      * 当前表象位置（wgs84）。取不到返回 null —— 调用方（[CameraMockSelector.select]）
      * 会把"位置未知"当成"不比较距离、在全部匹配素材里随机取"，而不是当成 0,0。
      */
-    fun position(allowFetch: Boolean = true): Pair<Double, Double>? {
-        if (isWarm()) return cachedPosition
+    fun position(allowFetch: Boolean = true, fresh: Boolean = false): Pair<Double, Double>? {
+        // fresh = true：这次调用**现取一次**，不吃缓存。
+        // 摄像头调用要按"此刻的位置"选片，缓存可能停在几秒甚至几分钟前（例如自动播放刚切段）。
+        if (!fresh && isWarm()) return cachedPosition
         if (!allowFetch) return cachedPosition
         val reply = call(CameraMockProtocol.Method.POSITION, null) ?: return cachedPosition
         val position = if (reply.getBoolean(CameraMockProtocol.Key.HAS_POSITION, false)) {
