@@ -162,27 +162,6 @@ object SensorNoiseCalibrator {
         /** 窗口是否已经开始（= 已经采到有效样本） */
         val started: Boolean get() = windowStartMs != UNSET
 
-        // ---- 暂停（检测到移动时不计时、不收样本）----
-        @Volatile private var pausedSinceMs: Long = UNSET
-        @Volatile private var pausedTotalMs: Long = 0L
-
-        /** 当前是否处于"移动中，暂停采集"状态 */
-        val paused: Boolean get() = pausedSinceMs != UNSET
-
-        /** 进入暂停：移动期间的时间**不计入**采集时长（和 GPS 没信号时一样在等） */
-        @Synchronized
-        fun pause(nowMs: Long) {
-            if (pausedSinceMs == UNSET) pausedSinceMs = nowMs
-        }
-
-        /** 退出暂停：把这段暂停时长从窗口里扣掉 */
-        @Synchronized
-        fun resume(nowMs: Long) {
-            if (pausedSinceMs == UNSET) return
-            pausedTotalMs += (nowMs - pausedSinceMs).coerceAtLeast(0L)
-            pausedSinceMs = UNSET
-        }
-
         /** 收到的原始样本（即使被丢弃也要记一笔，避免把"在动"误判成"没数据"） */
         @Synchronized
         fun noteRawSample(nowMs: Long) {
@@ -196,19 +175,14 @@ object SensorNoiseCalibrator {
         @Synchronized
         fun accept(nowMs: Long): Boolean {
             if (firstSampleMs == UNSET) firstSampleMs = nowMs
-            if (pausedSinceMs != UNSET) return false
             if (nowMs - firstSampleMs < warmupMs) return false
             if (windowStartMs == UNSET) windowStartMs = nowMs
             return true
         }
 
         /** 已采集毫秒数；窗口尚未开始时恒为 0（等待传感器的时间不算采集） */
-        fun elapsedMs(nowMs: Long): Long {
-            if (windowStartMs == UNSET) return 0L
-            // 暂停期间时钟停住：用暂停起点代替"现在"
-            val effectiveNow = if (pausedSinceMs != UNSET) pausedSinceMs else nowMs
-            return (effectiveNow - windowStartMs - pausedTotalMs).coerceAtLeast(0L)
-        }
+        fun elapsedMs(nowMs: Long): Long =
+            if (windowStartMs == UNSET) 0L else (nowMs - windowStartMs).coerceAtLeast(0L)
 
         /** 采集窗口是否已满 */
         fun finished(nowMs: Long): Boolean = elapsedMs(nowMs) >= durationMs
@@ -363,6 +337,7 @@ object SensorNoiseCalibrator {
 
         val window = CollectWindow()
         val motion = MotionWatch()
+        var skippedSamples = 0
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
                 val e = event ?: return
@@ -377,11 +352,10 @@ object SensorNoiseCalibrator {
                     Sensor.TYPE_GYROSCOPE -> motion.onGyro(e.values)
                 }
                 if (motion.moving()) {
-                    // **移动中：暂停采集** —— 计时停住、样本不收（与 GPS 无信号时的等待一致）
-                    window.pause(nowMs)
+                    // **移动中：整段跳过** —— 样本一律不收，但时间照走（窗口不会因此延长）
+                    skippedSamples++
                     return
                 }
-                window.resume(nowMs)
                 if (window.elapsedMs(nowMs) == 0L) trace?.markStart()
                 raw[e.sensor.type]?.add(nowMs to e.values.clone())
                 trace?.push(e.sensor.type, e.values)
@@ -490,8 +464,19 @@ object SensorNoiseCalibrator {
                 )
             )
         }
-        if (badWindows.isNotEmpty()) {
-            skippedNote = "已跳过 %d 段移动数据（%.0f%%）".format(badWindows.size, (1 - kept) * 100)
+        // 采集期间因"在动"被整段跳过的样本：只报告，不影响已收数据的统计
+        val notes = ArrayList<String>(2)
+        if (badWindows.isNotEmpty()) notes += "剔除 %d 段漂移数据（%.0f%%）".format(badWindows.size, (1 - kept) * 100)
+        if (skippedSamples > 0) notes += "跳过 %d 个移动中的样本".format(skippedSamples)
+        if (notes.isNotEmpty()) skippedNote = notes.joinToString("；")
+
+        // 静止样本太少：说明这段窗口基本都在动，本次校准没有意义
+        val accelSamples = bufs[Sensor.TYPE_ACCELEROMETER]?.count() ?: 0
+        if (accelSamples < MIN_SAMPLES) {
+            return Result(
+                base, "", false,
+                "检测到持续移动（跳过 %d 个样本），可用静止数据不足，请把手机放稳后重试".format(skippedSamples)
+            )
         }
 
         // ---- 中位数 + 方差 → 注入档 ----
