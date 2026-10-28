@@ -79,7 +79,23 @@ object BinderSensorMock {
     private var lastPushNanos = 0L
     @Volatile private var active = false
     @Volatile private var pumpThread: Thread? = null
+    private val pumpStartGuard = java.util.concurrent.atomic.AtomicBoolean(false)
     private val pumpLock = Object()
+
+    /**
+     * 速率提示 dump 的**单飞执行器**。
+     *
+     * `pushHints()` 内部是 `IBinder.dump`（本机约 40KB），不允许在泵的状态推进线程上
+     * 同步执行：一旦 binder 回调重入，就会与泵形成环。泵只置脏位/调度，真正的 dump
+     * 在这个独立线程里、且同一时刻最多一个。
+     */
+    private val hintExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "PortalSensorHints").apply { isDaemon = true }
+    }
+    private val hintInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 重入守卫：任何回调意外回到 beforePump 时直接丢弃这一轮，不让栈继续增长 */
+    private val stateAdvancing = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** 叫醒投递泵：会话/配置/订阅变化时调用（泵的等待会被 notify，不必等到上限） */
     fun wakePump() {
@@ -89,7 +105,7 @@ object BinderSensorMock {
     /** 「按应用期望出数据」的推送节流（与 SensorRateProbe 的 dump 缓存同量级） */
     private const val RATE_HINT_INTERVAL_NANOS = 2_000_000_000L
     private var lastRateHintNanos = 0L
-    private var rateHintLogged = false
+    @Volatile private var rateHintLogged = false
 
     /** 模拟步数真值（与 app 端 hook 同量级：随机起点，像"已经走了不少"） */
     /**
@@ -409,8 +425,15 @@ object BinderSensorMock {
                 Logger.error("BinderSensorMock: setHandleMap failed", it) }
     }
 
-    private fun deactivate() {
-        stopPump()
+    private fun deactivate(fromPump: Boolean = false) {
+        if (fromPump) {
+            // 泵线程自己收尾：不能 interrupt 自己，也不该在 loop 内再进 stopPump
+            pumpThread = null
+            pumpStartGuard.set(false)
+            SystemRuntimeChannel.stopDelivery()
+        } else {
+            stopPump()
+        }
         if (!active) return
         active = false
         if (nativeReady) {
@@ -433,10 +456,10 @@ object BinderSensorMock {
      * 停止顺序相反，中间不留"两边都不发"的空窗。
      */
     private fun ensurePump() {
-        if (pumpThread != null) return
+        if (!pumpStartGuard.compareAndSet(false, true)) return
         synchronized(this) {
             if (pumpThread != null) return
-            // 先起泵：载体可能因开机时序暂时不可用，泵线程会在循环里重试 [SystemRuntimeChannel.ensureDelivery]。
+            // 先起泵：载体可能因开机时序暂时不可用，泵线程自己在状态机里重试。
             pumpThread = Thread({ pumpLoop() }, "PortalSensorPump").apply {
                 isDaemon = true
                 start()
@@ -446,6 +469,7 @@ object BinderSensorMock {
     }
 
     private fun stopPump() {
+        pumpStartGuard.set(false)
         val t = pumpThread ?: run {
             SystemRuntimeChannel.stopDelivery()
             return
@@ -455,19 +479,35 @@ object BinderSensorMock {
         SystemRuntimeChannel.stopDelivery()
     }
 
+    private enum class PumpState { WAIT_CARRIER, RUNNING }
+
     private fun pumpLoop() {
+        var state = PumpState.WAIT_CARRIER
+        var backoffMs = 100L
         try {
             while (!Thread.currentThread().isInterrupted) {
-                if (!FakeLoc.anySensorMockEnabled || !FakeLoc.enable || !nativeReady) return
+                if (!FakeLoc.anySensorMockEnabled || !FakeLoc.enable || !nativeReady) {
+                    deactivate(fromPump = true)
+                    return
+                }
                 if (!SystemRuntimeChannel.ensureDelivery()) {
-                    // 载体还没就绪（开机时序）：保持泵存活并退避重试，而不是让整个功能静默缺失
-                    synchronized(pumpLock) { pumpLock.wait(100L) }
+                    // 载体还没就绪（开机时序）：状态机退避重试，保持泵存活
+                    state = PumpState.WAIT_CARRIER
+                    synchronized(pumpLock) { pumpLock.wait(backoffMs) }
+                    backoffMs = (backoffMs * 2).coerceAtMost(1_000L)
                     continue
+                }
+                if (state != PumpState.RUNNING) {
+                    state = PumpState.RUNNING
+                    backoffMs = 100L
                 }
                 val now = SystemClock.elapsedRealtimeNanos()
                 // 状态必须先于取帧：泵的每次唤醒就是"世界状态推进"的事件源
                 beforePump(now)
-                if (!FakeLoc.enable || !FakeLoc.anySensorMockEnabled) return
+                if (!FakeLoc.enable || !FakeLoc.anySensorMockEnabled) {
+                    deactivate(fromPump = true)
+                    return
+                }
                 SystemRuntimeChannel.pump(now)
                 /*
                  * 睡到"下一个到点时刻"：这是把轮询换成事件驱动的关键一步。
@@ -495,6 +535,7 @@ object BinderSensorMock {
         } finally {
             // 任何退出路径都要清掉引用并交回节拍：否则 native 侧会停在"只压制"，
             // 而我们的泵已经不在了 —— 那是"两边都不发"的最坏状态。
+            pumpStartGuard.set(false)
             if (pumpThread === Thread.currentThread()) pumpThread = null
             SystemRuntimeChannel.stopDelivery()
         }
@@ -507,13 +548,44 @@ object BinderSensorMock {
      * 直接推进状态。这样 `pushHints()`（sensor service dump，binder 调用）不会在持有
      * BinderSensorMock 监视器时执行，避免与等这把锁的 binder 线程形成跨线程等待。
      */
+    /**
+     * 单飞调度速率提示 dump：泵只负责触发，binder 调用在独立线程完成，
+     * 同一时刻最多一个在飞。即使 dump 触发回调，也回不到泵的状态推进路径。
+     */
+    private fun scheduleRateHints() {
+        if (!hintInFlight.compareAndSet(false, true)) return
+        hintExecutor.execute {
+            try {
+                if (FakeLoc.enable) {
+                    val ok = runCatching { SensorRateProbe.pushHints() }.getOrDefault(false)
+                    if (ok && !rateHintLogged) {
+                        rateHintLogged = true
+                        Logger.info("BinderSensorMock: 注入速率改由框架采用值驱动（见 rates=/hints）")
+                    }
+                }
+            } finally {
+                hintInFlight.set(false)
+            }
+        }
+    }
+
     private fun beforePump(now: Long) {
+        // 任何意外的重入（回调绕回推进路径）都丢弃这一轮，避免栈增长
+        if (!stateAdvancing.compareAndSet(false, true)) return
+        try {
+            beforePumpBody(now)
+        } finally {
+            stateAdvancing.set(false)
+        }
+    }
+
+    private fun beforePumpBody(now: Long) {
         val dt = if (lastTickNanos == 0L) 0.0 else (now - lastTickNanos) / 1e9
         lastTickNanos = now
 
         // 开关关闭 == 什么都不做（不装载、不注入、不注册载体）
         if (!FakeLoc.anySensorMockEnabled) {
-            deactivate()
+            deactivate(fromPump = true)
             return
         }
         // S2：运行时通道的**载体引导**只与实验开关同步，与"模拟会话是否在跑"无关
@@ -524,7 +596,7 @@ object BinderSensorMock {
         // 只有「模拟开关打开」且「模拟会话在跑」时才注入；否则真实传感器原样透传
         val want = FakeLoc.enable
         if (!want) {
-            deactivate()
+            deactivate(fromPump = true)
             return
         }
         if (!nativeReady) {
@@ -612,11 +684,7 @@ object BinderSensorMock {
         // 一次 dump 20~30ms，靠轮询做就是白烧（实测移动时 2s 一次 ≈1~1.5% 单核）
         if (SensorRateProbe.dueForRefresh(now, moving)) {
             SensorRateProbe.markRefreshed(now)
-            val ok = runCatching { SensorRateProbe.pushHints() }.getOrDefault(false)
-            if (ok && !rateHintLogged) {
-                rateHintLogged = true
-                Logger.info("BinderSensorMock: 注入速率改由框架采用值驱动（见 rates=/hints）")
-            }
+            scheduleRateHints()
         }
         BinderSensorNative.updateState(speed, bearingNow, moving, steps, now)
         lastPushLat = lat
