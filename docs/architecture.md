@@ -149,48 +149,9 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
 `get_sensor_status` 暴露到 Test 页；全零显示 `none`。这条是为了让"降级运行"与"一切正常"
 在界面上可区分 —— 本项目最容易出、最难查的一类故障正是"错了但不报错"。
 
-## 6. VVideo：视频数据的统一接口层
+## 6. 系统层摄像头虚拟化（不在 master）
 
-> 完整设计、ABI 与实测见 [`docs/vvideo.md`](vvideo.md)。
+相机 HAL 包装层（camshim）、VVideo 统一取帧层与对应的 Magisk 部署件**不在主干**，
+只存在于 `feature/hal-vcam` 分支（见 [`docs/BRANCH-NOTE.md`](BRANCH-NOTE.md)）。
+master 上的相机模拟只包含应用侧的 cammock 调用方与协议，设备实现由外部仓库负责。
 
-形状照 **Linux VFS**，代码在 `camera-hal/src/vvideo/`：
-`file_system_type` / `super_block` / `inode` / `dentry` / `file` + 两张操作表 + 挂载表 + 路径解析。
-调用者只知道"打开一个路径、等一帧、取一帧"，**帧从哪来由挂载决定**。
-
-### 为什么必须收成一层
-
-到这一层之前，取帧有**四种互不相干的方式**（`.raw` 模板文件 / app 产帧的共享文件 /
-C 里现算的合成图案 / 真 HAL 流缓冲），每种一套开关与错误处理 —— 同一个问题要答四遍，
-于是修一处忘三处（前置预览的显示变换曾在生成脚本与 HAL 里各写一份，改一边忘了另一边，
-画面就成了镜像）。
-
-### 两条硬约束（项目要求）
-
-| 约束 | 落点 |
-|---|---|
-| **数据流不过物理磁盘** | `raw` 挂载时读一次就 `close(fd)`；`shm` 默认 `memfd_create`（匿名共享内存，无块设备、无回写）；`gen`/`xform` 全在 RAM |
-| **事件驱动不轮询** | `struct vvideo_event`（POD，放在共享内存里）+ `FUTEX_WAIT/WAKE`；静态源 `always_ready`，`wait` 立刻返回；本层无 `sleep`/忙等 |
-
-### 后端与命名空间
-
-`vvideo_init()` 建 `/vvideo/{src,ctl}` 并注册全部内置后端（登记表 `vvfs_builtin.c`）：
-
-| 类型 | 一句话 |
-|---|---|
-| `mem` / `raw` | RAM 帧节点；`raw` = `dev` 文件在挂载时灌一次（数据面与 mem 相同） |
-| `gen` | 合成帧源（solid/grad/stripes/card/count），**按需产帧、无定时器** |
-| `shm` | 跨进程共享环（memfd 或 tmpfs 文件），事件字在共享内存头部 |
-| `xform` | **叠加变换层**：显示变换是挂载选项（`op=rot90cw+flipud`），不是代码里的 if |
-| `ctl` | 控制面与观测（tree/mounts/fs/log/stat/help + 可写的 `cmd`） |
-
-### 接入与开关
-
-`camshim.c` 只在**模板加载**一处接进来：`mock_map` 里以 `/vvideo/` 开头的路径经统一层
-零拷贝取帧。默认 `vvideo=0`，行为与接入前逐字节一致；真机上已做 **A/B 等价**验证
-（两张截图逐像素相同，`max diff = 0`）。
-
-### 验证手段
-
-开发机自测 `sh scripts/test-vvideo.sh`（`gcc -fsanitize=address,undefined`，**100 项全过**，
-无内存错误、无泄漏）。它先于真机抓到 4 个真 bug —— 其中包括"文本节点静默截断在 1023 字节"
-这种**不报错**的故障，正是本项目最怕的一类。详见 `docs/vvideo.md` §7.2。
