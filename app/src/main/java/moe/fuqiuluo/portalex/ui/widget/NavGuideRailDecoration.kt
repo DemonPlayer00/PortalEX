@@ -60,8 +60,9 @@ class NavGuideRailDecoration(
         density = parent.resources.displayMetrics.density
         val color = if (activeProvider?.invoke() == true) COLOR_ACTIVE else COLOR_IDLE
         railPaint.strokeWidth = 2f * density
-        val railX = 6f * density
-        val stubEnd = 13f * parent.resources.displayMetrics.density
+        // 左侧留出呼吸空间：蚂蚁线不贴屏幕/抽屉边缘
+        val railX = 12f * density
+        val stubEnd = 19f * density
         val step = 9f * parent.resources.displayMetrics.density
         val radius = 1.7f * parent.resources.displayMetrics.density
 
