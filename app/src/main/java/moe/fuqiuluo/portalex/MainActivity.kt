@@ -122,26 +122,32 @@ class MainActivity : AppCompatActivity() {
 
     /* 侧栏副标题的逐字彩蛋：每次启动打乱，播完一轮再打乱 */
     private val subtitleLines = listOf(
+        // Portal（游戏内对白/场景文字）
         "The cake is a lie.",
-        "We do what we must, because we can.",
-        "But now I only want you gone.",
-        "Remember when you tried to kill me twice?",
-        "This was a triumph.",
-        "I'm making a note here: huge success.",
-        "It's hard to overstate my satisfaction.",
-        "But there's no sense crying over every mistake.",
-        "You just keep on trying till you run out of cake.",
-        "I'm not even angry.",
-        "I'm being so sincere right now.",
-        "Now these points of data make a beautiful line.",
-        "And we're out of beta. We're releasing on time.",
-        "So I'm GLaD. I got burned.",
-        "Look at me still talking when there's science to do.",
-        "I've experiments to run. There is research to be done.",
-        "When life gives you lemons, don't make lemonade.",
-        "Science isn't about why, it's about why not.",
-        "This is the part where he kills us.",
+        "You're doing very well!",
+        "Please be advised that a noticeable taste of blood is not part of any test protocol.",
+        "Thank you for participating in this Aperture Science computer-aided enrichment activity.",
+        "Hello and, again, welcome to the Aperture Science computer-aided enrichment center.",
+        "We hope your brief detention in the relaxation vault has been a pleasant one.",
+        "Stand back. The portal will open in three. two. one.",
+        // Portal 2 — GLaDOS
+        "Oh... It's you.",
+        "It's been a long time. How have you been?",
+        "I've been really busy being dead. You know, after you MURDERED ME.",
         "You monster.",
+        "Federal regulations require me to warn you that this next test chamber... is looking pretty good.",
+        "The best solution to a problem is usually the easiest one.",
+        "It's been fun. Don't come back.",
+        "Look at you. Sailing through the air majestically. Like an eagle. Piloting a blimp.",
+        "You are a horrible person. We weren't even testing for that.",
+        // Portal 2 — Wheatley
+        "Hello! This is the part where I kill you.",
+        "Where are you going? Don't run! Don't run!",
+        "Are you still there? Can you pick me up, please?",
+        // Portal 2 — Cave Johnson
+        "Science isn't about WHY. It's about WHY NOT.",
+        "When life gives you lemons? Don't make lemonade.",
+        "I'm the man who's going to burn your house down! With the lemons!",
     )
     private var subtitleOrder: List<String> = emptyList()
     private var subtitleIndex = 0
