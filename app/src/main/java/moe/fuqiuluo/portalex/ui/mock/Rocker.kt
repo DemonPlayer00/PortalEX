@@ -103,12 +103,35 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
         }
         root.findViewById<View>(R.id.auto_lock).setOnClickListener {
             autoLockStatus = !autoLockStatus
-            if (autoLockStatus) {
-                root.findViewById<View>(R.id.auto_lock).setBackgroundResource(R.drawable.baseline_lock_24)
-            } else {
-                root.findViewById<View>(R.id.auto_lock).setBackgroundResource(R.drawable.baseline_manual_24)
-            }
+            applyKeepScreenOn(autoLockStatus)
+            renderAutoLock()
         }
+    }
+
+    /**
+     * 屏幕常亮开关：在悬浮窗自身窗口上加 FLAG_KEEP_SCREEN_ON。
+     *
+     * 不修改系统 Settings 的超时值，只在窗口可见期间阻止息屏；关闭开关或隐藏悬浮窗即恢复。
+     */
+    private fun applyKeepScreenOn(on: Boolean) {
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        layoutParams.flags = if (on) layoutParams.flags or flag else layoutParams.flags and flag.inv()
+        if (isStart) {
+            runCatching { windowManager.updateViewLayout(root, layoutParams) }
+                .onFailure { Log.w("Rocker", "更新屏幕常亮标志失败", it) }
+        }
+    }
+
+    private fun renderAutoLock() {
+        val view = root.findViewById<AppCompatImageView>(R.id.auto_lock)
+        view.setImageResource(
+            if (autoLockStatus) R.drawable.baseline_lightbulb_24
+            else R.drawable.baseline_lightbulb_outline_24
+        )
+        view.imageTintList = android.content.res.ColorStateList.valueOf(
+            if (autoLockStatus) android.graphics.Color.rgb(255, 193, 7)
+            else androidx.core.content.ContextCompat.getColor(activity, R.color.rocker_icon_tint)
+        )
     }
 
     private fun playAuto(rockerView: RockerView) {
@@ -157,6 +180,12 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
     fun hide(): Boolean {
         if (!isStart) return true
         return try {
+            // 悬浮窗消失即不再需要屏幕常亮，避免开关状态与系统行为脱节
+            if (autoLockStatus) {
+                autoLockStatus = false
+                applyKeepScreenOn(false)
+                renderAutoLock()
+            }
             val rockerView = root.findViewById<RockerView>(R.id.rocker)
             rockerView.reset()
             windowManager.removeView(root)
