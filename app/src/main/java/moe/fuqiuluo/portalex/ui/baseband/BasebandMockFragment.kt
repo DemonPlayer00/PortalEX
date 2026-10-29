@@ -21,6 +21,7 @@ import moe.fuqiuluo.portalex.service.MockServiceHelper
 class BasebandMockFragment : Fragment() {
     private var _binding: FragmentBasebandMockBinding? = null
     private val binding get() = _binding!!
+    private var switchListenerAttached = false
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, state: Bundle?): View {
         _binding = FragmentBasebandMockBinding.inflate(inflater, container, false)
@@ -34,7 +35,9 @@ class BasebandMockFragment : Fragment() {
         binding.basebandSsid.setText(prefs.getString("sim_wifi_v1", "CMCC-EDU"))
         binding.basebandBssid.setText(prefs.getString("sim_wifi_v2", "02:00:00:00:00:00"))
         binding.basebandSwitch.isChecked = prefs.getBoolean("sim_baseband_enabled", false)
-        binding.basebandSwitch.setOnCheckedChangeListener { _, on -> push(on) }
+        // 监听器**不能**在这里挂：Fragment 的 view state 恢复发生在 onCreateView 之后，
+        // 恢复 checked 状态会触发 OnCheckedChangeListener → 自动 push 一次配置。
+        // 改为 onResume/onViewStateRestored 之后挂（见 attachSwitchListener）。
         // 长按开关 = 清空「校准收集」的多条目列表，回到手填的单条配置
         binding.basebandSwitch.setOnLongClickListener {
             requireContext().cellEntries = emptyList()
@@ -47,17 +50,24 @@ class BasebandMockFragment : Fragment() {
         return binding.root
     }
 
+    /**
+     * 在视图状态恢复完成后才挂开关监听器。
+     *
+     * Android 会把 `SwitchMaterial` 的 checked 状态作为 view state 恢复，恢复动作发生在
+     * onCreateView 之后；如果监听器那时已经挂上，恢复过程就会触发 `push()`，产生
+     * "点进页面就改配置"的副作用。
+     */
+    private fun attachSwitchListener() {
+        if (switchListenerAttached) return
+        binding.basebandSwitch.setOnCheckedChangeListener { _, on -> push(on) }
+        switchListenerAttached = true
+    }
+
     override fun onResume() {
         super.onResume()
-        val cells = requireContext().cellEntries
-        val wifis = requireContext().wifiEntries
-        if (cells.isNotEmpty() || wifis.isNotEmpty()) {
-            android.widget.Toast.makeText(
-                requireContext(),
-                getString(R.string.baseband_collected_summary, cells.size, wifis.size),
-                android.widget.Toast.LENGTH_LONG
-            ).show()
-        }
+        attachSwitchListener()
+        // 这里**不再弹** "已收集 N 条" 的 toast：它读的是历史列表，不是本次扫描，
+        // 每次进页面都弹会被误认为"自动收集了附近 Wi-Fi"。
     }
 
     private fun push(enabled: Boolean) {
@@ -68,7 +78,15 @@ class BasebandMockFragment : Fragment() {
         val tac = binding.basebandTac.text?.toString().orEmpty()
         val ssid = binding.basebandSsid.text?.toString().orEmpty()
         val bssid = binding.basebandBssid.text?.toString().orEmpty()
-        ctx.sharedPrefs.edit()
+        val prefs = ctx.sharedPrefs
+        // 监听器只应由用户操作触发；万一别处又触发了，值没变就不要重写偏好/重发命令。
+        val unchanged = prefs.getBoolean("sim_baseband_enabled", false) == enabled &&
+                prefs.getString("sim_cell_v1", "").orEmpty() == "$mcc/$mnc" &&
+                prefs.getString("sim_cell_v2", "").orEmpty() == "$cid/$tac" &&
+                prefs.getString("sim_wifi_v1", "").orEmpty() == ssid &&
+                prefs.getString("sim_wifi_v2", "").orEmpty() == bssid
+        if (unchanged) return
+        prefs.edit()
             .putBoolean("sim_baseband_enabled", enabled)
             .putBoolean("sim_cell_enabled", enabled)
             .putBoolean("sim_wifi_enabled", enabled)
@@ -97,6 +115,7 @@ class BasebandMockFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        switchListenerAttached = false
         _binding = null
     }
 }
