@@ -21,6 +21,9 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -744,7 +747,7 @@ class CalibrationFragment : Fragment() {
      * 由调用方以 async 启动，因此两者同时开始、同时结束。
      * 纯采集，不写偏好、不弹提示 —— 写入统一在 applyWifiEntries 里做。
      */
-    private fun collectWifiEntries(ctx: android.content.Context): List<String> {
+    private suspend fun collectWifiEntries(ctx: android.content.Context): List<String> {
         val locationOn = runCatching {
             (ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager).isLocationEnabled
         }.getOrDefault(false)
@@ -760,6 +763,7 @@ class CalibrationFragment : Fragment() {
             runCatching { wm.startScan() }
             val deadline = System.currentTimeMillis() + SensorNoiseCalibrator.DURATION_MS
             while (System.currentTimeMillis() < deadline) {
+                currentCoroutineContext().ensureActive()
                 @Suppress("DEPRECATION", "MissingPermission")
                 val scans = runCatching { wm.scanResults }.getOrNull().orEmpty()
                 if (scans.isNotEmpty()) {
@@ -772,7 +776,7 @@ class CalibrationFragment : Fragment() {
                     }
                     break
                 }
-                Thread.sleep(300)
+                delay(300)
             }
         }
         return entries.toList()
