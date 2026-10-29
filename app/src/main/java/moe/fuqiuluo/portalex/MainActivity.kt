@@ -74,6 +74,8 @@ import com.baidu.mapapi.search.sug.SuggestionSearchOption
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.navigation.NavigationView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.service.MockServiceHelper
@@ -117,6 +119,18 @@ class MainActivity : AppCompatActivity() {
     /** 最近一次向 system_server 回读到的激活状态（只做绘制用的最近值，不是状态源）。 */
     private var railActive = false
     private var railQueriedAt = 0L
+
+    /* 侧栏副标题的逐字彩蛋：每次启动打乱，播完一轮再打乱 */
+    private val subtitleLines = listOf(
+        "The cake is a lie.",
+        "We do what we must, because we can.",
+        "But now I only want you gone.",
+        "Remember when you tried to kill me twice?",
+    )
+    private var subtitleOrder: List<String> = emptyList()
+    private var subtitleIndex = 0
+    private var subtitleInitialized = false
+    private var subtitleTypingJob: Job? = null
 
     private fun getRequiredPermissions(): MutableSet<String> {
         val permissions = mutableSetOf(
@@ -195,6 +209,36 @@ class MainActivity : AppCompatActivity() {
             resources.getDimensionPixelSize(R.dimen.nav_header_height)
         }
         header.layoutParams = header.layoutParams.apply { this.height = height }
+        setupSubtitleTyping(header)
+    }
+
+    /**
+     * 副标题点击彩蛋：按打乱后的顺序逐字打出，播完一轮后重新洗牌。
+     * 连续点击会取消当前动画，直接开始下一句。
+     */
+    private fun setupSubtitleTyping(header: View) {
+        val subtitle = header.findViewById<TextView>(R.id.textView) ?: return
+        if (!subtitleInitialized) {
+            subtitleOrder = subtitleLines.shuffled()
+            subtitleIndex = 0
+            subtitleInitialized = true
+        }
+        subtitle.isClickable = true
+        subtitle.setOnClickListener {
+            if (subtitleIndex >= subtitleOrder.size) {
+                subtitleOrder = subtitleLines.shuffled()
+                subtitleIndex = 0
+            }
+            val line = subtitleOrder[subtitleIndex++]
+            subtitleTypingJob?.cancel()
+            subtitleTypingJob = lifecycleScope.launch {
+                subtitle.text = ""
+                for (ch in line) {
+                    subtitle.append(ch.toString())
+                    delay(40L)
+                }
+            }
+        }
     }
 
     private fun initBinding() {
