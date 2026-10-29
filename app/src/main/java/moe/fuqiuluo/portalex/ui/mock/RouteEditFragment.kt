@@ -557,6 +557,7 @@ class RouteEditFragment : Fragment(), MapControlsHost {
         val inflater = LayoutInflater.from(requireContext())
         val dialogView = inflater.inflate(R.layout.dialog_add_route, null)
         val editName = dialogView.findViewById<TextInputEditText>(R.id.etRouteName)
+        val editAddress = dialogView.findViewById<TextInputEditText>(R.id.etRouteAddress)
         editName.addTextChangedListener {
             if (it.isNullOrBlank()) {
                 editName.error = "名称不能为空"
@@ -662,7 +663,10 @@ class RouteEditFragment : Fragment(), MapControlsHost {
 
                 with(requireContext()) {
                     val routes = HistoricalRoute.parseList(jsonHistoricalRoutes)
-                    routes.add(HistoricalRoute(name, mPoints, smooth))
+                    routes.add(HistoricalRoute(
+                        name, mPoints, smooth,
+                        address = editAddress.text?.toString()?.trim().orEmpty()
+                    ))
                     jsonHistoricalRoutes = HistoricalRoute.listToJson(routes)
                 }
 
