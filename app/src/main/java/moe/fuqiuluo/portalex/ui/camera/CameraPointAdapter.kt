@@ -12,7 +12,8 @@ import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 /** 视频点列表：名称 + 坐标/视频数 + 标签汇总；点一行进入该点的视频编辑 */
 class CameraPointAdapter(
     private val dataSet: MutableList<CameraVideoPoint>,
-    private val onItemClicked: (CameraVideoPoint) -> Unit
+    private val onItemClicked: (CameraVideoPoint) -> Unit,
+    private val onItemLongClicked: (CameraVideoPoint) -> Unit = {},
 ) : RecyclerView.Adapter<CameraPointAdapter.ViewHolder>() {
     private var filterTags: Set<String> = emptySet()
 
@@ -63,5 +64,9 @@ class CameraPointAdapter(
         }
         holder.itemView.alpha = if (matches(point)) 1f else 0.45f
         holder.itemView.setOnClickListener { onItemClicked(point) }
+        holder.itemView.setOnLongClickListener {
+            onItemLongClicked(point)
+            true
+        }
     }
 }

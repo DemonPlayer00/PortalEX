@@ -178,14 +178,18 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
 
     /** 隐藏悬浮摇杆；返回是否成功（本来就没显示时视为成功）。 */
     fun hide(): Boolean {
-        if (!isStart) return true
+        if (!isStart) {
+            // 即便窗口已经不在，也确保没有遗留的 KEEP_SCREEN_ON 标志
+            autoLockStatus = false
+            applyKeepScreenOn(false)
+            renderAutoLock()
+            return true
+        }
         return try {
-            // 悬浮窗消失即不再需要屏幕常亮，避免开关状态与系统行为脱节
-            if (autoLockStatus) {
-                autoLockStatus = false
-                applyKeepScreenOn(false)
-                renderAutoLock()
-            }
+            // 悬浮窗关闭 = 恢复系统屏幕超时（清掉常亮标志），不保留"亮着"状态
+            autoLockStatus = false
+            applyKeepScreenOn(false)
+            renderAutoLock()
             val rockerView = root.findViewById<RockerView>(R.id.rocker)
             rockerView.reset()
             windowManager.removeView(root)

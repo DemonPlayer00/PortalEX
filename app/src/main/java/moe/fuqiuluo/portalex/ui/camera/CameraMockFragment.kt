@@ -216,6 +216,31 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         autoUploadLibrary()
     }
 
+    /** 长按视频点列表：只重命名（坐标/视频在点详情页编辑）。 */
+    private fun showRenamePointDialog(point: CameraVideoPoint) {
+        val ctx = requireContext()
+        val layout = com.google.android.material.textfield.TextInputLayout(ctx).apply {
+            hint = "视频点名称"
+        }
+        val edit = com.google.android.material.textfield.TextInputEditText(ctx).apply {
+            setText(point.name)
+            setSingleLine(true)
+        }
+        layout.addView(edit)
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle("重命名视频点")
+            .setView(layout)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("确定") { _, _ ->
+                val name = edit.text?.toString()?.trim().orEmpty().ifBlank { point.name }
+                if (name == point.name) return@setPositiveButton
+                CameraMockStore.upsert(ctx, point.copy(name = name))
+                autoUploadLibrary()
+                refresh()
+            }
+            .show()
+    }
+
     private fun autoUploadLibrary(context: android.content.Context? = null) {
         val ctx = context ?: if (uiAlive()) requireContext() else return
         val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
@@ -243,12 +268,16 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         if (cameraExecutor.isShutdown) cameraExecutor = Executors.newSingleThreadExecutor()
         _binding = FragmentCameraMockBinding.inflate(inflater, container, false)
 
-        adapter = CameraPointAdapter(mutableListOf()) { point ->
-            findNavController().navigate(
-                R.id.nav_camera_point_edit,
-                bundleOf(ARG_POINT_ID to point.id)
-            )
-        }
+        adapter = CameraPointAdapter(
+            mutableListOf(),
+            onItemClicked = { point ->
+                findNavController().navigate(
+                    R.id.nav_camera_point_edit,
+                    bundleOf(ARG_POINT_ID to point.id)
+                )
+            },
+            onItemLongClicked = { point -> showRenamePointDialog(point) },
+        )
         binding.cameraPointList.layoutManager = LinearLayoutManager(requireContext())
         binding.cameraPointList.adapter = adapter
         ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
