@@ -219,17 +219,27 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     /** 长按视频点列表：只重命名（坐标/视频在点详情页编辑）。 */
     private fun showRenamePointDialog(point: CameraVideoPoint) {
         val ctx = requireContext()
+        val density = resources.displayMetrics.density
+        val root = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((24 * density).toInt(), (8 * density).toInt(), (24 * density).toInt(), 0)
+        }
         val layout = com.google.android.material.textfield.TextInputLayout(ctx).apply {
             hint = "视频点名称"
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (8 * density).toInt() }
         }
         val edit = com.google.android.material.textfield.TextInputEditText(ctx).apply {
             setText(point.name)
             setSingleLine(true)
         }
         layout.addView(edit)
+        root.addView(layout)
         MaterialAlertDialogBuilder(ctx)
             .setTitle("重命名视频点")
-            .setView(layout)
+            .setView(root)
             .setNegativeButton("取消", null)
             .setPositiveButton("确定") { _, _ ->
                 val name = edit.text?.toString()?.trim().orEmpty().ifBlank { point.name }
