@@ -368,6 +368,14 @@ class MainActivity : AppCompatActivity() {
                 // 侧栏引导线：路线模拟 → 角度模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）。
                 // 作为菜单 RecyclerView 的 ItemDecoration，随入口列表一起滚动/裁剪。
                 drawerMenuRecycler(navView)?.let { menuView ->
+                    // 入口列表也向右让出边缘空间，避免图标/文字顶着抽屉左边缘
+                    val listInset = (8 * resources.displayMetrics.density).toInt()
+                    menuView.setPadding(
+                        listInset,
+                        menuView.paddingTop,
+                        menuView.paddingEnd,
+                        menuView.paddingBottom,
+                    )
                     val rail = NavGuideRailDecoration(
                         startTitle = navView.menu.findItem(R.id.nav_route_gallery)?.title?.toString().orEmpty(),
                         endTitle = navView.menu.findItem(R.id.nav_angle_compass)?.title?.toString().orEmpty(),
