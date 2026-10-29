@@ -126,10 +126,27 @@ class MainActivity : AppCompatActivity() {
         "We do what we must, because we can.",
         "But now I only want you gone.",
         "Remember when you tried to kill me twice?",
+        "This was a triumph.",
+        "I'm making a note here: huge success.",
+        "It's hard to overstate my satisfaction.",
+        "But there's no sense crying over every mistake.",
+        "You just keep on trying till you run out of cake.",
+        "I'm not even angry.",
+        "I'm being so sincere right now.",
+        "Now these points of data make a beautiful line.",
+        "And we're out of beta. We're releasing on time.",
+        "So I'm GLaD. I got burned.",
+        "Look at me still talking when there's science to do.",
+        "I've experiments to run. There is research to be done.",
+        "When life gives you lemons, don't make lemonade.",
+        "Science isn't about why, it's about why not.",
+        "This is the part where he kills us.",
+        "You monster.",
     )
     private var subtitleOrder: List<String> = emptyList()
     private var subtitleIndex = 0
     private var subtitleInitialized = false
+    private var lastSubtitle: String? = null
     private var subtitleTypingJob: Job? = null
 
     private fun getRequiredPermissions(): MutableSet<String> {
@@ -225,11 +242,7 @@ class MainActivity : AppCompatActivity() {
         }
         subtitle.isClickable = true
         subtitle.setOnClickListener {
-            if (subtitleIndex >= subtitleOrder.size) {
-                subtitleOrder = subtitleLines.shuffled()
-                subtitleIndex = 0
-            }
-            val line = subtitleOrder[subtitleIndex++]
+            val line = nextSubtitleLine()
             subtitleTypingJob?.cancel()
             subtitleTypingJob = lifecycleScope.launch {
                 subtitle.text = ""
@@ -239,6 +252,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** 取下一句；一轮播完后洗牌，若新首句与上一句相同则移到末尾，避免连续重复。 */
+    private fun nextSubtitleLine(): String {
+        if (subtitleIndex >= subtitleOrder.size) {
+            subtitleOrder = subtitleLines.shuffled()
+            subtitleIndex = 0
+            if (subtitleOrder.size > 1 && subtitleOrder[0] == lastSubtitle) {
+                subtitleOrder = subtitleOrder.drop(1) + subtitleOrder[0]
+            }
+        }
+        return subtitleOrder[subtitleIndex++].also { lastSubtitle = it }
     }
 
     private fun initBinding() {
