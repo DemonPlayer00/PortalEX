@@ -94,6 +94,7 @@ import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
+import moe.fuqiuluo.portalex.ui.widget.NavGuideRailDecoration
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -119,6 +120,7 @@ class MainActivity : AppCompatActivity() {
     /** 最近一次向 system_server 回读到的激活状态（只做绘制用的最近值，不是状态源）。 */
     private var railActive = false
     private var railQueriedAt = 0L
+    private var guideRailDecoration: NavGuideRailDecoration? = null
 
     /* 侧栏副标题的逐字彩蛋：每次启动打乱，播完一轮再打乱 */
     private val subtitleLines = listOf(
@@ -363,27 +365,31 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
-                // 侧栏引导线：路线模拟 → 角度模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）
-                binding.navGuideRail.bind(
-                    navView,
-                    R.id.nav_route_gallery,
-                    R.id.nav_angle_compass,
-                    // 二类功能：随路线模拟启动的那几项，末端画三角
-                    listOf(
-                        R.id.nav_gnss_mock, R.id.nav_baseband, R.id.nav_camera_mock,
-                        R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass
+                // 侧栏引导线：路线模拟 → 角度模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）。
+                // 作为菜单 RecyclerView 的 ItemDecoration，随入口列表一起滚动/裁剪。
+                drawerMenuRecycler(navView)?.let { menuView ->
+                    val rail = NavGuideRailDecoration(
+                        startTitle = navView.menu.findItem(R.id.nav_route_gallery)?.title?.toString().orEmpty(),
+                        endTitle = navView.menu.findItem(R.id.nav_angle_compass)?.title?.toString().orEmpty(),
+                        // 二类功能：随路线模拟启动的那几项，末端画三角
+                        class2Titles = listOf(
+                            R.id.nav_gnss_mock, R.id.nav_baseband, R.id.nav_camera_mock,
+                            R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass
+                        ).mapNotNull { navView.menu.findItem(it)?.title?.toString() }.toSet(),
                     )
-                )
-                // 颜色由视图在每次绘制时向这里要；这里再向 system_server 回读（节流 700ms）。
-                binding.navGuideRail.activeProvider = {
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    if (now - railQueriedAt >= 700L) {
-                        railQueriedAt = now
-                        refreshGuideRail()
+                    menuView.addItemDecoration(rail)
+                    guideRailDecoration = rail
+                    // 颜色由装饰器在每次绘制时向这里要；这里再向 system_server 回读（节流 700ms）。
+                    rail.activeProvider = {
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - railQueriedAt >= 700L) {
+                            railQueriedAt = now
+                            refreshGuideRail()
+                        }
+                        railActive
                     }
-                    railActive
+                    refreshGuideRail()
                 }
-                refreshGuideRail()
                 // 工具页那组上方的细分隔线（单列表里用 ItemDecoration 画）
                 attachDrawerGroupDivider(navView, R.id.nav_gnss_mock)
                 attachDrawerGroupDivider(navView, R.id.nav_settings)
@@ -494,17 +500,20 @@ class MainActivity : AppCompatActivity() {
             }
             if (railActive != active) {
                 railActive = active
-                binding.navGuideRail.invalidate()
+                guideRailDecoration?.invalidate()
             }
         }
     }
 
 
+    private fun drawerMenuRecycler(navView: NavigationView): RecyclerView? =
+        (0 until navView.childCount)
+            .map { navView.getChildAt(it) }
+            .firstOrNull { it is RecyclerView } as? RecyclerView
+
     private fun attachDrawerGroupDivider(navView: NavigationView, itemId: Int) {
         val title = navView.menu.findItem(itemId)?.title ?: return
-        val menuView = (0 until navView.childCount)
-            .map { navView.getChildAt(it) }
-            .firstOrNull { it is RecyclerView } as? RecyclerView ?: return
+        val menuView = drawerMenuRecycler(navView) ?: return
         val color = MaterialColors.getColor(
             navView, com.google.android.material.R.attr.colorOutlineVariant
         )
