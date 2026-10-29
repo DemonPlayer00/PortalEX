@@ -16,6 +16,9 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.alibaba.fastjson2.JSONArray
+import com.alibaba.fastjson2.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -162,10 +165,11 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
         }
         val routes = HistoricalRoute.parseList(locations)
 
-        val historicalRouteAdapter = HistoricalRouteAdapter(routes.sortedBy { it.name }
-            .toMutableList()) { route, isLongClick ->
+        lateinit var historicalRouteAdapter: HistoricalRouteAdapter
+        historicalRouteAdapter = HistoricalRouteAdapter(routes.sortedBy { it.name }
+            .toMutableList()) { route, isLongClick, position ->
             if (isLongClick) {
-                Toast.makeText(requireContext(), "长按", Toast.LENGTH_SHORT).show()
+                showEditRouteDialog(route, historicalRouteAdapter, position)
             } else {
                 binding.mockRouteName.text = route.name
                 // 选中路线 → 立即完整重置播放器（重选同一条也从头开始）
@@ -252,6 +256,100 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
         }).attachToRecyclerView(recyclerView)
 
         return binding.root
+    }
+
+    /**
+     * 长按路线列表项：用原有路线编辑框修改名称 / 坐标 / 地址 / 平滑段。
+     * 坐标仍是 `first/second` JSON；地址是可选元数据，旧路线为空。
+     */
+    private fun showEditRouteDialog(
+        route: HistoricalRoute,
+        adapter: HistoricalRouteAdapter,
+        position: Int,
+    ) {
+        if (position == RecyclerView.NO_POSITION) return
+        val view = LayoutInflater.from(requireContext())
+            .inflate(R.layout.dialog_add_route, null)
+        val nameEdit = view.findViewById<TextInputEditText>(R.id.etRouteName)
+        val addressEdit = view.findViewById<TextInputEditText>(R.id.etRouteAddress)
+        val routeEdit = view.findViewById<TextInputEditText>(R.id.etRouteSet)
+        val smoothEdit = view.findViewById<TextInputEditText>(R.id.etRouteSmooth)
+
+        nameEdit.setText(route.name)
+        addressEdit.setText(route.address)
+        val coords = JSONArray()
+        route.route.forEach { (lat, lon) ->
+            coords.add(JSONObject().apply {
+                put("first", lat)
+                put("second", lon)
+            })
+        }
+        routeEdit.setText(coords.toJSONString())
+        smoothEdit.setText(
+            List(route.route.size) { route.isSmooth(it) }
+                .joinToString(",") { if (it) "true" else "false" }
+        )
+
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle("编辑路线")
+            .setView(view)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("保存") { _, _ ->
+                val newName = nameEdit.text?.toString()?.trim().orEmpty()
+                if (newName.isBlank()) {
+                    showToast("名称不能为空")
+                    return@setPositiveButton
+                }
+                val parsed = runCatching {
+                    val array = JSONArray.parse(routeEdit.text?.toString().orEmpty()) as JSONArray
+                    val points = ArrayList<Pair<Double, Double>>(array.size)
+                    for (i in 0 until array.size) {
+                        val obj = array.getJSONObject(i)
+                        val lat = obj.getDoubleValue("first")
+                        val lon = obj.getDoubleValue("second")
+                        if (lat !in -90.0..90.0 || lon !in -180.0..180.0) {
+                            error("经纬度超出范围")
+                        }
+                        points += lat to lon
+                    }
+                    points
+                }.getOrElse {
+                    showToast("路线坐标格式错误：${it.message ?: "请检查 JSON"}")
+                    return@setPositiveButton
+                }
+                if (parsed.size < 2) {
+                    showToast("路线至少需要两个坐标点")
+                    return@setPositiveButton
+                }
+                val smooth = smoothEdit.text?.toString().orEmpty()
+                    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                    .map {
+                        when (it.lowercase()) {
+                            "true" -> true
+                            "false" -> false
+                            else -> return@setPositiveButton
+                        }
+                    }
+                val updated = HistoricalRoute(
+                    name = newName,
+                    route = parsed,
+                    smooth = List(parsed.size) { smooth.getOrElse(it) { false } },
+                    address = addressEdit.text?.toString()?.trim().orEmpty(),
+                )
+
+                val all = HistoricalRoute.parseList(requireContext().jsonHistoricalRoutes)
+                    .toMutableList()
+                val index = all.indexOfFirst { it.name == route.name && it.route == route.route }
+                if (index >= 0) all[index] = updated else all.add(updated)
+                requireContext().jsonHistoricalRoutes = HistoricalRoute.listToJson(all)
+                adapter.updateItem(position, updated)
+                if (requireContext().selectRoute == route) {
+                    requireContext().selectRoute = updated
+                    binding.mockRouteName.text = updated.name
+                }
+                showToast("已保存路线")
+            }
+            .show()
     }
 
 

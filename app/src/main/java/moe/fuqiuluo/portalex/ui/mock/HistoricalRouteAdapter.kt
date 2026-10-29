@@ -11,7 +11,7 @@ import moe.fuqiuluo.portalex.R
 
 class HistoricalRouteAdapter(
     private val dataSet: MutableList<HistoricalRoute>,
-    private val onItemClicked: (HistoricalRoute, isLongClicked: Boolean) -> Unit
+    private val onItemClicked: (HistoricalRoute, isLongClicked: Boolean, position: Int) -> Unit
 ) : RecyclerView.Adapter<HistoricalRouteAdapter.ViewHolder>() {
 
     class ViewHolder(
@@ -31,6 +31,14 @@ class HistoricalRouteAdapter(
         notifyItemRemoved(position)
         notifyItemRangeChanged(position, itemCount - position)
         return removed
+    }
+
+    fun indexOf(route: HistoricalRoute): Int = dataSet.indexOf(route)
+
+    fun updateItem(position: Int, route: HistoricalRoute) {
+        if (position !in dataSet.indices) return
+        dataSet[position] = route
+        notifyItemChanged(position)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -57,10 +65,10 @@ class HistoricalRouteAdapter(
             "平滑: [" + smooth.joinToString(",") { if (it) "T" else "F" } + "]"
         }
         holder.root.setOnClickListener {
-            onItemClicked(dataSet[position], false)
+            onItemClicked(dataSet[position], false, position)
         }
         holder.root.setOnLongClickListener {
-            onItemClicked(dataSet[position], true)
+            onItemClicked(dataSet[position], true, position)
             true
         }
     }

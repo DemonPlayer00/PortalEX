@@ -13,7 +13,9 @@ data class HistoricalRoute(
      * 长度与 [route] 端点一一对应；**最后一个端点没有后续线段**（占位 false）。
      * 旧数据无该字段时补全为全 false（行为同不平滑）。
      */
-    val smooth: List<Boolean> = emptyList()
+    val smooth: List<Boolean> = emptyList(),
+    /** 路线/素材的可选地址（列表长按编辑用；旧数据为空） */
+    val address: String = ""
 ) {
     /** 第 index 段（端点 index → index+1）是否需要平滑；越界/缺省一律 false */
     fun isSmooth(index: Int): Boolean = smooth.getOrElse(index) { false }
@@ -99,7 +101,10 @@ data class HistoricalRoute(
                     }
                 }
             }
-            return HistoricalRoute(name, points, parseSmooth(obj, points.size))
+            return HistoricalRoute(
+                name, points, parseSmooth(obj, points.size),
+                address = obj.getString("address").orEmpty()
+            )
         }
 
         /** 解析逐端点平滑标志；缺失/非法一律 false，长度对齐端点数 */
@@ -131,6 +136,7 @@ data class HistoricalRoute(
             val smoothArray = JSONArray()
             smooth.forEach { smoothArray.add(it) }
             obj["smooth"] = smoothArray
+            if (address.isNotBlank()) obj["address"] = address
             return obj
         }
     }
