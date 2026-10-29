@@ -164,8 +164,8 @@
                     android:layout_height="16dp"
                     android:importantForAccessibility="no"
                     android:contentDescription="@string/app_name"
-                    android:background="@drawable/baseline_lock_24"
-                    android:backgroundTint="@color/rocker_icon_tint"
+                    android:src="@drawable/baseline_lightbulb_outline_24"
+                    app:tint="@color/rocker_icon_tint"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
