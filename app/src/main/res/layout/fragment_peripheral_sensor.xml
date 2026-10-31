@@ -36,27 +36,6 @@
                 android:layout_marginTop="10dp"
                 android:text="@string/peripheral_mock" />
 
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/cadence_readout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textSize="13sp" />
-
-            <LinearLayout
-                android:id="@+id/peripheral_rows"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical" />
-
-            <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/angle_readout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textSize="13sp" />
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -80,6 +59,28 @@
                     android:layout_weight="1"
                     android:text="@string/sensor_native_remove" />
             </LinearLayout>
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/cadence_readout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/peripheral_rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/angle_readout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textSize="13sp" />
+
 
             <com.google.android.material.textview.MaterialTextView
                 android:layout_width="match_parent"
