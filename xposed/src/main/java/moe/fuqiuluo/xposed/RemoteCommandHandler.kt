@@ -180,6 +180,11 @@ object RemoteCommandHandler {
 
                 // 实验性：Binder 外周传感器模拟随会话开始推流（开关关闭时无动作）
                 BinderSensorMock.onSimulationChanged()
+                // GNSS 伪启动：GNSS 状态推送线程在路线未开时会睡 30s；
+                // 路线一开始就把它叫醒，用户不需要再进 GNSS 页点一次。
+                if (FakeLoc.enableMockGnss) {
+                    LocationServiceHook.wakeGnssPusher()
+                }
 
                 // 启动拉回：设备在室内无真实 GPS 回调时，目标应用会停在原有位置，
                 // 需手动摇杆/路线播放一次才到预定位置——这里 0.5s 后单次推送当前位置
