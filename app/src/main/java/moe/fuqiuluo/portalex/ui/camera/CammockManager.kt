@@ -249,7 +249,11 @@ object CammockManager {
         text.trim().ifBlank { "$name 执行完成" }
     }
 
-    /** 卸载私有实现；实现自己的 uninstall.sh 负责 root 模块清理。 */
+    /**
+     * 卸载私有实现；实现自己的 uninstall.sh 负责 root 模块清理。
+     * **只清实现目录**：`CameraMockStore.dir(context)`（filesDir/camera）里的录制视频、
+     * 路线元数据和标签不属于实现，绝不在这里删除。
+     */
     fun uninstall(context: Context): Result<String> = runCatching {
         if (!isInstalled(context)) return@runCatching "没有已安装实现"
         val dir = currentDir(context)
