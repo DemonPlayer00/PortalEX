@@ -1,7 +1,5 @@
-package moe.fuqiuluo.portalex.ui.anglecompass
+package moe.fuqiuluo.portalex.ui.sensor
 
-import moe.fuqiuluo.portalex.service.ConfigSync
-import moe.fuqiuluo.portalex.ext.cadenceMock
 import android.location.LocationManager
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -9,11 +7,17 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import moe.fuqiuluo.portalex.R
-import moe.fuqiuluo.portalex.databinding.FragmentAngleCompassBinding
+import moe.fuqiuluo.portalex.databinding.FragmentPeripheralSensorBinding
+import moe.fuqiuluo.portalex.ext.cadenceMock
+import moe.fuqiuluo.portalex.ext.cadenceScale
+import moe.fuqiuluo.portalex.ext.cadenceWobbleAmp
+import moe.fuqiuluo.portalex.ext.cadenceWobbleRnd
 import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
 import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.sensorNoise
+import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.ui.common.NumberRow
 import moe.fuqiuluo.portalex.ui.common.SensorNativeGate
 import moe.fuqiuluo.portalex.ui.common.renderNumberRows
@@ -21,30 +25,16 @@ import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.SensorNoise
 
 /**
- * **角度计和指南针模拟**页。
+ * 统一的外周传感器模拟页。
  *
- * ## 为什么这一页目前只有只读状态
- *
- * 用户口径：只搬「Setting」页里属于本域的**设置项**；噪声档不搬，与其它设置耦合的项也不搬。
- * 而「Setting」页里**没有**方向/角度类设置项 —— 本域的全部数值（磁场 σ、方向角 σ、
- * 旋转矢量 σ）都属于**传感器噪声档**，按口径留在「Calibration」页；把传感器事件替换掉的
- * 开关（Binder 外周传感器模拟）是全局项，也留在「Setting」页。
- *
- * ⇒ 这一页先作为**只读状态页**：把"当前注入的是什么"摊出来，并指明去哪改。以后真有本域
- * 设置项（例如朝向跟随策略）时直接往这里加行即可 —— 行模板与输入对话框已是三个页面共用的。
- *
- * ## 三路噪声各是什么
- *
- *  · **磁场 σ**（µT）：指南针的原始量，逐轴高斯抖动 ⇒ 罗盘抖动幅度
- *  · **方向角 σ**（rad）：融合出来的朝向抖动 ⇒ 表盘会不会飘
- *  · **旋转矢量 σ**：姿态四元数抖动 ⇒ AR / 精细方向类应用
+ * 以前步频/加速度与角度/指南针分成两个页面、两个开关；现在由一个开关同时
+ * 控制两侧的偏好与下发，避免出现“只开了一侧却以为全开”的状态分裂。
  */
-class AngleCompassFragment : Fragment() {
+class PeripheralSensorFragment : Fragment() {
 
-    private var _binding: FragmentAngleCompassBinding? = null
+    private var _binding: FragmentPeripheralSensorBinding? = null
     private val binding get() = _binding!!
 
-    /** 本域的三路噪声档（只读展示用；编辑仍在 Calibration 页） */
     private val angleItems
         get() = SensorNoise.ITEMS.filter {
             it.start == SensorNoise.MAG || it.start == SensorNoise.ORIENT || it.start == SensorNoise.ROTVEC
@@ -53,31 +43,37 @@ class AngleCompassFragment : Fragment() {
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View {
-        _binding = FragmentAngleCompassBinding.inflate(inflater, container, false)
+        _binding = FragmentPeripheralSensorBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        // 外周传感器模拟（本页那一侧）。**开关即下发**（不等下次握手）—— 否则用户会以为"点了没反应"。
-        // 另一侧的值原样带着走：这条命令一次带两侧，别把对方的状态覆盖成默认。
-        binding.orientationMockSwitch.isChecked = requireContext().orientationMock
-        binding.orientationMockSwitch.setOnCheckedChangeListener { _, checked ->
+        val ctx0 = requireContext()
+        // 旧版本可能留下“只开一侧”的偏好；统一页面按 OR 迁移成同一状态。
+        val unified = ctx0.cadenceMock || ctx0.orientationMock
+        if (ctx0.cadenceMock != ctx0.orientationMock) {
+            ctx0.cadenceMock = unified
+            ctx0.orientationMock = unified
+        }
+        binding.peripheralMockSwitch.isChecked = unified
+        binding.peripheralMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
             fun push() {
-                // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
                 val r = ConfigSync.setSensorMock(
                     ctx, ctx.getSystemService(LocationManager::class.java),
-                    ctx.cadenceMock, ctx.orientationMock
+                    ctx.cadenceMock, ctx.orientationMock,
                 )
                 if (!r.isOk) {
-                    android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(
+                        ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
             if (!checked) {
+                ctx.cadenceMock = false
                 ctx.orientationMock = false
                 push()
                 return@setOnCheckedChangeListener
@@ -85,35 +81,62 @@ class AngleCompassFragment : Fragment() {
             SensorNativeGate.ensure(
                 this,
                 onReady = {
+                    ctx.cadenceMock = true
                     ctx.orientationMock = true
                     push()
+                    refresh()
                 },
                 onBlocked = {
+                    ctx.cadenceMock = false
                     ctx.orientationMock = false
-                    binding.orientationMockSwitch.isChecked = false
+                    binding.peripheralMockSwitch.isChecked = false
                 },
             )
         }
         renderRows()
-        refreshStatus()
+        refresh()
     }
 
     override fun onResume() {
         super.onResume()
-        // 噪声档可能在 Calibration 页刚被改过（含一键校准会连磁场一起填），回来重读
         renderRows()
-        refreshStatus()
+        refresh()
     }
 
-    /**
-     * 本页的两条波动参数（%，默认 15）—— 与步频页同款行模板。
-     *
-     * 与**噪声档**是两层：噪声档（Calibration 页）是"每条事件的传感器本底噪声"，
-     * 这里调的是叠加在它之上的**慢漂**（波动强度）与**逐条随机**（随机区间）。
-     * 保存即下发，失败说出来（静默失败 = 改了没生效的骗人开关）。
-     */
     private fun renderRows() {
         val context = requireContext()
+        renderNumberRows(
+            layoutInflater, binding.cadenceRows,
+            listOf(
+                NumberRow(
+                    title = getString(R.string.cadence_scale),
+                    desc = getString(R.string.cadence_scale_desc),
+                    display = { "%.2f ×".format(context.cadenceScale) },
+                    current = { context.cadenceScale.toDouble() },
+                    hint = {
+                        "步频倍率：微调「步频 ↔ 速度」的关系。1 = 不调整（逐位保持原公式）；" +
+                            ">1 = 同速度下步频更高，<1 = 更低。范围 0.2~3.0"
+                    },
+                    commit = { value ->
+                        context.cadenceScale = value.toFloat()
+                        renderRows()
+                        refresh()
+                    },
+                ),
+                wobbleRow(
+                    getString(R.string.wobble_amp), getString(R.string.wobble_amp_desc),
+                    get = { context.cadenceWobbleAmp },
+                    set = { context.cadenceWobbleAmp = it },
+                    hint = getString(R.string.wobble_amp_hint_cadence),
+                ),
+                wobbleRow(
+                    getString(R.string.wobble_rnd), getString(R.string.wobble_rnd_desc),
+                    get = { context.cadenceWobbleRnd },
+                    set = { context.cadenceWobbleRnd = it },
+                    hint = getString(R.string.wobble_rnd_hint_cadence),
+                ),
+            ),
+        )
         renderNumberRows(
             layoutInflater, binding.angleRows,
             listOf(
@@ -150,23 +173,27 @@ class AngleCompassFragment : Fragment() {
             renderRows()
             val ctx = requireContext()
             val r = ConfigSync.setSensorMock(
-                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
+                ctx, ctx.getSystemService(LocationManager::class.java),
+                ctx.cadenceMock, ctx.orientationMock,
             )
             if (!r.isOk) {
-                android.widget.Toast.makeText(ctx, "波动参数下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(
+                    ctx, "波动参数下发失败：$r", android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
         },
     )
 
-    /** 只读：当前注入档位 + 注入开关 + 当前朝向。改值请去 Calibration / Setting */
-    private fun refreshStatus() {
+    private fun refresh() {
         val context = requireContext()
+        binding.cadenceReadout.text = getString(
+            R.string.cadence_readout,
+            "%.2f".format(context.speed),
+            FakeLoc.cadenceForSpeed(context.speed),
+        )
         val values = context.sensorNoise
-        val bearing = if (FakeLoc.hasBearings) {
-            "%.1f°".format(FakeLoc.bearing)
-        } else {
-            "未显式下发（跟随路线切线 / 摇杆方向）"
-        }
+        val bearing = if (FakeLoc.hasBearings) "%.1f°".format(FakeLoc.bearing)
+        else "未显式下发（跟随路线切线 / 摇杆方向）"
         binding.angleReadout.text = buildString {
             append(getString(R.string.angle_readout_injection, context.orientationMock))
             append('\n')

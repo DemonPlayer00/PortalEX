@@ -34,13 +34,9 @@
             android:icon="@drawable/ic_bolt_24"
             android:title="@string/menu_stamina" />
         <item
-            android:id="@+id/nav_cadence"
+            android:id="@+id/nav_peripheral_sensor"
             android:icon="@drawable/baseline_directions_walk_24"
-            android:title="@string/menu_cadence" />
-        <item
-            android:id="@+id/nav_angle_compass"
-            android:icon="@drawable/baseline_explore_24"
-            android:title="@string/menu_angle_compass" />
+            android:title="@string/menu_peripheral_sensor" />
         <item
             android:id="@+id/nav_settings"
             android:icon="@drawable/baseline_settings_24"

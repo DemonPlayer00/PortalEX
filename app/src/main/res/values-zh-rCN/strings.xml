@@ -59,6 +59,13 @@
     <string name="allow_landscape_desc">选择自动、竖屏或横屏。</string>
     <string name="menu_stamina">体力模拟</string>
     <!-- 入口名（抽屉 + 顶栏标题）：这一页管步频侧（步数计数器/检测器）的模拟 -->
+    <string name="menu_peripheral_sensor">外周传感器模拟</string>
+    <string name="peripheral_page_title">外周传感器模拟</string>
+    <string name="peripheral_page_desc">一个开关统一控制步频、加速度、陀螺、朝向与指南针模拟。</string>
+    <string name="peripheral_mock">启用外周传感器模拟</string>
+    <string name="peripheral_section_cadence">步频与加速度</string>
+    <string name="peripheral_section_angle">角度与指南针</string>
+    <string name="peripheral_footer">步频由速度和倍率决定，事件由系统自动分发。</string>
     <string name="menu_cadence">步频与加速度模拟</string>
     <string name="menu_angle_compass">角度与指南针模拟</string>
     <string name="stamina_enable">启用体力模拟</string>
