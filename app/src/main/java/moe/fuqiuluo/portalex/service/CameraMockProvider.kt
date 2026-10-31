@@ -68,9 +68,11 @@ class CameraMockProvider : ContentProvider() {
             }
 
             CameraMockProtocol.Method.DELETE_LOCAL_VIDEOS -> {
+                val only = extras?.getStringArray(CameraMockProtocol.Key.VIDEO_IDS)?.toSet()
                 var deleted = 0
                 CameraMockStore.routes(ctx).forEach { route ->
                     route.videos.forEach { video ->
+                        if (only != null && video.id !in only) return@forEach
                         if (CameraMockStore.videoFile(ctx, video.file).exists()) {
                             CameraMockStore.deleteVideoFile(ctx, video.file)
                             deleted++

@@ -54,12 +54,16 @@ internal object CameraMockServerContext {
         return reply?.getString(CameraMockProtocol.Key.ROUTES_JSON)
     }
 
-    fun deleteLocalVideos(): Int {
+    fun deleteLocalVideos(videoIds: Set<String>): Int {
+        if (videoIds.isEmpty()) return 0
         val ctx = get() ?: return 0
         val uri = Uri.parse("content://${CameraMockProtocol.AUTHORITY}")
+        val extras = Bundle().apply {
+            putStringArray(CameraMockProtocol.Key.VIDEO_IDS, videoIds.toTypedArray())
+        }
         val reply = runCatching {
             ctx.contentResolver.call(
-                uri, CameraMockProtocol.Method.DELETE_LOCAL_VIDEOS, null, Bundle()
+                uri, CameraMockProtocol.Method.DELETE_LOCAL_VIDEOS, null, extras
             )
         }.getOrNull()
         return reply?.getInt(CameraMockProtocol.Key.DELETED, 0) ?: 0

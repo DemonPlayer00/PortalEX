@@ -439,7 +439,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                     R.drawable.baseline_file_download_24,
                     getString(R.string.camera_import_archive)
                 ) {
-                    videoArchiveLauncher.launch(zipPickerIntent())
+                    if (ensureUploadReady()) videoArchiveLauncher.launch(zipPickerIntent())
                 }
             )
         )
@@ -452,7 +452,34 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
      */
 
 
+    /**
+     * 录制/导入的素材最终要由 system_server 持有唯一副本；没有完成 PortalEX
+     * 系统服务握手时无法上传，因此录制入口先做一次明确的门禁。
+     */
+    private fun ensureUploadReady(): Boolean {
+        val lm = mockServiceViewModel.locationManager
+        if (lm == null) {
+            Toast.makeText(
+                requireContext(),
+                "PortalEX 系统服务未就绪，无法上传录制素材",
+                Toast.LENGTH_LONG
+            ).show()
+            return false
+        }
+        runCatching { MockServiceHelper.tryInitService(lm) }
+        if (!MockServiceHelper.isServiceInit()) {
+            Toast.makeText(
+                requireContext(),
+                "PortalEX 未注入系统服务，录制素材无法上传；请检查模块作用域并重启",
+                Toast.LENGTH_LONG
+            ).show()
+            return false
+        }
+        return true
+    }
+
     private fun startRecordingFromMap() {
+        if (!ensureUploadReady()) return
         val locationManager = requireContext()
             .getSystemService(LocationManager::class.java)
         val locationOn = locationManager != null && (

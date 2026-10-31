@@ -58,6 +58,7 @@ object CameraMockProtocol {
         const val MANIFEST_JSON = "manifest_json"
         const val ROUTES_JSON = "routes_json"
         const val DELETED = "deleted"
+        const val VIDEO_IDS = "video_ids"
         const val HAS_POSITION = "has_position"
         const val LAT = "lat"
         const val LON = "lon"
