@@ -531,9 +531,20 @@ internal object SystemRuntimeChannel {
         }
     }
 
-    private fun isMi6RuntimeUnsupported(): Boolean =
-        Build.DEVICE.equals("sagit", ignoreCase = true) ||
-            Build.MODEL.equals("MI 6", ignoreCase = true)
+    /**
+     * 不用设备型号：按“Android 15 + LineageOS”这套 runtime sensor 实现判断。
+     * 实测该组合的 runtime JNI/native 注入会 SIGSEGV/SIGBUS；同版本其它 ROM
+     * 若需要强制开启，可用 debug.portalex.runtime_sensor=1 覆盖。
+     */
+    private fun isMi6RuntimeUnsupported(): Boolean {
+        if (Build.VERSION.SDK_INT != 35) return false
+        val lineage = runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java)
+                .invoke(null, "ro.lineage.version") as? String
+        }.getOrNull().orEmpty()
+        return lineage.isNotEmpty()
+    }
 
     /** 停投递并**立刻**把节拍交回 poll 路径（顺序不能反：先停泵再切时钟）。 */
     fun stopDelivery() {
