@@ -2,9 +2,7 @@ package moe.fuqiuluo.xposed.hooks.camera
 
 import android.net.LocalServerSocket
 import moe.fuqiuluo.xposed.utils.BinderUtils
-import moe.fuqiuluo.xposed.hooks.MotionClock
-import moe.fuqiuluo.xposed.utils.MotionEngine
-import moe.fuqiuluo.xposed.utils.StaminaRuntime
+import moe.fuqiuluo.xposed.hooks.RoutePositionSampler
 import android.net.LocalSocket
 import moe.fuqiuluo.xposed.camera.CameraMockSelection
 import moe.fuqiuluo.xposed.camera.CameraMockServerStore
@@ -227,12 +225,8 @@ internal object CameraMockSelectionServer {
         // 旧实现用 FakeLoc.lastLocation，路线播放期间不会跟着每一帧更新，
         // 选片会用到旧坐标（表现为"选片变了但位置对不上"）。
         val last = FakeLoc.lastLocation
-        val ahead = MotionEngine.positionAhead(
-            MotionClock.elapsedSinceBeatNanos() / 1e9,
-            FakeLoc.speed,
-            StaminaRuntime.multiplier(),
-        )
-        val sampled = if (ahead.moved) ahead.lat to ahead.lon else null
+        val sample = RoutePositionSampler.sample()
+        val sampled = if (sample.sampledAhead) sample.lat to sample.lon else null
         val currentValid = FakeLoc.latitude != 0.0 || FakeLoc.longitude != 0.0
         val lat = when {
             sampled != null -> sampled.first

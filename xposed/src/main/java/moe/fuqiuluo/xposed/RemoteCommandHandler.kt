@@ -9,6 +9,7 @@ import android.os.Process
 import android.os.SystemClock
 import moe.fuqiuluo.xposed.hooks.LocationServiceHook
 import moe.fuqiuluo.xposed.hooks.MotionClock
+import moe.fuqiuluo.xposed.hooks.RoutePositionSampler
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorNative
 import moe.fuqiuluo.xposed.utils.PortalProtocol.Cmd
@@ -378,21 +379,11 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.GET_LOCATION -> {
-                // 查询型取位：按"现在"采样一次路线，不写回 FakeLoc、不改变投递节奏。
-                // 摄像机调用会通过 CameraMockClient.position(fresh=true) 走到这里；
-                // 只回上一拍坐标会让选片落在 50ms 之前的点上。
-                val ahead = MotionEngine.positionAhead(
-                    MotionClock.elapsedSinceBeatNanos() / 1e9,
-                    FakeLoc.speed,
-                    StaminaRuntime.multiplier(),
-                )
-                if (ahead.moved) {
-                    rely.putDouble(Key.LAT, ahead.lat)
-                    rely.putDouble(Key.LON, ahead.lon)
-                } else {
-                    rely.putDouble(Key.LAT, FakeLoc.latitude)
-                    rely.putDouble(Key.LON, FakeLoc.longitude)
-                }
+                // 查询型取位：与 getCurrentLocation()/选片共用同一个只读采样接口。
+                // 只算位置，不写回 FakeLoc、不改变 MotionClock 的投递节奏。
+                val sample = RoutePositionSampler.sample()
+                rely.putDouble(Key.LAT, sample.lat)
+                rely.putDouble(Key.LON, sample.lon)
                 return true
             }
             Cmd.GET_LISTENER_SIZE -> {
