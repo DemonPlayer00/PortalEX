@@ -114,7 +114,7 @@ internal object CameraMockController {
         appSurfaces.addAll(outputs)
         selection = picked
         intercepting = true
-        Logger.info(
+        Logger.debug(
             "摄像头选片探针：pkg=${packageName ?: "-"} " +
                 "call=(${picked.queryLat},${picked.queryLon}) " +
                 "selected=${picked.pointName}/${picked.videoName} " +

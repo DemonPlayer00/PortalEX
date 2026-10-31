@@ -253,7 +253,7 @@ internal object CameraMockSelectionServer {
             last != null -> "lastLocation"
             else -> "none"
         }
-        Logger.info(
+        Logger.debug(
             "选片探针：source=$source request=($reqLat,$reqLon) " +
                 "current=(${FakeLoc.latitude},${FakeLoc.longitude}) " +
                 "lastLocation=(${last?.latitude},${last?.longitude}) used=($lat,$lon) tags=$tags"
@@ -263,7 +263,7 @@ internal object CameraMockSelectionServer {
         if (selected != null) {
             val nearest = selected.nearestDistanceM
             val delta = if (nearest.isNaN()) Double.NaN else selected.distanceM - nearest
-            Logger.info(
+            Logger.debug(
                 "选片探针：selected=${selected.pointName}/${selected.videoName} " +
                     "selPos=(${selected.selectedLat},${selected.selectedLon}) " +
                     "recordedAt=${selected.recordedAt} startMs=${selected.startMs} " +
@@ -271,7 +271,7 @@ internal object CameraMockSelectionServer {
                     "nearest=$nearest delta=$delta candidates=${selected.candidateCount}"
             )
             if (!delta.isNaN() && delta > 0.5) {
-                Logger.warn("选片探针：更近的候选未选中，距离差 ${"%.1f".format(delta)}m")
+                Logger.debug("选片探针：更近的候选未选中，距离差 ${"%.1f".format(delta)}m")
             }
         }
         if (selected == null) {
