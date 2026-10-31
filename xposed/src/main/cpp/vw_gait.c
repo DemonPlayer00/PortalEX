@@ -9,8 +9,8 @@
  * 因此这些函数不加锁 —— 它们与其他世界状态共享同一个临界区，别在这里补锁（pthread
  * 互斥量不可重入，会自死锁）。
  *
- * ⚠️ 步态波形是**反复实测校准过**的：`g_gait_steps = 9`（一个波形周期 = 9 步，
- * 由"波长 ×3"两次迭代而来）。改任何系数或相位推进都会直接改变应用侧步频读数。
+ * ⚠️ 步态波形现按**一步一个完整正弦波**（一正峰 + 一负峰）设置：
+ * `g_gait_steps = 1`。改相位推进或步态系数都会直接改变加速度波形。
  */
 #include <math.h>
 #include <stdio.h>
@@ -40,10 +40,9 @@ static const double SWAY_MIN_DEG = 0.5;
  * 频率与步频严格同源（cadenceForSpeed），因此 IMU 的周期峰与步事件是对齐的。 */
 static double g_gait_phase = 0.0;
 /* 一个波形周期 = 多少步（校准量）。
- * 原始波形是"一个周期 = 一步"。用户按"波长 ×3"迭代了两次：3 → **9**（本轮默认 9 步/周期）。
- * 这是**编译期常量**：不再有任何运行时校准入口（曾有一个读 /data/local/tmp 的临时口子，
- * 已按要求连同那个文件一起移除）。 */
-static int g_gait_steps = 9;
+ * 现在固定为 1：每一步一个完整正弦波（一正峰 + 一负峰）。
+ * 这是编译期常量，不做运行时校准。 */
+static int g_gait_steps = 1;
 static int g_gait_step_index = 0;         /* 周期内的第几步，用于轮转 PLL 目标相位 */
 static long long g_gait_anchor_ns = 0;   /* 最近一步的时间戳 */
 static long long g_gait_interval_ns = 0; /* 平滑后的步间隔（相位推进的节拍来源） */
@@ -159,7 +158,8 @@ void vw_advance_to(long long now) {
             if (cadence > 220.0) cadence = 220.0;
             step_hz = cadence / 60.0;
         }
-        /* 每步推进 2π/步数 ⇒ 一个波形周期正好是 g_gait_steps 步 */
+        /* 每步推进 2π/步数 ⇒ 一个波形周期正好是 g_gait_steps 步。
+         * 当前 g_gait_steps=1：每一步完成一正峰 + 一负峰。 */
         g_gait_phase += (2.0 * M_PI / (double) g_gait_steps) * step_hz * dt;
         if (g_gait_phase >= 2.0 * M_PI) g_gait_phase -= 2.0 * M_PI;
     }
@@ -179,7 +179,7 @@ void gait_note_step(long long ts) {
     if (g_gait_anchor_ns > 0) {
         long long iv = ts - g_gait_anchor_ns;
         /* 只接受合理步间隔（0.2~3 步/秒），异常值不参与平滑 */
-        if (iv > 330000000LL && iv < 5000000000LL) {
+        if (iv > 200000000LL && iv < 5000000000LL) {
             g_gait_interval_ns = g_gait_interval_ns > 0
                                          ? (g_gait_interval_ns * 3 + iv) / 4
                                          : iv;
@@ -192,11 +192,11 @@ void gait_note_step(long long ts) {
      * "额外一步"——实测 180 步/分被读成 202 步/分。小增益下几十步才纠完漂移，
      * 波形始终光滑，频率仍由实测步间隔推进（= 步频）。
      *
-     * 目标相位**逐步交替**：一个步幅周期里两个峰分别在 π/2 与 3π/2，
-     * 于是每一步都落在自己的那个峰上（而不是把相位硬拉回同一个点 —— 那会与
-     * "每步推进半个周期"打架，等于给频率加一个恒定偏置）。 */
-    double target = (double) ((g_gait_step_index % g_gait_steps) + 1) *
-                    (2.0 * M_PI / (double) g_gait_steps);
+     * 一步一个波形时固定对齐正峰 π/2；每步的负峰在其后半周期内自然出现。 */
+    double target = g_gait_steps <= 1
+            ? M_PI / 2.0
+            : (double) ((g_gait_step_index % g_gait_steps) + 1) *
+              (2.0 * M_PI / (double) g_gait_steps);
     double err = target - g_gait_phase;
     while (err > M_PI) err -= 2.0 * M_PI;
     while (err < -M_PI) err += 2.0 * M_PI;
@@ -209,14 +209,8 @@ void gait_note_step(long long ts) {
 /**
  * 当前步态加速度（设备坐标，m/s²）。静止时三项全 0。
  *
- * **纯正弦，一个波形周期 = 两步**（步幅相位，见 advance_one_tick）：`az = amp·sin φ`。
- * 即"只把原来的波长拉长一倍"，不做任何谐波加工。
- *
- * 已知后果（刻意保留，便于手动对比）：
- *   · 基频落在**步幅频率**（步频 / 2）。按"两步一周期"换算步频的估计器（FFT 取基频 ×2
- *     那类）读数会回落到真步频 —— 这正是要修的现象（实测读数 286 ≈ 2×143）。
- *   · 一个周期内只有**一个正峰**，所以纯峰值/阈值计数类估计器会读到**步频的一半**
- *     （每两步一个峰）。要两全就得补二次谐波（1 周期 = 1 步），本版按用户要求不做。
+ * **纯正弦，一个波形周期 = 一步**：`az = amp·sin φ`。
+ * 每一步有一个正峰与一个负峰，IMU 基频与步频一致（当前 g_gait_steps=1）。
  *
  * 三分量仍**几乎同相**（±0.05rad）：加速度**模长** sqrt(ax²+ay²+az²) 的形状才与 az 一致。
  * 踩过的坑：对称的 sin(2φ)（每步两个等高峰）→ 基频被读成 2× 步频；

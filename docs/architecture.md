@@ -121,7 +121,7 @@ PortalEX 是**一个 APK 两个身份**：既是用户界面（`:app`），又�
 | 单次生成上限 | 128 条（安全阀；正常一次只有几条） | `MAX_EVENTS_PER_CALL` |
 | 步事件过期窗口 | 2 s | `STALE_WINDOW_NS` |
 | 时间戳抖动 | 周期的 ±5%，钳 150µs~2ms，**严格不越过 now** | `jitter_ts` |
-| 步态波形 | 一个周期 = **9 步**（"波长 ×3"两次迭代而来） | `vw_gait.c` `g_gait_steps` |
+| 步态波形 | 一个周期 = **1 步**（一正峰 + 一负峰，IMU 基频 = 步频） | `vw_gait.c` `g_gait_steps` |
 | 噪声档 | 逐轴 σ（20 槽：σ 与陀螺零偏）+ 高丝动态值 | `vw_noise.c` / `SensorNoise.kt` |
 | install offsets | 7 项（relro 2 + poll 4 + enableDisable 1） | `InstallOffsets.kt` / `vw_internal.h` |
 | 载体 | deviceId `0x0FA0`、type `0x10000` | `SystemRuntimeChannel.kt` |
