@@ -59,6 +59,18 @@ class PeripheralSensorFragment : Fragment() {
             ctx0.orientationMock = unified
         }
         binding.peripheralMockSwitch.isChecked = unified
+        if (unified) {
+            // 默认开启时也要走门禁：库缺失就提示，不允许“开关看起来开着、native 实际没加载”。
+            SensorNativeGate.ensure(
+                this,
+                onReady = { refresh() },
+                onBlocked = {
+                    ctx0.cadenceMock = false
+                    ctx0.orientationMock = false
+                    binding.peripheralMockSwitch.isChecked = false
+                },
+            )
+        }
         binding.peripheralMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
             fun push() {
