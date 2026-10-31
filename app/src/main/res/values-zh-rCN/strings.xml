@@ -89,6 +89,16 @@
     <string name="sensor_native_check_failed">检查失败：%1$s</string>
     <string name="sensor_native_install_failed">释放失败：%1$s</string>
     <string name="sensor_native_restarting">库已释放，正在重启 system_server；系统恢复后请重新开启传感器模拟。</string>
+    <string name="sensor_native_update">立即更新库</string>
+    <string name="sensor_native_remove">移除自定义库</string>
+    <string name="sensor_native_update_message">使用 %1$s 把固定路径的传感器库替换为当前 APK 内的版本？运行中的 system_server 需重启后才会使用新库。</string>
+    <string name="sensor_native_remove_message">从 /data/local/tmp/portalex 删除自定义传感器库？当前 system_server 仍持有已映射的旧库，重启后才会停止加载；之后 native 传感器注入将不可用。</string>
+    <string name="sensor_native_updating">正在替换传感器库…</string>
+    <string name="sensor_native_removing">正在移除传感器库…</string>
+    <string name="sensor_native_updated">库已替换；重启 system_server 后生效。</string>
+    <string name="sensor_native_removed">库已移除；重启 system_server 后不再加载。</string>
+    <string name="sensor_native_update_failed">更新失败：%1$s</string>
+    <string name="sensor_native_remove_failed">移除失败：%1$s</string>
     <string name="sensor_native_restart_checkbox">释放后自动重启 system_server</string>
     <string name="sensor_native_restart_skipped">库已释放，但未自动重启 system_server。请手动重启后再开启传感器模拟。</string>
     <string name="sensor_native_restart_failed">库已释放，但 system_server 重启失败：%1$s</string>

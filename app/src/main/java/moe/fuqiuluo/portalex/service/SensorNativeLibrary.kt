@@ -67,6 +67,11 @@ object SensorNativeLibrary {
         )
     }
 
+    /** 删除固定库；当前 system_server 的已映射旧库不会立即卸载。 */
+    fun remove(context: Context): Result<Unit> = runCatching {
+        runSu(context, "rm -f '$DST' '$DST_TMP'; test ! -e '$DST'")
+    }
+
     /** 重启 zygote，使新的 system_server 重新加载固定路径。 */
     fun restartSystemServer(context: Context): Result<Unit> = runCatching {
         runSu(context, "setprop ctl.restart zygote")

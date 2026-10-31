@@ -38,26 +38,110 @@ object SensorNativeGate {
                 append(fragment.getString(R.string.sensor_native_message, ctx.suPath))
                 if (reason != null) append("\n\n").append(fragment.getString(R.string.sensor_native_check_failed, reason))
             }
-            val restartBox = android.widget.CheckBox(ctx).apply {
-                setText(R.string.sensor_native_restart_checkbox)
-                isChecked = true
-                val pad = (16 * resources.displayMetrics.density).toInt()
-                setPadding(pad, pad / 2, pad, 0)
+            showInstallPrompt(fragment, message) { restart ->
+                install(fragment, restart, onBlocked)
             }
-            MaterialAlertDialogBuilder(ctx)
-                .setTitle(R.string.sensor_native_title)
-                .setMessage(message)
-                .setView(restartBox)
-                .setCancelable(false)
-                .setPositiveButton(R.string.sensor_native_install) { _, _ ->
-                    install(fragment, restartBox.isChecked, onBlocked)
-                }
-                .setNegativeButton(R.string.cancel) { _, _ -> onBlocked() }
-                .show()
         }
     }
 
-    private fun install(fragment: Fragment, restart: Boolean, onBlocked: () -> Unit) {
+    /**
+     * “立即更新”：不做 same 检查，强制用当前 APK 的库替换固定文件。
+     * 复用与缺失库完全相同的安装提示、复选框和按钮，避免出现两套确认语义。
+     */
+    fun update(fragment: Fragment, onChanged: () -> Unit) {
+        val ctx = fragment.requireContext()
+        val message = fragment.getString(R.string.sensor_native_message, ctx.suPath)
+        showInstallPrompt(fragment, message) { restart ->
+            install(fragment, restart, onChanged, R.string.sensor_native_updated)
+        }
+    }
+
+    /** “移除自定义库”：删除固定文件；当前进程仍用旧映射，重启后才彻底不加载。 */
+    fun remove(fragment: Fragment, onRemoved: () -> Unit) {
+        val ctx = fragment.requireContext()
+        val restartBox = restartCheckBox(fragment, checked = true)
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle(R.string.sensor_native_title)
+            .setMessage(R.string.sensor_native_remove_message)
+            .setView(restartBox)
+            .setCancelable(false)
+            .setPositiveButton(R.string.sensor_native_remove) { _, _ ->
+                removeNow(fragment, restartBox.isChecked, onRemoved)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * 统一的安装/更新确认弹窗。message 由调用方传入，文案可在资源里调整；
+     * 结构（标题、复选框、按钮、取消语义）只有这一处。
+     */
+    private fun showInstallPrompt(
+        fragment: Fragment,
+        message: String,
+        onConfirm: (restart: Boolean) -> Unit,
+    ) {
+        val ctx = fragment.requireContext()
+        val restartBox = restartCheckBox(fragment, checked = true)
+        MaterialAlertDialogBuilder(ctx)
+            .setTitle(R.string.sensor_native_title)
+            .setMessage(message)
+            .setView(restartBox)
+            .setCancelable(false)
+            .setPositiveButton(R.string.sensor_native_install) { _, _ ->
+                onConfirm(restartBox.isChecked)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun restartCheckBox(fragment: Fragment, checked: Boolean): android.widget.CheckBox =
+        android.widget.CheckBox(fragment.requireContext()).apply {
+            setText(R.string.sensor_native_restart_checkbox)
+            isChecked = checked
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+        }
+
+    private fun removeNow(fragment: Fragment, restart: Boolean, onRemoved: () -> Unit) {
+        val ctx = fragment.requireContext()
+        val progress = MaterialAlertDialogBuilder(ctx)
+            .setTitle(R.string.sensor_native_title)
+            .setMessage(R.string.sensor_native_removing)
+            .setCancelable(false)
+            .show()
+        fragment.viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { SensorNativeLibrary.remove(ctx) }
+            progress.dismiss()
+            result.onFailure { t ->
+                showFailure(fragment, fragment.getString(
+                    R.string.sensor_native_remove_failed,
+                    SensorNativeLibrary.errorText(t),
+                ))
+                return@launch
+            }
+            onRemoved()
+            if (!restart) {
+                showFailure(fragment, fragment.getString(R.string.sensor_native_removed))
+                return@launch
+            }
+            Toast.makeText(ctx, R.string.sensor_native_restarting, Toast.LENGTH_LONG).show()
+            val restartResult = withContext(Dispatchers.IO) { SensorNativeLibrary.restartSystemServer(ctx) }
+            restartResult.onFailure { t ->
+                showFailure(fragment, fragment.getString(
+                    R.string.sensor_native_restart_failed,
+                    SensorNativeLibrary.errorText(t),
+                ))
+            }
+        }
+    }
+
+    private fun install(
+        fragment: Fragment,
+        restart: Boolean,
+        onBlocked: () -> Unit,
+        successNoRestartRes: Int = R.string.sensor_native_restart_skipped,
+    ) {
         val ctx = fragment.requireContext()
         val progress = MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.sensor_native_title)
@@ -76,7 +160,7 @@ object SensorNativeGate {
                 return@launch
             }
             if (!restart) {
-                showFailure(fragment, fragment.getString(R.string.sensor_native_restart_skipped))
+                showFailure(fragment, fragment.getString(successNoRestartRes))
                 onBlocked()
                 return@launch
             }
