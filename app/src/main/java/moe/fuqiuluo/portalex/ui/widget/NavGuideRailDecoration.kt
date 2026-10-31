@@ -82,18 +82,25 @@ class NavGuideRailDecoration(
         val radius = 1.7f * density
 
         // 只画蚂蚁点，不画贯穿的实线；端点离开屏幕时仍按内容坐标生成点阵。
-        // 圆点按固定步长铺满整条范围，并额外对齐可见菜单项中心。
+        // 关键：以每个菜单项中心（箭头）为锚点，锚点之间均分补点，
+        // 而不是先铺全局固定步长再额外插点。
+        val anchorYs = linkedSetOf<Float>()
+        anchorYs.add(startY)
+        anchorYs.add(endY)
+        rows.map { it.second.centerY() }.filter { it in startY..endY }.forEach(anchorYs::add)
+        val anchors = anchorYs.sorted()
         val dotYs = ArrayList<Float>()
-        var y = startY
-        while (y <= endY) {
-            dotYs.add(y)
-            y += step
+        anchors.forEachIndexed { index, y ->
+            if (index == 0) {
+                dotYs.add(y)
+            } else {
+                val prev = anchors[index - 1]
+                val gap = y - prev
+                val parts = max(1, round(gap / step).toInt())
+                for (k in 1..parts) dotYs.add(prev + gap * k / parts)
+            }
         }
-        rows.map { it.second.centerY() }.filter { it in startY..endY }.forEach { center ->
-            if (dotYs.none { abs(it - center) < 0.5f }) dotYs.add(center)
-        }
-        dotYs.sort()
-        // 只让条目之间的自由点闪烁；条目中心（箭头/支线所在处）必须始终有点。
+        // 只有锚点之间的自由点闪烁；箭头/条目中心必须始终有点。
         val rowCenters = rows.map { it.second.centerY() }
         val freeDots = dotYs.indices.filter { i ->
             rowCenters.none { abs(it - dotYs[i]) < 0.5f }
