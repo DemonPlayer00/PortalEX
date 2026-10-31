@@ -475,9 +475,8 @@ internal object SystemRuntimeChannel {
      */
     fun startDelivery(): Boolean {
         if (delivering) return true
-        // 结构性策略：runtime 是**实验特性，默认永不启用**。
-        // 不在 system_server 里按设备/ROM 条件猜测；只有显式调试开关才尝试。
-        // 这样生产路径不会调用 setRuntimeClock，也不会执行不安全的 native runtime。
+        // runtime 是默认投递通道；仅 debug.portalex.runtime_sensor=0 时退回 poll。
+        // 原生库必须原子 staged，禁止在 system_server 已 mmap 时 cp -f 覆盖。
         if (!isExperimentalRuntimeEnabled()) {
             if (!runtimeDisabledWarned) {
                 runtimeDisabledWarned = true
@@ -500,14 +499,15 @@ internal object SystemRuntimeChannel {
     }
 
     /**
-     * 运行时通道是实验开关：默认 false，只有显式 debug prop=1 才启用。
-     * 系统属性反射失败时按 false 处理（安全优先）。
+     * 运行时通道默认启用（它负责传感器投递的主路径）。
+     * `debug.portalex.runtime_sensor=0` 可显式退回 poll-only，用于排障。
+     * 属性读取失败时按启用处理；native 加载/注册失败会由后续 carrier/start 路径兜底。
      */
     internal fun isExperimentalRuntimeEnabled(): Boolean = runCatching {
         Class.forName("android.os.SystemProperties")
             .getMethod("get", String::class.java)
-            .invoke(null, "debug.portalex.runtime_sensor") == "1"
-    }.getOrDefault(false)
+            .invoke(null, "debug.portalex.runtime_sensor") != "0"
+    }.getOrDefault(true)
 
     /** 幂等启动：runtime 实验关闭时直接返回 false，不注册载体。 */
     fun ensureDelivery(): Boolean {
