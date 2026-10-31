@@ -240,8 +240,15 @@ internal object CameraMockSelectionServer {
             reply(client, "ERR\tno-simulated-position")
             return
         }
+        val source = when {
+            currentValid -> "current"
+            reqLat != null && reqLon != null -> "request"
+            last != null -> "lastLocation"
+            else -> "none"
+        }
         Logger.info(
-            "选片探针：request=($reqLat,$reqLon) current=(${FakeLoc.latitude},${FakeLoc.longitude}) " +
+            "选片探针：source=$source request=($reqLat,$reqLon) " +
+                "current=(${FakeLoc.latitude},${FakeLoc.longitude}) " +
                 "lastLocation=(${last?.latitude},${last?.longitude}) used=($lat,$lon) tags=$tags"
         )
         val selected = CameraMockServerStore.select(lat, lon, now, tags, session)
