@@ -86,6 +86,7 @@ import moe.fuqiuluo.portalex.bdmap.Poi
 import moe.fuqiuluo.portalex.bdmap.toPoi
 import moe.fuqiuluo.portalex.databinding.ActivityMainBinding
 import moe.fuqiuluo.portalex.ext.allowLandscape
+import moe.fuqiuluo.portalex.ext.suPath
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.orientationMode
 import moe.fuqiuluo.portalex.ext.ORIENTATION_AUTO
@@ -96,6 +97,10 @@ import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.DrawerGroupDivider
 import moe.fuqiuluo.portalex.ui.widget.NavGuideRailDecoration
+import moe.fuqiuluo.portalex.ui.widget.DrawerWarningDecoration
+import moe.fuqiuluo.portalex.ui.camera.CammockManager
+import moe.fuqiuluo.portalex.service.SensorNativeLibrary
+import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
@@ -122,6 +127,10 @@ class MainActivity : AppCompatActivity() {
     private var railActive = false
     private var railQueriedAt = 0L
     private var guideRailDecoration: NavGuideRailDecoration? = null
+    private var drawerWarningDecoration: DrawerWarningDecoration? = null
+    private var warningJob: Job? = null
+    private var suCheckedPath: String? = null
+    private var suUsable: Boolean? = null
 
     /* 侧栏副标题的逐字彩蛋：每次启动打乱，播完一轮再打乱 */
     private val subtitleLines = listOf(
@@ -408,6 +417,10 @@ class MainActivity : AppCompatActivity() {
                     )
                     menuView.addItemDecoration(rail)
                     guideRailDecoration = rail
+                    val warning = DrawerWarningDecoration()
+                    menuView.addItemDecoration(warning)
+                    drawerWarningDecoration = warning
+                    refreshDrawerWarnings()
                     // 颜色由装饰器在每次绘制时向这里要；这里再向 system_server 回读（节流 700ms）。
                     rail.activeProvider = {
                         val now = android.os.SystemClock.elapsedRealtime()
@@ -517,6 +530,54 @@ class MainActivity : AppCompatActivity() {
      * 用 is_start 命令回读（MockServiceHelper.isMockStart），
      * 不看 App 自己的任何开关镜像 —— 状态切换不在这里实现。
      */
+    /**
+     * 侧栏警告：sensor 库未释放、cammock 未安装、su 不可用时，对应入口画黄框。
+     * 状态来源：system_server 的 get_sensor_lib_state、App 的 cammock 安装状态、su 实测。
+     */
+    private fun refreshDrawerWarnings() {
+        if (!::binding.isInitialized) return
+        val navView = binding.navView
+        val app = this
+        warningJob?.cancel()
+        warningJob = lifecycleScope.launch {
+            val lm = mockServiceViewModel.locationManager
+                ?: getSystemService(LocationManager::class.java)
+            val sensorReplaced = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (lm != null && !MockServiceHelper.isServiceInit()) {
+                        MockServiceHelper.tryInitService(lm)
+                    }
+                    val state = lm?.let { MockServiceHelper.getSensorLibraryState(it) }
+                    state?.getBoolean(Key.SENSOR_LIB_REPLACED, false) ?: false
+                }.getOrDefault(false)
+            }
+            val cameraInstalled = withContext(Dispatchers.IO) {
+                runCatching { CammockManager.isInstalled(app) }.getOrDefault(false)
+            }
+            val path = app.suPath
+            val su = withContext(Dispatchers.IO) {
+                if (suCheckedPath == path && suUsable != null) {
+                    suUsable!!
+                } else {
+                    val ok = SensorNativeLibrary.canUseSu(app)
+                    suCheckedPath = path
+                    suUsable = ok
+                    ok
+                }
+            }
+            if (!isFinishing && !isDestroyed) {
+                val warnings = linkedSetOf<String>()
+                if (!sensorReplaced) navView.menu.findItem(R.id.nav_peripheral_sensor)?.title
+                    ?.toString()?.let(warnings::add)
+                if (!cameraInstalled) navView.menu.findItem(R.id.nav_camera_mock)?.title
+                    ?.toString()?.let(warnings::add)
+                if (!su) navView.menu.findItem(R.id.nav_settings)?.title
+                    ?.toString()?.let(warnings::add)
+                drawerWarningDecoration?.warningTitles = warnings
+            }
+        }
+    }
+
     private fun refreshGuideRail() {
         val lm = mockServiceViewModel.locationManager
         if (lm == null) {
@@ -709,6 +770,11 @@ class MainActivity : AppCompatActivity() {
         if (missing.isNotEmpty()) {
             requestPermissions(missing.toTypedArray(), REQUEST_STARTUP_PERMISSIONS)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::binding.isInitialized) refreshDrawerWarnings()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

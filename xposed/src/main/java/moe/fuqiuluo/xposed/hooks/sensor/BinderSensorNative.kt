@@ -22,6 +22,9 @@ internal object BinderSensorNative {
     @Volatile private var loadError = ""
     private val lock = Any()
 
+    /** 当前进程是否已成功加载固定库（状态查询用）。 */
+    val isLoaded: Boolean get() = loaded
+
     /** 最近一次装载失败的说明（诊断用） */
     fun lastLoadError(): String =
         "BinderSensorNative: load failed - ${loadError.ifEmpty { "unknown" }}"

@@ -394,6 +394,10 @@ object MockServiceHelper {
      * 诊断页数据源：向系统侧要一份数值总览（注入层状态、运动学、意图步频 vs 实际步频）。
      * 服务未握手时返回 null。
      */
+    /** system_server 固定 sensor 库是否已释放（以及是否已加载）。 */
+    fun getSensorLibraryState(locationManager: LocationManager): Bundle? =
+        query(locationManager, Cmd.GET_SENSOR_LIB_STATE)
+
     fun getSensorStatus(locationManager: LocationManager): Bundle? {
         if (!::randomKey.isInitialized) {
             return null

@@ -26,6 +26,7 @@ import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.LocConfig
 import moe.fuqiuluo.xposed.utils.SensorNoise
 import moe.fuqiuluo.xposed.utils.NetworkSimConfig
+import java.io.File
 import java.util.Collections
 import kotlin.random.Random
 
@@ -289,6 +290,15 @@ object RemoteCommandHandler {
             Cmd.GET_SENSOR_STATUS -> {
                 // 诊断页数值总览：注入层/运动学/步频意图 vs 实际的原始数值
                 BinderSensorMock.fillStatus(rely)
+                return true
+            }
+            Cmd.GET_SENSOR_LIB_STATE -> {
+                // App 侧入口黄框状态：固定库是否已经释放到 system_server、是否已加载。
+                rely.putBoolean(
+                    Key.SENSOR_LIB_REPLACED,
+                    File("/data/system/portalex/sensorlib/libportalsensor.so").isFile,
+                )
+                rely.putBoolean(Key.SENSOR_LIB_LOADED, BinderSensorNative.isLoaded)
                 return true
             }
             Cmd.IS_SENSOR_MOCK -> {
