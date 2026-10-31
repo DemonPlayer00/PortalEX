@@ -96,13 +96,13 @@ internal object CameraMockSelectionServer {
     }
 
     @Synchronized
-    private fun importPendingUpload(json: String? = null) {
-        val payload = json ?: CameraMockServerContext.appRoutes() ?: return
-        runCatching {
+    private fun importPendingUpload(json: String? = null): Boolean {
+        val payload = json ?: CameraMockServerContext.appRoutes() ?: return false
+        return runCatching {
             val routes = CameraMockCodec.decodeRoutes(payload)
-            if (routes.isEmpty()) return@runCatching
+            if (routes.isEmpty()) return@runCatching false
             val resolver = CameraMockServerContext.get()?.contentResolver
-                ?: return@runCatching
+                ?: return@runCatching false
             var copiedAll = true
             routes.forEach { route ->
                 route.videos.forEach { video ->
@@ -127,7 +127,7 @@ internal object CameraMockSelectionServer {
             if (!copiedAll) {
                 // 任何一条没落到系统库都不能删 app 本地副本；下次有变化再重试。
                 Logger.warn("选片服务：app 库导入不完整，保留本地副本，等待重试")
-                return@runCatching
+                return@runCatching false
             }
             CameraMockServerStore.save(routes)
             val keep = routes.flatMap { it.videos }.map { it.id }.toSet()
@@ -136,9 +136,11 @@ internal object CameraMockSelectionServer {
             // 只有在全部视频都确认落库后才删除 app 本地副本。
             val deleted = CameraMockServerContext.deleteLocalVideos(keep)
             Logger.info("选片服务：已请求 app 删除本地视频 $deleted 个")
+            true
         }.onFailure {
             Logger.warn("选片服务：provider 导入失败 ${it.message}")
-        }
+            false
+        }.getOrDefault(false)
     }
 
 
@@ -218,9 +220,12 @@ internal object CameraMockSelectionServer {
         if (line == "IMPORT_LIBRARY") {
             // app 主动上传：不经 /data/local/tmp 共享目录，直接通过 ContentProvider
             // 拉 routes/video fd，避免 app 对 shell_data_file 无写权限。
-            importPendingUpload()
+            val ok = importPendingUpload()
             val count = CameraMockServerStore.load().sumOf { it.videos.size }
-            reply(client, "OK\timported\t$count")
+            reply(
+                client,
+                if (ok) "OK\timported\t$count" else "ERR\timport-failed\t$count"
+            )
             return
         }
         val parts = line.split('\t')
