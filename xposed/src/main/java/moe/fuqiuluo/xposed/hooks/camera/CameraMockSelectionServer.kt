@@ -219,19 +219,47 @@ internal object CameraMockSelectionServer {
             reply(client, "ERR\tlocation-mock-off")
             return
         }
-        // 按需读取位置生成器最后一次更新的坐标，不做轮询。
-        val simulated = FakeLoc.lastLocation
-        if (simulated == null && reqLat == null && reqLon == null) {
+        // 当前表象位置：路线/摇杆/自动播放都只更新 FakeLoc.latitude/longitude；
+        // FakeLoc.lastLocation 是 Location 对象，路线播放期间不会跟着每一帧更新，
+        // 直接拿它选片会用到旧坐标（表现为"选片变了但位置对不上"）。
+        val last = FakeLoc.lastLocation
+        val currentValid = FakeLoc.latitude != 0.0 || FakeLoc.longitude != 0.0
+        val lat = when {
+            currentValid -> FakeLoc.latitude
+            reqLat != null && reqLon != null -> reqLat
+            last != null -> last.latitude
+            else -> null
+        }
+        val lon = when {
+            currentValid -> FakeLoc.longitude
+            reqLat != null && reqLon != null -> reqLon
+            last != null -> last.longitude
+            else -> null
+        }
+        if (lat == null || lon == null) {
             reply(client, "ERR\tno-simulated-position")
             return
         }
-        // **优先用此刻的表象位置**：请求里的 lat/lon 由 native 侧在打开相机那一刻带上，
-        // 路线播放过程中早就过期了；拿过期坐标选片，等于"走到哪都挑同一个点"。
-        val lat = simulated?.latitude ?: reqLat
-        val lon = simulated?.longitude ?: reqLon
-        Logger.info("选片服务：select lat=$lat lon=$lon tags=$tags")
+        Logger.info(
+            "选片探针：request=($reqLat,$reqLon) current=(${FakeLoc.latitude},${FakeLoc.longitude}) " +
+                "lastLocation=(${last?.latitude},${last?.longitude}) used=($lat,$lon) tags=$tags"
+        )
         val selected = CameraMockServerStore.select(lat, lon, now, tags, session)
         Logger.info("选片服务：select result=${selected?.videoId}")
+        if (selected != null) {
+            val nearest = selected.nearestDistanceM
+            val delta = if (nearest.isNaN()) Double.NaN else selected.distanceM - nearest
+            Logger.info(
+                "选片探针：selected=${selected.pointName}/${selected.videoName} " +
+                    "selPos=(${selected.selectedLat},${selected.selectedLon}) " +
+                    "recordedAt=${selected.recordedAt} startMs=${selected.startMs} " +
+                    "timeDelta=${selected.timeDistanceMs} dist=${selected.distanceM} " +
+                    "nearest=$nearest delta=$delta candidates=${selected.candidateCount}"
+            )
+            if (!delta.isNaN() && delta > 0.5) {
+                Logger.warn("选片探针：更近的候选未选中，距离差 ${"%.1f".format(delta)}m")
+            }
+        }
         if (selected == null) {
             reply(client, "ERR\tno-match package=$packageName")
             return

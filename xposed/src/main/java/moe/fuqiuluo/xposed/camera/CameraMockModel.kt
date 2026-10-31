@@ -106,7 +106,22 @@ data class CameraMockSelection(
     val durationMs: Long,
     val startMs: Long,
     /** 选取时该点距"当前表象位置"的球面距离（米），仅用于诊断展示 */
-    val distanceM: Double
+    val distanceM: Double,
+    /* ---- 选片探针字段（默认值保证旧调用/旧数据兼容） ---- */
+    /** 本次选片实际使用的查询坐标（wgs84）；NaN = 位置未知 */
+    val queryLat: Double = Double.NaN,
+    val queryLon: Double = Double.NaN,
+    /** 被选中视频轨迹点/锚点的坐标（wgs84） */
+    val selectedLat: Double = Double.NaN,
+    val selectedLon: Double = Double.NaN,
+    /** 被选中视频的录制墙钟时间；0 = 未知 */
+    val recordedAt: Long = 0L,
+    /** 录制时刻与本次查询时刻的"一天中时刻"距离；Long.MAX_VALUE = 无时间信息 */
+    val timeDistanceMs: Long = Long.MAX_VALUE,
+    /** 全部候选中的最小距离；NaN = 位置未知 */
+    val nearestDistanceM: Double = Double.NaN,
+    /** 参与本次比较的候选轨迹点数量 */
+    val candidateCount: Int = 0,
 )
 
 /** 预设标签。用户可在此基础上自由添加自定义标签（不做白名单限制）。 */

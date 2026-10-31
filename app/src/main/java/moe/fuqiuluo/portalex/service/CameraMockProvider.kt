@@ -17,6 +17,9 @@ import moe.fuqiuluo.xposed.camera.CameraMockCodec
 import moe.fuqiuluo.xposed.camera.CameraMockProtocol
 
 import java.io.FileNotFoundException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 摄像头模拟的**跨进程通道**（app 侧服务端）。
@@ -105,13 +108,31 @@ class CameraMockProvider : ContentProvider() {
             // 模块侧回传"这次拦到了什么"，供 Test 页观测（真机上日志常常拿不到）
             CameraMockProtocol.Method.REPORT -> {
                 val text = buildString {
+                    val callLat = extras?.getDouble(CameraMockProtocol.Key.QUERY_LAT, Double.NaN) ?: Double.NaN
+                    val callLon = extras?.getDouble(CameraMockProtocol.Key.QUERY_LON, Double.NaN) ?: Double.NaN
+                    val selLat = extras?.getDouble(CameraMockProtocol.Key.SELECTED_LAT, Double.NaN) ?: Double.NaN
+                    val selLon = extras?.getDouble(CameraMockProtocol.Key.SELECTED_LON, Double.NaN) ?: Double.NaN
+                    val dist = extras?.getDouble(CameraMockProtocol.Key.DISTANCE_M, -1.0) ?: -1.0
+                    val nearest = extras?.getDouble(CameraMockProtocol.Key.NEAREST_DISTANCE_M, Double.NaN) ?: Double.NaN
+                    val recordedAt = extras?.getLong(CameraMockProtocol.Key.RECORDED_AT, 0L) ?: 0L
+                    val timeDelta = extras?.getLong(CameraMockProtocol.Key.TIME_DISTANCE_MS, Long.MAX_VALUE)
+                        ?: Long.MAX_VALUE
                     append(stamp())
                     append(" pkg=").append(claimed ?: "-")
                     append(" point=").append(extras?.getString(CameraMockProtocol.Key.POINT_NAME) ?: "-")
                     append(" video=").append(extras?.getString(CameraMockProtocol.Key.VIDEO_NAME) ?: "-")
                     append(" start=").append((extras?.getLong(CameraMockProtocol.Key.START_MS, 0L) ?: 0L) / 1000)
-                    append("s dist=").append(extras?.getDouble(CameraMockProtocol.Key.DISTANCE_M, -1.0)?.toInt())
-                    append("m status=").append(extras?.getString(CameraMockProtocol.Key.STATUS) ?: "-")
+                    append("s call=").append(coord(callLat, callLon))
+                    append(" sel=").append(coord(selLat, selLon))
+                    append(" rec=").append(timeText(recordedAt))
+                    append(" dt=").append(if (timeDelta == Long.MAX_VALUE) "?" else "${timeDelta / 1000}s")
+                    append(" dist=").append(if (dist < 0) "?" else "${"%.1f".format(dist)}m")
+                    append(" nearest=").append(if (nearest.isNaN()) "?" else "${"%.1f".format(nearest)}m")
+                    if (!nearest.isNaN()) {
+                        append(" Δd=").append("%.1f".format(dist - nearest)).append("m")
+                    }
+                    append(" n=").append(extras?.getInt(CameraMockProtocol.Key.CANDIDATE_COUNT, 0) ?: 0)
+                    append(" status=").append(extras?.getString(CameraMockProtocol.Key.STATUS) ?: "-")
                 }
                 CameraMockRuntime.noteReport(text)
                 Bundle().apply { putString(CameraMockProtocol.Key.STATUS, "ok") }
@@ -184,4 +205,10 @@ class CameraMockProvider : ContentProvider() {
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
+    private fun coord(lat: Double, lon: Double): String =
+        if (lat.isNaN() || lon.isNaN()) "?" else "%.6f,%.6f".format(lat, lon)
+
+    private fun timeText(ms: Long): String =
+        if (ms <= 0L) "?" else SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(ms))
+
 }
