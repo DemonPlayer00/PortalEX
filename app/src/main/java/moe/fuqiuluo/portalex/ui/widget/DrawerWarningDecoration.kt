@@ -55,12 +55,9 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
                 val border = MaterialShapeDrawable(shape.shapeAppearanceModel).apply {
                     setStroke(1f * density, Color.parseColor("#FFFFC107"))
                     fillColor = android.content.res.ColorStateList.valueOf(Color.TRANSPARENT)
-                    bounds = Rect(
-                        insetX.toInt(),
-                        -outsetY.toInt(),
-                        child.width - insetX.toInt(),
-                        child.height + outsetY.toInt(),
-                    )
+                    // 直接用菜单项背景 drawable 的真实 bounds，不能再加内缩/外扩，
+                    // 否则黄框和选中项的胶囊高亮之间会出现空隙。
+                    bounds = Rect(shape.bounds)
                 }
                 c.save()
                 c.translate(child.left.toFloat(), child.top.toFloat())
