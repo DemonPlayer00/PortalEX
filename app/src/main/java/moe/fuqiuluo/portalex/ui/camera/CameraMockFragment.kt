@@ -253,6 +253,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     private fun autoUploadLibrary(context: android.content.Context? = null) {
         val ctx = context ?: if (uiAlive()) requireContext() else return
+        // 没装实现时仍允许录制/管理素材；不要每次都调用 upload.sh 再弹一条失败提示。
+        if (!CammockManager.isInstalled(ctx)) return
         val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
         Executors.newSingleThreadExecutor().execute {
             val result = CammockManager.upload(ctx)
@@ -776,7 +778,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val context = requireContext()
         MaterialAlertDialogBuilder(context)
             .setTitle("卸载摄像头实现")
-            .setMessage("将删除 app 私有目录和 /data/local/tmp/portalex/cammock 下的实现文件。")
+            .setMessage("只删除摄像头实现文件；已录制的视频、路线和标签等素材会保留。")
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton("卸载") { _, _ ->
                 binding.cameraMockUninstallImpl.isEnabled = false
@@ -874,7 +876,13 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         binding.cameraMockImplStatus.text = if (installed) {
             "实现已安装：" + CammockManager.supportedModels(ctx).joinToString().ifBlank { "未声明机型" }
         } else {
-            "需要安装摄像头实现（按机型适配）"
+            "未安装摄像头实现（按机型适配）· 仍可录制/导入视频素材"
+        }
+        binding.switchCameraMock.isEnabled = installed
+        binding.switchCameraMock.alpha = if (installed) 1f else 0.5f
+        if (!installed && ctx.cameraMockEnabled) {
+            // 实现可能被外部卸载，残留的开关状态要清掉；素材库不受影响。
+            ctx.cameraMockEnabled = false
         }
         binding.cameraMockImportImpl.text = if (installed) "重导" else "导入"
         binding.cameraMockUpdateImpl.visibility = if (installed) View.VISIBLE else View.GONE
@@ -886,10 +894,11 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val enabled = context.cameraMockEnabled
         val filter = context.cameraMockTagFilter
         val videos = points.sumOf { it.videos.size }
-        binding.cameraMockStatus.text = if (enabled) {
-            "已启动 · ${points.size} 个点位 / $videos 段视频"
-        } else {
-            "未启动 · ${points.size} 个点位 / $videos 段视频"
+        binding.cameraMockStatus.text = when {
+            !CammockManager.isInstalled(context) ->
+                "未安装实现 · 可录制/管理 ${points.size} 个点位 / $videos 段视频"
+            enabled -> "已启动 · ${points.size} 个点位 / $videos 段视频"
+            else -> "未启动 · ${points.size} 个点位 / $videos 段视频"
         }
 
 
