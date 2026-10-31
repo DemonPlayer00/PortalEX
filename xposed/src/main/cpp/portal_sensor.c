@@ -953,6 +953,13 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
         JNIEnv *env, jobject thiz, jint type, jlong period_ns, jlong batch_ns, jboolean active) {
     (void) env;
     (void) thiz;
+    /*
+     * runtime 通道接管期间不写 channel hint：MI6 上该路径在 SensorService
+     * 线程出现无法解释的 SIGSEGV（vw_set_channel_hint 内）。runtime 使用
+     * 默认栅格即可；poll 路径仍保留精确的 rate hint。
+     */
+    if (g_rt_clock) return;
+    if (type <= 0 || type > 4096) return;
     vw_set_channel_hint((int32_t) type, (long long) period_ns, (long long) batch_ns,
                         active ? 1 : 0);
 }
