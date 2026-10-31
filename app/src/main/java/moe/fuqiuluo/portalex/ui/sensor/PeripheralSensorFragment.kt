@@ -105,6 +105,20 @@ class PeripheralSensorFragment : Fragment() {
                 },
             )
         }
+        binding.sensorNativeUpdate.setOnClickListener {
+            SensorNativeGate.update(this) {
+                refresh()
+            }
+        }
+        binding.sensorNativeRemove.setOnClickListener {
+            SensorNativeGate.remove(this) {
+                val ctx = requireContext()
+                ctx.cadenceMock = false
+                ctx.orientationMock = false
+                binding.peripheralMockSwitch.isChecked = false
+                refresh()
+            }
+        }
         renderRows()
         refresh()
     }
