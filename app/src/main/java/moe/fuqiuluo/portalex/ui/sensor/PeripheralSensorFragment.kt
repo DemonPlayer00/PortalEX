@@ -106,7 +106,7 @@ class PeripheralSensorFragment : Fragment() {
     private fun renderRows() {
         val context = requireContext()
         renderNumberRows(
-            layoutInflater, binding.cadenceRows,
+            layoutInflater, binding.peripheralRows,
             listOf(
                 NumberRow(
                     title = getString(R.string.cadence_scale),
@@ -135,11 +135,6 @@ class PeripheralSensorFragment : Fragment() {
                     set = { context.cadenceWobbleRnd = it },
                     hint = getString(R.string.wobble_rnd_hint_cadence),
                 ),
-            ),
-        )
-        renderNumberRows(
-            layoutInflater, binding.angleRows,
-            listOf(
                 wobbleRow(
                     getString(R.string.wobble_amp), getString(R.string.wobble_amp_desc),
                     get = { context.orientationWobbleAmp },
@@ -154,6 +149,7 @@ class PeripheralSensorFragment : Fragment() {
                 ),
             ),
         )
+
     }
 
     private fun wobbleRow(
@@ -195,8 +191,6 @@ class PeripheralSensorFragment : Fragment() {
         val bearing = if (FakeLoc.hasBearings) "%.1f°".format(FakeLoc.bearing)
         else "未显式下发（跟随路线切线 / 摇杆方向）"
         binding.angleReadout.text = buildString {
-            append(getString(R.string.angle_readout_injection, context.orientationMock))
-            append('\n')
             angleItems.forEach { item ->
                 append(item.title).append('：').append(SensorNoise.formatItem(item, values))
                 append(' ').append(item.unit).append('\n')
