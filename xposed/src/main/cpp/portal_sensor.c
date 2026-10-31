@@ -475,7 +475,11 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
 }
 
 static long run_target(int idx, void *self, portal_sensor_event_t *events, size_t count) {
+    /* vtable 槽可能属于与当前实例不匹配的 target；越界/空指针必须先拒绝，
+     * 否则 MI6 上会从 g_targets 越界读到垃圾 orig 并 SIGSEGV。 */
+    if (idx < 0 || idx >= g_target_count) return 0;
     ps_target_t *t = &g_targets[idx];
+    if (t->orig == NULL) return 0;
     long n = t->orig(self, events, count);
     return post_process(events, n, count);
 }
