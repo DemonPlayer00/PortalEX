@@ -26,7 +26,7 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         color = Color.parseColor("#FFFFC107")
-        strokeWidth = 2f
+        strokeWidth = 1f
     }
 
     override fun onDrawOver(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
@@ -34,13 +34,18 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
         menuView = parent
         if (warningTitles.isEmpty()) return
         val density = parent.resources.displayMetrics.density
-        paint.strokeWidth = 1.8f * density
-        val insetX = 8f * density
-        val insetY = 5f * density
-        val radius = 8f * density
+        paint.strokeWidth = 1f * density
+        val insetX = 5f * density
+        val insetY = 4f * density
+        val fallbackRadius = 24f * density
+        val outline = android.graphics.Outline()
         for (i in 0 until parent.childCount) {
             val child = parent.getChildAt(i)
             if (titleOf(child) !in warningTitles) continue
+            child.background?.getOutline(outline)
+            // NavigationView 的 item 背景是 MaterialShapeDrawable：直接取它的
+            // outline 半径，黄框才能跟着胶囊按钮的圆角走。
+            val radius = outline.radius.takeIf { it > 0f } ?: fallbackRadius
             val rect = RectF(
                 child.left + insetX,
                 child.top + insetY,
