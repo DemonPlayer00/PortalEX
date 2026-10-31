@@ -93,8 +93,13 @@ class NavGuideRailDecoration(
             if (dotYs.none { abs(it - center) < 0.5f }) dotYs.add(center)
         }
         dotYs.sort()
-        val hidden = if (dotYs.isEmpty()) -1 else
-            ((SystemClock.uptimeMillis() / 140L) % dotYs.size).toInt()
+        // 只让条目之间的自由点闪烁；条目中心（箭头/支线所在处）必须始终有点。
+        val rowCenters = rows.map { it.second.centerY() }
+        val freeDots = dotYs.indices.filter { i ->
+            rowCenters.none { abs(it - dotYs[i]) < 0.5f }
+        }
+        val hidden = if (freeDots.isEmpty()) -1 else
+            freeDots[((SystemClock.uptimeMillis() / 140L) % freeDots.size).toInt()]
         dotYs.forEachIndexed { i, dotY ->
             if (i != hidden) c.drawCircle(railX, dotY, radius, dotPaint)
         }

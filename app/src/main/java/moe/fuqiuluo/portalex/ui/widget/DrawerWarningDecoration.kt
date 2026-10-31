@@ -40,8 +40,9 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
         if (warningTitles.isEmpty()) return
         val density = parent.resources.displayMetrics.density
         paint.strokeWidth = 1f * density
-        val insetX = 5f * density
-        val insetY = 4f * density
+        // 菜单项自身有左右留白；警告框比 item 更窄、略向外扩高，避免“过宽、过矮”。
+        val insetX = 8f * density
+        val outsetY = 4f * density
         val fallbackRadius = 24f * density
         val outline = android.graphics.Outline()
         for (i in 0 until parent.childCount) {
@@ -54,7 +55,12 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
                 val border = MaterialShapeDrawable(shape.shapeAppearanceModel).apply {
                     setStroke(1f * density, Color.parseColor("#FFFFC107"))
                     fillColor = android.content.res.ColorStateList.valueOf(Color.TRANSPARENT)
-                    bounds = Rect(0, 0, child.width, child.height)
+                    bounds = Rect(
+                        insetX.toInt(),
+                        -outsetY.toInt(),
+                        child.width - insetX.toInt(),
+                        child.height + outsetY.toInt(),
+                    )
                 }
                 c.save()
                 c.translate(child.left.toFloat(), child.top.toFloat())
@@ -65,9 +71,9 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
                 val radius = outline.radius.takeIf { it > 0f } ?: fallbackRadius
                 val rect = RectF(
                     child.left + insetX,
-                    child.top + insetY,
+                    child.top - outsetY,
                     child.right - insetX,
-                    child.bottom - insetY,
+                    child.bottom + outsetY,
                 )
                 c.drawRoundRect(rect, radius, radius, paint)
             }
