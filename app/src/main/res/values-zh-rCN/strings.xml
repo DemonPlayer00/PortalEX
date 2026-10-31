@@ -83,8 +83,8 @@
     <string name="orientation_mock">外周传感器模拟（角度与指南针侧）</string>
     <string name="orientation_mock_desc">模拟加速度、陀螺和磁场，用于朝向。</string>
     <string name="sensor_native_title">传感器 native 库</string>
-    <string name="sensor_native_message">启动外周传感器模拟前，PortalEX 需要把 libportalsensor.so 释放给系统服务。\n\n将使用设置页指定的 root 命令（%1$s）：复制到 /data/local/tmp/portalex、设置 SELinux 上下文，然后重启 system_server。\n\n继续？</string>
-    <string name="sensor_native_install">释放并重启</string>
+    <string name="sensor_native_message">启动外周传感器模拟前，PortalEX 需要把 libportalsensor.so 释放给系统服务。\n\n将使用设置页指定的 root 命令（%1$s）：复制到 /data/local/tmp/portalex 并设置 SELinux 上下文。是否重启 system_server 由下方复选框决定。</string>
+    <string name="sensor_native_install">释放</string>
     <string name="sensor_native_installing">正在释放 native 库…</string>
     <string name="sensor_native_check_failed">检查失败：%1$s</string>
     <string name="sensor_native_install_failed">释放失败：%1$s</string>

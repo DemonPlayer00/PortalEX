@@ -80,8 +80,8 @@
     <string name="orientation_mock">Peripheral sensor mock (angle/compass)</string>
     <string name="orientation_mock_desc">Simulate accelerometer, gyroscope and magnetic field for heading.</string>
     <string name="sensor_native_title">Sensor native library</string>
-    <string name="sensor_native_message">Before starting peripheral sensor simulation, PortalEX must release libportalsensor.so to the system service.\n\nThis uses the root command configured in Settings (%1$s): copy to /data/local/tmp/portalex, set SELinux context, then restart system_server.\n\nContinue?</string>
-    <string name="sensor_native_install">Release and restart</string>
+    <string name="sensor_native_message">Before starting peripheral sensor simulation, PortalEX must release libportalsensor.so to the system service.\n\nThis uses the root command configured in Settings (%1$s): copy to /data/local/tmp/portalex and set the SELinux context. Whether to restart system_server is controlled by the checkbox below.</string>
+    <string name="sensor_native_install">Release</string>
     <string name="sensor_native_installing">Releasing native library…</string>
     <string name="sensor_native_check_failed">Check failed: %1$s</string>
     <string name="sensor_native_install_failed">Release failed: %1$s</string>
