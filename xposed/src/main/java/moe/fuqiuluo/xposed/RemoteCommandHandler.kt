@@ -378,8 +378,21 @@ object RemoteCommandHandler {
                 return true
             }
             Cmd.GET_LOCATION -> {
-                rely.putDouble(Key.LAT, FakeLoc.latitude)
-                rely.putDouble(Key.LON, FakeLoc.longitude)
+                // 查询型取位：按"现在"采样一次路线，不写回 FakeLoc、不改变投递节奏。
+                // 摄像机调用会通过 CameraMockClient.position(fresh=true) 走到这里；
+                // 只回上一拍坐标会让选片落在 50ms 之前的点上。
+                val ahead = MotionEngine.positionAhead(
+                    MotionClock.elapsedSinceBeatNanos() / 1e9,
+                    FakeLoc.speed,
+                    StaminaRuntime.multiplier(),
+                )
+                if (ahead.moved) {
+                    rely.putDouble(Key.LAT, ahead.lat)
+                    rely.putDouble(Key.LON, ahead.lon)
+                } else {
+                    rely.putDouble(Key.LAT, FakeLoc.latitude)
+                    rely.putDouble(Key.LON, FakeLoc.longitude)
+                }
                 return true
             }
             Cmd.GET_LISTENER_SIZE -> {
