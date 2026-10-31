@@ -480,7 +480,7 @@ static long run_target(int idx, void *self, portal_sensor_event_t *events, size_
     if (idx < 0 || idx >= MAX_TARGETS || idx >= g_target_count) return 0;
     ps_target_t *t = &g_targets[idx];
     if (t->orig == NULL || !addr_is_executable((uintptr_t) t->orig)) {
-        LOGE("run_target: invalid orig for target %d (%p)", idx, (void *) t->orig);
+        // 热路径不要在这里打日志：MI6 的 poll 线程曾在下游 log PLT 上崩溃。
         return 0;
     }
     long n = t->orig(self, events, count);
