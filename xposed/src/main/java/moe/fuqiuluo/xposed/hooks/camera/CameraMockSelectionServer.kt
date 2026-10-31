@@ -2,6 +2,9 @@ package moe.fuqiuluo.xposed.hooks.camera
 
 import android.net.LocalServerSocket
 import moe.fuqiuluo.xposed.utils.BinderUtils
+import moe.fuqiuluo.xposed.hooks.MotionClock
+import moe.fuqiuluo.xposed.utils.MotionEngine
+import moe.fuqiuluo.xposed.utils.StaminaRuntime
 import android.net.LocalSocket
 import moe.fuqiuluo.xposed.camera.CameraMockSelection
 import moe.fuqiuluo.xposed.camera.CameraMockServerStore
@@ -219,18 +222,27 @@ internal object CameraMockSelectionServer {
             reply(client, "ERR\tlocation-mock-off")
             return
         }
-        // 当前表象位置：路线/摇杆/自动播放都只更新 FakeLoc.latitude/longitude；
-        // FakeLoc.lastLocation 是 Location 对象，路线播放期间不会跟着每一帧更新，
-        // 直接拿它选片会用到旧坐标（表现为"选片变了但位置对不上"）。
+        // 当前表象位置：优先**立即向路线采样一次**（只计算、不写回 FakeLoc，
+        // 也不改变 MotionClock 的投递节奏）；路线未播放时退回当前镜像坐标。
+        // 旧实现用 FakeLoc.lastLocation，路线播放期间不会跟着每一帧更新，
+        // 选片会用到旧坐标（表现为"选片变了但位置对不上"）。
         val last = FakeLoc.lastLocation
+        val ahead = MotionEngine.positionAhead(
+            MotionClock.elapsedSinceBeatNanos() / 1e9,
+            FakeLoc.speed,
+            StaminaRuntime.multiplier(),
+        )
+        val sampled = if (ahead.moved) ahead.lat to ahead.lon else null
         val currentValid = FakeLoc.latitude != 0.0 || FakeLoc.longitude != 0.0
         val lat = when {
+            sampled != null -> sampled.first
             currentValid -> FakeLoc.latitude
             reqLat != null && reqLon != null -> reqLat
             last != null -> last.latitude
             else -> null
         }
         val lon = when {
+            sampled != null -> sampled.second
             currentValid -> FakeLoc.longitude
             reqLat != null && reqLon != null -> reqLon
             last != null -> last.longitude
@@ -241,6 +253,7 @@ internal object CameraMockSelectionServer {
             return
         }
         val source = when {
+            sampled != null -> "motion-sample"
             currentValid -> "current"
             reqLat != null && reqLon != null -> "request"
             last != null -> "lastLocation"
