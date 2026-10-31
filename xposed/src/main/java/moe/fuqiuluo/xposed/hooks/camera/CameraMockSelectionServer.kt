@@ -171,10 +171,19 @@ internal object CameraMockSelectionServer {
     private fun peerUidOf(client: LocalSocket): Int =
         runCatching { client.peerCredentials?.uid ?: -1 }.getOrDefault(-1)
 
+    /** MI6 HAL-overlay 实现的独立 frame producer（可选安装）。 */
+    private val producerUid: Int by lazy {
+        runCatching {
+            CameraMockServerContext.get()?.packageManager
+                ?.getPackageUid("moe.fuqiuluo.cammockproducer", 0)
+        }.getOrNull() ?: -1
+    }
+
     private fun peerAllowed(uid: Int): Boolean {
         if (uid < 0) return false
         if (uid == 0 || uid == android.os.Process.SYSTEM_UID) return true
         if (uid == BinderUtils.moduleOwnerUid()) return true
+        if (uid == producerUid) return true
         return uid == AID_MEDIA || uid == AID_CAMERASERVER
     }
 

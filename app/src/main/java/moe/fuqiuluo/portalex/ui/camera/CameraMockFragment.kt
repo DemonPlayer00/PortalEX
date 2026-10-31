@@ -261,9 +261,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             ?.map { it.name }
             .orEmpty()
         Executors.newSingleThreadExecutor().execute {
-            // 非模块型实现（OnePlus provider）优先直接同步到 system_server；
-            // 成功时 system_server 已持有唯一副本，并会删除 app 本地视频。
-            val systemSynced = !CammockManager.isModule(ctx) && CameraMockSyncClient.importLibrary()
+            // 所有实现都优先同步到 system_server；成功时 system_server 持有唯一副本，
+            // 并删除 app 本地视频。MI6 的 producer 也改为从标准选片接口取 fd。
+            val systemSynced = CameraMockSyncClient.importLibrary()
             val result = if (systemSynced) {
                 // system_server 已确认全部视频落库；删除同步前的 app 本地副本。
                 localBefore.forEach { CameraMockStore.deleteVideoFile(ctx, it) }
