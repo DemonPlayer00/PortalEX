@@ -1,5 +1,7 @@
 package moe.fuqiuluo.xposed.hooks.sensor
 
+import android.os.Build
+
 import moe.fuqiuluo.xposed.utils.MethodHook
 import moe.fuqiuluo.xposed.utils.MethodHookParam
 import moe.fuqiuluo.xposed.utils.Logger
@@ -459,6 +461,7 @@ internal object SystemRuntimeChannel {
     private val valueScratch = HashMap<Int, FloatArray>()
 
     @Volatile private var delivering = false
+    @Volatile private var mi6Warned = false
     @Volatile private var pumpFrames = 0L
     @Volatile private var pumpEvents = 0L
 
@@ -472,6 +475,18 @@ internal object SystemRuntimeChannel {
      */
     fun startDelivery(): Boolean {
         if (delivering) return true
+        // MI6/LineageOS 22 实测：调用 BinderSensorNative.setRuntimeClock 时
+        // system_server 在 JNI 入口 SIGSEGV（PortalSensorPump，pc=0x9300）。
+        // 该设备的 runtime sensor 通道不可用；保留 poll 路径，避免整个系统进程崩溃。
+        if (isMi6RuntimeUnsupported()) {
+            if (!mi6Warned) {
+                mi6Warned = true
+                phase = "disabled-mi6"
+                lastError = "MI6 runtime sensor channel disabled"
+                Logger.warn("SystemRuntimeChannel: MI6 runtime sensor JNI 不可用，使用 poll 路径")
+            }
+            return false
+        }
         if (!carrierReady) return false
         return runCatching {
             BinderSensorNative.setRuntimeClock(true)
@@ -500,6 +515,10 @@ internal object SystemRuntimeChannel {
         if (ensureCarrier() == 0) return false
         return startDelivery()
     }
+
+    private fun isMi6RuntimeUnsupported(): Boolean =
+        Build.DEVICE.equals("sagit", ignoreCase = true) ||
+            Build.MODEL.equals("MI 6", ignoreCase = true)
 
     /** 停投递并**立刻**把节拍交回 poll 路径（顺序不能反：先停泵再切时钟）。 */
     fun stopDelivery() {
