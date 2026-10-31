@@ -191,4 +191,39 @@ class CameraMockSelectorTest {
         )!!
         assertEquals("a", sticky.videoId)
     }
+    @Test
+    fun `选片探针记录查询坐标与选中轨迹点`() {
+        val picked = CameraMockSelector.select(
+            manifest(), pTiananmen.lat, pTiananmen.lon, Random(1), nowMs = 0L
+        )!!
+        assertEquals(pTiananmen.lat, picked.queryLat, 1e-9)
+        assertEquals(pTiananmen.lon, picked.queryLon, 1e-9)
+        assertEquals(pTiananmen.lat, picked.selectedLat, 1e-9)
+        assertEquals(pTiananmen.lon, picked.selectedLon, 1e-9)
+        assertEquals(0.0, picked.nearestDistanceM, 1e-3)
+        assertEquals(0.0, picked.distanceM, 1e-3)
+        assertTrue(picked.candidateCount > 0)
+    }
+
+    @Test
+    fun `路线探针记录最近候选与选中候选的距离差`() {
+        val day = 24L * 60L * 60L * 1000L
+        val hour = 60L * 60L * 1000L
+        val now = 200L * day + 12L * hour
+        val near = CameraRoute(
+            "near", "near", 39.9087, 116.3975, 0L,
+            listOf(CameraVideo("near-v", "near", "near.mp4", 10_000, emptyList(), 0L))
+        )
+        val far = CameraRoute(
+            "far", "far", 39.9500, 116.3975, 0L,
+            listOf(CameraVideo("far-v", "far", "far.mp4", 10_000, emptyList(), 0L))
+        )
+        val sel = CameraMockSelectionEngine.selectRoutes(
+            listOf(near, far), 39.9087, 116.3975, emptyList(), nowMs = now, random = Random(1)
+        )!!
+        assertEquals("near-v", sel.videoId)
+        assertEquals(sel.nearestDistanceM, sel.distanceM, 1e-6)
+        assertEquals(2, sel.candidateCount)
+    }
+
 }

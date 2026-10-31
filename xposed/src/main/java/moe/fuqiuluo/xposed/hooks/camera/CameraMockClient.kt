@@ -168,6 +168,14 @@ internal object CameraMockClient {
                 putString(CameraMockProtocol.Key.VIDEO_ID, selection.videoId)
                 putLong(CameraMockProtocol.Key.START_MS, selection.startMs)
                 putDouble(CameraMockProtocol.Key.DISTANCE_M, selection.distanceM)
+                putDouble(CameraMockProtocol.Key.QUERY_LAT, selection.queryLat)
+                putDouble(CameraMockProtocol.Key.QUERY_LON, selection.queryLon)
+                putDouble(CameraMockProtocol.Key.SELECTED_LAT, selection.selectedLat)
+                putDouble(CameraMockProtocol.Key.SELECTED_LON, selection.selectedLon)
+                putLong(CameraMockProtocol.Key.RECORDED_AT, selection.recordedAt)
+                putLong(CameraMockProtocol.Key.TIME_DISTANCE_MS, selection.timeDistanceMs)
+                putDouble(CameraMockProtocol.Key.NEAREST_DISTANCE_M, selection.nearestDistanceM)
+                putInt(CameraMockProtocol.Key.CANDIDATE_COUNT, selection.candidateCount)
             }
         }
         // 上报不该挡着摄像头：丢到预热线程上去做（失败也只是少一条观测记录）

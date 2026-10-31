@@ -59,6 +59,8 @@ object CameraMockSelectionEngine {
     data class Candidate(
         val pointId: String,
         val pointName: String,
+        val lat: Double,
+        val lon: Double,
         val video: CameraVideo,
         val startMs: Long,
         val distanceM: Double,
@@ -82,6 +84,7 @@ object CameraMockSelectionEngine {
         nowMs: Long? = null,
     ): CameraMockSelection? {
         if (candidates.isEmpty()) return null
+        val nearestDistance = candidates.minOf { it.distanceM }
         val chosen = if (lat == null || lon == null) {
             val timed = nearestTimeCandidates(candidates, nowMs)
             val pool = timed.ifEmpty { candidates }
@@ -109,6 +112,14 @@ object CameraMockSelectionEngine {
             durationMs = video.durationMs,
             startMs = start,
             distanceM = chosen.distanceM,
+            queryLat = lat ?: Double.NaN,
+            queryLon = lon ?: Double.NaN,
+            selectedLat = chosen.lat,
+            selectedLon = chosen.lon,
+            recordedAt = video.recordedAt,
+            timeDistanceMs = if (nowMs != null) timeOfDayDistanceMs(video.recordedAt, nowMs) else Long.MAX_VALUE,
+            nearestDistanceM = nearestDistance,
+            candidateCount = candidates.size,
         )
     }
 
@@ -126,6 +137,9 @@ object CameraMockSelectionEngine {
         }
         if (hits.isEmpty()) return null
         val now = nowMs ?: 0L
+        val nearestDistance = if (lat == null || lon == null) Double.NaN
+        else hits.minOf { WorldMath.haversine(lat, lon, it.first.lat, it.first.lon) }
+        val candidateCount = hits.sumOf { it.second.size }
         val chosen = if (lat == null || lon == null) {
             val flat = hits.flatMap { (point, videos) -> videos.map { point to it } }
             val timed = if (nowMs == null) emptyList() else flat.filter { it.second.recordedAt > 0L }
@@ -163,6 +177,14 @@ object CameraMockSelectionEngine {
             durationMs = video.durationMs,
             startMs = randomStartMs(video.durationMs, random),
             distanceM = distance,
+            queryLat = lat ?: Double.NaN,
+            queryLon = lon ?: Double.NaN,
+            selectedLat = point.lat,
+            selectedLon = point.lon,
+            recordedAt = video.recordedAt,
+            timeDistanceMs = if (nowMs != null) timeOfDayDistanceMs(video.recordedAt, now) else Long.MAX_VALUE,
+            nearestDistanceM = nearestDistance,
+            candidateCount = candidateCount,
         )
     }
 
@@ -281,6 +303,15 @@ object CameraMockSelectionEngine {
             durationMs = chosen.video.durationMs,
             startMs = start,
             distanceM = chosen.distanceM,
+            queryLat = lat ?: Double.NaN,
+            queryLon = lon ?: Double.NaN,
+            selectedLat = chosen.lat,
+            selectedLon = chosen.lon,
+            recordedAt = chosen.video.recordedAt,
+            timeDistanceMs = chosen.timeMs,
+            nearestDistanceM = if (lat == null || lon == null) Double.NaN
+            else candidates.minOf { it.distanceM },
+            candidateCount = candidates.size,
         )
     }
 

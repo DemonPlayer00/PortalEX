@@ -67,6 +67,14 @@ object CameraMockProtocol {
         const val POINT_NAME = "point_name"
         const val START_MS = "start_ms"
         const val DISTANCE_M = "distance_m"
+        const val QUERY_LAT = "query_lat"
+        const val QUERY_LON = "query_lon"
+        const val SELECTED_LAT = "selected_lat"
+        const val SELECTED_LON = "selected_lon"
+        const val RECORDED_AT = "recorded_at"
+        const val TIME_DISTANCE_MS = "time_distance_ms"
+        const val NEAREST_DISTANCE_M = "nearest_distance_m"
+        const val CANDIDATE_COUNT = "candidate_count"
         const val STATUS = "status"
     }
 
