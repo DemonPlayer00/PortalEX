@@ -475,14 +475,7 @@ static long post_process(portal_sensor_event_t *buf, long n, size_t cap) {
 }
 
 static long run_target(int idx, void *self, portal_sensor_event_t *events, size_t count) {
-    /* vtable 槽可能属于与当前实例不匹配的 target；越界/空指针必须先拒绝，
-     * 否则 MI6 上会从 g_targets 越界读到垃圾 orig 并 SIGSEGV。 */
-    if (idx < 0 || idx >= MAX_TARGETS || idx >= g_target_count) return 0;
     ps_target_t *t = &g_targets[idx];
-    if (t->orig == NULL || !addr_is_executable((uintptr_t) t->orig)) {
-        // 热路径不要在这里打日志：MI6 的 poll 线程曾在下游 log PLT 上崩溃。
-        return 0;
-    }
     long n = t->orig(self, events, count);
     return post_process(events, n, count);
 }
@@ -608,15 +601,10 @@ static int do_install(const jlong *o, int olen) {
         int av = (__system_property_get("debug.portalex.accviapoll", avh) > 0 && avh[0] == '0');
         vw_set_acc_via_poll(!av);
     }
-    /*
-     * 采样率观测槽永久停用：MI6/LineageOS 上只要挂上 enableDisable，
-     * ps_calling_uid -> ps_dlopen_libbinder -> dlsym 就会把 system_server
-     * 打到非法 pc（SIGSEGV）。不再读取 debug.portalex.ratehook，避免调试
-     * 属性残留再次打开这条路径；频率观测继续由纯 Java 的 SensorRateProbe 承担。
-     */
-    int ratehook = 0;
+    char rhv[PROP_VALUE_MAX] = {0};
+    int ratehook = (__system_property_get("debug.portalex.ratehook", rhv) > 0 && rhv[0] == '1');
     if (!ratehook) {
-        LOGI("sampling-rate observer: permanently parked");
+        LOGI("sampling-rate observer: parked (debug.portalex.ratehook != 1)");
     } else if (olen > MAX_TARGETS + 2 && o[MAX_TARGETS + 2] != 0) {
         uintptr_t en_addr = g_base + (uintptr_t) o[MAX_TARGETS + 2];
         if (!addr_is_executable(en_addr)) {
@@ -645,18 +633,10 @@ static int do_install(const jlong *o, int olen) {
 /* JNI                                                                 */
 /* ------------------------------------------------------------------ */
 
-/* 显式注册 native 方法，避免 ART 自动解析到陈旧/失效的 JNI trampoline。 */
-static int register_runtime_clock(JNIEnv *env);
-
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    (void) vm;
     (void) reserved;
     vw_init();
-    JNIEnv *env = NULL;
-    if ((*vm)->GetEnv(vm, (void **) &env, JNI_VERSION_1_6) == JNI_OK && env != NULL) {
-        register_runtime_clock(env);
-    } else {
-        LOGE("JNI_OnLoad: GetEnv failed; native methods stay auto-bound");
-    }
     LOGI("native layer loaded (pid=%d)", getpid());
     return JNI_VERSION_1_6;
 }
@@ -773,63 +753,6 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock(JNIEnv 
     g_rt_clock = v;
     LOGI("delivery clock -> %s (poll path %s)", v ? "runtime" : "poll",
          v ? "suppress-only" : "inject+suppress");
-}
-
-/*
- * 只注册最容易暴露“自动绑定失效”的入口。
- *
- * MI6 的 tombstone：第一次调用 setRuntimeClock 时 ART JNI trampoline
- * 跳到 pc=0x9300（不在 libportalsensor.so 映射内），说明自动符号解析拿到了
- * 失效入口。RegisterNatives 在 System.load 阶段绑定到当前库里的函数地址，
- * 不再依赖后续 dlsym/缓存。
- */
-static int register_runtime_clock(JNIEnv *env) {
-    jclass cls = (*env)->FindClass(
-        env, "moe/fuqiuluo/xposed/hooks/sensor/BinderSensorNative");
-    if (cls == NULL) {
-        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-        LOGE("RegisterNatives: BinderSensorNative class not found");
-        return 0;
-    }
-    JNINativeMethod method = {
-        "setRuntimeClock",
-        "(Z)V",
-        (void *) Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock
-    };
-    jint rc = (*env)->RegisterNatives(env, cls, &method, 1);
-    if (rc != JNI_OK) {
-        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-        LOGE("RegisterNatives(setRuntimeClock) failed rc=%d", (int) rc);
-        (*env)->DeleteLocalRef(env, cls);
-        return 0;
-    }
-    LOGI("RegisterNatives: setRuntimeClock -> %p",
-         (void *) Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock);
-    (*env)->DeleteLocalRef(env, cls);
-    return 1;
-}
-
-/**
- * Java 侧在 System.load 后调用：用当前对象的 jclass 注册 native 方法。
- * JNI_OnLoad 的 FindClass 看不到 LspModuleClassLoader 里的模块类，
- * 因此必须由持有 BinderSensorNative 的 Java 侧把 class 传进来。
- */
-JNIEXPORT jboolean JNICALL
-Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_registerNativeMethods(
-        JNIEnv *env, jobject thiz) {
-    (void) thiz;
-    jclass cls = (*env)->GetObjectClass(env, thiz);
-    if (cls == NULL) return JNI_FALSE;
-    JNINativeMethod method = {
-        "setRuntimeClock",
-        "(Z)V",
-        (void *) Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock
-    };
-    jint rc = (*env)->RegisterNatives(env, cls, &method, 1);
-    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-    (*env)->DeleteLocalRef(env, cls);
-    LOGI("RegisterNatives(jclass): setRuntimeClock rc=%d", (int) rc);
-    return rc == JNI_OK ? JNI_TRUE : JNI_FALSE;
 }
 
 /**
@@ -960,13 +883,6 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setChannelHint(
         JNIEnv *env, jobject thiz, jint type, jlong period_ns, jlong batch_ns, jboolean active) {
     (void) env;
     (void) thiz;
-    /*
-     * runtime 通道接管期间不写 channel hint：MI6 上该路径在 SensorService
-     * 线程出现无法解释的 SIGSEGV（vw_set_channel_hint 内）。runtime 使用
-     * 默认栅格即可；poll 路径仍保留精确的 rate hint。
-     */
-    if (g_rt_clock) return;
-    if (type <= 0 || type > 4096) return;
     vw_set_channel_hint((int32_t) type, (long long) period_ns, (long long) batch_ns,
                         active ? 1 : 0);
 }

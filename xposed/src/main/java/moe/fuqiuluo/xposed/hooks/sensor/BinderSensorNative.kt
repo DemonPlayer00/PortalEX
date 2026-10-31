@@ -47,12 +47,6 @@ internal object BinderSensorNative {
                     System.loadLibrary("portalsensor")
                 }
                 loaded = true
-                val registered = runCatching { registerNativeMethods() }.getOrDefault(false)
-                if (!registered) {
-                    Logger.warn("BinderSensorNative: RegisterNatives(jclass) failed; setRuntimeClock stays auto-bound")
-                } else {
-                    Logger.info("BinderSensorNative: RegisterNatives(jclass) ok")
-                }
                 Logger.info("BinderSensorNative: loaded ($path)")
             } catch (t: Throwable) {
                 loadFailed = true
@@ -134,12 +128,6 @@ internal object BinderSensorNative {
      * 先问 supportsMessageQueues，真时调 vtable 的 `pollFmq`）。只挂 `poll`
      * 等于挂在一条没人走的路上——实测就是这个结果。两套都挂，两种 HAL 形态都覆盖。
      */
-    /**
-     * 由 Java 侧在 System.load 后调用，用当前 jclass 注册 native 方法。
-     * JNI_OnLoad 的 FindClass 看不到模块 classloader；不能依赖它。
-     */
-    external fun registerNativeMethods(): Boolean
-
     external fun install(offsets: LongArray): Boolean
 
     /** 带契约校验的装载入口（调用方一律走这个，不要直接调 [install]） */
