@@ -253,16 +253,29 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     private fun autoUploadLibrary(context: android.content.Context? = null) {
         val ctx = context ?: if (uiAlive()) requireContext() else return
-        // 没装实现时仍允许录制/管理素材；不要每次都调用 upload.sh 再弹一条失败提示。
-        if (!CammockManager.isInstalled(ctx)) return
         val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
+        if (ids.isEmpty()) return
         Executors.newSingleThreadExecutor().execute {
-            val result = CammockManager.upload(ctx)
+            // 非模块型实现（OnePlus provider）优先直接同步到 system_server；
+            // 成功时 system_server 已持有唯一副本，并会删除 app 本地视频。
+            val systemSynced = !CammockManager.isModule(ctx) && CameraMockSyncClient.importLibrary()
+            val result = if (systemSynced) {
+                Result.success(ids.size)
+            } else if (CammockManager.isInstalled(ctx)) {
+                CammockManager.upload(ctx)
+            } else {
+                Result.failure(IllegalStateException("未安装摄像头实现"))
+            }
             main.post {
                 result.onSuccess { n ->
                     CameraMockUploadState.markUploaded(ctx, ids)
                     if (!uiAlive()) return@onSuccess
-                    Toast.makeText(ctx, "已通过 cammock 上传 $n 段视频", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        ctx,
+                        if (systemSynced) "素材已同步到系统库 $n 段"
+                        else "已通过 cammock 上传 $n 段视频",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }.onFailure {
                     CameraMockUploadState.markFailed(ctx, ids)
                     if (!uiAlive()) return@onFailure
