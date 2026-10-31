@@ -54,79 +54,79 @@ class NavGuideRailDecoration(
     override fun onDrawOver(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
         super.onDrawOver(c, parent, state)
         menuView = parent
-        val anchors = collectAnchors(parent)
-        if (anchors.isEmpty()) return
+        val density = parent.resources.displayMetrics.density
+        this.density = density
+        val rows = collectRows(parent)
+        val scroll = parent.computeVerticalScrollOffset().toFloat()
 
-        density = parent.resources.displayMetrics.density
+        // 端点可能在滚动后离开屏幕：用内容坐标缓存，之后按当前滚动量还原。
+        rows.firstOrNull { it.first == startTitle }?.let {
+            startContentY = it.second.centerY() + scroll
+        }
+        rows.firstOrNull { it.first == endTitle }?.let {
+            endContentY = it.second.centerY() + scroll
+        }
+        val startY = rows.firstOrNull { it.first == startTitle }?.second?.centerY()
+            ?: if (startContentY.isFinite()) startContentY - scroll else Float.NaN
+        val endY = rows.firstOrNull { it.first == endTitle }?.second?.centerY()
+            ?: if (endContentY.isFinite()) endContentY - scroll else Float.NaN
+        if (!startY.isFinite() || !endY.isFinite() || endY < startY) return
+
         val color = if (activeProvider?.invoke() == true) COLOR_ACTIVE else COLOR_IDLE
         railPaint.strokeWidth = 2f * density
-        // 左侧留出呼吸空间：蚂蚁线不贴屏幕/抽屉边缘
-        val railX = 12f * density
-        val stubEnd = 19f * density
-        val step = 9f * parent.resources.displayMetrics.density
-        val radius = 1.7f * parent.resources.displayMetrics.density
-
         railPaint.color = color
         dotPaint.color = color
+        val railX = 12f * density
+        val stubEnd = 19f * density
+        val step = 9f * density
+        val radius = 1.7f * density
 
-        // 圆点按菜单项位置对齐：每个条目中心必有一个点，条目之间按步长均分补点。
-        // 这样支线永远正对着一个圆点，不需要任何“接上去”的补线。
-        val dotYs = ArrayList<Float>(anchors.size * 4)
-        anchors.forEachIndexed { index, anchor ->
-            val y = anchor.centerY()
-            if (index == 0) {
-                dotYs.add(y)
-            } else {
-                val prev = anchors[index - 1].centerY()
-                val gap = y - prev
-                val parts = max(1, round(gap / step).toInt())
-                for (k in 1..parts) dotYs.add(prev + gap * k / parts)
-            }
-        }
+        // 主线一次画完，不依赖端点是否还在可见区域。
+        c.drawLine(railX, startY, railX, endY, railPaint)
 
-        // 缺口只在两根支线之间的点里轮转：连接处始终可见，动画依旧一次只藏一个点
-        val freeDots = dotYs.indices.filter { i ->
-            anchors.none { abs(it.centerY() - dotYs[i]) < 0.5f }
+        // 圆点按固定步长铺满整条线，并额外对齐可见菜单项中心。
+        val dotYs = ArrayList<Float>()
+        var y = startY
+        while (y <= endY) {
+            dotYs.add(y)
+            y += step
         }
-        val hidden = if (freeDots.isEmpty()) {
-            -1
-        } else {
-            freeDots[((SystemClock.uptimeMillis() / 140L) % freeDots.size).toInt()]
+        rows.map { it.second.centerY() }.filter { it in startY..endY }.forEach { center ->
+            if (dotYs.none { abs(it - center) < 0.5f }) dotYs.add(center)
         }
-        dotYs.forEachIndexed { i, y ->
-            if (i == hidden) return@forEachIndexed
-            c.drawCircle(railX, y, radius, dotPaint)
+        dotYs.sort()
+        val hidden = if (dotYs.isEmpty()) -1 else
+            ((SystemClock.uptimeMillis() / 140L) % dotYs.size).toInt()
+        dotYs.forEachIndexed { i, dotY ->
+            if (i != hidden) c.drawCircle(railX, dotY, radius, dotPaint)
         }
         if (parent.isShown) parent.postInvalidateOnAnimation()
 
-        // 每个菜单项一条短支线；端点：起点圆点，二类功能用朝右的等边三角形
-        anchors.forEachIndexed { index, anchor ->
-            val itemY = anchor.centerY()
+        // 支线只画当前可见的菜单项；标题决定是否用箭头。
+        rows.forEach { (title, rect) ->
+            val itemY = rect.centerY()
+            if (itemY !in startY..endY) return@forEach
             c.drawLine(railX, itemY, stubEnd, itemY, railPaint)
-            val title = titles.getOrNull(index)
-            if (title != null && title in class2Titles) {
+            if (title in class2Titles) {
                 drawArrowHead(c, stubEnd, itemY, dotPaint)
             } else {
-                c.drawCircle(stubEnd, itemY, 2.2f * parent.resources.displayMetrics.density, dotPaint)
+                c.drawCircle(stubEnd, itemY, 2.2f * density, dotPaint)
             }
         }
     }
 
-    private var titles: List<String> = emptyList()
+    private var startContentY = Float.NaN
+    private var endContentY = Float.NaN
 
-    /** 收集从起点到终点的菜单项在列表坐标系里的纵向范围。 */
-    private fun collectAnchors(parent: RecyclerView): List<RectF> {
+    /** 当前可见的菜单项（标题 + 屏幕坐标）。 */
+    private fun collectRows(parent: RecyclerView): List<Pair<String, RectF>> {
         val rows = ArrayList<Pair<String, RectF>>()
         for (i in 0 until parent.childCount) {
             val item = parent.getChildAt(i)
             val title = titleOf(item) ?: continue
             rows += title to RectF(0f, item.top.toFloat(), 0f, item.bottom.toFloat())
         }
-        val from = rows.indexOfFirst { it.first == startTitle }
-        val to = rows.indexOfFirst { it.first == endTitle }
-        if (from < 0 || to < 0 || to < from) return emptyList()
-        titles = rows.subList(from, to + 1).map { it.first }
-        return rows.subList(from, to + 1).map { it.second }
+        return rows
     }
 
     private fun titleOf(view: View): String? = when (view) {

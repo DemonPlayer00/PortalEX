@@ -415,11 +415,12 @@ class MainActivity : AppCompatActivity() {
                             R.id.nav_stamina, R.id.nav_peripheral_sensor
                         ).mapNotNull { navView.menu.findItem(it)?.title?.toString() }.toSet(),
                     )
-                    menuView.addItemDecoration(rail)
-                    guideRailDecoration = rail
+                    // 先加警告框，再加蚂蚁线：后者最后绘制，保证蚂蚁线永远在黄框上层。
                     val warning = DrawerWarningDecoration()
                     menuView.addItemDecoration(warning)
                     drawerWarningDecoration = warning
+                    menuView.addItemDecoration(rail)
+                    guideRailDecoration = rail
                     refreshDrawerWarnings()
                     // 颜色由装饰器在每次绘制时向这里要；这里再向 system_server 回读（节流 700ms）。
                     rail.activeProvider = {
