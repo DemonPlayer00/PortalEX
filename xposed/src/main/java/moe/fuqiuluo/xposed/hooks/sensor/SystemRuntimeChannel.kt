@@ -478,7 +478,8 @@ internal object SystemRuntimeChannel {
         // MI6/LineageOS 22 实测：调用 BinderSensorNative.setRuntimeClock 时
         // system_server 在 JNI 入口 SIGSEGV（PortalSensorPump，pc=0x9300）。
         // 该设备的 runtime sensor 通道不可用；保留 poll 路径，避免整个系统进程崩溃。
-        if (isMi6RuntimeUnsupported()) {
+        val override = runtimeSensorOverride()
+        if (override == false || (override != true && isMi6RuntimeUnsupported())) {
             if (!mi6Warned) {
                 mi6Warned = true
                 phase = "disabled-mi6"
@@ -514,6 +515,20 @@ internal object SystemRuntimeChannel {
         if (delivering) return true
         if (ensureCarrier() == 0) return false
         return startDelivery()
+    }
+
+    /** 调试逃生口：debug.portalex.runtime_sensor=0/1；null = 按系统条件。 */
+    private fun runtimeSensorOverride(): Boolean? {
+        val raw = runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java)
+                .invoke(null, "debug.portalex.runtime_sensor") as? String
+        }.getOrNull()
+        return when (raw) {
+            "1" -> true
+            "0" -> false
+            else -> null
+        }
     }
 
     private fun isMi6RuntimeUnsupported(): Boolean =
