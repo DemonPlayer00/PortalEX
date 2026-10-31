@@ -461,7 +461,6 @@ internal object SystemRuntimeChannel {
     private val valueScratch = HashMap<Int, FloatArray>()
 
     @Volatile private var delivering = false
-    @Volatile private var runtimeDisabledWarned = false
     @Volatile private var pumpFrames = 0L
     @Volatile private var pumpEvents = 0L
 
@@ -475,22 +474,18 @@ internal object SystemRuntimeChannel {
      */
     fun startDelivery(): Boolean {
         if (delivering) return true
-        // runtime 是默认投递通道；仅 debug.portalex.runtime_sensor=0 时退回 poll。
-        // 原生库必须原子 staged，禁止在 system_server 已 mmap 时 cp -f 覆盖。
-        if (!isExperimentalRuntimeEnabled()) {
-            if (!runtimeDisabledWarned) {
-                runtimeDisabledWarned = true
-                phase = "poll-only"
-                lastError = "runtime sensor disabled (poll-only)"
-                Logger.info("SystemRuntimeChannel: runtime 通道默认关闭，使用 poll 路径")
-            }
-            return false
-        }
         if (!carrierReady) return false
         return runCatching {
             BinderSensorNative.setRuntimeClock(true)
+            /*
+             * 步数两条流"改走 poll 路径"的尝试**已实测否决**，默认不启用（保留开关备用）：
+             * 实测结果 —— poll 路径把步数节流到 ~48 步/分（意图 163/分），投递质量反而更差；
+             * 而且计数器在 Java 客户端**仍然是那个陈旧恒定值**（3169），说明"值被换掉"
+             * 与投递路径无关，两条路径都一样。详见 docs 与今日备忘。
+             */
+            // BinderSensorNative.setStepsViaPoll(true)
             delivering = true
-            Logger.info("SystemRuntimeChannel: 投递已交给运行时通道（实验）")
+            Logger.info("SystemRuntimeChannel: 投递已交给运行时通道（poll 路径转纯压制）")
             true
         }.onFailure {
             lastError = "startDelivery: ${it.message}"
@@ -499,20 +494,11 @@ internal object SystemRuntimeChannel {
     }
 
     /**
-     * 运行时通道默认启用（它负责传感器投递的主路径）。
-     * `debug.portalex.runtime_sensor=0` 可显式退回 poll-only，用于排障。
-     * 属性读取失败时按启用处理；native 加载/注册失败会由后续 carrier/start 路径兜底。
+     * 幂等启动：载体可能因为开机时序（`ptr-pending`）暂时不可用。
+     * 泵线程每轮用它重试，而不是"启动时失败就永远没有泵"。
      */
-    internal fun isExperimentalRuntimeEnabled(): Boolean = runCatching {
-        Class.forName("android.os.SystemProperties")
-            .getMethod("get", String::class.java)
-            .invoke(null, "debug.portalex.runtime_sensor") != "0"
-    }.getOrDefault(true)
-
-    /** 幂等启动：runtime 实验关闭时直接返回 false，不注册载体。 */
     fun ensureDelivery(): Boolean {
         if (delivering) return true
-        if (!isExperimentalRuntimeEnabled()) return false
         if (ensureCarrier() == 0) return false
         return startDelivery()
     }
