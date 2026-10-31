@@ -633,10 +633,18 @@ static int do_install(const jlong *o, int olen) {
 /* JNI                                                                 */
 /* ------------------------------------------------------------------ */
 
+/* 显式注册 native 方法，避免 ART 自动解析到陈旧/失效的 JNI trampoline。 */
+static int register_runtime_clock(JNIEnv *env);
+
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
-    (void) vm;
     (void) reserved;
     vw_init();
+    JNIEnv *env = NULL;
+    if ((*vm)->GetEnv(vm, (void **) &env, JNI_VERSION_1_6) == JNI_OK && env != NULL) {
+        register_runtime_clock(env);
+    } else {
+        LOGE("JNI_OnLoad: GetEnv failed; native methods stay auto-bound");
+    }
     LOGI("native layer loaded (pid=%d)", getpid());
     return JNI_VERSION_1_6;
 }
@@ -753,6 +761,40 @@ Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock(JNIEnv 
     g_rt_clock = v;
     LOGI("delivery clock -> %s (poll path %s)", v ? "runtime" : "poll",
          v ? "suppress-only" : "inject+suppress");
+}
+
+/*
+ * 只注册最容易暴露“自动绑定失效”的入口。
+ *
+ * MI6 的 tombstone：第一次调用 setRuntimeClock 时 ART JNI trampoline
+ * 跳到 pc=0x9300（不在 libportalsensor.so 映射内），说明自动符号解析拿到了
+ * 失效入口。RegisterNatives 在 System.load 阶段绑定到当前库里的函数地址，
+ * 不再依赖后续 dlsym/缓存。
+ */
+static int register_runtime_clock(JNIEnv *env) {
+    jclass cls = (*env)->FindClass(
+        env, "moe/fuqiuluo/xposed/hooks/sensor/BinderSensorNative");
+    if (cls == NULL) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        LOGE("RegisterNatives: BinderSensorNative class not found");
+        return 0;
+    }
+    JNINativeMethod method = {
+        "setRuntimeClock",
+        "(Z)V",
+        (void *) Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock
+    };
+    jint rc = (*env)->RegisterNatives(env, cls, &method, 1);
+    if (rc != JNI_OK) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        LOGE("RegisterNatives(setRuntimeClock) failed rc=%d", (int) rc);
+        (*env)->DeleteLocalRef(env, cls);
+        return 0;
+    }
+    LOGI("RegisterNatives: setRuntimeClock -> %p",
+         (void *) Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock);
+    (*env)->DeleteLocalRef(env, cls);
+    return 1;
 }
 
 /**
