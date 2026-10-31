@@ -601,10 +601,15 @@ static int do_install(const jlong *o, int olen) {
         int av = (__system_property_get("debug.portalex.accviapoll", avh) > 0 && avh[0] == '0');
         vw_set_acc_via_poll(!av);
     }
-    char rhv[PROP_VALUE_MAX] = {0};
-    int ratehook = (__system_property_get("debug.portalex.ratehook", rhv) > 0 && rhv[0] == '1');
+    /*
+     * 采样率观测槽永久停用：MI6/LineageOS 上只要挂上 enableDisable，
+     * ps_calling_uid -> ps_dlopen_libbinder -> dlsym 就会把 system_server
+     * 打到非法 pc（SIGSEGV）。不再读取 debug.portalex.ratehook，避免调试
+     * 属性残留再次打开这条路径；频率观测继续由纯 Java 的 SensorRateProbe 承担。
+     */
+    int ratehook = 0;
     if (!ratehook) {
-        LOGI("sampling-rate observer: parked (debug.portalex.ratehook != 1)");
+        LOGI("sampling-rate observer: permanently parked");
     } else if (olen > MAX_TARGETS + 2 && o[MAX_TARGETS + 2] != 0) {
         uintptr_t en_addr = g_base + (uintptr_t) o[MAX_TARGETS + 2];
         if (!addr_is_executable(en_addr)) {
