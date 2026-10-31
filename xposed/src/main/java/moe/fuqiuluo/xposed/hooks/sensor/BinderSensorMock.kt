@@ -593,7 +593,10 @@ object BinderSensorMock {
         // S2：运行时通道的**载体引导**只与实验开关同步，与"模拟会话是否在跑"无关
         // —— 它只启动框架的运行时投递机制（事件缓冲 + RuntimeSensorHandler 线程），
         // 不推送任何数据，载体本身对客户端不可见。投递接管在后续阶段接入。
-        if (nativeReady) SystemRuntimeChannel.ensureCarrier()
+        // runtime 是实验开关；默认 poll-only，不注册运行时载体。
+        if (nativeReady && SystemRuntimeChannel.isExperimentalRuntimeEnabled()) {
+            SystemRuntimeChannel.ensureCarrier()
+        }
 
         // 只有「模拟开关打开」且「模拟会话在跑」时才注入；否则真实传感器原样透传
         val want = FakeLoc.enable

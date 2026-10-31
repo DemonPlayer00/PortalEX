@@ -461,7 +461,7 @@ internal object SystemRuntimeChannel {
     private val valueScratch = HashMap<Int, FloatArray>()
 
     @Volatile private var delivering = false
-    @Volatile private var mi6Warned = false
+    @Volatile private var runtimeDisabledWarned = false
     @Volatile private var pumpFrames = 0L
     @Volatile private var pumpEvents = 0L
 
@@ -475,31 +475,23 @@ internal object SystemRuntimeChannel {
      */
     fun startDelivery(): Boolean {
         if (delivering) return true
-        // MI6/LineageOS 22 实测：调用 BinderSensorNative.setRuntimeClock 时
-        // system_server 在 JNI 入口 SIGSEGV（PortalSensorPump，pc=0x9300）。
-        // 该设备的 runtime sensor 通道不可用；保留 poll 路径，避免整个系统进程崩溃。
-        val override = runtimeSensorOverride()
-        if (override == false || (override != true && isMi6RuntimeUnsupported())) {
-            if (!mi6Warned) {
-                mi6Warned = true
-                phase = "disabled-mi6"
-                lastError = "MI6 runtime sensor channel disabled"
-                Logger.warn("SystemRuntimeChannel: MI6 runtime sensor JNI 不可用，使用 poll 路径")
+        // 结构性策略：runtime 是**实验特性，默认永不启用**。
+        // 不在 system_server 里按设备/ROM 条件猜测；只有显式调试开关才尝试。
+        // 这样生产路径不会调用 setRuntimeClock，也不会执行不安全的 native runtime。
+        if (!isExperimentalRuntimeEnabled()) {
+            if (!runtimeDisabledWarned) {
+                runtimeDisabledWarned = true
+                phase = "poll-only"
+                lastError = "runtime sensor disabled (poll-only)"
+                Logger.info("SystemRuntimeChannel: runtime 通道默认关闭，使用 poll 路径")
             }
             return false
         }
         if (!carrierReady) return false
         return runCatching {
             BinderSensorNative.setRuntimeClock(true)
-            /*
-             * 步数两条流"改走 poll 路径"的尝试**已实测否决**，默认不启用（保留开关备用）：
-             * 实测结果 —— poll 路径把步数节流到 ~48 步/分（意图 163/分），投递质量反而更差；
-             * 而且计数器在 Java 客户端**仍然是那个陈旧恒定值**（3169），说明"值被换掉"
-             * 与投递路径无关，两条路径都一样。详见 docs 与今日备忘。
-             */
-            // BinderSensorNative.setStepsViaPoll(true)
             delivering = true
-            Logger.info("SystemRuntimeChannel: 投递已交给运行时通道（poll 路径转纯压制）")
+            Logger.info("SystemRuntimeChannel: 投递已交给运行时通道（实验）")
             true
         }.onFailure {
             lastError = "startDelivery: ${it.message}"
@@ -508,40 +500,21 @@ internal object SystemRuntimeChannel {
     }
 
     /**
-     * 幂等启动：载体可能因为开机时序（`ptr-pending`）暂时不可用。
-     * 泵线程每轮用它重试，而不是"启动时失败就永远没有泵"。
+     * 运行时通道是实验开关：默认 false，只有显式 debug prop=1 才启用。
+     * 系统属性反射失败时按 false 处理（安全优先）。
      */
+    internal fun isExperimentalRuntimeEnabled(): Boolean = runCatching {
+        Class.forName("android.os.SystemProperties")
+            .getMethod("get", String::class.java)
+            .invoke(null, "debug.portalex.runtime_sensor") == "1"
+    }.getOrDefault(false)
+
+    /** 幂等启动：runtime 实验关闭时直接返回 false，不注册载体。 */
     fun ensureDelivery(): Boolean {
         if (delivering) return true
+        if (!isExperimentalRuntimeEnabled()) return false
         if (ensureCarrier() == 0) return false
         return startDelivery()
-    }
-
-    /** 调试逃生口：debug.portalex.runtime_sensor=0/1；null = 按系统条件。 */
-    private fun runtimeSensorOverride(): Boolean? {
-        val raw = runCatching {
-            Class.forName("android.os.SystemProperties")
-                .getMethod("get", String::class.java)
-                .invoke(null, "debug.portalex.runtime_sensor") as? String
-        }.getOrNull()
-        return when (raw) {
-            "1" -> true
-            "0" -> false
-            else -> null
-        }
-    }
-
-    /**
-     * 不用设备型号：按“Android 15 + LineageOS”这套 runtime sensor 实现判断。
-     * 实测该组合的 runtime JNI/native 注入会 SIGSEGV/SIGBUS；同版本其它 ROM
-     * 若需要强制开启，可用 debug.portalex.runtime_sensor=1 覆盖。
-     */
-    private fun isMi6RuntimeUnsupported(): Boolean {
-        if (Build.VERSION.SDK_INT != 35) return false
-        // 直接读 Build.DISPLAY/FINGERPRINT：SystemProperties 反射在 system_server
-        // 可能被 hidden-API 限制，之前因此没有命中，guard 实际未生效。
-        return Build.DISPLAY.contains("lineage", ignoreCase = true) ||
-            Build.FINGERPRINT.contains("lineage", ignoreCase = true)
     }
 
     /** 停投递并**立刻**把节拍交回 poll 路径（顺序不能反：先停泵再切时钟）。 */
