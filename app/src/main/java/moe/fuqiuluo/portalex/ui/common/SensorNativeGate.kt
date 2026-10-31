@@ -1,5 +1,7 @@
 package moe.fuqiuluo.portalex.ui.common
 
+import android.view.LayoutInflater
+import android.widget.CheckBox
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -59,14 +61,14 @@ object SensorNativeGate {
     /** “移除自定义库”：删除固定文件；当前进程仍用旧映射，重启后才彻底不加载。 */
     fun remove(fragment: Fragment, onRemoved: () -> Unit) {
         val ctx = fragment.requireContext()
-        val restartBox = restartCheckBox(fragment, checked = true)
+        val choice = restartChoice(fragment)
         MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.sensor_native_title)
             .setMessage(R.string.sensor_native_remove_message)
-            .setView(restartBox)
+            .setView(choice.view)
             .setCancelable(false)
             .setPositiveButton(R.string.sensor_native_remove) { _, _ ->
-                removeNow(fragment, restartBox.isChecked, onRemoved)
+                removeNow(fragment, choice.checkBox.isChecked, onRemoved)
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
@@ -82,26 +84,29 @@ object SensorNativeGate {
         onConfirm: (restart: Boolean) -> Unit,
     ) {
         val ctx = fragment.requireContext()
-        val restartBox = restartCheckBox(fragment, checked = true)
+        val choice = restartChoice(fragment)
         MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.sensor_native_title)
             .setMessage(message)
-            .setView(restartBox)
+            .setView(choice.view)
             .setCancelable(false)
             .setPositiveButton(R.string.sensor_native_install) { _, _ ->
-                onConfirm(restartBox.isChecked)
+                onConfirm(choice.checkBox.isChecked)
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
-    private fun restartCheckBox(fragment: Fragment, checked: Boolean): android.widget.CheckBox =
-        android.widget.CheckBox(fragment.requireContext()).apply {
-            setText(R.string.sensor_native_restart_checkbox)
-            isChecked = checked
-            val pad = (16 * resources.displayMetrics.density).toInt()
-            setPadding(pad, pad / 2, pad, 0)
-        }
+    private class RestartChoice(val view: android.view.View, val checkBox: CheckBox)
+
+    /** 与其它 dialog 对齐：使用统一的 24dp 内容内边距，默认不自动重启。 */
+    private fun restartChoice(fragment: Fragment): RestartChoice {
+        val view = LayoutInflater.from(fragment.requireContext())
+            .inflate(R.layout.dialog_sensor_native_restart, null)
+        val box = view.findViewById<CheckBox>(R.id.restart_system_server)
+        box.isChecked = false
+        return RestartChoice(view, box)
+    }
 
     private fun removeNow(fragment: Fragment, restart: Boolean, onRemoved: () -> Unit) {
         val ctx = fragment.requireContext()

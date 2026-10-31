@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 与 MaterialAlertDialog 的 message 内容对齐：左右 24dp，复选框只占一行。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="4dp"
+    android:paddingBottom="0dp">
+
+    <com.google.android.material.checkbox.MaterialCheckBox
+        android:id="@+id/restart_system_server"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:checked="false"
+        android:text="@string/sensor_native_restart_checkbox"
+        android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+</LinearLayout>
