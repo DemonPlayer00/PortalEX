@@ -78,9 +78,21 @@ internal object CameraMockSelectionServer {
         val incoming = runCatching { CameraMockCodec.decodeRoutes(json) }.getOrNull() ?: return
         if (incoming.isEmpty()) return
         val current = CameraMockServerStore.load()
-        // app 是数据源：按当前 app 库同步。已一致时不做重复 fd 拷贝。
-        if (CameraMockCodec.encodeRoutes(incoming) == CameraMockCodec.encodeRoutes(current)) return
+        val ids = incoming.flatMap { it.videos }.map { it.id }.toSet()
+        // app 是数据源：metadata 已一致且系统侧文件齐全时，只清掉 app 本地副本（幂等）。
+        if (CameraMockCodec.encodeRoutes(incoming) == CameraMockCodec.encodeRoutes(current) &&
+            allVideosPresent(ids)
+        ) {
+            CameraMockServerContext.deleteLocalVideos(ids)
+            return
+        }
         importPendingUpload(json)
+    }
+
+    /** 系统侧是否已经有这些视频的完整副本。 */
+    private fun allVideosPresent(ids: Set<String>): Boolean = ids.all { id ->
+        val f = CameraMockServerStore.videoFile(id)
+        f.isFile && f.length() > 0L
     }
 
     @Synchronized
@@ -91,6 +103,7 @@ internal object CameraMockSelectionServer {
             if (routes.isEmpty()) return@runCatching
             val resolver = CameraMockServerContext.get()?.contentResolver
                 ?: return@runCatching
+            var copiedAll = true
             routes.forEach { route ->
                 route.videos.forEach { video ->
                     val uri = Uri.parse(
@@ -104,16 +117,24 @@ internal object CameraMockSelectionServer {
                                 dest.outputStream().use { out -> input.copyTo(out) }
                             }
                         }
+                        if (!dest.isFile || dest.length() == 0L) error("空文件")
                     }.onFailure {
+                        copiedAll = false
                         Logger.warn("选片服务：拉取视频 ${video.id} 失败 ${it.message}")
                     }
                 }
+            }
+            if (!copiedAll) {
+                // 任何一条没落到系统库都不能删 app 本地副本；下次有变化再重试。
+                Logger.warn("选片服务：app 库导入不完整，保留本地副本，等待重试")
+                return@runCatching
             }
             CameraMockServerStore.save(routes)
             val keep = routes.flatMap { it.videos }.map { it.id }.toSet()
             val removed = CameraMockServerStore.pruneOrphanVideos(keep)
             Logger.info("选片服务：已通过 provider 导入 app 库 ${routes.size} 条路线，清理孤立视频 $removed 个")
-            val deleted = CameraMockServerContext.deleteLocalVideos()
+            // 只有在全部视频都确认落库后才删除 app 本地副本。
+            val deleted = CameraMockServerContext.deleteLocalVideos(keep)
             Logger.info("选片服务：已请求 app 删除本地视频 $deleted 个")
         }.onFailure {
             Logger.warn("选片服务：provider 导入失败 ${it.message}")
