@@ -310,7 +310,7 @@ class TestFragment : Fragment() {
             appendLine("静默失败计数   ${status.getString("diag") ?: "（旧版模块无此字段）"}")
             appendLine()
             appendLine("── 步频：意图 vs 实际 ──")
-            appendLine("意图步频       ${status.getInt("cadence_intent")} 步/分（按实测速度算）")
+            appendLine("意图步频       ${status.getInt("cadence_intent")} 步/分（移动时；静止为 0）")
             appendLine("设定速度       ${"%.2f".format(status.getDouble("configured_speed"))} m/s")
             appendLine("实测速度       ${"%.2f".format(status.getDouble("measured_speed"))} m/s")
             appendLine("移动判定       ${yn(status.getBoolean("moving"))}")

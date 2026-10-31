@@ -316,7 +316,9 @@ object BinderSensorMock {
         rely.putDouble("bearing_target", FakeLoc.bearing)
         rely.putDouble("bearing_frame", FakeLoc.processedBearing())
         rely.putDouble("gait_speed", speed)
-        rely.putInt("cadence_intent", FakeLoc.cadenceForSpeed(speed))
+        // 静止时公式的 60 步/分下限（×1.15 = 69）只是步态公式的基线，
+        // 不代表真的在出步；诊断页不能把 69 当成实际意图。
+        rely.putInt("cadence_intent", if (moving) FakeLoc.cadenceForSpeed(speed) else 0)
         rely.putDouble("cadence_scale", FakeLoc.cadenceScale)
         rely.putLong("steps_total", steps)
         // 客户端视角的"开机总步数"（我们推送的 STEP_COUNTER 值）
