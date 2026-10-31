@@ -15,6 +15,7 @@ import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
 import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.sensorNoise
 import moe.fuqiuluo.portalex.ui.common.NumberRow
+import moe.fuqiuluo.portalex.ui.common.SensorNativeGate
 import moe.fuqiuluo.portalex.ui.common.renderNumberRows
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.SensorNoise
@@ -66,14 +67,32 @@ class AngleCompassFragment : Fragment() {
         binding.orientationMockSwitch.isChecked = requireContext().orientationMock
         binding.orientationMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
-            ctx.orientationMock = checked
-            // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
-            val r = ConfigSync.setSensorMock(
-                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
-            )
-            if (!r.isOk) {
-                android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            fun push() {
+                // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
+                val r = ConfigSync.setSensorMock(
+                    ctx, ctx.getSystemService(LocationManager::class.java),
+                    ctx.cadenceMock, ctx.orientationMock
+                )
+                if (!r.isOk) {
+                    android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
+            if (!checked) {
+                ctx.orientationMock = false
+                push()
+                return@setOnCheckedChangeListener
+            }
+            SensorNativeGate.ensure(
+                this,
+                onReady = {
+                    ctx.orientationMock = true
+                    push()
+                },
+                onBlocked = {
+                    ctx.orientationMock = false
+                    binding.orientationMockSwitch.isChecked = false
+                },
+            )
         }
         renderRows()
         refreshStatus()

@@ -16,6 +16,7 @@ import moe.fuqiuluo.portalex.ext.cadenceWobbleAmp
 import moe.fuqiuluo.portalex.ext.cadenceWobbleRnd
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.ui.common.NumberRow
+import moe.fuqiuluo.portalex.ui.common.SensorNativeGate
 import moe.fuqiuluo.portalex.ui.common.renderNumberRows
 import moe.fuqiuluo.xposed.utils.FakeLoc
 
@@ -59,14 +60,32 @@ class CadenceFragment : Fragment() {
         binding.cadenceMockSwitch.isChecked = requireContext().cadenceMock
         binding.cadenceMockSwitch.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
-            ctx.cadenceMock = checked
-            // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
-            val r = ConfigSync.setSensorMock(
-                ctx, ctx.getSystemService(LocationManager::class.java), ctx.cadenceMock, ctx.orientationMock
-            )
-            if (!r.isOk) {
-                android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+            fun push() {
+                // 失败必须说出来：静默失败会让用户以为"关了却还在注入" —— 那正是最该避免的骗人开关
+                val r = ConfigSync.setSensorMock(
+                    ctx, ctx.getSystemService(LocationManager::class.java),
+                    ctx.cadenceMock, ctx.orientationMock
+                )
+                if (!r.isOk) {
+                    android.widget.Toast.makeText(ctx, "外周模拟下发失败：$r", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
+            if (!checked) {
+                ctx.cadenceMock = false
+                push()
+                return@setOnCheckedChangeListener
+            }
+            SensorNativeGate.ensure(
+                this,
+                onReady = {
+                    ctx.cadenceMock = true
+                    push()
+                },
+                onBlocked = {
+                    ctx.cadenceMock = false
+                    binding.cadenceMockSwitch.isChecked = false
+                },
+            )
         }
         renderRows()
         refreshReadout()

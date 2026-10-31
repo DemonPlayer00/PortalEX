@@ -75,6 +75,16 @@
     <string name="cadence_mock_desc">模拟步数与步频，不修改目标应用。</string>
     <string name="orientation_mock">外周传感器模拟（角度与指南针侧）</string>
     <string name="orientation_mock_desc">模拟加速度、陀螺和磁场，用于朝向。</string>
+    <string name="sensor_native_title">传感器 native 库</string>
+    <string name="sensor_native_message">启动外周传感器模拟前，PortalEX 需要把 libportalsensor.so 释放给系统服务。\n\n将使用设置页指定的 root 命令（%1$s）：复制到 /data/local/tmp/portalex、设置 SELinux 上下文，然后重启 system_server。\n\n继续？</string>
+    <string name="sensor_native_install">释放并重启</string>
+    <string name="sensor_native_installing">正在释放 native 库…</string>
+    <string name="sensor_native_check_failed">检查失败：%1$s</string>
+    <string name="sensor_native_install_failed">释放失败：%1$s</string>
+    <string name="sensor_native_restarting">库已释放，正在重启 system_server；系统恢复后请重新开启传感器模拟。</string>
+    <string name="sensor_native_restart_checkbox">释放后自动重启 system_server</string>
+    <string name="sensor_native_restart_skipped">库已释放，但未自动重启 system_server。请手动重启后再开启传感器模拟。</string>
+    <string name="sensor_native_restart_failed">库已释放，但 system_server 重启失败：%1$s</string>
 
     <!--
       按组波动（两组各两条，单位 %，默认 15）：与噪声档两层 —— 噪声档是"本底噪声"，

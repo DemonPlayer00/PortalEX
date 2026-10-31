@@ -1,6 +1,5 @@
 package moe.fuqiuluo.xposed.hooks.sensor
 
-import android.os.Build
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.ModulePrefs
@@ -9,19 +8,14 @@ import java.io.File
 /**
  * Binder 外周传感器模拟 —— 原生注入层的 Java 门面（**只在 system_server 里使用**）。
  *
- * 原生库（`libportalsensor.so`）由本模块自己编译，安装到模块 APK 的 lib 目录
- * （`:app` 开了 `useLegacyPackaging`，所以 .so 是被解压到
- * `/data/app/~~xxx/<pkg>-yyy/lib/<abi>/` 的，而不是压在 APK 里）。
- * LSPosed 把模块代码注入进 system_server 时，模块自己的 lib 目录对
- * system_server 是可读可执行的（与 LSPosed 加载模块 dex 同一条许可路径），
- * 因此这里直接按绝对路径 `System.load`。
+ * 原生库固定从 `/data/local/tmp/portalex/libportalsensor.so` 加载。
+ * App 在传感器模拟启动前用 root 释放该文件并设置 system_lib_file 上下文；
+ * system_server 只负责加载，不从 APK 回退，也不在运行中替换。
  *
- * 任何一步失败（找不到 .so / dlopen 报错 / SELinux 拒绝）都只是让这个实验性
- * 功能**不生效**：load 失败返回 false，调用方保持既有行为不变。
+ * 任何一步失败（文件缺失 / dlopen 报错 / SELinux 拒绝）都只是让 native
+ * 功能不生效：load 失败返回 false，调用方保持 poll 行为不变。
  */
 internal object BinderSensorNative {
-
-    private const val LIB_NAME = "libportalsensor.so"
 
     @Volatile private var loaded = false
     @Volatile private var loadFailed = false
@@ -41,11 +35,8 @@ internal object BinderSensorNative {
             if (loadFailed) return false
             try {
                 val path = libraryPath()
-                if (path != null) {
-                    System.load(path)
-                } else {
-                    System.loadLibrary("portalsensor")
-                }
+                    ?: error("fixed native library missing: /data/local/tmp/portalex/libportalsensor.so")
+                System.load(path)
                 loaded = true
                 Logger.info("BinderSensorNative: loaded ($path)")
             } catch (t: Throwable) {
@@ -58,58 +49,14 @@ internal object BinderSensorNative {
     }
 
     /**
-     * 模块自己的 .so 路径。
-     *
-     * 注意：LSPosed 注入模块时用的是 `LspModuleClassLoader`，dex 是**在内存里**加载的
-     * （`InMemoryDexFile`），因此 `protectionDomain.codeSource.location` 为空——
-     * 不能靠它反推 APK。可行的两条路：
-     *   1. 该 classloader 的 `toString()` 里带 `module=<apk 绝对路径>`（LSPosed 自己的格式）；
-     *   2. 用 system context 的 PackageManager 按模块包名查 `sourceDir`。
-     * 拿到 APK 后取同级 `lib/<abi>/`——`:app` 开了 `extractNativeLibs`，.so 是解压出来的，
-     * 可以直接 `System.load`。
+     * 固定单一路径。库由 App 在传感器模拟启动前用 root 释放并设置
+     * system_lib_file 上下文；system_server 只负责加载，绝不从 APK 回退。
      */
     private fun libraryPath(): String? {
-        val abiDir = when {
-            Build.SUPPORTED_ABIS.any { it == "arm64-v8a" } -> "arm64"
-            Build.SUPPORTED_ABIS.any { it == "x86_64" } -> "x86_64"
-            else -> return null
-        }
-        /*
-         * 从 /data/app/.../lib/arm64 直接 System.load 在 MI6 的 system_server 里会被内核
-         * 以 “couldn't map segment: Permission denied” 拒绝（apk_data_file 不可执行）。
-         * 安装脚本把同一 .so 复制到 system_server 可执行的 system_lib_file 路径后，
-         * 这里优先加载该副本；没有副本时才回退到模块 APK 的 lib 目录。
-         */
-        for (staged in listOf(
-            "/data/local/tmp/portalex/$LIB_NAME",
-            "/data/system/portalex_$LIB_NAME",
-        )) {
-            if (File(staged).isFile) return staged
-        }
-        for (apk in apkCandidates()) {
-            val lib = File(File(apk).parentFile, "lib/$abiDir/$LIB_NAME")
-            if (lib.exists()) return lib.absolutePath
-        }
-        return null
+        val fixed = File("/data/local/tmp/portalex/libportalsensor.so")
+        return if (fixed.isFile) fixed.absolutePath else null
     }
 
-    private fun apkCandidates(): List<String> {
-        val out = LinkedHashSet<String>()
-        // 1) LspModuleClassLoader.toString() 里的 module=<apk>
-        runCatching {
-            val s = BinderSensorNative::class.java.classLoader?.toString() ?: return@runCatching
-            Regex("module=([^,\\]]+\\.apk)").find(s)?.groupValues?.get(1)?.let { out.add(it) }
-        }
-        // 2) PackageManager 按模块包名查 sourceDir
-        runCatching {
-            val pm = moe.fuqiuluo.xposed.utils.BinderUtils.getSystemContext()?.packageManager
-            val pkg = ModulePrefs.modulePackage
-            pm?.getApplicationInfo(pkg, 0)?.sourceDir?.let { out.add(it) }
-        }.onFailure {
-            Logger.debug("BinderSensorNative: package lookup failed: ${it.message}")
-        }
-        return out.toList()
-    }
 
     // ---- native 接口 ----
 
