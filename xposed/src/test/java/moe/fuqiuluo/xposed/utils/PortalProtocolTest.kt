@@ -33,15 +33,16 @@ class PortalProtocolTest {
     @Test
     fun commandCount_isPinned() {
         // 新增/删除命令 ⇒ 改这条断言（顺带提醒你两侧都要接上）
-        // 36：统一架构迁移命令 + 摄像头控制面；随后删掉了一条已废弃命令
-        assertEquals(36, cmd.size)
+        // 37：新增 get_sensor_lib_state（侧栏警告状态）
+        assertEquals(37, cmd.size)
     }
 
     @Test
     fun keyCount_isPinned() {
         // 73：fused/CNO 标定字段；84：基带多条目（sim_list）与校准页的
         // 逐星状态、列表回填字段（见 Git 历史 6d35c8ce / 8b5bc1bc）
-        assertEquals(84, key.size)
+        // 86：新增 sensor_lib_replaced / sensor_lib_loaded
+        assertEquals(86, key.size)
     }
 
     @Test

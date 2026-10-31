@@ -77,6 +77,16 @@ object SensorNativeLibrary {
         runSu(context, "setprop ctl.restart zygote")
     }
 
+    /** 设置页的 su 是否真的可调用（用于侧栏设置入口黄色警告）。 */
+    fun canUseSu(context: Context): Boolean = runCatching {
+        val p = ProcessBuilder(context.suPath, "-c", "true").redirectErrorStream(true).start()
+        if (!p.waitFor(2, TimeUnit.SECONDS)) {
+            p.destroyForcibly()
+            return@runCatching false
+        }
+        p.exitValue() == 0
+    }.getOrDefault(false)
+
     fun errorText(t: Throwable): String = t.message?.takeIf { it.isNotBlank() } ?: t.toString()
 
     private fun runSu(context: Context, command: String): String {

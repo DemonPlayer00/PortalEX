@@ -31,6 +31,7 @@ object PortalProtocol {
         const val GET_LOCATION       = "get_location"
         const val GET_MOTION         = "get_motion"
         const val GET_SENSOR_STATUS  = "get_sensor_status"
+        const val GET_SENSOR_LIB_STATE = "get_sensor_lib_state"
         const val GET_STAMINA        = "get_stamina"
         const val GET_SPEED          = "get_speed"
         const val IS_GNSS_START      = "is_gnss_start"
@@ -126,6 +127,9 @@ object PortalProtocol {
         const val ENABLE_DEBUG_LOG          = "enable_debug_log"
         const val ENABLE_LOG                = "enable_log"
         const val ENABLE_NMEA               = "enable_nmea"
+        /** system_server 固定 sensor 库是否已存在 / 是否已加载 */
+        const val SENSOR_LIB_REPLACED        = "sensor_lib_replaced"
+        const val SENSOR_LIB_LOADED          = "sensor_lib_loaded"
         const val HAS_BEARINGS              = "has_bearings"
         const val HIDE_MOCK                 = "hide_mock"
         const val HOOK_WIFI                 = "hook_wifi"
