@@ -37,46 +37,25 @@
                 android:text="@string/peripheral_mock" />
 
             <com.google.android.material.textview.MaterialTextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:text="@string/peripheral_section_cadence"
-                android:textStyle="bold" />
-
-            <com.google.android.material.textview.MaterialTextView
                 android:id="@+id/cadence_readout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="10dp"
                 android:textSize="13sp" />
 
             <LinearLayout
-                android:id="@+id/cadence_rows"
+                android:id="@+id/peripheral_rows"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:orientation="vertical" />
-
-            <com.google.android.material.textview.MaterialTextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:text="@string/peripheral_section_angle"
-                android:textStyle="bold" />
 
             <com.google.android.material.textview.MaterialTextView
                 android:id="@+id/angle_readout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="10dp"
                 android:textSize="13sp" />
-
-            <LinearLayout
-                android:id="@+id/angle_rows"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="vertical" />
 
             <com.google.android.material.textview.MaterialTextView
                 android:layout_width="match_parent"
