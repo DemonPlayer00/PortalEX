@@ -41,8 +41,10 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
         val density = parent.resources.displayMetrics.density
         paint.strokeWidth = 1f * density
         // 菜单项自身有左右留白；警告框比 item 更窄、略向外扩高，避免“过宽、过矮”。
-        val insetX = 8f * density
-        val outsetY = 4f * density
+        // 实测：item 背景 bounds 比实际胶囊高亮更宽；水平多缩 14dp，
+        // 垂直不再缩（否则黄框比高亮矮一截）。
+        val insetX = 14f * density
+        val insetY = 0f
         val fallbackRadius = 24f * density
         val outline = android.graphics.Outline()
         for (i in 0 until parent.childCount) {
@@ -55,9 +57,15 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
                 val border = MaterialShapeDrawable(shape.shapeAppearanceModel).apply {
                     setStroke(1f * density, Color.parseColor("#FFFFC107"))
                     fillColor = android.content.res.ColorStateList.valueOf(Color.TRANSPARENT)
-                    // 直接用菜单项背景 drawable 的真实 bounds，不能再加内缩/外扩，
-                    // 否则黄框和选中项的胶囊高亮之间会出现空隙。
-                    bounds = Rect(shape.bounds)
+                    // 背景 drawable 的 bounds 覆盖整个 item；选中胶囊的高亮实际
+                    // 内缩于 item，黄框按同样内缩量贴合，不能外扩。
+                    val base = shape.bounds
+                    bounds = Rect(
+                        base.left + insetX.toInt(),
+                        base.top + insetY.toInt(),
+                        base.right - insetX.toInt(),
+                        base.bottom - insetY.toInt(),
+                    )
                 }
                 c.save()
                 c.translate(child.left.toFloat(), child.top.toFloat())
@@ -68,9 +76,9 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
                 val radius = outline.radius.takeIf { it > 0f } ?: fallbackRadius
                 val rect = RectF(
                     child.left + insetX,
-                    child.top - outsetY,
+                    child.top + insetY,
                     child.right - insetX,
-                    child.bottom + outsetY,
+                    child.bottom - insetY,
                 )
                 c.drawRoundRect(rect, radius, radius, paint)
             }
