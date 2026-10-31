@@ -57,6 +57,13 @@
     <string name="allow_landscape">Screen orientation</string>
     <string name="allow_landscape_desc">Choose automatic, portrait, or landscape.</string>
     <string name="menu_stamina">Stamina Mock</string>
+    <string name="menu_peripheral_sensor">Peripheral sensor mock</string>
+    <string name="peripheral_page_title">Peripheral sensor mock</string>
+    <string name="peripheral_page_desc">One switch controls cadence, accelerometer, gyroscope, orientation and compass simulation.</string>
+    <string name="peripheral_mock">Enable peripheral sensor mock</string>
+    <string name="peripheral_section_cadence">Cadence &amp; acceleration</string>
+    <string name="peripheral_section_angle">Angle &amp; compass</string>
+    <string name="peripheral_footer">Cadence is derived from speed and multiplier. Events are delivered automatically.</string>
     <string name="menu_cadence">Cadence &amp; Acceleration Mock</string>
     <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
     <string name="stamina_enable">Enable stamina simulation</string>

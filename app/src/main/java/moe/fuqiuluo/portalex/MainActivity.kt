@@ -358,14 +358,14 @@ class MainActivity : AppCompatActivity() {
                         R.id.nav_home, R.id.nav_quick_launch, R.id.nav_route_gallery, R.id.nav_gnss_mock,
                         R.id.nav_baseband,
                         R.id.nav_camera_mock,
-                        R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass,
+                        R.id.nav_stamina, R.id.nav_peripheral_sensor,
                         R.id.nav_calibration, R.id.nav_test, R.id.nav_settings
                     ), drawerLayout
                 )
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
-                // 侧栏引导线：路线模拟 → 角度模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）。
+                // 侧栏引导线：路线模拟 → 外周传感器模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）。
                 // 作为菜单 RecyclerView 的 ItemDecoration，随入口列表一起滚动/裁剪。
                 drawerMenuRecycler(navView)?.let { menuView ->
                     // 入口列表也向右让出边缘空间，避免图标/文字顶着抽屉左边缘
@@ -378,11 +378,11 @@ class MainActivity : AppCompatActivity() {
                     )
                     val rail = NavGuideRailDecoration(
                         startTitle = navView.menu.findItem(R.id.nav_route_gallery)?.title?.toString().orEmpty(),
-                        endTitle = navView.menu.findItem(R.id.nav_angle_compass)?.title?.toString().orEmpty(),
+                        endTitle = navView.menu.findItem(R.id.nav_peripheral_sensor)?.title?.toString().orEmpty(),
                         // 二类功能：随路线模拟启动的那几项，末端画三角
                         class2Titles = listOf(
                             R.id.nav_gnss_mock, R.id.nav_baseband, R.id.nav_camera_mock,
-                            R.id.nav_stamina, R.id.nav_cadence, R.id.nav_angle_compass
+                            R.id.nav_stamina, R.id.nav_peripheral_sensor
                         ).mapNotNull { navView.menu.findItem(it)?.title?.toString() }.toSet(),
                     )
                     menuView.addItemDecoration(rail)
