@@ -131,6 +131,13 @@ class TestFragment : Fragment() {
         super.onPause()
     }
 
+    private fun sensorHookMode(mode: String?): String = when (mode) {
+        "runtime" -> "runtime（Java 运行时投递）"
+        "poll" -> "poll（HAL 轮询出口）"
+        "none" -> "none（无法注入 / 未启用）"
+        else -> "未知（旧版模块无此字段）"
+    }
+
     private suspend fun refresh() {
         val ctx = context ?: return
         val text = buildString {
@@ -297,6 +304,7 @@ class TestFragment : Fragment() {
             appendLine("模拟会话       ${yn(status.getBoolean("mock_running"))}")
             appendLine("原生层装载     ${yn(status.getBoolean("native_ready"))}")
             appendLine("注入激活       ${yn(status.getBoolean("active"))}")
+            appendLine("当前 hook 模式 ${sensorHookMode(status.getString("sensor_hook_mode"))}")
             // 静默失败记账（模块侧）：非 none 说明注入层/投递链正在降级运行 —— 比"功能没了"
             // 更难发现的那类故障，在这里必须一眼可见
             appendLine("静默失败计数   ${status.getString("diag") ?: "（旧版模块无此字段）"}")

@@ -281,6 +281,16 @@ object BinderSensorMock {
         rely.putBoolean("mock_running", FakeLoc.enable)
         rely.putBoolean("native_ready", nativeReady)
         rely.putBoolean("active", active)
+        // 当前投递/hook 模式：Test 页直接显示，避免从 rt_channel 长字符串里猜。
+        rely.putString(
+            "sensor_hook_mode",
+            when {
+                SystemRuntimeChannel.isDelivering -> "runtime"
+                nativeReady && active -> "poll"
+                // 已加载但未激活、或根本没加载：都不能注入，统一显示 none。
+                else -> "none"
+            },
+        )
         rely.putString("native", runCatching { BinderSensorNative.status() }.getOrDefault("n/a"))
         // 运行时投递通道（"投递 100% 可控"那条路）的状态
         rely.putString("rt_channel", SystemRuntimeChannel.status())
@@ -373,7 +383,9 @@ object BinderSensorMock {
                 return false
             }
             // 走带契约校验的入口：长度/顺序不对就明确拒绝，而不是喂给 native 静默失效
-            val ok = BinderSensorNative.installChecked(syms.toOffsets())
+            val ok = runCatching { BinderSensorNative.installChecked(syms.toOffsets()) }
+                .onFailure { Logger.error("BinderSensorMock: native install threw: ${it.message}", it) }
+                .getOrDefault(false)
             if (ok) {
                 nativeReady = true
                 seedHandleMap()

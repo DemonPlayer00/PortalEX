@@ -4,6 +4,7 @@ import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
 import moe.fuqiuluo.xposed.utils.ModulePrefs
 import java.io.File
+import java.io.FileInputStream
 
 /**
  * Binder 外周传感器模拟 —— 原生注入层的 Java 门面（**只在 system_server 里使用**）。
@@ -39,6 +40,13 @@ internal object BinderSensorNative {
             try {
                 val path = libraryPath()
                     ?: error("fixed native library missing: /data/system/portalex/sensorlib/libportalsensor.so")
+                val invalid = validateElf(path)
+                if (invalid != null) {
+                    loadFailed = true
+                    loadError = invalid
+                    Logger.error("BinderSensorNative: $invalid")
+                    return false
+                }
                 System.load(path)
                 loaded = true
                 Logger.info("BinderSensorNative: loaded ($path)")
@@ -49,6 +57,27 @@ internal object BinderSensorNative {
             }
             return loaded
         }
+    }
+
+    /**
+     * 在 dlopen 之前拒绝明显错误的 ELF（空文件、32 位、错误架构）。
+     * 这只能拦住“格式不兼容”，不能拦住格式正确但 native 代码主动 SIGSEGV 的库；
+     * 后者无法在 system_server 内安全捕获，只能依靠固定路径/哈希与重启恢复。
+     */
+    private fun validateElf(path: String): String? {
+        val header = ByteArray(20)
+        FileInputStream(path).use { input ->
+            if (input.read(header) != header.size) return "library too small: $path"
+        }
+        if (!(header[0] == 0x7f.toByte() && header[1] == 'E'.code.toByte() &&
+                header[2] == 'L'.code.toByte() && header[3] == 'F'.code.toByte())
+        ) return "not an ELF library: $path"
+        if (header[4].toInt() != 2) return "not a 64-bit ELF: $path"
+        if (header[5].toInt() != 1) return "not a little-endian ELF: $path"
+        val machine = (header[18].toInt() and 0xff) or ((header[19].toInt() and 0xff) shl 8)
+        // 本模块只发布 arm64；x86_64 的机器号也接受，方便后续构建扩展。
+        if (machine != 183 && machine != 62) return "unsupported ELF machine=$machine: $path"
+        return null
     }
 
     /**
@@ -90,7 +119,11 @@ internal object BinderSensorNative {
             )
             return false
         }
-        return install(offsets)
+        return runCatching { install(offsets) }
+            .onFailure {
+                Logger.error("BinderSensorNative: native install threw: ${it.message}", it)
+            }
+            .getOrDefault(false)
     }
 
     /** 注入总开关（关 = 真实事件原样放行，不做任何压制/注入） */
