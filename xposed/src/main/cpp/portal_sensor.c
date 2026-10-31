@@ -798,6 +798,29 @@ static int register_runtime_clock(JNIEnv *env) {
 }
 
 /**
+ * Java 侧在 System.load 后调用：用当前对象的 jclass 注册 native 方法。
+ * JNI_OnLoad 的 FindClass 看不到 LspModuleClassLoader 里的模块类，
+ * 因此必须由持有 BinderSensorNative 的 Java 侧把 class 传进来。
+ */
+JNIEXPORT jboolean JNICALL
+Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_registerNativeMethods(
+        JNIEnv *env, jobject thiz) {
+    (void) thiz;
+    jclass cls = (*env)->GetObjectClass(env, thiz);
+    if (cls == NULL) return JNI_FALSE;
+    JNINativeMethod method = {
+        "setRuntimeClock",
+        "(Z)V",
+        (void *) Java_moe_fuqiuluo_xposed_hooks_sensor_BinderSensorNative_setRuntimeClock
+    };
+    jint rc = (*env)->RegisterNatives(env, cls, &method, 1);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+    LOGI("RegisterNatives(jclass): setRuntimeClock rc=%d", (int) rc);
+    return rc == JNI_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+/**
  * 取一帧"截至 now_nanos 应发出的事件"（运行时通道专用）。
  *
  * 每事件写 4 个 long（handle / type / timestamp / values 个数），值写进 [values]，
