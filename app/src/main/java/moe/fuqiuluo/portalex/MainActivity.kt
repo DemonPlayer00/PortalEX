@@ -86,6 +86,7 @@ import moe.fuqiuluo.portalex.bdmap.Poi
 import moe.fuqiuluo.portalex.bdmap.toPoi
 import moe.fuqiuluo.portalex.databinding.ActivityMainBinding
 import moe.fuqiuluo.portalex.ext.allowLandscape
+import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.orientationMode
 import moe.fuqiuluo.portalex.ext.ORIENTATION_AUTO
 import moe.fuqiuluo.portalex.ext.ORIENTATION_LANDSCAPE
@@ -274,6 +275,25 @@ class MainActivity : AppCompatActivity() {
         return subtitleOrder[subtitleIndex++].also { lastSubtitle = it }
     }
 
+    /**
+     * 首次安装或版本哈希变化后的首次启动：主界面准备好后自动打开侧栏。
+     * 只记录一次，后续同版本启动不重复弹出。
+     */
+    private fun maybeOpenDrawerOnFirstLaunch(drawerLayout: DrawerLayout) {
+        val version = runCatching {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        }.getOrNull() ?: "unknown"
+        val seen = sharedPrefs.getString("drawer_seen_version", null)
+        if (seen == version) return
+        drawerLayout.post {
+            if (isFinishing || isDestroyed) return@post
+            if (!drawerLayout.isDrawerOpen(Gravity.START)) {
+                drawerLayout.openDrawer(Gravity.START)
+            }
+            sharedPrefs.edit().putString("drawer_seen_version", version).apply()
+        }
+    }
+
     private fun initBinding() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -365,6 +385,7 @@ class MainActivity : AppCompatActivity() {
 
                 setupActionBarWithNavController(navController, appBarConfiguration)
                 navView.setupWithNavController(navController)
+                maybeOpenDrawerOnFirstLaunch(drawerLayout)
                 // 侧栏引导线：路线模拟 → 外周传感器模拟，打开路线模拟后变蓝（提示中间几项会跟着启动）。
                 // 作为菜单 RecyclerView 的 ItemDecoration，随入口列表一起滚动/裁剪。
                 drawerMenuRecycler(navView)?.let { menuView ->

@@ -80,7 +80,7 @@
     <string name="orientation_mock">Peripheral sensor mock (angle/compass)</string>
     <string name="orientation_mock_desc">Simulate accelerometer, gyroscope and magnetic field for heading.</string>
     <string name="sensor_native_title">Sensor native library</string>
-    <string name="sensor_native_message">Before starting peripheral sensor simulation, PortalEX must release libportalsensor.so to the system service.\n\nThis uses the root command configured in Settings (%1$s): copy to /data/local/tmp/portalex and set the SELinux context. Whether to restart system_server is controlled by the checkbox below.</string>
+    <string name="sensor_native_message">Before starting peripheral sensor simulation, PortalEX must release libportalsensor.so to the system service.\n\nThis uses the root command configured in Settings (%1$s): copy to /data/system/portalex/sensorlib and set the SELinux context. Whether to restart system_server is controlled by the checkbox below.</string>
     <string name="sensor_native_install">Release</string>
     <string name="sensor_native_installing">Releasing native library…</string>
     <string name="sensor_native_check_failed">Check failed: %1$s</string>
@@ -89,7 +89,7 @@
     <string name="sensor_native_update">Update now</string>
     <string name="sensor_native_remove">Remove custom library</string>
     <string name="sensor_native_update_message">Replace the fixed sensor library with the one from this APK using %1$s? This does not change the running system_server until it restarts.</string>
-    <string name="sensor_native_remove_message">Remove the custom sensor library from /data/local/tmp/portalex? The running system_server keeps the already-mapped copy until restart; after that, native sensor injection will be unavailable.</string>
+    <string name="sensor_native_remove_message">Remove the custom sensor library from /data/system/portalex/sensorlib? The running system_server keeps the already-mapped copy until restart; after that, native sensor injection will be unavailable.</string>
     <string name="sensor_native_updating">Replacing sensor library…</string>
     <string name="sensor_native_removing">Removing sensor library…</string>
     <string name="sensor_native_updated">Library replaced. Restart system_server for it to take effect.</string>

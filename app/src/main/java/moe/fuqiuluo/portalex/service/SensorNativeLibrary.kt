@@ -10,14 +10,14 @@ import java.util.concurrent.TimeUnit
  *
  * 固定约定：
  * - 源：当前 APK 解压出的 nativeLibraryDir/libportalsensor.so
- * - 目标：/data/local/tmp/portalex/libportalsensor.so
+ * - 目标：/data/system/portalex/sensorlib/libportalsensor.so
  * - 上下文：u:object_r:system_lib_file:s0
  *
  * 只在传感器模拟启动前调用；目标已存在且内容一致时不触发 root。
  */
 object SensorNativeLibrary {
 
-    const val DST = "/data/local/tmp/portalex/libportalsensor.so"
+    const val DST = "/data/system/portalex/sensorlib/libportalsensor.so"
     private const val DST_TMP = "$DST.tmp"
 
     data class Status(
@@ -58,7 +58,7 @@ object SensorNativeLibrary {
         runSu(
             context,
             "set -e; " +
-                "mkdir -p /data/local/tmp/portalex; " +
+                "mkdir -p /data/system/portalex/sensorlib; " +
                 "cp -f '${src.absolutePath}' '$DST_TMP'; " +
                 "chmod 755 '$DST_TMP'; " +
                 "chcon u:object_r:system_lib_file:s0 '$DST_TMP'; " +

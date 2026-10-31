@@ -8,7 +8,7 @@ import java.io.File
 /**
  * Binder 外周传感器模拟 —— 原生注入层的 Java 门面（**只在 system_server 里使用**）。
  *
- * 原生库固定从 `/data/local/tmp/portalex/libportalsensor.so` 加载。
+ * 原生库固定从 `/data/system/portalex/sensorlib/libportalsensor.so` 加载。
  * App 在传感器模拟启动前用 root 释放该文件并设置 system_lib_file 上下文；
  * system_server 只负责加载，不从 APK 回退，也不在运行中替换。
  *
@@ -35,7 +35,7 @@ internal object BinderSensorNative {
             if (loadFailed) return false
             try {
                 val path = libraryPath()
-                    ?: error("fixed native library missing: /data/local/tmp/portalex/libportalsensor.so")
+                    ?: error("fixed native library missing: /data/system/portalex/sensorlib/libportalsensor.so")
                 System.load(path)
                 loaded = true
                 Logger.info("BinderSensorNative: loaded ($path)")
@@ -53,7 +53,7 @@ internal object BinderSensorNative {
      * system_lib_file 上下文；system_server 只负责加载，绝不从 APK 回退。
      */
     private fun libraryPath(): String? {
-        val fixed = File("/data/local/tmp/portalex/libportalsensor.so")
+        val fixed = File("/data/system/portalex/sensorlib/libportalsensor.so")
         return if (fixed.isFile) fixed.absolutePath else null
     }
 
