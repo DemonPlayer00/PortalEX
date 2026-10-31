@@ -3,11 +3,16 @@ package moe.fuqiuluo.portalex.ui.widget
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.RippleDrawable
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.shape.MaterialShapeDrawable
 
 /**
  * 侧栏入口警告框：按菜单标题给未就绪的入口画黄色线框。
@@ -42,18 +47,40 @@ class DrawerWarningDecoration : RecyclerView.ItemDecoration() {
         for (i in 0 until parent.childCount) {
             val child = parent.getChildAt(i)
             if (titleOf(child) !in warningTitles) continue
-            child.background?.getOutline(outline)
-            // NavigationView 的 item 背景是 MaterialShapeDrawable：直接取它的
-            // outline 半径，黄框才能跟着胶囊按钮的圆角走。
-            val radius = outline.radius.takeIf { it > 0f } ?: fallbackRadius
-            val rect = RectF(
-                child.left + insetX,
-                child.top + insetY,
-                child.right - insetX,
-                child.bottom - insetY,
-            )
-            c.drawRoundRect(rect, radius, radius, paint)
+            // 直接复用菜单项背景的 MaterialShapeDrawable 形状（含胶囊圆角）；
+            // 只改描边，不自己猜圆角半径。
+            val shape = materialShapeOf(child.background)
+            if (shape != null) {
+                val border = MaterialShapeDrawable(shape.shapeAppearanceModel).apply {
+                    setStroke(1f * density, Color.parseColor("#FFFFC107"))
+                    fillColor = android.content.res.ColorStateList.valueOf(Color.TRANSPARENT)
+                    bounds = Rect(0, 0, child.width, child.height)
+                }
+                c.save()
+                c.translate(child.left.toFloat(), child.top.toFloat())
+                border.draw(c)
+                c.restore()
+            } else {
+                child.background?.getOutline(outline)
+                val radius = outline.radius.takeIf { it > 0f } ?: fallbackRadius
+                val rect = RectF(
+                    child.left + insetX,
+                    child.top + insetY,
+                    child.right - insetX,
+                    child.bottom - insetY,
+                )
+                c.drawRoundRect(rect, radius, radius, paint)
+            }
         }
+    }
+
+    private fun materialShapeOf(drawable: Drawable?): MaterialShapeDrawable? = when (drawable) {
+        is MaterialShapeDrawable -> drawable
+        is RippleDrawable -> (0 until drawable.numberOfLayers)
+            .firstNotNullOfOrNull { materialShapeOf(drawable.getDrawable(it)) }
+        is LayerDrawable -> (0 until drawable.numberOfLayers)
+            .firstNotNullOfOrNull { materialShapeOf(drawable.getDrawable(it)) }
+        else -> null
     }
 
     private fun titleOf(view: View): String? = when (view) {
