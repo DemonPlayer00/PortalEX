@@ -538,12 +538,10 @@ internal object SystemRuntimeChannel {
      */
     private fun isMi6RuntimeUnsupported(): Boolean {
         if (Build.VERSION.SDK_INT != 35) return false
-        val lineage = runCatching {
-            Class.forName("android.os.SystemProperties")
-                .getMethod("get", String::class.java)
-                .invoke(null, "ro.lineage.version") as? String
-        }.getOrNull().orEmpty()
-        return lineage.isNotEmpty()
+        // 直接读 Build.DISPLAY/FINGERPRINT：SystemProperties 反射在 system_server
+        // 可能被 hidden-API 限制，之前因此没有命中，guard 实际未生效。
+        return Build.DISPLAY.contains("lineage", ignoreCase = true) ||
+            Build.FINGERPRINT.contains("lineage", ignoreCase = true)
     }
 
     /** 停投递并**立刻**把节拍交回 poll 路径（顺序不能反：先停泵再切时钟）。 */
