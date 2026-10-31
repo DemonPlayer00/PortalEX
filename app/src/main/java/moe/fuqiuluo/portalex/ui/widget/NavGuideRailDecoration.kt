@@ -81,10 +81,8 @@ class NavGuideRailDecoration(
         val step = 9f * density
         val radius = 1.7f * density
 
-        // 主线一次画完，不依赖端点是否还在可见区域。
-        c.drawLine(railX, startY, railX, endY, railPaint)
-
-        // 圆点按固定步长铺满整条线，并额外对齐可见菜单项中心。
+        // 只画蚂蚁点，不画贯穿的实线；端点离开屏幕时仍按内容坐标生成点阵。
+        // 圆点按固定步长铺满整条范围，并额外对齐可见菜单项中心。
         val dotYs = ArrayList<Float>()
         var y = startY
         while (y <= endY) {
