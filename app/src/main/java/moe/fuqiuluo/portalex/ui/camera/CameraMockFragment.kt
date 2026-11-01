@@ -127,6 +127,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 }
                 updateImplementationUi()
                 refresh()
+                (activity as? MainActivity)?.refreshDrawerWarnings()
             }
         }
     }
