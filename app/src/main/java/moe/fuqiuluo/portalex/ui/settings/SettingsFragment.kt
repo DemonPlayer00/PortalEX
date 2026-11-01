@@ -13,11 +13,13 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.ViewModelProvider
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
@@ -27,6 +29,8 @@ import moe.fuqiuluo.portalex.ext.ORIENTATION_AUTO
 import moe.fuqiuluo.portalex.ext.ORIENTATION_LANDSCAPE
 import moe.fuqiuluo.portalex.ext.ORIENTATION_PORTRAIT
 import moe.fuqiuluo.portalex.ext.orientationMode
+import moe.fuqiuluo.portalex.ext.suPath
+import moe.fuqiuluo.portalex.service.SensorNativeLibrary
 import moe.fuqiuluo.portalex.ext.debug
 import moe.fuqiuluo.portalex.ext.fusedMode
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
@@ -46,6 +50,10 @@ import moe.fuqiuluo.xposed.utils.PortalProtocol
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
 class SettingsFragment : Fragment() {
+
+    private var suWarningJob: Job? = null
+    private var suWarningPath: String? = null
+    private var suWarningUsable: Boolean? = null
     private var _binding: FragmentSettingsBinding? = null
     private val binding get() = _binding!!
 
@@ -195,7 +203,36 @@ class SettingsFragment : Fragment() {
         if (_binding != null) {
             refreshBatteryOptimizationState()
             refreshFusedState()
+            refreshSuWarning()
         }
+    }
+
+    /**
+     * su 不可用时给设置行加黄框。与侧栏设置入口同色、1dp 线宽，但使用 8dp 小圆角。
+     * 结果按 suPath 缓存，避免每次进设置页都触发 root 授权。
+     */
+    private fun refreshSuWarning(force: Boolean = false) {
+        val ctx = context ?: return
+        if (_binding == null) return
+        val path = ctx.suPath
+        if (!force && path == suWarningPath && suWarningUsable != null) {
+            applySuWarning(suWarningUsable == true)
+            return
+        }
+        suWarningJob?.cancel()
+        suWarningJob = viewLifecycleOwner.lifecycleScope.launch {
+            val usable = withContext(Dispatchers.IO) {
+                runCatching { SensorNativeLibrary.canUseSu(ctx) }.getOrDefault(false)
+            }
+            suWarningPath = path
+            suWarningUsable = usable
+            if (_binding != null) applySuWarning(usable)
+        }
+    }
+
+    private fun applySuWarning(usable: Boolean) {
+        binding.suPathLayout.background = if (usable) null else
+            ContextCompat.getDrawable(requireContext(), R.drawable.bg_su_warning)
     }
 
     /** 电池优化白名单状态：文案如实反映，不做假成功 */
@@ -229,6 +266,8 @@ class SettingsFragment : Fragment() {
                 }
                 context.suPath = p
                 binding.suPathValue.text = context.suPath
+                // 每次改完 su 命令都重新检查一次（即使路径字符串没变）。
+                refreshSuWarning(force = true)
                 showToast(getString(R.string.su_path_updated))
             }
         }
