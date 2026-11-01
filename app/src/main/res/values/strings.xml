@@ -422,4 +422,5 @@
     <string name="orientation_landscape">Landscape</string>
     <string name="calibration_altitude">Altitude</string>
     <string name="calibration_altitude_desc">GPS-measured altitude above sea level.</string>
+    <string name="camera_loading">正在处理视频…</string>
 </resources>

@@ -106,6 +106,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val uri = result.data?.data ?: return@registerForActivityResult
         val ctx = requireContext()
         setFabLoading(true)
+        showCameraLoading("正在导入摄像头实现…")
         Executors.newSingleThreadExecutor().execute {
             val result = runCatching { CammockManager.importArchive(ctx, uri) }
                 .getOrElse {
@@ -116,6 +117,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 }
             main.post {
                 setFabLoading(false)
+                hideCameraLoading()
                 if (!uiAlive()) return@post
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
                 if (!result.supported) {
@@ -139,11 +141,13 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         val uri = result.data?.data ?: return@registerForActivityResult
         val ctx = requireContext()
         setFabLoading(true)
+        showCameraLoading("正在导入视频与路径…")
         Executors.newSingleThreadExecutor().execute {
             val result = runCatching { CameraMockArchive.importZip(ctx, uri) }
                 .getOrElse { CameraMockArchive.ImportResult(false, message = "导入失败：${it.message}") }
             main.post {
                 setFabLoading(false)
+                hideCameraLoading()
                 if (result.ok) autoUploadLibrary(ctx)
                 if (!uiAlive()) return@post
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
@@ -384,6 +388,17 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private fun uiAlive(): Boolean = isAdded && _binding != null
 
     private var importFabBar: FabBarView? = null
+    private var cameraLoading: CameraLoadingDialog? = null
+
+    private fun showCameraLoading(message: CharSequence) {
+        if (!uiAlive()) return
+        cameraLoading = (cameraLoading ?: CameraLoadingDialog(requireContext())).also { it.show(message) }
+    }
+
+    private fun hideCameraLoading() {
+        cameraLoading?.dismiss()
+        cameraLoading = null
+    }
 
     private fun setFabLoading(value: Boolean) {
         if (value) importFabBar = (activity as? MainActivity)?.fabBar
@@ -441,6 +456,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     override fun onDestroyView() {
         refreshToken++
         mapDrawToken++
+        hideCameraLoading()
         cameraExecutor.shutdownNow()
         binding.cameraMockMap.onDestroy()
         super.onDestroyView()
