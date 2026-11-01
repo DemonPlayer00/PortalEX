@@ -121,6 +121,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     }
 
     private var pendingExport: CameraVideo? = null
+    private var cameraLoading: CameraLoadingDialog? = null
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
@@ -128,6 +129,9 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         pendingExport = null
         if (uri == null) return@registerForActivityResult
         val ctx = requireContext()
+        cameraLoading = (cameraLoading ?: CameraLoadingDialog(ctx)).also {
+            it.show("正在导出视频与路径…")
+        }
         Executors.newSingleThreadExecutor().execute {
             val ok = runCatching {
                 val videoFile = CameraMockStore.videoFile(ctx, video.file)
@@ -169,9 +173,13 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                     Toast.makeText(ctx, "导出失败：${exception.message}", Toast.LENGTH_LONG).show()
                 }
             }
-            if (ok.isSuccess) activity?.runOnUiThread {
+            activity?.runOnUiThread {
+                cameraLoading?.dismiss()
+                cameraLoading = null
                 if (!uiAlive()) return@runOnUiThread
-                Toast.makeText(ctx, "已导出视频与路径时间轴", Toast.LENGTH_SHORT).show()
+                if (ok.isSuccess) {
+                    Toast.makeText(ctx, "已导出视频与路径时间轴", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -311,6 +319,8 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         loadToken++
         routeDrawToken++
         fitToken++
+        cameraLoading?.dismiss()
+        cameraLoading = null
         routeExecutor.shutdownNow()
         super.onDestroyView()
         _binding?.bmapView?.onDestroy()
