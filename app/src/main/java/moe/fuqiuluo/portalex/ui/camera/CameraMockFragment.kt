@@ -838,6 +838,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                         binding.cameraMockUninstallImpl.isEnabled = true
                         updateSwitch()
                         updateImplementationUi()
+                        (activity as? MainActivity)?.refreshDrawerWarnings()
                         Toast.makeText(context, result.getOrElse { "卸载失败" }, Toast.LENGTH_LONG).show()
                     }
                 }
