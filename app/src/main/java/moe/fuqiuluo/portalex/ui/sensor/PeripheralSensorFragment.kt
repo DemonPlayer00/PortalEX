@@ -108,6 +108,7 @@ class PeripheralSensorFragment : Fragment() {
         binding.sensorNativeUpdate.setOnClickListener {
             SensorNativeGate.update(this) {
                 refresh()
+                (activity as? moe.fuqiuluo.portalex.MainActivity)?.refreshDrawerWarnings()
             }
         }
         binding.sensorNativeRemove.setOnClickListener {
@@ -117,6 +118,7 @@ class PeripheralSensorFragment : Fragment() {
                 ctx.orientationMock = false
                 binding.peripheralMockSwitch.isChecked = false
                 refresh()
+                (activity as? moe.fuqiuluo.portalex.MainActivity)?.refreshDrawerWarnings()
             }
         }
         renderRows()

@@ -535,8 +535,12 @@ class MainActivity : AppCompatActivity() {
      * 侧栏警告：sensor 库未释放、cammock 未安装、su 不可用时，对应入口画黄框。
      * 状态来源：system_server 的 get_sensor_lib_state、App 的 cammock 安装状态、su 实测。
      */
-    private fun refreshDrawerWarnings() {
+    fun refreshDrawerWarnings(forceSu: Boolean = false) {
         if (!::binding.isInitialized) return
+        if (forceSu) {
+            suCheckedPath = null
+            suUsable = null
+        }
         val navView = binding.navView
         val app = this
         warningJob?.cancel()

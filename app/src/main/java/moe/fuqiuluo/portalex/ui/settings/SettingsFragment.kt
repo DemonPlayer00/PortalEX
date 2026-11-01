@@ -268,6 +268,7 @@ class SettingsFragment : Fragment() {
                 binding.suPathValue.text = context.suPath
                 // 每次改完 su 命令都重新检查一次（即使路径字符串没变）。
                 refreshSuWarning(force = true)
+                (activity as? MainActivity)?.refreshDrawerWarnings(forceSu = true)
                 showToast(getString(R.string.su_path_updated))
             }
         }
