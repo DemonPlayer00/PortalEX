@@ -138,7 +138,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 val exportSource = if (videoFile.isFile) {
                     videoFile
                 } else {
-                    CammockManager.exportVideo(ctx, video.id).getOrThrow()
+                    CameraMockSyncClient.exportVideo(ctx, video.id).getOrThrow()
                 }
                 ctx.contentResolver.openOutputStream(uri)?.use { output ->
                     java.util.zip.ZipOutputStream(output).use { zip ->
@@ -528,7 +528,11 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         val ctx = requireContext()
         val ids = working?.videos.orEmpty().map { it.id }
         Executors.newSingleThreadExecutor().execute {
-            val result = CammockManager.upload(ctx)
+            val result = if (CameraMockSyncClient.importLibrary()) {
+                Result.success(ids.size)
+            } else {
+                Result.failure(IllegalStateException("system_server 素材同步失败"))
+            }
             activity?.runOnUiThread {
                 if (result.isSuccess) {
                     CameraMockUploadState.markUploaded(ctx, ids)
@@ -553,7 +557,11 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         val ids = working?.videos.orEmpty().map { it.id }
         Toast.makeText(ctx, "正在重试上传…", Toast.LENGTH_SHORT).show()
         Executors.newSingleThreadExecutor().execute {
-            val result = CammockManager.upload(ctx)
+            val result = if (CameraMockSyncClient.importLibrary()) {
+                Result.success(ids.size)
+            } else {
+                Result.failure(IllegalStateException("system_server 素材同步失败"))
+            }
             activity?.runOnUiThread {
                 if (result.isSuccess) {
                     CameraMockUploadState.markUploaded(ctx, ids)

@@ -273,10 +273,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 // system_server 已确认全部视频落库；删除同步前的 app 本地副本。
                 localBefore.forEach { CameraMockStore.deleteVideoFile(ctx, it) }
                 Result.success(ids.size)
-            } else if (CammockManager.isInstalled(ctx)) {
-                CammockManager.upload(ctx)
             } else {
-                Result.failure(IllegalStateException("未安装摄像头实现"))
+                Result.failure(IllegalStateException("system_server 素材同步失败"))
             }
             main.post {
                 result.onSuccess { n ->
