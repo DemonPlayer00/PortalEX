@@ -187,10 +187,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                         Toast.makeText(requireContext(), "路线端点不足，无法定位", Toast.LENGTH_SHORT).show()
                     } else {
                         mockServiceViewModel.stopAutoPlay()
-                        val lats = route.route.map { it.first }.toDoubleArray()
-                        val lons = route.route.map { it.second }.toDoubleArray()
-                        val smooth = BooleanArray(maxOf(0, route.route.size - 1)) { route.isSmooth(it) }
-                        if (MockServiceHelper.setRoute(lm, lats, lons, smooth)) {
+                        // 重置进度与位置必须成对；统一走 ViewModel 的原子封装。
+                        if (mockServiceViewModel.resetRouteToStart()) {
                             Toast.makeText(requireContext(), "位置已更新到路线起点", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(requireContext(), "更新位置失败", Toast.LENGTH_SHORT).show()
@@ -407,19 +405,12 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                         return@withContext
                     }
 
-                    val first = selectedRoute.route.firstOrNull()
-                    if (first == null) {
-                        showToast("路线端点不足，无法更新起点")
+                    // 启动模拟也属于“重新播放”：进度与位置一起回到起点。
+                    // ViewModel 内部下发 set_route + set_route_playing(false)，避免瞬移。
+                    if (mockServiceViewModel.resetRouteToStart()) {
+                        showToast("路线进度已重置到起点")
                     } else {
-                        val lats = selectedRoute.route.map { it.first }.toDoubleArray()
-                        val lons = selectedRoute.route.map { it.second }.toDoubleArray()
-                        if (MockServiceHelper.setRoute(lm, lats, lons) &&
-                            MockServiceHelper.setRoutePlaying(lm, false)
-                        ) {
-                            showToast("更新路线起点位置成功")
-                        } else {
-                            showToast("更新位置失败")
-                        }
+                        showToast("更新路线起点位置失败")
                     }
                 }
             } finally {
