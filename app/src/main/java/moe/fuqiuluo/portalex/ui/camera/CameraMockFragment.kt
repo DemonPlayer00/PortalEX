@@ -149,7 +149,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             main.post {
                 setFabLoading(false)
                 hideCameraLoading()
-                if (result.ok) autoUploadLibrary(ctx)
                 if (!uiAlive()) return@post
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
                 if (result.ok) refresh()
@@ -219,7 +218,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             ).show()
         }
         refresh()
-        autoUploadLibrary()
     }
 
     /** 长按视频点列表：只重命名（坐标/视频在点详情页编辑）。 */
@@ -251,51 +249,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 val name = edit.text?.toString()?.trim().orEmpty().ifBlank { point.name }
                 if (name == point.name) return@setPositiveButton
                 CameraMockStore.upsert(ctx, point.copy(name = name))
-                autoUploadLibrary()
-                refresh()
+                        refresh()
             }
             .show()
-    }
-
-    private fun autoUploadLibrary(context: android.content.Context? = null) {
-        val ctx = context ?: if (uiAlive()) requireContext() else return
-        val ids = CameraMockStore.routes(ctx).flatMap { r -> r.videos.map { it.id } }
-        if (ids.isEmpty()) return
-        // 只清理“本次同步前已存在”的本地文件，避免误删同步期间刚开始的新录制。
-        val localBefore = CameraMockStore.dir(ctx).listFiles()
-            ?.filter { it.isFile && it.extension.equals("mp4", true) }
-            ?.map { it.name }
-            .orEmpty()
-        Executors.newSingleThreadExecutor().execute {
-            // 先修复 system_server 目录属主/权限，避免清空素材库后 ENOENT。
-            CameraMockSyncClient.prepareStorage(ctx)
-            // 所有实现都优先同步到 system_server；成功时 system_server 持有唯一副本，
-            // 并删除 app 本地视频。MI6 的 producer 也改为从标准选片接口取 fd。
-            val systemSynced = CameraMockSyncClient.importLibrary(ctx)
-            val result = if (systemSynced) {
-                // system_server 已确认全部视频落库；删除同步前的 app 本地副本。
-                localBefore.forEach { CameraMockStore.deleteVideoFile(ctx, it) }
-                Result.success(ids.size)
-            } else {
-                Result.failure(IllegalStateException("system_server 素材同步失败"))
-            }
-            main.post {
-                result.onSuccess { n ->
-                    CameraMockUploadState.markUploaded(ctx, ids)
-                    if (!uiAlive()) return@onSuccess
-                    Toast.makeText(
-                        ctx,
-                        if (systemSynced) "素材已同步到系统库 $n 段"
-                        else "已通过 cammock 上传 $n 段视频",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }.onFailure {
-                    CameraMockUploadState.markFailed(ctx, ids)
-                    if (!uiAlive()) return@onFailure
-                    Toast.makeText(ctx, "自动上传失败，可在视频点内重试：${it.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
     }
 
     override fun onCreateView(
@@ -338,8 +294,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                     .setNegativeButton("取消") { _, _ -> adapter.notifyItemChanged(position) }
                     .setPositiveButton("删除") { _, _ ->
                         CameraMockStore.removePoint(ctx, point.id)
-                        autoUploadLibrary()
-                        refresh()
+                                        refresh()
                         Toast.makeText(ctx, "已删除路段和 ${point.videos.size} 段视频", Toast.LENGTH_SHORT).show()
                     }
                     .show()
@@ -446,8 +401,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         // 不依赖启动 cammock 成功，否则 provider 启动失败会把素材上传一起拖死。
         if (!resumedLibrarySync) {
             resumedLibrarySync = true
-            autoUploadLibrary()
-        }
+            }
         avoidFabBar()
         updateFabActions()
         /* 页面回到前台时对齐一次产帧线程：开关可能是在别处（或上一次进程）打开的，
@@ -1037,8 +991,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                         autoSelectTimeTag(context)
                         // 启动时把当前素材库同步到 system_server；否则新导入/修复后的
                         // 视频要等到下一次改名/重新导入才会进入系统库，摄像头会一直黑屏。
-                        autoUploadLibrary(context)
-                    }
+                            }
                     updateSwitch()
                     updateStatus(lastPoints)
                     Toast.makeText(
