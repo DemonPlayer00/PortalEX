@@ -115,12 +115,20 @@ object CammockManager {
     }.getOrElse { Install(false, emptyList(), "安装失败：${it.message}") }
 
     /** PortalEX 只调用实现自己的 start.sh；provider/HAL 细节由实现负责。 */
-    fun start(context: Context): Result<String> = runScript(context, "start.sh")
+    fun start(context: Context): Result<String> = runScript(
+        context, "start.sh", timeoutMs = 30_000L,
+        successMarkers = listOf("cammock provider started", "MI6 cammock started")
+    )
 
     /** 停止也由实现自己的 stop.sh 负责。 */
     fun stop(context: Context): Result<String> = runScript(context, "stop.sh")
 
-    private fun runScript(context: Context, name: String, timeoutMs: Long = 30_000L): Result<String> = runCatching {
+    private fun runScript(
+        context: Context,
+        name: String,
+        timeoutMs: Long = 30_000L,
+        successMarkers: List<String> = emptyList(),
+    ): Result<String> = runCatching {
         if (!isInstalled(context)) error("尚未安装摄像头实现")
         val dir = currentDir(context)
         val script = File(dir, name)
@@ -157,7 +165,25 @@ object CammockManager {
                 }
             }
         }.apply { isDaemon = true; start() }
-        if (!p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        // 启停脚本会把 provider 留在后台。部分 KernelSU/su supervisor 会一直等
+        // 这个后台子进程，导致脚本已经打印完成标记、Process.waitFor 却永远不返回。
+        // 因此先轮询完成标记：看到标记就立即返回，不再把 30s 超时当成启动失败。
+        val deadline = startedAt + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (p.waitFor(100, java.util.concurrent.TimeUnit.MILLISECONDS)) break
+            val snapshot = synchronized(out) { out.toString() }
+            if (successMarkers.any { snapshot.contains(it) }) {
+                android.util.Log.i(
+                    "CammockManager",
+                    "$name reached success marker after ${System.currentTimeMillis() - startedAt}ms"
+                )
+                // 停止读取输出，避免后台 provider 继续占着管道；不 destroy 进程，
+                // 它可能已经是 provider 的唯一 supervisor。
+                runCatching { p.inputStream.close() }
+                return@runCatching snapshot.trim()
+            }
+        }
+        if (p.isAlive) {
             p.destroyForcibly()
             reader.join(2_000)
             error("$name 执行超时（${timeoutMs / 1000}s，长视频上传请重试）")
