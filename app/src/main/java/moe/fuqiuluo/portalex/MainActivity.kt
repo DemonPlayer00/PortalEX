@@ -974,6 +974,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // 最近任务划掉时会走到这里；窗口属于旧任务，留着只会变成看不见控制面的幽灵。
+        if (isFinishing && !isChangingConfigurations) {
+            runCatching { mockServiceViewModel.hideRockerForTaskRemoval() }
+        }
         super.onDestroy()
 
         mSuggestionSearch?.destroy()
