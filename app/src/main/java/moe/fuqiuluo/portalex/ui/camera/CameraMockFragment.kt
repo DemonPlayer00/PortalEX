@@ -267,6 +267,8 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
             ?.map { it.name }
             .orEmpty()
         Executors.newSingleThreadExecutor().execute {
+            // 先修复 system_server 目录属主/权限，避免清空素材库后 ENOENT。
+            CameraMockSyncClient.prepareStorage(ctx)
             // 所有实现都优先同步到 system_server；成功时 system_server 持有唯一副本，
             // 并删除 app 本地视频。MI6 的 producer 也改为从标准选片接口取 fd。
             val systemSynced = CameraMockSyncClient.importLibrary()
