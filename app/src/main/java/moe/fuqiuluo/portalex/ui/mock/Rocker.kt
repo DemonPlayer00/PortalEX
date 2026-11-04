@@ -21,6 +21,32 @@ import moe.fuqiuluo.portalex.ext.rockerCoords
 
 @SuppressLint("RtlHardcoded", "ClickableViewAccessibility")
 class Rocker(private val activity: Activity) : View.OnTouchListener {
+    companion object {
+        /**
+         * 进程内唯一悬浮摇杆窗口。
+         *
+         * ViewModel 会随 Activity/任务重建；单进程内若旧窗口还挂在 WindowManager 上，
+         * 新页面会创建一个“看不见状态”的 Rocker，于是复选框为否但旧窗口仍在，
+         * 点一下又叠加第二个。新实例创建/显示前统一回收旧窗口。
+         */
+        private var active = java.lang.ref.WeakReference<Rocker>(null)
+
+        @Synchronized
+        private fun adopt(rocker: Rocker) {
+            val old = active.get()
+            if (old != null && old !== rocker && old.isStart) {
+                runCatching { old.hide() }
+            }
+            active = java.lang.ref.WeakReference(rocker)
+        }
+
+        @Synchronized
+        fun discardStale() {
+            val old = active.get()
+            if (old != null && old.isStart) runCatching { old.hide() }
+            active.clear()
+        }
+    }
     /** 宿主 Activity：供 ViewModel 检测 Activity 重建后是否已过期（旧实例不能再 addView） */
     val hostActivity: Activity get() = activity
 
@@ -106,6 +132,7 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
             applyKeepScreenOn(autoLockStatus)
             renderAutoLock()
         }
+        adopt(this)
     }
 
     /**
@@ -167,6 +194,7 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
     fun show(): Boolean {
         if (isStart) return true
         return try {
+            adopt(this)
             windowManager.addView(root, layoutParams)
             isStart = true
             true
@@ -194,6 +222,7 @@ class Rocker(private val activity: Activity) : View.OnTouchListener {
             rockerView.reset()
             windowManager.removeView(root)
             isStart = false
+            if (active.get() === this) active.clear()
             true
         } catch (e: Exception) {
             Log.e("Rocker", "移除悬浮摇杆失败", e)
