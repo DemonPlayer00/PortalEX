@@ -36,6 +36,7 @@ import android.os.Bundle
 internal object CameraMockSelectionServer {
 
     const val SOCKET_NAME = "portalex_camera_mock"
+    private const val FILE_SOCKET_PATH = "/data/system/portalex/camera.sock"
 
     @Volatile
     private var started = false
@@ -63,6 +64,61 @@ internal object CameraMockSelectionServer {
             started = false
             Logger.error("选片服务启动失败", it)
         }
+    }
+
+    /**
+     * 文件系统命名空间的第二入口：root 侧 nc 可以用 -U 直接连它，
+     * 不要求 app（untrusted_app）对 system_server 拥有 connectto 权限。
+     *
+     * android.net.LocalServerSocket 只支持抽象命名空间，所以这里直接使用
+     * JDK Unix domain socket（Android 13+）。
+     */
+    private fun startFileSocket() {
+        runCatching {
+            File(FILE_SOCKET_PATH).parentFile?.mkdirs()
+            File(FILE_SOCKET_PATH).delete()
+            Thread({
+                // compileSdk 的 Kotlin stub 只暴露无参 open()；运行时 Android 13+
+                // 有 open(ProtocolFamily)，用反射避免被 stub 卡住。
+                val server = java.nio.channels.ServerSocketChannel::class.java
+                    .getMethod("open", java.net.ProtocolFamily::class.java)
+                    .invoke(null, java.net.StandardProtocolFamily.UNIX)
+                    as java.nio.channels.ServerSocketChannel
+                server.bind(java.net.UnixDomainSocketAddress.of(FILE_SOCKET_PATH))
+                runCatching { android.system.Os.chmod(FILE_SOCKET_PATH, 438) } // 0666
+                Logger.info("选片服务：监听 $FILE_SOCKET_PATH")
+                while (true) {
+                    val client = server.accept()
+                    runCatching {
+                        val reader = BufferedReader(
+                            InputStreamReader(java.nio.channels.Channels.newInputStream(client))
+                        )
+                        val line = reader.readLine().orEmpty()
+                        val reply = when (line) {
+                            "IMPORT_LIBRARY" -> {
+                                val ok = importPendingUpload()
+                                val count = CameraMockServerStore.load().sumOf { it.videos.size }
+                                if (ok) "OK\timported\t$count" else "ERR\timport-failed\t$count"
+                            }
+                            "GET_LIBRARY" -> {
+                                syncAppLibrary()
+                                "LIB\t" + CameraMockCodec.encodeRoutes(CameraMockServerStore.load())
+                            }
+                            else -> "ERR\tbad-request"
+                        }
+                        OutputStreamWriter(java.nio.channels.Channels.newOutputStream(client)).apply {
+                            write(reply); write("\n"); flush()
+                        }
+                    }.onFailure {
+                        Logger.warn("选片服务文件 socket 处理失败 ${it.message}")
+                    }
+                    runCatching { client.close() }
+                }
+            }, "PortalEX-SelectionFileServer").apply {
+                isDaemon = true
+                start()
+            }
+        }.onFailure { Logger.warn("选片服务文件 socket 启动失败 ${it.message}") }
     }
 
     private val uploadDir = File("/data/local/tmp/portalex/upload")

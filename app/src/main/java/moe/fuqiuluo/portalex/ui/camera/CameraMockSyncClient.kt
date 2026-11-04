@@ -18,6 +18,7 @@ import java.io.FileOutputStream
  */
 object CameraMockSyncClient {
     private const val SOCKET = "portalex_camera_mock"
+    private const val FILE_SOCKET = "/data/system/portalex/camera.sock"
 
     /**
      * 系统侧视频目录的 root 侧自愈。
@@ -43,7 +44,12 @@ object CameraMockSyncClient {
         p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
     }.getOrDefault(false)
 
-    fun importLibrary(timeoutMs: Int = 300_000): Boolean = runCatching {
+    fun importLibrary(context: Context? = null, timeoutMs: Int = 300_000): Boolean {
+        if (importLibraryDirect(timeoutMs)) return true
+        return context != null && importLibraryViaRoot(context, timeoutMs)
+    }
+
+    private fun importLibraryDirect(timeoutMs: Int): Boolean = runCatching {
         val socket = LocalSocket()
         try {
             socket.connect(
@@ -57,6 +63,19 @@ object CameraMockSyncClient {
         } finally {
             runCatching { socket.close() }
         }
+    }.getOrDefault(false)
+
+    /**
+     * root 侧 nc 走文件系统 socket 上传。root/ksu 域不需要 app 对
+     * system_server unix_stream_socket 的 connectto 权限。
+     */
+    private fun importLibraryViaRoot(context: Context, timeoutMs: Int): Boolean = runCatching {
+        val cmd = "printf 'IMPORT_LIBRARY\\n' | /system/bin/nc -U -q 2 '$FILE_SOCKET' 2>/dev/null"
+        val p = ProcessBuilder(context.suPath, "-c", cmd)
+            .redirectErrorStream(true).start()
+        val output = p.inputStream.bufferedReader().use { it.readText() }
+        p.waitFor(timeoutMs.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+        output.contains("OK")
     }.getOrDefault(false)
 
     /**
