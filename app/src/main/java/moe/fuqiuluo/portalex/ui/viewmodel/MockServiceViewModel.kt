@@ -184,13 +184,32 @@ class MockServiceViewModel : ViewModel() {
         // 会话刚起来先同步一次配置：模块刚启动时用的是默认值（比如上报间隔 100ms），
         // 不同步的话设置页里的「最大位置上报间隔」看起来永远不生效。
         ConfigSync.push(Portal.appContext, locationManager)
-        // 会话刚起来就把当前路线重新下发：模块侧会清进度，并在未播放时把位置对齐到起点
-        val lm = locationManager
-        if (lm != null && selectedRoute != null && pathPoints.size >= 2) {
-            val (lats, lons, smooth) = buildUpload()
-            routeUploaded = MockServiceHelper.setRoute(lm, lats, lons, smooth)
-        }
+        // 会话刚起来就把当前路线重新下发，并明确停止播放：
+        // set_route + set_route_playing(false) 必须成对，否则位置会停在旧进度。
+        resetRouteToStart()
         Log.i("MockServiceViewModel", "新一轮会话：路线进度已重置")
+    }
+
+    /**
+     * 将路线进度和位置一起重置到起点。
+     *
+     * 用户在“启动路线模拟”或点击路线列表时调用。只 reset 本地进度而不下发 set_route，
+     * 或只 set_route 不停止播放，都会让 App 与 system_server 的进度错位并瞬移。
+     */
+    fun resetRouteToStart(): Boolean {
+        routeUploaded = false
+        routePlayingPushed = false
+        lastPushedActive = false
+        lastPushedBearing = Double.NaN
+        val lm = locationManager ?: return false
+        val route = selectedRoute ?: return false
+        if (route.route.size < 2) return false
+        val (lats, lons, smooth) = buildUpload()
+        val uploaded = MockServiceHelper.setRoute(lm, lats, lons, smooth)
+        routeUploaded = uploaded
+        val stopped = MockServiceHelper.setRoutePlaying(lm, false)
+        if (::rocker.isInitialized) rocker.autoStatus = false
+        return uploaded && stopped
     }
 
     /** 切路线时强制退出自动播放：位置归零、等用户按播放。 */
