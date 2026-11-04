@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.ext.keepAliveInBackground
+import moe.fuqiuluo.portalex.ui.mock.Rocker
 
 /**
  * 会话期间的**后台保活服务**（设置项「后台保活」，默认开）。
@@ -123,6 +124,13 @@ class MockKeepAliveService : Service() {
             return START_NOT_STICKY
         }
         return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // 最近任务被划掉：前台服务可能让进程继续活着，但悬浮摇杆的宿主任务已经没了。
+        // 主动回收窗口，避免留下“看不见控制面”的摇杆。
+        runCatching { Rocker.discardStale() }
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {

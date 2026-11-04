@@ -212,6 +212,15 @@ class MockServiceViewModel : ViewModel() {
         return uploaded && stopped
     }
 
+    /**
+     * 任务被划掉/Activity 正在结束时关闭悬浮摇杆。
+     * 不停止 system_server 会话，只移除已经失去宿主控制面的窗口。
+     */
+    fun hideRockerForTaskRemoval() {
+        stopMotionForFloatingHidden()
+        if (::rocker.isInitialized) runCatching { rocker.hide() }
+    }
+
     /** 切路线时强制退出自动播放：位置归零、等用户按播放。 */
     fun stopAutoPlay() {
         if (::rocker.isInitialized) rocker.autoStatus = false
