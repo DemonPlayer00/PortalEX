@@ -150,6 +150,20 @@ class MockServiceViewModel : ViewModel() {
     }
 
     /**
+     * 页面重建时恢复“当前选中路线”的显示数据。
+     *
+     * 只重建本地路径/距离，不动 routeUploaded / routePlayingPushed，也不向 system_server
+     * 发 set_route：进入页面不是路线切换，不能把播放进度重置到起点。
+     * 真正的重置只在用户点击路线列表项时执行（并同时 set_route 到起点）。
+     */
+    fun restoreRouteForDisplay(route: HistoricalRoute) {
+        selectedRoute = route
+        cachedRoute = route
+        pathPoints = buildPath(route)
+        routeDistance = pathPoints.lastOrNull()?.cum ?: 0.0
+    }
+
+    /**
      * 选中路线后立刻开始播放（模拟已在运行时用）。
      *
      * 播完一次之后 onRouteCompleted 会把 autoStatus 关掉，于是「再点一条路线」只会换数据、
