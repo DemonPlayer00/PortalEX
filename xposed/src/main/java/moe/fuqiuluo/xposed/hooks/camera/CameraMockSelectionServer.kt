@@ -41,6 +41,13 @@ internal object CameraMockSelectionServer {
     @Volatile
     private var started = false
 
+    /** 素材导入是慢路径，绝不能阻塞相机 SELECT。 */
+    private val syncExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "PortalEX-CameraSync").apply { isDaemon = true }
+    }
+    @Volatile
+    private var syncQueued = false
+
     fun start() {
         if (started) return
         started = true
@@ -63,6 +70,24 @@ internal object CameraMockSelectionServer {
         }.onFailure {
             started = false
             Logger.error("选片服务启动失败", it)
+        }
+    }
+
+    /**
+     * 异步、合并的库同步。多次 SELECT 只会排队一次同步；SELECT 本身立即
+     * 使用当前系统库，库还没准备好就快速返回 no-match，provider 走黑帧回退。
+     */
+    private fun scheduleSync() {
+        if (syncQueued) return
+        syncQueued = true
+        syncExecutor.execute {
+            try {
+                val startedAt = System.currentTimeMillis()
+                syncAppLibrary()
+                Logger.info("选片服务：异步库同步完成 ${System.currentTimeMillis() - startedAt}ms")
+            } finally {
+                syncQueued = false
+            }
         }
     }
 
@@ -251,17 +276,18 @@ internal object CameraMockSelectionServer {
             return
         }
         Logger.info("选片服务：handle start (uid=$peerUid)")
-        // app 是唯一数据源：每次选片前比对 app 库，只有变化时才导入/拷贝。
-        syncAppLibrary()
-        Logger.info("选片服务：sync done")
         val reader = BufferedReader(InputStreamReader(client.inputStream))
         val line = reader.readLine() ?: run { Logger.info("选片服务：empty request"); return }
         if (line == "GET_LIBRARY") {
+            // 显式读库：同步一次，保证返回的是最新库。
+            syncAppLibrary()
             val json = CameraMockCodec.encodeRoutes(CameraMockServerStore.load())
             reply(client, "LIB\t$json")
             return
         }
         if (line.startsWith("EXPORT_VIDEO\t")) {
+            // 导出需要文件已落库；显式同步只发生在导出路径。
+            syncAppLibrary()
             val videoId = line.substringAfter('\t').trim()
             val file = CameraMockServerStore.videoFile(videoId)
             if (!file.isFile) {
@@ -306,6 +332,8 @@ internal object CameraMockSelectionServer {
         // native provider 目前发送空标签；为空时回源 app 的当前标签筛选。
         val tags = if (wireTags.isEmpty()) CameraMockServerContext.appTagFilter() else wireTags
         val session = parts.getOrNull(6).orEmpty()
+        // 选片是相机热路径：先触发异步同步，不等待整库拷贝。
+        scheduleSync()
         // 只在位置模拟运行时提供虚拟相机；没有模拟就用真实相机。
         if (!FakeLoc.enable) {
             reply(client, "ERR\tlocation-mock-off")
