@@ -99,6 +99,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private var refreshToken = 0
     private var mapDrawToken = 0
     private var pendingRecordAfterPermission = false
+    private var resumedLibrarySync = false
     private val cammockImportLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -439,6 +440,12 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     override fun onResume() {
         super.onResume()
         binding.cameraMockMap.onResume()
+        // 进入素材页先做一次幂等同步，修复“库里有元数据但 system_server 为空”的情况；
+        // 不依赖启动 cammock 成功，否则 provider 启动失败会把素材上传一起拖死。
+        if (!resumedLibrarySync) {
+            resumedLibrarySync = true
+            autoUploadLibrary()
+        }
         avoidFabBar()
         updateFabActions()
         /* 页面回到前台时对齐一次产帧线程：开关可能是在别处（或上一次进程）打开的，
@@ -457,6 +464,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         hideCameraLoading()
         cameraExecutor.shutdownNow()
         binding.cameraMockMap.onDestroy()
+        resumedLibrarySync = false
         super.onDestroyView()
         _binding = null
     }
@@ -1023,7 +1031,12 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 if (!uiAlive()) return@post
                 binding.switchCameraMock.isEnabled = true
                 if (result.isSuccess) {
-                    if (next) autoSelectTimeTag(context)
+                    if (next) {
+                        autoSelectTimeTag(context)
+                        // 启动时把当前素材库同步到 system_server；否则新导入/修复后的
+                        // 视频要等到下一次改名/重新导入才会进入系统库，摄像头会一直黑屏。
+                        autoUploadLibrary(context)
+                    }
                     updateSwitch()
                     updateStatus(lastPoints)
                     Toast.makeText(
