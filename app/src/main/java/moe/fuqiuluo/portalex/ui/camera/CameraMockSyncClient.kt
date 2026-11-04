@@ -1,8 +1,10 @@
 package moe.fuqiuluo.portalex.ui.camera
 
+import android.content.Context
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.os.ParcelFileDescriptor
+import moe.fuqiuluo.portalex.ext.suPath
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -16,6 +18,30 @@ import java.io.FileOutputStream
  */
 object CameraMockSyncClient {
     private const val SOCKET = "portalex_camera_mock"
+
+    /**
+     * 系统侧视频目录的 root 侧自愈。
+     *
+     * 清空素材库时只删 camera/ 子目录，/data/system/portalex 若曾被 root 工具创建，
+     * system_server 没有权限重新建 camera/videos，上传会以 ENOENT 失败。
+     * 顺便补 KernelSU/APatch 的 connectto 规则，避免 SELinux 再次挡住 socket。
+     */
+    fun prepareStorage(context: Context): Boolean = runCatching {
+        val script = """
+            mkdir -p /data/system/portalex/camera/videos
+            chown system:system /data/system/portalex /data/system/portalex/camera /data/system/portalex/camera/videos 2>/dev/null || true
+            chmod 771 /data/system/portalex 2>/dev/null || true
+            chmod 775 /data/system/portalex/camera /data/system/portalex/camera/videos 2>/dev/null || true
+            if [ -x /data/adb/ksud ]; then
+                /data/adb/ksud sepolicy patch "allow untrusted_app system_server unix_stream_socket connectto" >/dev/null 2>&1 || true
+            elif [ -x /data/adb/apd ]; then
+                /data/adb/apd sepolicy --live "allow untrusted_app system_server unix_stream_socket connectto" >/dev/null 2>&1 || true
+            fi
+        """.trimIndent()
+        val p = ProcessBuilder(context.suPath, "-c", script)
+            .redirectErrorStream(true).start()
+        p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
+    }.getOrDefault(false)
 
     fun importLibrary(timeoutMs: Int = 300_000): Boolean = runCatching {
         val socket = LocalSocket()
