@@ -13,6 +13,7 @@ import moe.fuqiuluo.portalex.ext.enableAGPS
 import moe.fuqiuluo.portalex.ext.enableGetFromLocation
 import moe.fuqiuluo.portalex.ext.enableNMEA
 import moe.fuqiuluo.portalex.ext.enableRequestGeofence
+import moe.fuqiuluo.portalex.ext.gnssMockIntent
 import moe.fuqiuluo.portalex.ext.minSatelliteCount
 import moe.fuqiuluo.portalex.ext.needDowngradeToCdma
 import moe.fuqiuluo.portalex.ext.speed
@@ -205,6 +206,11 @@ object MockServiceHelper {
         // 保活只服务"无人值守的收尾"（播完的提示音/状态收回），由遥控循环按需起停
         // （见 MockServiceViewModel.syncBackgroundKeepAlive）：空闲占前台/持锁属于无谓耗电。
         return if(locationManager.sendExtraCommand(PortalProtocol.PROVIDER, randomKey, rely)) {
+            // GNSS 意图独立于路线会话存在；路线真正启动后再补发一次 START_GNSS_MOCK。
+            // 这样即使 App 在路线未启动时只记住了 intent，GNSS 也会随路线自动生效。
+            runCatching { Portal.appContext }.getOrNull()?.let { ctx ->
+                if (ctx.gnssMockIntent) runCatching { startGnssMock(locationManager) }
+            }
             val started = isMockStart(locationManager)
             if (started) onSessionChanged?.invoke(true)
             started
