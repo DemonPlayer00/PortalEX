@@ -528,7 +528,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         val ctx = requireContext()
         val ids = working?.videos.orEmpty().map { it.id }
         Executors.newSingleThreadExecutor().execute {
-            val result = if (CameraMockSyncClient.importLibrary()) {
+            val result = if (CameraMockSyncClient.importLibrary(ctx)) {
                 Result.success(ids.size)
             } else {
                 Result.failure(IllegalStateException("system_server 素材同步失败"))
@@ -557,7 +557,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         val ids = working?.videos.orEmpty().map { it.id }
         Toast.makeText(ctx, "正在重试上传…", Toast.LENGTH_SHORT).show()
         Executors.newSingleThreadExecutor().execute {
-            val result = if (CameraMockSyncClient.importLibrary()) {
+            val result = if (CameraMockSyncClient.importLibrary(ctx)) {
                 Result.success(ids.size)
             } else {
                 Result.failure(IllegalStateException("system_server 素材同步失败"))
