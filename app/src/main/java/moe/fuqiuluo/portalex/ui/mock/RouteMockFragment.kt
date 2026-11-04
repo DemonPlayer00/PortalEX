@@ -132,7 +132,8 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                 mockServiceViewModel.clearSelectedRoute()
             } else {
                 binding.mockRouteName.text = it.name
-                mockServiceViewModel.selectRouteForPlayback(it)
+                // 进入页面只恢复显示；不重置进度，也不下发 set_route。
+                mockServiceViewModel.restoreRouteForDisplay(it)
                 centerHomeMap(it)
             }
         }
