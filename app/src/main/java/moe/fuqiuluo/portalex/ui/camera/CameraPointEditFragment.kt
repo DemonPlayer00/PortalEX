@@ -521,35 +521,6 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         working = point.copy(videos = point.videos + video)
         CameraMockStore.upsert(requireContext(), working!!)
         refreshVideos()
-        autoUploadLibrary()
-    }
-
-    private fun autoUploadLibrary() {
-        val ctx = requireContext()
-        val ids = working?.videos.orEmpty().map { it.id }
-        Executors.newSingleThreadExecutor().execute {
-            val result = if (CameraMockSyncClient.importLibrary(ctx)) {
-                Result.success(ids.size)
-            } else {
-                Result.failure(IllegalStateException("system_server 素材同步失败"))
-            }
-            activity?.runOnUiThread {
-                if (result.isSuccess) {
-                    CameraMockUploadState.markUploaded(ctx, ids)
-                } else {
-                    CameraMockUploadState.markFailed(ctx, ids)
-                }
-                if (!uiAlive()) return@runOnUiThread
-                if (result.isFailure) {
-                    Toast.makeText(
-                        ctx,
-                        "上传失败，长视频可重试：${result.exceptionOrNull()?.message}",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-                refreshVideos()
-            }
-        }
     }
 
     private fun retryUpload() {
@@ -632,8 +603,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 })
                 CameraMockStore.upsert(ctx, working!!)
                 refreshVideos()
-                autoUploadLibrary()
-            }
+                    }
             .show()
     }
 
