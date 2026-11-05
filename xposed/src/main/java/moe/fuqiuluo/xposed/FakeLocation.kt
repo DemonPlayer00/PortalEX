@@ -9,6 +9,7 @@ import moe.fuqiuluo.xposed.hooks.fused.ThirdPartyLocationHook
 import moe.fuqiuluo.xposed.hooks.oplus.OplusLocationHook
 import moe.fuqiuluo.xposed.hooks.telephony.miui.MiuiTelephonyManagerHook
 import moe.fuqiuluo.xposed.hooks.camera.CameraWatch
+import moe.fuqiuluo.xposed.debug.FingerprintAccessLogger
 import moe.fuqiuluo.xposed.hooks.NetworkTypeSpoof
 import moe.fuqiuluo.xposed.hooks.sensor.BinderSensorMock
 import moe.fuqiuluo.xposed.hooks.sensor.SystemRuntimeChannel
@@ -133,6 +134,7 @@ class FakeLocation {
                     Logger.info("Found com.android.phone")
                     TelephonyHook(info.classLoader)
                     MiuiTelephonyManagerHook(info.classLoader)
+                    FingerprintAccessLogger.installPhone(info.classLoader)
                 }
                 "android" -> {
                     Logger.info("Debug Log Status: ${FakeLoc.enableDebugLog}")
@@ -144,6 +146,7 @@ class FakeLocation {
                     }
                     TelephonyHook.hookSubOnTransact(info.classLoader)
                     WlanHook(systemClassLoader)
+                    FingerprintAccessLogger.install(info.classLoader, systemClassLoader)
                     AndroidFusedLocationProviderHook(info.classLoader)
 
                     ThirdPartyLocationHook(info.classLoader)
