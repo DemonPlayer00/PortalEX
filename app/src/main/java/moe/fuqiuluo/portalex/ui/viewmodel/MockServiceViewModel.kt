@@ -203,7 +203,9 @@ class MockServiceViewModel : ViewModel() {
         lastPushedBearing = Double.NaN
         val lm = locationManager ?: return false
         val route = selectedRoute ?: return false
-        if (route.route.size < 2) return false
+        // 单点路线也是合法坐标点：系统侧 set_route 会清空播放路径并把位置落到该点。
+        // 这里不能按“至少 2 点”拒绝，否则点击历史单点只更新了选中态、位置不动。
+        if (route.route.isEmpty()) return false
         val (lats, lons, smooth) = buildUpload()
         val uploaded = MockServiceHelper.setRoute(lm, lats, lons, smooth)
         routeUploaded = uploaded
