@@ -70,8 +70,8 @@ class StaminaFragment : Fragment() {
                 get = { it.decayPerMinute },
                 set = { c, v -> c.copy(decayPerMinute = v) },
                 format = { "%.1f 点/分".format(it) },
-                hint = "满速跑动时每分钟掉多少体力。默认 22 ⇒ 首次疲劳约在 1.4 km / 9 分" +
-                        "（别按线性外推：体力越低恢复越快、消耗也降，后半段掉得更慢）",
+                hint = "满速跑动时每分钟掉多少体力。默认 18 ⇒ 首次疲劳约在 2.2 km / 14 分" +
+                        "（按临界速度/D′ 模型校准；别按线性外推：体力越低恢复越快、消耗也降，后半段掉得更慢）",
             ),
             Row(
                 title = getString(R.string.stamina_rest_at),
@@ -97,7 +97,7 @@ class StaminaFragment : Fragment() {
                 set = { c, v -> c.copy(fatigueSec = v) },
                 format = { "%.0f 秒".format(it) },
                 hint = "一次疲劳的倒计时预算：进疲劳按下这个秒数，倒完即开跑。" +
-                        "实际时长通常更长（低于开跑阈值时倒得慢，默认约 2 倍），看下面结果行。默认 80 秒",
+                        "实际时长通常更长（低于开跑阈值时倒得慢，默认约 2 倍），看下面结果行。默认 120 秒",
             ),
             Row(
                 title = getString(R.string.stamina_walk_speed),
@@ -105,7 +105,7 @@ class StaminaFragment : Fragment() {
                 get = { it.walkSpeed },
                 set = { c, v -> c.copy(walkSpeed = v) },
                 format = { "%.2f m/s".format(it) },
-                hint = "疲劳期间的速度。默认 1.10 m/s（走路）",
+                hint = "疲劳期间的速度。默认 1.20 m/s（快走；接近 D′ 恢复期的主动恢复速度）",
             ),
             Row(
                 title = getString(R.string.stamina_floor),
@@ -129,7 +129,7 @@ class StaminaFragment : Fragment() {
                 get = { it.transitionSec },
                 set = { c, v -> c.copy(transitionSec = v) },
                 format = { "%.1f 秒".format(it) },
-                hint = "进出疲劳时速度平滑的时长：默认 3 秒（把台阶摊成斜坡）。" +
+                hint = "进出疲劳时速度平滑的时长：默认 5 秒（把台阶摊成斜坡）。" +
                         "每次方向变化重抽一次（× ±随机化幅度）。0 = 直接跳变",
             ),
             Row(
@@ -138,7 +138,7 @@ class StaminaFragment : Fragment() {
                 get = { it.randomPercent },
                 set = { c, v -> c.copy(randomPercent = v) },
                 format = { "±%.0f %%".format(it) },
-                hint = "随机化幅度：施加在「本轮衰减速率」「本次过渡时长」「本次疲劳时长」上，默认 ±15%",
+                hint = "随机化幅度：施加在「本轮衰减速率」「本次过渡时长」「本次疲劳时长」上，默认 ±10%",
             ),
             Row(
                 title = getString(R.string.stamina_ignore_window),
@@ -320,8 +320,8 @@ class StaminaFragment : Fragment() {
                     "%.1f".format(metrics.firstFatigueSec / 60.0),
                     if (metrics.firstCycleSec > 0) "%.1f".format(metrics.firstCycleSec / 60.0) else "—",
                     "%.2f".format(metrics.fatigueSpeedMps),
-                    metrics.fatigueCountWithin(1_500.0),
-                    metrics.fatigueCountWithin(2_000.0),
+                    metrics.fatigueCountWithin(3_000.0),
+                    metrics.fatigueCountWithin(5_000.0),
                 )
             )
         }

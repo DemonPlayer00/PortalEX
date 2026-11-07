@@ -9,7 +9,7 @@ import kotlin.random.Random
  *
  * 为什么单独抽出来：[StaminaModel] 每拍算一次倍率，「按距离预览倍率曲线」又要算同一组公式。
  * 两处各写一份的话，预览图与实际跑出来的节奏迟早对不上 —— 而这种漂移没有任何测试会自己暴露，
- * 只有用户发现"图上说到 2km 才累、实际 1.5km 就掉速"才会被当成 bug 报上来。
+ * 只有用户发现"图上说到 2.2km 才累、实际 1.5km 就掉速"才会被当成 bug 报上来。
  */
 internal object StaminaMath {
 
@@ -202,7 +202,7 @@ object StaminaCurve {
         /**
          * 前 [meters] 米内进入了多少次疲劳。
          *
-         * 这是用户直接关心的那个数（"1.5 km 内 1 次、2 km 内 2 次"），
+         * 这是用户直接关心的那个数（默认目标："3 km 内至少 1 次、5 km 内至少 2 次"），
          * 所以由曲线自己数出来显示在页面上，而不是让人去图上比划。
          */
         fun fatigueCountWithin(meters: Double): Int =

@@ -35,7 +35,11 @@ object StaminaPrefs {
      * `rest_sec` 的原因。
      */
     private const val VERSION_KEY = "stamina_version"
-    private const val VERSION = 1
+    /**
+     * 2026-11-07：默认参数按临界速度 / D′ 文献重标定（衰减/恢复/疲劳预算/走路速度）。
+     * 旧版本存下来的是旧默认，必须整组重置，否则界面显示"默认"但模块仍用旧值。
+     */
+    private const val VERSION = 2
 
     fun load(context: Context): StaminaConfig {
         val sp = context.sharedPrefs

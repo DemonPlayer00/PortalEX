@@ -332,50 +332,55 @@ class StaminaCycleAnalysisTest {
     /**
      * **默认值必须落在健康区间**（页面上的「重置数据」就是恢复到这组值）。
      *
-     * 用户口径（2026-09-17）：**1.5 km 内 1 次疲劳、2 km 内 2 次** —— 默认那 2 km 窗口里
-     * 就要看得见这个模式。这条同时防"改默认值顺手把开箱体验弄坏"。
+     * 2026-11-07 按临界速度 / D′ 恢复文献重定：
+     * - 基础 3.05 m/s 约在娱乐跑者 CS 附近；
+     * - D′ 恢复时间常数约 376 s（间歇跑研究，见 StaminaModel 文档）；
+     * - 因此默认目标改为 **约 2.2 km / 14 分首次疲劳，一次约 3 分钟，周期约 7 分钟**，
+     *   而不是旧版每 1.5 km 疲劳一次。
+     *
+     * 这组值仍由曲线实测钉住：改默认值必须同步解释为什么。
      */
     @Test
     fun `出厂默认必须落在健康区间`() {
         val c = StaminaConfig(enabled = true)
         val limit = StaminaCurve.decayLimitForRecovery(c, base)
-        val curve = StaminaCurve.simulate(c, base, maxDistanceMeters = 3_000.0)
+        val curve = StaminaCurve.simulate(c, base, maxDistanceMeters = 5_000.0)
         val m = curve.metrics
 
         println(
-            "出厂默认：衰减 %.1f（回血上限 %.1f）｜疲劳体力值 %.0f%% / 开跑阈值 %.0f%% ｜ 首次疲劳 %.2f km / %.1f 分 ⇒ 疲劳 %.0f 秒 ｜ 周期 %.0f 秒 ｜ 均速 %.2f m/s ｜ 1.5km 内 %d 次 / 2km 内 %d 次"
+            "出厂默认：衰减 %.1f（回血上限 %.1f）｜疲劳体力值 %.0f%% / 开跑阈值 %.0f%% ｜ 首次疲劳 %.2f km / %.1f 分 ⇒ 疲劳 %.0f 秒 ｜ 周期 %.0f 秒 ｜ 均速 %.2f m/s ｜ 3km 内 %d 次 / 5km 内 %d 次"
                 .format(
                     c.decayPerMinute, limit, c.restAtPercent, c.resumeAtPercent,
                     m.firstFatigueDistanceM / 1000.0, m.firstFatigueStartSec / 60.0,
                     m.firstFatigueSec, m.firstCycleSec, m.averageSpeedMps,
-                    m.fatigueCountWithin(1_500.0), m.fatigueCountWithin(2_000.0),
+                    m.fatigueCountWithin(3_000.0), m.fatigueCountWithin(5_000.0),
                 )
         )
         assertTrue("默认衰减必须留下余量：%.1f < %.1f".format(c.decayPerMinute, limit),
             c.decayPerMinute < limit * 0.9)
         assertTrue("默认疲劳速度必须真的比跑动慢", StaminaCurve.fatigueSlowsDown(c, base))
         assertTrue("默认参数必须会疲劳", m.hasFatigue)
-        // 目标 1：1.5 km 内 1 次、2 km 内 2 次（名义曲线必须**正好**是这样）
-        assertEquals("1.5 km 内的疲劳次数", 1, m.fatigueCountWithin(1_500.0))
-        assertEquals("2 km 内的疲劳次数", 2, m.fatigueCountWithin(2_000.0))
-        assertTrue("首次疲劳应在 1.0~1.5 km（实得 %.2f km）".format(m.firstFatigueDistanceM / 1000.0),
-            m.firstFatigueDistanceM in 1_000.0..1_500.0)
-        assertTrue("单次疲劳应在 1~5 分钟（实得 %.0f 秒）".format(m.firstFatigueSec),
-            m.firstFatigueSec in 60.0..300.0)
+        assertTrue("首次疲劳应在 1.8~2.8 km（实得 %.2f km）".format(m.firstFatigueDistanceM / 1000.0),
+            m.firstFatigueDistanceM in 1_800.0..2_800.0)
+        assertTrue("首次疲劳应在 10~18 分钟（实得 %.1f 分）".format(m.firstFatigueStartSec / 60.0),
+            m.firstFatigueStartSec in 600.0..1_080.0)
+        assertTrue("单次疲劳应在 2~6 分钟（实得 %.0f 秒）".format(m.firstFatigueSec),
+            m.firstFatigueSec in 120.0..360.0)
+        assertTrue("疲劳周期应在 5~10 分钟（实得 %.0f 秒）".format(m.firstCycleSec),
+            m.firstCycleSec in 300.0..600.0)
+        assertTrue("平均速度不应掉到走路档（实得 %.2f m/s）".format(m.averageSpeedMps),
+            m.averageSpeedMps > 2.0)
 
-        // 目标 2：带随机时也要**大多数情况**满足，而不只是名义值满足
-        var hit15 = 0
-        var hit20 = 0
+        // 带随机时也应有疲劳，但不能把首次疲劳提前到 1.5 km 内
+        var hit = 0
         val samples = 30
         for (seed in 1..samples) {
             val s = StaminaCurve.sample(
-                c, base, maxDistanceMeters = 2_500.0, dtSec = 0.1, random = Random(seed.toLong())
+                c, base, maxDistanceMeters = 3_000.0, dtSec = 0.1, random = Random(seed.toLong())
             ).metrics
-            if (s.fatigueCountWithin(1_500.0) >= 1) hit15++
-            if (s.fatigueCountWithin(2_000.0) >= 2) hit20++
+            if (s.hasFatigue && s.firstFatigueDistanceM >= 1_500.0) hit++
         }
-        println("随机采样 $samples 次：1.5km 内 ≥1 次 $hit15/$samples；2km 内 ≥2 次 $hit20/$samples")
-        assertTrue("带随机也应多数命中：1.5km 内 ≥1（实得 $hit15/$samples）", hit15 >= samples / 2)
-        assertTrue("带随机也应多数命中：2km 内 ≥2（实得 $hit20/$samples）", hit20 >= samples / 2)
+        println("随机采样 $samples 次：首次疲劳在 1.5km 之后 $hit/$samples")
+        assertTrue("带随机也应多数命中（实得 $hit/$samples）", hit >= samples / 2)
     }
 }
