@@ -99,6 +99,9 @@ object StaminaPrefs {
             putFloat(P + "walk", c.walkSpeed.toFloat())
             putFloat(P + "floor", c.minSpeedFactor.toFloat())
             putFloat(P + "random", c.randomPercent.toFloat())
+            // 旧版点率旋钮已从模型移除；即使没有走整组重置，也不能把死键留在盘上。
+            remove(P + "decay")
+            remove(P + "recover")
         }
     }
 }
