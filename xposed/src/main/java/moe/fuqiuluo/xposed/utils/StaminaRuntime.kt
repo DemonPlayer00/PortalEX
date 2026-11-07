@@ -138,12 +138,13 @@ object StaminaRuntime {
 
     /**
      * 当前**恢复速率**（点/分钟）—— 供界面显示"空闲时也在回体力"。
-     * 与模型内部同一口径（公式只有一处实现，见 [StaminaMath.recoveryFactor]）。
+     * 与模型内部同一口径（公式只有一处实现，见 `StaminaModel` 的 τD′ 公式）。
      */
     fun recoveringPerMinute(): Double {
         val c = config
         if (!c.enabled) return 0.0
-        return c.recoverCoefficient * StaminaMath.recoveryFactor(model.snapshot().staminaPercent)
+        val s = model.snapshot().staminaPercent
+        return (100.0 - s) / c.recoveryTauSec * 60.0
     }
 
     /** 状态回传（`get_stamina` / `get_sensor_status` 的回包） */

@@ -26,7 +26,12 @@ class StaminaCurveTest {
         floor: Double = 0.75,
         randomPct: Double = 0.0,
     ) = StaminaConfig(
-        enabled = true, decayPerMinute = decay, recoverCoefficient = recover,
+        enabled = true,
+        // 测试仍用“每分点率”描述旋钮；换算成新公式参数：
+        // 满速消耗率 = 100*(base-CS)/D′，恢复时间常数取 100*60/recover。
+        criticalSpeedMps = (base - decay / 60.0).coerceIn(0.5, 10.0),
+        dPrimeMeters = 100.0,
+        recoveryTauSec = (100.0 * 60.0 / recover).coerceIn(10.0, 3600.0),
         restAtPercent = restAt, fatigueSec = fatigueSec,
         walkSpeed = walk, minSpeedFactor = floor, randomPercent = randomPct,
         moveIgnoreWindowSec = 3.0, moveIgnoreSpeed = 12.0,
@@ -69,12 +74,14 @@ class StaminaCurveTest {
     fun `第一段单调下降且起点为 1_0`() {
         val curve = StaminaCurve.simulate(cfg(), base, maxDistanceMeters = 2_000.0)
         assertEquals("起点倍率", 1.0, curve.multiplier[0].toDouble(), 1e-9)
-
+        val firstFatigue = curve.metrics.firstFatigueDistanceM
+        assertTrue("测试窗口内应有首次疲劳", firstFatigue > 0.0)
         var prev = curve.multiplier[0].toDouble()
         var declined = false
         for (i in 1 until curve.size) {
+            if (curve.distanceM[i] > firstFatigue + 1.0) break
             val m = curve.multiplier[i].toDouble()
-            assertTrue("倍率不应上升（第 $i 点：$prev -> $m）", m <= prev + 1e-6)
+            assertTrue("疲劳前倍率不应上升（第 $i 点：$prev -> $m）", m <= prev + 1e-6)
             if (m < prev - 1e-6) declined = true
             prev = m
         }
@@ -96,9 +103,9 @@ class StaminaCurveTest {
             val mb = baseCurve.at(d)
             val mh = high.at(d)
             val ml = low.at(d)
-            assertTrue("$d m：衰减更快的线不该高于无随机线（$mh > $mb）", mh <= mb + 1e-6)
-            assertTrue("$d m：衰减更慢的线不该低于无随机线（$ml < $mb）", ml >= mb - 1e-6)
-            if (mb - mh > 0.01 || ml - mb > 0.01) separated = true
+            // 新模型有疲劳/恢复反馈，极值线在时间轴上的先后可能交叉；
+            // 这里只钉住“极值包络确实分开”，不再假设逐点单调。
+            if (kotlin.math.abs(mh - mb) > 0.01 || kotlin.math.abs(ml - mb) > 0.01) separated = true
             d += 200.0
         }
         assertTrue("两条极值线在 2.8km 内应与无随机线明显分开", separated)

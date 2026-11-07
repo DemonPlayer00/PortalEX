@@ -18,17 +18,17 @@ class StaminaWireTest {
         // 数一遍 data class 的属性（用 toWire 的长度对照声明处的 WIRE_SIZE）
         val c = StaminaConfig()
         assertEquals(StaminaConfig.WIRE_SIZE, c.toWire().size)
-        // 12 = enabled, decay, recover, restAt, resumeAt, fatigueSec, transition, walk,
+        // 13 = enabled, CS, D′, τD′, restAt, resumeAt, fatigueSec, transition, walk,
         //      minSpeedFactor, random, ignoreWindow, ignoreSpeed
-        assertEquals(12, StaminaConfig.WIRE_SIZE)
+        assertEquals(13, StaminaConfig.WIRE_SIZE)
     }
 
     @Test
     fun `往返无损`() {
         val c = StaminaConfig(
-            enabled = true, decayPerMinute = 22.0, recoverCoefficient = 6.0,
-            restAtPercent = 15.0, resumeAtPercent = 25.0, fatigueSec = 80.0,
-            transitionSec = 3.0, walkSpeed = 1.1, minSpeedFactor = 0.75,
+            enabled = true, criticalSpeedMps = 2.9, dPrimeMeters = 150.0,
+            recoveryTauSec = 376.0, restAtPercent = 15.0, resumeAtPercent = 25.0,
+            fatigueSec = 120.0, transitionSec = 5.0, walkSpeed = 1.2, minSpeedFactor = 0.75,
             randomPercent = 20.0, moveIgnoreWindowSec = 3.0, moveIgnoreSpeed = 12.0,
         ).sanitized()
         val back = StaminaConfig.fromWire(c.toWire())!!
@@ -38,8 +38,9 @@ class StaminaWireTest {
          * （实测 1.1f = 1.100000023841858）。逐字段给容差才是这条通路的正确期望。
          */
         assertEquals(c.enabled, back.enabled)
-        assertEquals(c.decayPerMinute, back.decayPerMinute, 1e-4)
-        assertEquals(c.recoverCoefficient, back.recoverCoefficient, 1e-4)
+        assertEquals(c.criticalSpeedMps, back.criticalSpeedMps, 1e-4)
+        assertEquals(c.dPrimeMeters, back.dPrimeMeters, 1e-4)
+        assertEquals(c.recoveryTauSec, back.recoveryTauSec, 1e-3)
         assertEquals(c.restAtPercent, back.restAtPercent, 1e-4)
         assertEquals(c.resumeAtPercent, back.resumeAtPercent, 1e-4)
         assertEquals(c.fatigueSec, back.fatigueSec, 1e-3)

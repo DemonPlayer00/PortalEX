@@ -134,8 +134,6 @@
     <string name="stamina_reset_data_ok">恢复默认</string>
     <string name="stamina_reset_data_done">已恢复默认参数并重置体力</string>
     <string name="stamina_params">参数（点击修改）</string>
-    <string name="stamina_decay">体力衰减</string>
-    <string name="stamina_decay_desc">满速跑动每分钟消耗的体力。</string>
     <string name="stamina_rest_at">疲劳体力值</string>
     <string name="stamina_rest_at_desc">体力低于此值时进入疲劳。</string>
     <string name="stamina_resume">开跑阈值</string>
@@ -146,8 +144,6 @@
     <string name="stamina_ignore_speed">忽略阈值</string>
     <string name="stamina_ignore_window_desc">判断异常速度的时间窗口。</string>
     <string name="stamina_ignore_speed_desc">快于此速度的移动不消耗体力。</string>
-    <string name="stamina_recover">恢复速度</string>
-    <string name="stamina_recover_desc">休息时每分钟恢复的体力。</string>
     <string name="stamina_walk_speed">疲劳时速度</string>
     <string name="stamina_walk_speed_desc">疲劳时的移动速度（m/s）。</string>
     <string name="stamina_floor">跑动降速下限</string>
@@ -157,10 +153,15 @@
     <string name="stamina_fatigue_sec">疲劳时长</string>
     <string name="stamina_fatigue_sec_desc">一次疲劳持续的时间（秒）。</string>
     <string name="stamina_metrics_label">这套参数跑出来</string>
+    <string name="stamina_critical_speed">临界速度 CS</string>
+    <string name="stamina_critical_speed_desc">高于它才消耗 D′，低于它恢复。</string>
+    <string name="stamina_d_prime">D′ 距离能力</string>
+    <string name="stamina_d_prime_desc">高于临界速度的有限距离能力。</string>
+    <string name="stamina_recovery_tau">D′ 恢复时间常数 τD′</string>
+    <string name="stamina_recovery_tau_desc">D′ 指数恢复的时间常数。</string>
     <string name="stamina_metrics">首次疲劳 %1$s km（跑 %2$s 分）· 一次疲劳 %3$s 分 · 周期 %4$s 分 · 疲劳时 %5$s m/s · 3km 内 %6$d 次 / 5km 内 %7$d 次</string>
     <string name="stamina_metrics_no_fatigue">10 km 内不会进疲劳（疲劳体力值 %.0f%% 太低，或体力衰减太小）</string>
     <string name="stamina_metrics_unknown_cycle">周期：窗口内只出现过一次疲劳</string>
-    <string name="stamina_health_decay">⚠ 体力衰减过高：疲劳期体力净下降（上限约 %1$s 点/分），曲线会一路掉到 0 并卡住</string>
     <string name="stamina_health_no_slowdown">⚠ 疲劳时速度不低于跑动速度，疲劳等于没降速（把「疲劳时速度」调低）</string>
     <string name="menu_test">测试</string>
     <string name="menu_calibration">校准</string>

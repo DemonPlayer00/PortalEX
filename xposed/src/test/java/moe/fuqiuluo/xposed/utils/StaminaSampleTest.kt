@@ -18,8 +18,8 @@ class StaminaSampleTest {
     private val base = 3.05
 
     private fun cfg(randomPct: Double = 15.0) = StaminaConfig(
-        enabled = true, decayPerMinute = 11.0, recoverCoefficient = 4.0,
-        restAtPercent = 20.0, resumeAtPercent = 30.0, fatigueSec = 120.0,
+        enabled = true, criticalSpeedMps = 2.85, dPrimeMeters = 100.0,
+        recoveryTauSec = 1500.0, restAtPercent = 20.0, resumeAtPercent = 30.0, fatigueSec = 120.0,
         transitionSec = 3.0, walkSpeed = 1.10,
         minSpeedFactor = 0.75, randomPercent = randomPct,
         moveIgnoreWindowSec = 3.0, moveIgnoreSpeed = 12.0,

@@ -36,10 +36,10 @@ object StaminaPrefs {
      */
     private const val VERSION_KEY = "stamina_version"
     /**
-     * 2026-11-07：默认参数按临界速度 / D′ 文献重标定（衰减/恢复/疲劳预算/走路速度）。
-     * 旧版本存下来的是旧默认，必须整组重置，否则界面显示"默认"但模块仍用旧值。
+     * 2026-11-07：配置从"衰减/恢复点率"切到 CS / D′ / τD′ 公式参数。
+     * 旧版本存下来的衰减/恢复点率没有对应关系，必须整组重置。
      */
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     fun load(context: Context): StaminaConfig {
         val sp = context.sharedPrefs
@@ -53,12 +53,13 @@ object StaminaPrefs {
         val d = StaminaConfig()
         return StaminaConfig(
             enabled = sp.getBoolean(P + "enabled", d.enabled),
-            decayPerMinute = sp.getFloat(P + "decay", d.decayPerMinute.toFloat()).toDouble(),
+            criticalSpeedMps = sp.getFloat(P + "critical_speed", d.criticalSpeedMps.toFloat()).toDouble(),
+            dPrimeMeters = sp.getFloat(P + "d_prime", d.dPrimeMeters.toFloat()).toDouble(),
+            recoveryTauSec = sp.getFloat(P + "recovery_tau", d.recoveryTauSec.toFloat()).toDouble(),
             restAtPercent = sp.getFloat(P + "rest_at", d.restAtPercent.toFloat()).toDouble(),
             resumeAtPercent = sp.getFloat(P + "resume", d.resumeAtPercent.toFloat()).toDouble(),
             fatigueSec = sp.getFloat(P + "fatigue_sec", d.fatigueSec.toFloat()).toDouble(),
             transitionSec = sp.getFloat(P + "transition", d.transitionSec.toFloat()).toDouble(),
-            recoverCoefficient = sp.getFloat(P + "recover", d.recoverCoefficient.toFloat()).toDouble(),
             moveIgnoreWindowSec = sp.getFloat(P + "ignore_window", d.moveIgnoreWindowSec.toFloat()).toDouble(),
             moveIgnoreSpeed = sp.getFloat(P + "ignore_speed", d.moveIgnoreSpeed.toFloat()).toDouble(),
             walkSpeed = sp.getFloat(P + "walk", d.walkSpeed.toFloat()).toDouble(),
@@ -77,6 +78,8 @@ object StaminaPrefs {
         context.sharedPrefs.edit {
             remove(P + "rest_sec")
             remove(P + "rest_factor")
+            remove(P + "decay")
+            remove(P + "recover")
         }
     }
 
@@ -84,12 +87,13 @@ object StaminaPrefs {
         val c = config.sanitized()
         context.sharedPrefs.edit {
             putBoolean(P + "enabled", c.enabled)
-            putFloat(P + "decay", c.decayPerMinute.toFloat())
+            putFloat(P + "critical_speed", c.criticalSpeedMps.toFloat())
+            putFloat(P + "d_prime", c.dPrimeMeters.toFloat())
+            putFloat(P + "recovery_tau", c.recoveryTauSec.toFloat())
             putFloat(P + "rest_at", c.restAtPercent.toFloat())
             putFloat(P + "resume", c.resumeAtPercent.toFloat())
             putFloat(P + "fatigue_sec", c.fatigueSec.toFloat())
             putFloat(P + "transition", c.transitionSec.toFloat())
-            putFloat(P + "recover", c.recoverCoefficient.toFloat())
             putFloat(P + "ignore_window", c.moveIgnoreWindowSec.toFloat())
             putFloat(P + "ignore_speed", c.moveIgnoreSpeed.toFloat())
             putFloat(P + "walk", c.walkSpeed.toFloat())

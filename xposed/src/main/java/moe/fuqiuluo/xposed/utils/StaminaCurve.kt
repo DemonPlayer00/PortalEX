@@ -13,10 +13,6 @@ import kotlin.random.Random
  */
 internal object StaminaMath {
 
-    /** 恢复倍率：体力 100% → 1.0，50% → 1.5，**0% → 2.0（最快）** */
-    fun recoveryFactor(staminaPercent: Double): Double =
-        2.0 - staminaPercent.coerceIn(0.0, 100.0) / 100.0
-
     /** 疲劳速度倍率：体力从 100 降到休息阈值时，从 1.0 平滑降到 [StaminaConfig.minSpeedFactor] */
     fun fatigueFactor(c: StaminaConfig, staminaPercent: Double): Double {
         val span = (100.0 - c.restAtPercent).coerceAtLeast(1e-6)
@@ -120,20 +116,6 @@ object StaminaCurve {
 
     /** 预览的可见窗口（米）：用户口径 2km */
     const val DEFAULT_WINDOW_M = 2_000.0
-
-    /**
-     * **体检**：疲劳期"能不能回血"的衰减上限（点/分）。
-     *
-     * 疲劳期以 [StaminaConfig.walkSpeed] 前进，消耗 = `衰减 × 走路/基础`；恢复 =
-     * `恢复系数 × 恢复倍率(体力)`。要能回血，两者在**疲劳体力值**处就得交叉：
-     * 超过本值 ⇒ 疲劳期体力一路下滑、最终卡在 0%（曲线变成"永远很累"）。
-     */
-    fun decayLimitForRecovery(c: StaminaConfig, baseSpeed: Double): Double {
-        val base = if (baseSpeed > 0.05) baseSpeed else 1.0
-        val walkRatio = c.walkSpeed / base
-        return if (walkRatio <= 0.0 || c.restAtPercent >= 100.0) Double.MAX_VALUE
-        else c.recoverCoefficient * StaminaMath.recoveryFactor(c.restAtPercent) / walkRatio
-    }
 
     /** **体检**：疲劳时速度是否真的比跑动慢（否则"疲劳"等于没降速） */
     fun fatigueSlowsDown(c: StaminaConfig, baseSpeed: Double): Boolean {
@@ -344,7 +326,8 @@ object StaminaCurve {
         val step = dtSec.coerceIn(0.02, 1.0)
         val limit = if (maxDistanceMeters > 0.0) maxDistanceMeters else DEFAULT_MAX_DISTANCE_M
         val scale = if (decayScale.isFinite() && decayScale > 0.0) decayScale else 1.0
-        val decayPerMinute = c.decayPerMinute * scale
+        // 兼容旧测试/曲线参数的“消耗倍率”：现在缩放的是 D′ 消耗项
+        val depletionScale = scale
 
         var stamina = 100.0
         var resting = false
@@ -376,8 +359,12 @@ object StaminaCurve {
             val moved = base * multiplier * step
 
             // ↓↓↓ 以下与 StaminaModel.tick 的结算顺序逐条对应，改一处必须改另一处 ↓↓↓
-            stamina += c.recoverCoefficient / 60.0 * StaminaMath.recoveryFactor(stamina) * step
-            stamina -= decayPerMinute / 60.0 * multiplier * step
+            // D′ 余额：名义速度高于 CS 才消耗，否则按 τD′ 指数恢复。
+            if (!resting && base > c.criticalSpeedMps) {
+                stamina -= depletionScale * 100.0 * (base - c.criticalSpeedMps) / c.dPrimeMeters * step
+            } else {
+                stamina += (100.0 - stamina) / c.recoveryTauSec * step
+            }
             stamina = stamina.coerceIn(0.0, 100.0)
             if (!resting && stamina <= c.restAtPercent) {
                 resting = true

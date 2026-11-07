@@ -47,35 +47,38 @@ import kotlin.random.Random
  * ## 默认值怎么推出来的（2026-11-07 按临界速度 / D′ 恢复文献重定）
  *
  * 生理学上，"能维持多久"由 **临界速度（CS）** 与 **D′（高于 CS 的有限距离能力）** 描述：
- * 恒定速度 v > CS 时，近似有
  *
  * ```
  * t_exhaust ≈ D′ / (v − CS)        （速度-时间双曲线）
  * D′bal(t) = D′ − ∫ D′exp · e^(−(t−u)/τD′) du
  * ```
  *
- * 跑步的 D′ 恢复时间常数 τD′ 约 **376 s**（Galbraith et al. 2015 的间歇跑数据；
- * 游泳/自行车常见 6–10 min，见 Raimundo et al. 2022）。本模型不是直接实现双曲线，
- * 而是把 100 点体力当作 D′ 的归一化余额：
+ * 本模型把 100 点体力当作 D′ 的归一化余额，直接使用这三个可调参数：
  *
- * - 基础速度 3.05 m/s（≈11 km/h），按娱乐跑者 CS 约 2.8–3.0 m/s、D′ 约 120–180 m 映射；
- * - 满速衰减 **18 点/分**、恢复 **6 点/分** ⇒ 默认首次疲劳约 **2.2 km / 14 分**；
- * - 疲劳阈值 15%、开跑阈值 25% 保留迟滞带；一次疲劳预算 **120 s**，实际约 3 分钟；
- * - 疲劳步行 **1.2 m/s**、过渡 **5 s**，避免"瞬间从跑变走"的台阶。
+ * - [criticalSpeedMps]：CS，默认 2.90 m/s（娱乐跑者约 10.4 km/h）；
+ * - [dPrimeMeters]：D′，默认 150 m；基础速度 3.05 m/s 时约在 14 分钟 / 2.2 km
+ *   进入疲劳（与 τD′ ≈ 376 s 的恢复时间常数配套，见下）；
+ * - [recoveryTauSec]：τD′，默认 376 s（Galbraith 等间歇跑数据；自行车/游泳常见 6–10 min）。
  *
+ * 疲劳阈值/开跑阈值/疲劳预算/步行速度/过渡时间仍是行为参数，默认值见字段。
  * 这组值由 `StaminaCycleAnalysisTest` 的 `出厂默认必须落在健康区间` 钉住（含随机采样）。
- * 它表达的是"接近临界速度的持续跑，约 2 km 后需要一次明显降速恢复"，不是把用户
- * 绑死在某个配速上；所有参数仍可在体力页调整。
+ * 它们表达的是"接近临界速度的持续跑，约 2 km 后需要一次明显降速恢复"，
+ * 不是把用户绑死在某个配速上；所有参数仍可在体力页调整。
  *
+ * ⚠️ 别用"100 点 ÷ 净速率"线性外推首次疲劳：净掉速率随体力下降而变小，
+ * 后半段掉得比前半段慢得多。
+
  * ⚠️ 别用"100 点 ÷ 净速率"线性外推首次疲劳：净掉速率随体力下降而变小（恢复变快、消耗变慢），
  * 后半段掉得比前半段慢得多。
  */
 data class StaminaConfig(
     var enabled: Boolean = false,
-    /** 消耗系数：满速跑动时每分钟消耗多少点 */
-    var decayPerMinute: Double = 18.0,
-    /** 恢复速度系数：实际恢复 = 本值 × 恢复倍率(体力) ÷ 冷却时间系数 */
-    var recoverCoefficient: Double = 6.0,
+    /** 临界速度 CS（m/s）：高于它才消耗 D′，低于它恢复 */
+    var criticalSpeedMps: Double = 2.90,
+    /** D′（米）：高于 CS 的有限距离能力；决定满速时的消耗速率 */
+    var dPrimeMeters: Double = 150.0,
+    /** D′ 恢复时间常数 τD′（秒）：越大恢复越慢，默认来自间歇跑研究 */
+    var recoveryTauSec: Double = 376.0,
     /** 休息体力值：低于它就对速度倍率再乘 [restSpeedFactor] */
     var restAtPercent: Double = 15.0,
     /**
@@ -127,8 +130,9 @@ data class StaminaConfig(
      */
     fun toWire(): FloatArray = floatArrayOf(
         if (enabled) 1f else 0f,
-        decayPerMinute.toFloat(),
-        recoverCoefficient.toFloat(),
+        criticalSpeedMps.toFloat(),
+        dPrimeMeters.toFloat(),
+        recoveryTauSec.toFloat(),
         restAtPercent.toFloat(),
         resumeAtPercent.toFloat(),
         fatigueSec.toFloat(),
@@ -146,21 +150,22 @@ data class StaminaConfig(
             if (w == null || w.size != WIRE_SIZE) return null
             return StaminaConfig(
                 enabled = w[0] != 0f,
-                decayPerMinute = w[1].toDouble(),
-                recoverCoefficient = w[2].toDouble(),
-                restAtPercent = w[3].toDouble(),
-                resumeAtPercent = w[4].toDouble(),
-                fatigueSec = w[5].toDouble(),
-                transitionSec = w[6].toDouble(),
-                walkSpeed = w[7].toDouble(),
-                minSpeedFactor = w[8].toDouble(),
-                randomPercent = w[9].toDouble(),
-                moveIgnoreWindowSec = w[10].toDouble(),
-                moveIgnoreSpeed = w[11].toDouble(),
+                criticalSpeedMps = w[1].toDouble(),
+                dPrimeMeters = w[2].toDouble(),
+                recoveryTauSec = w[3].toDouble(),
+                restAtPercent = w[4].toDouble(),
+                resumeAtPercent = w[5].toDouble(),
+                fatigueSec = w[6].toDouble(),
+                transitionSec = w[7].toDouble(),
+                walkSpeed = w[8].toDouble(),
+                minSpeedFactor = w[9].toDouble(),
+                randomPercent = w[10].toDouble(),
+                moveIgnoreWindowSec = w[11].toDouble(),
+                moveIgnoreSpeed = w[12].toDouble(),
             ).sanitized()
         }
 
-        const val WIRE_SIZE = 12
+        const val WIRE_SIZE = 13
     }
 
     /**
@@ -173,8 +178,9 @@ data class StaminaConfig(
     fun sanitized(): StaminaConfig {
         val restAt = restAtPercent.coerceIn(0.0, 98.0)
         return copy(
-            decayPerMinute = decayPerMinute.coerceIn(0.1, 600.0),
-            recoverCoefficient = recoverCoefficient.coerceIn(0.01, 600.0),
+            criticalSpeedMps = criticalSpeedMps.coerceIn(0.5, 10.0),
+            dPrimeMeters = dPrimeMeters.coerceIn(10.0, 5000.0),
+            recoveryTauSec = recoveryTauSec.coerceIn(10.0, 3600.0),
             restAtPercent = restAt,
             resumeAtPercent = resumeAtPercent.coerceIn(restAt + 1.0, 99.0),
             fatigueSec = fatigueSec.coerceIn(1.0, 3600.0),
@@ -215,7 +221,8 @@ class StaminaModel {
     private var currentMultiplier: Double = 1.0
     private var restCount: Int = 0
     private var restTotalSec: Double = 0.0
-    private var decayThisRun: Double = Double.NaN
+    /** 本次跑动抽到的 D′ 消耗速率（点/秒）；进疲劳后重抽 */
+    private var depletionThisRun: Double = Double.NaN
 
     /**
      * 疲劳倒计时**剩余预算**（秒）。进疲劳时 = [StaminaConfig.fatigueSec] ×(1±随机化幅度)，
@@ -274,7 +281,7 @@ class StaminaModel {
         currentMultiplier = 1.0
         restCount = 0
         restTotalSec = 0.0
-        decayThisRun = Double.NaN
+        depletionThisRun = Double.NaN
         fatigueRemainingSec = 0.0
         blend = 0.0
         blendTarget = 0.0
@@ -312,19 +319,21 @@ class StaminaModel {
             val ignoring = apparent > c.moveIgnoreSpeed || avg > c.moveIgnoreSpeed
             if (ignoring) ignoredTicks += 1
 
-            // 2) 连续恢复（一直在发生，与消耗并存）
-            // ⚠️ 系数单位是「点/分钟」，必须 /60 换成每秒再乘 Δt。漏这一步恢复会快 60 倍，
-            // 表现是「体力永远满」（实测踩过：恢复 2.0/拍 压过消耗 0.09/拍，8 条单测同时红）。
-            // 恢复 = 系数/60 × 恢复倍率(体力)：倍率 100%→1.0、0%→2.0（越低越快）
-            val recoverPerSecond =
-                c.recoverCoefficient / 60.0 * StaminaMath.recoveryFactor(staminaPercent)
-            staminaPercent += recoverPerSecond * dtSec
-
-            // 3) 消耗：只在"本拍确有位移"且未被忽略时
-            if (!ignoring && moved > 0.0) {
-                if (decayThisRun.isNaN()) decayThisRun = jitter(c.decayPerMinute, c.randomPercent, random)
-                // 消耗系数同样是「点/分钟」+ 与表象速度成正比
-                staminaPercent -= decayThisRun / 60.0 * (apparent / base) * dtSec
+            // 2) D′ 余额：高于 CS 持续消耗，否则按 τD′ 指数恢复。
+            //    恢复/消耗都从**名义速度 base** 计算，避免"降速后自动停止消耗"的反馈死锁；
+            //    只有真的有位移才消耗，空闲只恢复。
+            if (!resting && !ignoring && moved > 0.0 && base > c.criticalSpeedMps) {
+                if (depletionThisRun.isNaN()) {
+                    // 100 点 = 100% D′；满强度下每秒消耗 (v-CS)/D′。
+                    depletionThisRun = jitter(
+                        100.0 * (base - c.criticalSpeedMps) / c.dPrimeMeters,
+                        c.randomPercent,
+                        random,
+                    )
+                }
+                staminaPercent -= depletionThisRun * dtSec
+            } else {
+                staminaPercent += (100.0 - staminaPercent) / c.recoveryTauSec * dtSec
             }
             staminaPercent = staminaPercent.coerceIn(0.0, 100.0)
 
@@ -336,7 +345,7 @@ class StaminaModel {
                 restCount += 1
                 // 每次疲劳重抽预算（× ±随机化幅度）—— 两次不会一样长
                 fatigueRemainingSec = jitter(c.fatigueSec, c.randomPercent, random)
-                decayThisRun = Double.NaN    // 下一段跑动重新抽消耗速率
+                depletionThisRun = Double.NaN    // 下一段跑动重新抽消耗速率
             } else if (resting) {
                 // 低于开跑阈值 ⇒ 倒得慢（几乎停滞），达到/超过 ⇒ 倒得快，越远越快
                 fatigueRemainingSec -= StaminaMath.fatigueTickRate(c, staminaPercent) * dtSec

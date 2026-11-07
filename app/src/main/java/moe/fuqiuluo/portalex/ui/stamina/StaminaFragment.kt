@@ -65,13 +65,28 @@ class StaminaFragment : Fragment() {
     private val rows: List<Row>
         get() = listOf(
             Row(
-                title = getString(R.string.stamina_decay),
-                desc = getString(R.string.stamina_decay_desc),
-                get = { it.decayPerMinute },
-                set = { c, v -> c.copy(decayPerMinute = v) },
-                format = { "%.1f 点/分".format(it) },
-                hint = "满速跑动时每分钟掉多少体力。默认 18 ⇒ 首次疲劳约在 2.2 km / 14 分" +
-                        "（按临界速度/D′ 模型校准；别按线性外推：体力越低恢复越快、消耗也降，后半段掉得更慢）",
+                title = getString(R.string.stamina_critical_speed),
+                desc = getString(R.string.stamina_critical_speed_desc),
+                get = { it.criticalSpeedMps },
+                set = { c, v -> c.copy(criticalSpeedMps = v) },
+                format = { "%.2f m/s".format(it) },
+                hint = "临界速度 CS：低于它只恢复、不消耗 D′。默认 2.90 m/s（约 10.4 km/h）",
+            ),
+            Row(
+                title = getString(R.string.stamina_d_prime),
+                desc = getString(R.string.stamina_d_prime_desc),
+                get = { it.dPrimeMeters },
+                set = { c, v -> c.copy(dPrimeMeters = v) },
+                format = { "%.0f m".format(it) },
+                hint = "D′：高于 CS 的有限距离能力。默认 150 m；越小越快进入疲劳",
+            ),
+            Row(
+                title = getString(R.string.stamina_recovery_tau),
+                desc = getString(R.string.stamina_recovery_tau_desc),
+                get = { it.recoveryTauSec },
+                set = { c, v -> c.copy(recoveryTauSec = v) },
+                format = { "%.0f 秒".format(it) },
+                hint = "D′ 恢复时间常数 τD′：越大恢复越慢。默认 376 秒（间歇跑文献）",
             ),
             Row(
                 title = getString(R.string.stamina_rest_at),
@@ -114,14 +129,6 @@ class StaminaFragment : Fragment() {
                 set = { c, v -> c.copy(minSpeedFactor = v) },
                 format = { "%.2f ×".format(it) },
                 hint = "跑动段的下限（占基础速度比例）。默认 0.75 ⇒ 进疲劳前最低约 2.29 m/s",
-            ),
-            Row(
-                title = getString(R.string.stamina_recover),
-                desc = getString(R.string.stamina_recover_desc),
-                get = { it.recoverCoefficient },
-                set = { c, v -> c.copy(recoverCoefficient = v) },
-                format = { "%.1f 点/分".format(it) },
-                hint = "恢复速度系数：体力 100% 时按本值回，0% 时翻倍（越低回得越快）。默认 6.0 点/分",
             ),
             Row(
                 title = getString(R.string.stamina_transition),
@@ -325,11 +332,7 @@ class StaminaFragment : Fragment() {
                 )
             )
         }
-        // 体检：这两条是"参数会把模拟弄坏"的判据，直接说人话，别让用户自己推
-        val decayLimit = StaminaCurve.decayLimitForRecovery(config, base)
-        if (decayLimit.isFinite() && config.decayPerMinute > decayLimit * 0.95) {
-            sb.append("\n").append(getString(R.string.stamina_health_decay, "%.1f".format(decayLimit)))
-        }
+        // 体检：参数是否会让疲劳降速失效
         if (!StaminaCurve.fatigueSlowsDown(config, base)) {
             sb.append("\n").append(getString(R.string.stamina_health_no_slowdown))
         }

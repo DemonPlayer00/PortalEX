@@ -123,8 +123,6 @@
     <string name="stamina_reset_data_ok">Stamina reset data ok</string>
     <string name="stamina_reset_data_done">Stamina reset data done</string>
     <string name="stamina_params">Parameters (tap to edit)</string>
-    <string name="stamina_decay">Stamina decay</string>
-    <string name="stamina_decay_desc">Stamina consumed per minute at full speed.</string>
     <string name="stamina_rest_at">Fatigue stamina</string>
     <string name="stamina_rest_at_desc">Enter fatigue below this stamina value.</string>
     <string name="stamina_resume">Resume threshold</string>
@@ -135,8 +133,6 @@
     <string name="stamina_ignore_speed">Ignore speed</string>
     <string name="stamina_ignore_window_desc">Time window for abnormal speed detection.</string>
     <string name="stamina_ignore_speed_desc">Faster movement does not consume stamina.</string>
-    <string name="stamina_recover">Recovery rate</string>
-    <string name="stamina_recover_desc">Stamina recovered per minute while resting.</string>
     <string name="stamina_walk_speed">Fatigue speed</string>
     <string name="stamina_walk_speed_desc">Movement speed while fatigued (m/s).</string>
     <string name="stamina_floor">Run speed floor</string>
@@ -146,10 +142,15 @@
     <string name="stamina_fatigue_sec">Fatigue duration</string>
     <string name="stamina_fatigue_sec_desc">Duration of one fatigue period in seconds.</string>
     <string name="stamina_metrics_label">Stamina metrics label</string>
+    <string name="stamina_critical_speed">Critical speed</string>
+    <string name="stamina_critical_speed_desc">Speed above which D-prime is consumed.</string>
+    <string name="stamina_d_prime">D-prime distance</string>
+    <string name="stamina_d_prime_desc">Finite distance capacity above critical speed.</string>
+    <string name="stamina_recovery_tau">D-prime recovery time constant</string>
+    <string name="stamina_recovery_tau_desc">Exponential recovery time constant for D-prime.</string>
     <string name="stamina_metrics">Stamina metrics</string>
     <string name="stamina_metrics_no_fatigue">Stamina metrics no fatigue</string>
     <string name="stamina_metrics_unknown_cycle">Stamina metrics unknown cycle</string>
-    <string name="stamina_health_decay">Stamina health decay</string>
     <string name="stamina_health_no_slowdown">Stamina health no slowdown</string>
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
