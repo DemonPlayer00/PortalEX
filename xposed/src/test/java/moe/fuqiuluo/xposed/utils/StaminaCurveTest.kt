@@ -9,13 +9,11 @@ class StaminaCurveTest {
     private val cfg = StaminaConfig(enabled = true, criticalSpeedMps = 2.90, dPrimeMeters = 150.0, recoveryTauSec = 376.0)
 
     @Test
-    fun `曲线纵轴是 D-prime 余额且单调下降`() {
+    fun `曲线纵轴是速度倍率 且体力下降`() {
         val c = StaminaCurve.simulate(cfg, base, maxDistanceMeters = 3_000.0, dtSec = 0.25)
         assertEquals(1.0, c.multiplier[0].toDouble(), 1e-6)
-        assertTrue("3km 内应明显消耗", c.multiplier.last() < 0.5)
-        for (i in 1 until c.size) {
-            assertTrue("余额不应上升", c.multiplier[i] <= c.multiplier[i - 1] + 1e-6)
-        }
+        assertTrue("3km 内应消耗 D′", c.staminaEndPercent < 100.0)
+        assertTrue("低体力时速度应下降", c.multiplier.last() < 1.0)
     }
 
     @Test

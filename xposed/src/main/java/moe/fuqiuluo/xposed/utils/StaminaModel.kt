@@ -50,6 +50,18 @@ data class StaminaConfig(
 }
 
 /**
+ * 由 D′ 余额推导速度倍率：满余额保持基础速度，余额下降时逐渐降到略低于 CS。
+ * 这样低体力时实际配速会穿过 CS，恢复分支才有可能被触发。
+ */
+fun paceMultiplier(staminaPercent: Double, baseSpeed: Double, criticalSpeedMps: Double): Double {
+    if (baseSpeed <= criticalSpeedMps || criticalSpeedMps <= 0.0) return 1.0
+    val slow = criticalSpeedMps * 0.98
+    val s = staminaPercent.coerceIn(0.0, 100.0) / 100.0
+    val speed = slow + (baseSpeed - slow) * s
+    return (speed / baseSpeed).coerceIn(0.0, 1.0)
+}
+
+/**
  * 纯 D′ 余额模型。
  *
  * **不改变速度**：速度是推进引擎的输入；本模型只记录 D′ 消耗/恢复。
@@ -59,6 +71,7 @@ class StaminaModel {
     private val lock = Any()
     private var staminaPercent: Double = 100.0
     private var lastApparent = 0.0
+    private var lastMultiplier = 1.0
 
     data class Snapshot(
         val staminaPercent: Double,
@@ -75,12 +88,17 @@ class StaminaModel {
     )
 
     fun snapshot(): Snapshot = synchronized(lock) {
-        Snapshot(staminaPercent = staminaPercent, apparentSpeed = lastApparent)
+        Snapshot(
+            staminaPercent = staminaPercent,
+            speedScale = lastMultiplier,
+            apparentSpeed = lastApparent,
+        )
     }
 
     fun reset() = synchronized(lock) {
         staminaPercent = 100.0
         lastApparent = 0.0
+        lastMultiplier = 1.0
     }
 
     /**
@@ -113,7 +131,8 @@ class StaminaModel {
                 staminaPercent += (100.0 - staminaPercent) / c.recoveryTauSec * dtSec
             }
             staminaPercent = staminaPercent.coerceIn(0.0, 100.0)
-            return staminaPercent
+            lastMultiplier = paceMultiplier(staminaPercent, base, c.criticalSpeedMps)
+            return lastMultiplier
         }
     }
 }

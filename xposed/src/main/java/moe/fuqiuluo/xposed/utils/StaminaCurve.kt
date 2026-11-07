@@ -62,17 +62,19 @@ object StaminaCurve {
         ds.add(0f)
         bs.add(1f)
         while (distance < limit && elapsed < MAX_SECONDS) {
-            stamina += if (base > c.criticalSpeedMps) {
-                -100.0 * (base - c.criticalSpeedMps) / c.dPrimeMeters * step
+            val mult = paceMultiplier(stamina, base, c.criticalSpeedMps)
+            val pace = base * mult
+            stamina += if (pace > c.criticalSpeedMps) {
+                -100.0 * (pace - c.criticalSpeedMps) / c.dPrimeMeters * step
             } else {
                 (100.0 - stamina) / c.recoveryTauSec * step
             }
             stamina = stamina.coerceIn(0.0, 100.0)
             if (exhaustedAt < 0.0 && stamina <= 0.0) exhaustedAt = distance
-            distance += base * step
+            distance += pace * step
             elapsed += step
             ds.add(distance.toFloat())
-            bs.add((stamina / 100.0).toFloat())
+            bs.add(mult.toFloat())
         }
         return Curve(
             distanceM = ds.toFloatArray(),

@@ -14,7 +14,7 @@ class StaminaModelTest {
         m.tick(cfg, 60.0, base, base * 60.0)
         // 100*(3.05-2.90)/150 * 60 = 6 点
         assertEquals(94.0, m.snapshot().staminaPercent, 1e-6)
-        assertEquals(1.0, m.snapshot().speedScale, 0.0)
+        assertTrue("体力下降后速度应低于 1.0", m.snapshot().speedScale < 1.0)
     }
 
     @Test

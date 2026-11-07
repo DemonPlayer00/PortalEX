@@ -71,8 +71,8 @@
     <string name="stamina_enable">启用体力模拟</string>
     <string name="stamina_enable_desc">只跟踪 D′ 余额：高于 CS 时消耗，低于 CS 或休息时恢复；不改变速度。</string>
     <string name="stamina_status">当前体力</string>
-    <string name="stamina_chart_title">实际运行状态 / 时间</string>
-    <string name="stamina_chart_desc">横轴为时间；实线为 D′ 余额（0~100%），虚线为实际配速（满格 6 m/s）。</string>
+    <string name="stamina_chart_title">速度倍率 / 距离</string>
+    <string name="stamina_chart_desc">横轴为距离，纵轴为速度倍率；配速会随 D′ 余额下降，低于 CS 后恢复。</string>
     <!-- 步频模拟页 -->
     <string name="cadence_page_desc">用速度调整步频；倍率 1 表示不调整。</string>
     <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>

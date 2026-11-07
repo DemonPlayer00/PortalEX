@@ -115,6 +115,20 @@ class StaminaFragment : Fragment() {
             refreshStatus()
         }
 
+        // 理论 / 生成 两页：点"生成"= 用真实引擎重跑一条（所以它同时是刷新键，
+        // 已经在生成页时再点一次也重新跑 —— 这条由按钮自己的 click 兜住，
+        // 因为 ToggleGroup 对"重复选中同一个按钮"不会回调）
+        binding.staminaChartMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            when (checkedId) {
+                R.id.stamina_chart_mode_generated -> generate()
+                else -> showTheory()
+            }
+        }
+        binding.staminaChartModeGenerated.setOnClickListener {
+            if (binding.staminaChart.mode() == StaminaChartView.Mode.GENERATED) generate()
+        }
+
         binding.staminaReset.setOnClickListener {
             StaminaController.resetStamina(requireContext())
             refreshStatus()
@@ -180,6 +194,8 @@ class StaminaFragment : Fragment() {
         )
     }
 
+    private var chartConfig: StaminaConfig? = null
+
     /** 恢复出厂参数 + 重置运行时体力/统计（开关状态保留），并清掉已废弃的旧键 */
     private fun resetAllData() {
         val context = requireContext()
@@ -194,22 +210,96 @@ class StaminaFragment : Fragment() {
         // ⚠️ 这里**不能**只把 chartConfig 标成 defaults 就完事：生成页的曲线是"一次跑法的快照"，
         //    那样它会以为自己的采样还新鲜，继续显示用旧参数跑出来的图（真机上就是这么露馅的）。
         //    所以按当前页签各自走一遍刷新路径。
-        showLive()
+        if (binding.staminaChart.mode() == StaminaChartView.Mode.GENERATED) {
+            generate()
+        } else {
+            showTheory()
+        }
         refreshStatus()
         Toast.makeText(context, R.string.stamina_reset_data_done, Toast.LENGTH_SHORT).show()
     }
 
-    private fun showLive() {
+    /** 理论页：解析积分 + ±随机包络（跟随参数自动刷新） */
+    private fun showTheory() {
+        val config = StaminaController.config()
+        val base = requireContext().speed
+        chartConfig = config
         binding.staminaChartSample.visibility = View.GONE
         binding.staminaChartMetrics.visibility = View.VISIBLE
         binding.staminaChartDesc.text = getString(R.string.stamina_chart_desc)
-        binding.staminaChart.submit(StaminaController.history(), requireContext().speed)
-        val h = StaminaController.history()
-        binding.staminaChartMetrics.text = if (h.isEmpty()) {
-            "暂无运行数据；启动路线或摇杆后这里显示逐拍配速与 D′ 余额"
+        binding.staminaChart.submit(config, base)
+        renderMetrics(config, base)
+    }
+
+    /**
+     * **把反推变成读数**：这套参数跑出来是什么样，直接算出来显示，不用联立公式。
+     *
+     * 数据直接取图表刚算好的那条理论曲线的指标（不重复积分），
+     * 再加两条体检：疲劳期能不能回血、疲劳有没有真的降速。
+     */
+    private fun renderMetrics(config: StaminaConfig, base: Double) {
+        val metrics = binding.staminaChart.theoryMetrics()
+        val sb = StringBuilder()
+        if (metrics == null) {
+            sb.append("等待曲线…")
         } else {
-            val last = h.last()
-            "最近：配速 %.2f m/s · D′ 余额 %.1f%%".format(last.paceMps, last.staminaPercent)
+            val exhausted = metrics.firstFatigueDistanceM
+            if (exhausted < 0.0) {
+                sb.append("当前参数下 10 km 内 D′ 不会耗尽")
+            } else {
+                sb.append("D′ 预计耗尽：%.2f km".format(exhausted / 1000.0))
+            }
+            sb.append("\nCS %.2f m/s · D′ %.0f m · τD′ %.0f s"
+                .format(config.criticalSpeedMps, config.dPrimeMeters, config.recoveryTauSec))
+        }
+        binding.staminaChartMetrics.text = sb.toString()
+    }
+
+    private fun generate() {
+        val context = requireContext()
+        val config = StaminaController.config()
+        val base = context.speed
+        chartConfig = config
+        val history = StaminaController.history()
+        val curve = if (history.size >= 2) {
+            // 生成页优先显示**实际运行采样**（逐秒配速），而不是再跑一条理论模拟。
+            val distances = FloatArray(history.size)
+            val multipliers = FloatArray(history.size)
+            var d = 0.0
+            history.forEachIndexed { i, s ->
+                if (i > 0) {
+                    val prev = history[i - 1]
+                    d += (prev.paceMps + s.paceMps) * 0.5 * (s.elapsedSec - prev.elapsedSec)
+                }
+                distances[i] = d.toFloat()
+                multipliers[i] = (s.paceMps / base).coerceIn(0.0, 1.0).toFloat()
+            }
+            StaminaCurve.Curve(
+                distanceM = distances,
+                multiplier = multipliers,
+                metrics = StaminaCurve.Metrics(
+                    averageSpeedMps = if (history.last().elapsedSec > 0)
+                        d / history.last().elapsedSec else 0.0,
+                ),
+                elapsedSec = history.last().elapsedSec,
+                staminaEndPercent = history.last().staminaPercent,
+            )
+        } else {
+            val dtSec = context.reportDuration.coerceIn(1, 1000) / 1000.0
+            StaminaCurve.sample(config, base, dtSec = dtSec)
+        }
+
+        binding.staminaChartMetrics.visibility = View.GONE
+        binding.staminaChartDesc.text = getString(R.string.stamina_chart_desc)
+        binding.staminaChart.submitGenerated(curve, base)
+
+        val km = curve.distanceM.last() / 1000.0
+        val minutes = curve.elapsedSec / 60.0
+        binding.staminaChartSample.visibility = View.VISIBLE
+        binding.staminaChartSample.text = if (history.size >= 2) {
+            "实际采样：%.1f km / %.1f 秒".format(km, minutes * 60.0)
+        } else {
+            "暂无实际采样，显示公式预览：%.1f km / %.1f 分钟".format(km, minutes)
         }
     }
 
@@ -218,7 +308,13 @@ class StaminaFragment : Fragment() {
         val readable = StaminaController.refresh(context)
         val snapshot = StaminaController.snapshot()
         val base = context.speed
-        showLive()
+        if (binding.staminaChart.mode() == StaminaChartView.Mode.THEORY) {
+            binding.staminaChart.submit(StaminaController.config(), base)
+            renderMetrics(StaminaController.config(), base)
+        } else if (StaminaController.config() != chartConfig) {
+            chartConfig = StaminaController.config()
+            generate()
+        }
         binding.staminaValue.text = if (readable) "%.1f %%".format(snapshot.staminaPercent) else "—"
         val phase = when {
             !readable -> getString(R.string.stamina_phase_unavailable)
@@ -228,7 +324,9 @@ class StaminaFragment : Fragment() {
             else -> "空闲（D′ 恢复中）"
         }
         binding.staminaPhase.text = phase
-        binding.staminaEffective.text = "基础 %.2f m/s（纯公式不调制速度）".format(base)
+        binding.staminaEffective.text = "基础 %.2f m/s ⇒ 当前 %.2f m/s".format(
+            base, StaminaController.effectiveSpeed(base)
+        )
         binding.staminaStats.text = "D′ 余额 %.1f%%".format(snapshot.staminaPercent)
     }
 
