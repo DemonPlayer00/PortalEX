@@ -40,7 +40,7 @@ object StaminaRuntime {
 
     /** 上一拍结算出的速度倍率。推进引擎每拍只读它（关掉体力时对外恒 1.0） */
     @Volatile
-    private var multiplier: Double = NO_STAMINA_MODULATION
+    private var multiplier: Double = StaminaModel.NO_MODULATION
 
     /** App 是否已经下发过参数（诊断：false = 还在用内置默认，页面与模块可能对不上） */
     @Volatile
@@ -65,16 +65,16 @@ object StaminaRuntime {
         val parsed = StaminaConfig.fromWire(wire) ?: return
         config = parsed
         wireApplied = true
-        if (!parsed.enabled) multiplier = NO_STAMINA_MODULATION
+        if (!parsed.enabled) multiplier = StaminaModel.NO_MODULATION
     }
 
     /** 当前速度倍率（1.0 = 不调制）。推进引擎唯一该读的东西 */
-    fun multiplier(): Double = if (config.enabled) multiplier else NO_STAMINA_MODULATION
+    fun multiplier(): Double = if (config.enabled) multiplier else StaminaModel.NO_MODULATION
 
     /** 界面上的"重置体力"：回到满体力、清空休息计时与统计（不改参数、不动会话） */
     fun reset() {
         model.reset()
-        multiplier = NO_STAMINA_MODULATION
+        multiplier = StaminaModel.NO_MODULATION
         lastMovedNanos = 0L
         lastTickNanos = 0L
     }
@@ -83,31 +83,22 @@ object StaminaRuntime {
      * 推进一拍。**只在 [config] 启用时改变倍率**；关掉体力时对外恒 1.0
      * （于是"关掉体力模拟"与"没在动"在位移计算上完全等价，调用方不需要分支）。
      */
-    fun tick(
-        baseSpeed: Double,
-        movedMeters: Double,
-        dtSec: Double = Double.NaN,
-        progress: Double = Double.NaN,
-    ) {
+    fun tick(baseSpeed: Double, movedMeters: Double) {
         val now = SystemClock.elapsedRealtimeNanos()
+        val last = lastTickNanos
+        lastTickNanos = now
         val c = config
         if (!c.enabled) {
-            lastTickNanos = now
-            multiplier = NO_STAMINA_MODULATION
+            multiplier = StaminaModel.NO_MODULATION
             return
         }
-        // 推进时钟传入本拍真实 dt；只有补账/旧调用才回退到内部墙钟。
-        // 公式必须用「本拍位移 / 本拍 dt」的逐拍配速，不能用一个固定的名义速度。
-        val dt = if (dtSec.isFinite() && dtSec > 0.0) dtSec.coerceAtMost(5.0) else {
-            val last = lastTickNanos
-            (if (last == 0L) 0.0 else (now - last) / 1e9).coerceIn(0.0, 5.0)
-        }
-        lastTickNanos = now
-        if (movedMeters > 0.0) lastMovedNanos = now
+        // 上限 5s：长时间冻结（进程被挂起）后不补出一个巨大的 Δt
+        if (movedMeters > 0.0) lastMovedNanos = SystemClock.elapsedRealtimeNanos()
+        // dt 由本对象自己算（见下方 KDoc）：账只能记一次 —— 若由调用方给 dt，
+        // 而 reconcileNow（读取时补账）又动过 lastTickNanos，同一段时间会被记两遍
+        val dt = (if (last == 0L) 0.0 else (now - last) / 1e9).coerceIn(0.0, 5.0)
         val before = multiplier
-        val dPrimeMultiplier = model.tick(c, dt, baseSpeed, movedMeters)
-        val profile = if (progress.isFinite()) ordinaryPaceProfile(progress) else 1.0
-        multiplier = (dPrimeMultiplier * profile).coerceIn(0.02, 1.0)
+        multiplier = model.tick(c, dt, baseSpeed, movedMeters)
         // 可观测性：倍率**变化时**打一条（调试开关下）。没有这条日志，"体力有没有真的生效"
         // 就只能靠肉眼看配速 —— 那是无法在测试里复现的证据形式。
         if (FakeLoc.enableDebugLog && movedMeters > 0.0 && abs(multiplier - before) > 5e-3) {
@@ -147,13 +138,12 @@ object StaminaRuntime {
 
     /**
      * 当前**恢复速率**（点/分钟）—— 供界面显示"空闲时也在回体力"。
-     * 与模型内部同一口径（公式只有一处实现，见 `StaminaModel` 的 τD′ 公式）。
+     * 与模型内部同一口径（公式只有一处实现，见 [StaminaMath.recoveryFactor]）。
      */
     fun recoveringPerMinute(): Double {
         val c = config
         if (!c.enabled) return 0.0
-        val s = model.snapshot().staminaPercent
-        return (100.0 - s) / c.recoveryTauSec * 60.0
+        return c.recoverCoefficient * StaminaMath.recoveryFactor(model.snapshot().staminaPercent)
     }
 
     /** 状态回传（`get_stamina` / `get_sensor_status` 的回包） */

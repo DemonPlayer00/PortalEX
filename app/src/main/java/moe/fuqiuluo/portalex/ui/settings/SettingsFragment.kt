@@ -314,10 +314,6 @@ class SettingsFragment : Fragment() {
                 }
                 context.speed = value
                 binding.speedValue.text = getString(R.string.speed_format, value)
-                // 配速是体力公式的逐拍输入：改动必须同步到 system_server，
-                // 否则模块仍拿旧 speed 计算，低配速也不会恢复。
-                ConfigSync.mirrorLocal(context)
-                updateRemoteConfig()
             }
         }
 
