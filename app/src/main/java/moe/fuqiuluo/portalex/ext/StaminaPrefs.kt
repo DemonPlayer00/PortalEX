@@ -17,6 +17,7 @@ object StaminaPrefs {
             val fresh = StaminaConfig()
             save(context, fresh)
             sp.edit { putInt(VERSION_KEY, VERSION) }
+            clearObsolete(context)
             return fresh
         }
         val d = StaminaConfig()

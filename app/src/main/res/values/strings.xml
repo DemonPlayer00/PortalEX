@@ -67,7 +67,7 @@
     <string name="menu_cadence">Cadence &amp; Acceleration Mock</string>
     <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
     <string name="stamina_enable">Enable stamina simulation</string>
-    <string name="stamina_enable_desc">Stamina drains while running and recovers at rest. Low stamina slows you down and causes fatigue.</string>
+    <string name="stamina_enable_desc">Tracks D-prime balance: depletes above critical speed and recovers below it. Speed is not modified.</string>
     <string name="stamina_status">Current stamina</string>
     <string name="stamina_chart_title">D-prime balance / distance</string>
     <string name="stamina_chart_desc">X axis: distance. Y axis: D-prime balance (1.0 = full, 0 = exhausted).</string>
@@ -123,24 +123,10 @@
     <string name="stamina_reset_data_ok">Stamina reset data ok</string>
     <string name="stamina_reset_data_done">Stamina reset data done</string>
     <string name="stamina_params">Parameters (tap to edit)</string>
-    <string name="stamina_rest_at">Fatigue stamina</string>
-    <string name="stamina_rest_at_desc">Enter fatigue below this stamina value.</string>
-    <string name="stamina_resume">Resume threshold</string>
-    <string name="stamina_resume_desc">Resume running when the fatigue cooldown reaches 0.</string>
-    <string name="stamina_transition">Transition time</string>
-    <string name="stamina_transition_desc">Seconds used to smooth speed around fatigue transitions. 0 means instant.</string>
     <string name="stamina_ignore_window">Ignore window</string>
     <string name="stamina_ignore_speed">Ignore speed</string>
     <string name="stamina_ignore_window_desc">Time window for abnormal speed detection.</string>
     <string name="stamina_ignore_speed_desc">Faster movement does not consume stamina.</string>
-    <string name="stamina_walk_speed">Fatigue speed</string>
-    <string name="stamina_walk_speed_desc">Movement speed while fatigued (m/s).</string>
-    <string name="stamina_floor">Run speed floor</string>
-    <string name="stamina_floor_desc">Lowest fraction of base speed while running.</string>
-    <string name="stamina_random">Randomization</string>
-    <string name="stamina_random_desc">Random variation for decay, transitions and fatigue duration.</string>
-    <string name="stamina_fatigue_sec">Fatigue duration</string>
-    <string name="stamina_fatigue_sec_desc">Duration of one fatigue period in seconds.</string>
     <string name="stamina_metrics_label">Stamina metrics label</string>
     <string name="stamina_critical_speed">Critical speed</string>
     <string name="stamina_critical_speed_desc">Speed above which D-prime is consumed.</string>
@@ -148,10 +134,6 @@
     <string name="stamina_d_prime_desc">Finite distance capacity above critical speed.</string>
     <string name="stamina_recovery_tau">D-prime recovery time constant</string>
     <string name="stamina_recovery_tau_desc">Exponential recovery time constant for D-prime.</string>
-    <string name="stamina_metrics">Stamina metrics</string>
-    <string name="stamina_metrics_no_fatigue">Stamina metrics no fatigue</string>
-    <string name="stamina_metrics_unknown_cycle">Stamina metrics unknown cycle</string>
-    <string name="stamina_health_no_slowdown">Stamina health no slowdown</string>
     <string name="menu_test">Test</string>
     <string name="menu_calibration">Calibration</string>
     <string name="calibration_hint">Adjust simulated sensor jitter. Tap Calibrate to measure; movement only skips the sensor part, GPS and baseband are still measured.</string>
