@@ -69,8 +69,8 @@
     <string name="stamina_enable">Enable stamina simulation</string>
     <string name="stamina_enable_desc">Stamina drains while running and recovers at rest. Low stamina slows you down and causes fatigue.</string>
     <string name="stamina_status">Current stamina</string>
-    <string name="stamina_chart_title">Speed multiplier / distance</string>
-    <string name="stamina_chart_desc">X axis: distance. Y axis: speed multiplier.</string>
+    <string name="stamina_chart_title">D-prime balance / distance</string>
+    <string name="stamina_chart_desc">X axis: distance. Y axis: D-prime balance (1.0 = full, 0 = exhausted).</string>
     <string name="cadence_page_desc">Adjust cadence with speed. Multiplier 1 means unchanged.</string>
     <string name="cadence_readout">Cadence readout</string>
     <string name="cadence_scale">Cadence multiplier</string>

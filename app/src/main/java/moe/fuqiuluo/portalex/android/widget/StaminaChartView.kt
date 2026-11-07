@@ -131,19 +131,10 @@ class StaminaChartView @JvmOverloads constructor(
         this.config = config
         this.baseSpeed = base
 
-        val p = (config.randomPercent / 100.0).coerceIn(0.0, 1.0)
-        baseCurve = StaminaCurve.simulate(config, base, decayScale = 1.0)
-        // 运行时随机有三处：每段跑动抽一次衰减速率、每次方向变化抽一次过渡时长、
-        // 每次疲劳抽一次疲劳时长。三者独立 ⇒ 极值组合同样可达：
-        // 速度下界 = 衰减最大 + 过渡最快 + 疲劳最长，上界反之。
-        lowerBoundCurve = StaminaCurve.simulate(
-            config, base, decayScale = 1.0 + p, transitionScale = (1.0 - p).coerceAtLeast(0.05),
-            fatigueScale = 1.0 + p,
-        )
-        upperBoundCurve = StaminaCurve.simulate(
-            config, base, decayScale = 1.0 - p, transitionScale = 1.0 + p,
-            fatigueScale = (1.0 - p).coerceAtLeast(0.05),
-        )
+        baseCurve = StaminaCurve.simulate(config, base)
+        // 纯公式没有随机包络/疲劳状态，两条边界线不再使用
+        lowerBoundCurve = null
+        upperBoundCurve = null
         clampScroll()
         invalidate()
     }
@@ -311,10 +302,9 @@ class StaminaChartView @JvmOverloads constructor(
             label.color = colorLabel
             label.textSize = sp(10f)
             label.textAlign = Paint.Align.LEFT
-            canvas.drawText("本次生成（真实引擎 · 含随机）", left + dp(18f), baseline, label)
+            canvas.drawText("本次生成（D′ 余额）", left + dp(18f), baseline, label)
             return
         }
-        val pct = (config?.randomPercent ?: 0.0).toInt()
         val swatch = dp(14f)
         var x = left
 
@@ -326,13 +316,6 @@ class StaminaChartView @JvmOverloads constructor(
         label.textAlign = Paint.Align.LEFT
         x += swatch + dp(4f)
         canvas.drawText(BASE_LEGEND, x, baseline, label)
-        x += label.measureText(BASE_LEGEND) + dp(12f)
-
-        stroke.color = withAlpha(colorLine, BOUND_ALPHA)
-        stroke.strokeWidth = dp(1.5f)
-        canvas.drawLine(x, baseline - dp(3f), x + swatch, baseline - dp(3f), stroke)
-        x += swatch + dp(4f)
-        canvas.drawText("±$pct% 极值", x, baseline, label)
     }
 
     private fun drawChevron(canvas: Canvas, x: Float, y: Float, pointingLeft: Boolean) {
@@ -421,6 +404,6 @@ class StaminaChartView @JvmOverloads constructor(
         const val LEGEND_H_DP = 14f
         const val AXIS_H_DP = 14f
 
-        const val BASE_LEGEND = "无随机"
+        const val BASE_LEGEND = "D′ 余额"
     }
 }

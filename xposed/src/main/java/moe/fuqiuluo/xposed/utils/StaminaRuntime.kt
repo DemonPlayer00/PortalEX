@@ -40,7 +40,7 @@ object StaminaRuntime {
 
     /** 上一拍结算出的速度倍率。推进引擎每拍只读它（关掉体力时对外恒 1.0） */
     @Volatile
-    private var multiplier: Double = StaminaModel.NO_MODULATION
+    private var multiplier: Double = NO_STAMINA_MODULATION
 
     /** App 是否已经下发过参数（诊断：false = 还在用内置默认，页面与模块可能对不上） */
     @Volatile
@@ -65,16 +65,16 @@ object StaminaRuntime {
         val parsed = StaminaConfig.fromWire(wire) ?: return
         config = parsed
         wireApplied = true
-        if (!parsed.enabled) multiplier = StaminaModel.NO_MODULATION
+        if (!parsed.enabled) multiplier = NO_STAMINA_MODULATION
     }
 
     /** 当前速度倍率（1.0 = 不调制）。推进引擎唯一该读的东西 */
-    fun multiplier(): Double = if (config.enabled) multiplier else StaminaModel.NO_MODULATION
+    fun multiplier(): Double = if (config.enabled) multiplier else NO_STAMINA_MODULATION
 
     /** 界面上的"重置体力"：回到满体力、清空休息计时与统计（不改参数、不动会话） */
     fun reset() {
         model.reset()
-        multiplier = StaminaModel.NO_MODULATION
+        multiplier = NO_STAMINA_MODULATION
         lastMovedNanos = 0L
         lastTickNanos = 0L
     }
@@ -89,7 +89,7 @@ object StaminaRuntime {
         lastTickNanos = now
         val c = config
         if (!c.enabled) {
-            multiplier = StaminaModel.NO_MODULATION
+            multiplier = NO_STAMINA_MODULATION
             return
         }
         // 上限 5s：长时间冻结（进程被挂起）后不补出一个巨大的 Δt

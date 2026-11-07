@@ -71,8 +71,8 @@
     <string name="stamina_enable">启用体力模拟</string>
     <string name="stamina_enable_desc">体力会随跑动消耗、休息时恢复；体力不足会降速并进入疲劳。</string>
     <string name="stamina_status">当前体力</string>
-    <string name="stamina_chart_title">速度倍率 / 距离</string>
-    <string name="stamina_chart_desc">横轴为距离，纵轴为速度倍率。</string>
+    <string name="stamina_chart_title">D′ 余额 / 距离</string>
+    <string name="stamina_chart_desc">横轴为距离，纵轴为 D′ 余额比例（1.0 = 满，0 = 耗尽）。</string>
     <!-- 步频模拟页 -->
     <string name="cadence_page_desc">用速度调整步频；倍率 1 表示不调整。</string>
     <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>
@@ -125,7 +125,7 @@
 
     <string name="stamina_chart_mode_theory">理论</string>
     <string name="stamina_chart_mode_generated">生成</string>
-    <string name="stamina_chart_sample">本次生成：%1$s km 用 %2$s 分钟 · 平均配速 %3$s/km · 疲劳 %4$d 次（共 %5$s 分钟）</string>
+    <string name="stamina_chart_sample">本次生成：%1$s km / %2$s 分钟 · 平均配速 %3$s/km</string>
     <string name="stamina_reset">重置体力</string>
     <string name="stamina_phase_unavailable">状态不可读（模块未装载或命令通道未握手）—— 体力模拟未生效</string>
     <string name="stamina_phase_not_applied">参数尚未同步到系统侧（模拟会话未启动？）—— 当前数值来自内置默认</string>
