@@ -51,7 +51,7 @@ object StaminaPrefs {
             return fresh
         }
         val d = StaminaConfig()
-        return StaminaConfig(
+        val loaded = StaminaConfig(
             enabled = sp.getBoolean(P + "enabled", d.enabled),
             criticalSpeedMps = sp.getFloat(P + "critical_speed", d.criticalSpeedMps.toFloat()).toDouble(),
             dPrimeMeters = sp.getFloat(P + "d_prime", d.dPrimeMeters.toFloat()).toDouble(),
@@ -66,6 +66,12 @@ object StaminaPrefs {
             minSpeedFactor = sp.getFloat(P + "floor", d.minSpeedFactor.toFloat()).toDouble(),
             randomPercent = sp.getFloat(P + "random", d.randomPercent.toFloat()).toDouble(),
         ).sanitized()
+        // 旧版衰减/恢复点率不再参与模型，读到新版本时就清掉，避免留下死键。
+        sp.edit {
+            remove(P + "decay")
+            remove(P + "recover")
+        }
+        return loaded
     }
 
     /**
