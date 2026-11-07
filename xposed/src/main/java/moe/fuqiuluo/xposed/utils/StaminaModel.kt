@@ -86,8 +86,8 @@ class StaminaModel {
     /**
      * 推进一拍。
      *
-     * @param baseSpeed 本拍名义速度（m/s），用于判断是否高于 CS
-     * @param movedMeters 本拍实际位移（米）；0 = 空闲，只恢复
+     * @param baseSpeed 本拍名义速度（m/s）；仅用于兼容调用签名
+     * @param movedMeters 本拍实际位移（米）；实际速度 = moved / dt
      */
     fun tick(
         config: StaminaConfig,
@@ -104,8 +104,10 @@ class StaminaModel {
 
         synchronized(lock) {
             lastApparent = apparent
-            if (moved > 0.0 && base > c.criticalSpeedMps) {
-                staminaPercent -= 100.0 * (base - c.criticalSpeedMps) / c.dPrimeMeters * dtSec
+            // 用**本拍实际表象速度**判断，而不是配置里的名义速度：
+            // 位置被节流/路线限速/暂停后走得很慢时，必须真的进入恢复分支。
+            if (moved > 0.0 && apparent > c.criticalSpeedMps) {
+                staminaPercent -= 100.0 * (apparent - c.criticalSpeedMps) / c.dPrimeMeters * dtSec
             } else {
                 // 低于 CS 或空闲：D′ 指数恢复
                 staminaPercent += (100.0 - staminaPercent) / c.recoveryTauSec * dtSec

@@ -28,6 +28,18 @@ class StaminaModelTest {
     }
 
     @Test
+    fun `实际配速低于 CS 时恢复 即使名义速度仍高`() {
+        val m = StaminaModel()
+        m.tick(cfg, 600.0, base, base * 600.0)
+        val depleted = m.snapshot().staminaPercent
+        // 名义 base 仍为 3.05，但本拍只走了 2.0 m/s 的实际位移
+        m.tick(cfg, 60.0, base, 2.0 * 60.0)
+        assertTrue("低实际配速应恢复：%.2f -> %.2f".format(
+            depleted, m.snapshot().staminaPercent
+        ), m.snapshot().staminaPercent > depleted)
+    }
+
+    @Test
     fun `D-prime 余额被夹在 0 到 100`() {
         val m = StaminaModel()
         m.tick(cfg, 10_000.0, base, base * 10_000.0)
