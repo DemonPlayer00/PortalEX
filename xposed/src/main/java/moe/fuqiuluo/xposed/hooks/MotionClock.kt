@@ -284,8 +284,12 @@ object MotionClock {
         }
 
         // 2) 体力：用**本拍真实推进的位移**结算（不是名义值）——旧实现同一口径
-        // 逐拍配速：本拍位移 / 本拍 dt（不是固定名义速度）
-        StaminaRuntime.tick(FakeLoc.speed, step.meters, dt)
+        // 逐拍配速：本拍位移 / 本拍 dt；同时把路线进度交给起跑/疲劳/终点曲线。
+        val motion = MotionEngine.status()
+        val progress = if (motion.distanceMeters > 0.0) {
+            (motion.travelledMeters / motion.distanceMeters).coerceIn(0.0, 1.0)
+        } else Double.NaN
+        StaminaRuntime.tick(FakeLoc.speed, step.meters, dt, progress)
         val t2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
         if (!step.moved) {

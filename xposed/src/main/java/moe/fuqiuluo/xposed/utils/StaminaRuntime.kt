@@ -83,7 +83,12 @@ object StaminaRuntime {
      * 推进一拍。**只在 [config] 启用时改变倍率**；关掉体力时对外恒 1.0
      * （于是"关掉体力模拟"与"没在动"在位移计算上完全等价，调用方不需要分支）。
      */
-    fun tick(baseSpeed: Double, movedMeters: Double, dtSec: Double = Double.NaN) {
+    fun tick(
+        baseSpeed: Double,
+        movedMeters: Double,
+        dtSec: Double = Double.NaN,
+        progress: Double = Double.NaN,
+    ) {
         val now = SystemClock.elapsedRealtimeNanos()
         val c = config
         if (!c.enabled) {
@@ -100,7 +105,9 @@ object StaminaRuntime {
         lastTickNanos = now
         if (movedMeters > 0.0) lastMovedNanos = now
         val before = multiplier
-        multiplier = model.tick(c, dt, baseSpeed, movedMeters)
+        val dPrimeMultiplier = model.tick(c, dt, baseSpeed, movedMeters)
+        val profile = if (progress.isFinite()) ordinaryPaceProfile(progress) else 1.0
+        multiplier = (dPrimeMultiplier * profile).coerceIn(0.02, 1.0)
         // 可观测性：倍率**变化时**打一条（调试开关下）。没有这条日志，"体力有没有真的生效"
         // 就只能靠肉眼看配速 —— 那是无法在测试里复现的证据形式。
         if (FakeLoc.enableDebugLog && movedMeters > 0.0 && abs(multiplier - before) > 5e-3) {

@@ -72,7 +72,7 @@
     <string name="stamina_enable_desc">配速随 D′ 余额下降；低于 CS 时 D′ 恢复，速度随之回升。</string>
     <string name="stamina_status">当前体力</string>
     <string name="stamina_chart_title">速度倍率 / 距离</string>
-    <string name="stamina_chart_desc">横轴为距离，纵轴为速度倍率；配速会随 D′ 余额下降，低于 CS 后恢复。</string>
+    <string name="stamina_chart_desc">横轴为距离，纵轴为速度倍率；叠加普通人的起跑加速、疲劳降速、低速平台和终点加速。</string>
     <!-- 步频模拟页 -->
     <string name="cadence_page_desc">用速度调整步频；倍率 1 表示不调整。</string>
     <string name="cadence_readout">当前步频意图：基础速度 %1$s m/s ⇒ %2$d 步/分</string>

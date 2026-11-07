@@ -62,7 +62,9 @@ object StaminaCurve {
         ds.add(0f)
         bs.add(1f)
         while (distance < limit && elapsed < MAX_SECONDS) {
-            val mult = paceMultiplier(stamina, base, c.criticalSpeedMps)
+            val progress = if (limit > 0.0) (distance / limit).coerceIn(0.0, 1.0) else 0.0
+            val mult = (paceMultiplier(stamina, base, c.criticalSpeedMps) *
+                    ordinaryPaceProfile(progress)).coerceIn(0.02, 1.0)
             val pace = base * mult
             stamina += if (pace > c.criticalSpeedMps) {
                 -100.0 * (pace - c.criticalSpeedMps) / c.dPrimeMeters * step
