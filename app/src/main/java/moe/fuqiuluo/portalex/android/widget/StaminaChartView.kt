@@ -302,7 +302,7 @@ class StaminaChartView @JvmOverloads constructor(
             label.color = colorLabel
             label.textSize = sp(10f)
             label.textAlign = Paint.Align.LEFT
-            canvas.drawText("本次生成（D′ 余额）", left + dp(18f), baseline, label)
+            canvas.drawText("本次生成（速度倍率）", left + dp(18f), baseline, label)
             return
         }
         val swatch = dp(14f)
@@ -404,6 +404,6 @@ class StaminaChartView @JvmOverloads constructor(
         const val LEGEND_H_DP = 14f
         const val AXIS_H_DP = 14f
 
-        const val BASE_LEGEND = "D′ 余额"
+        const val BASE_LEGEND = "速度倍率"
     }
 }

@@ -8,7 +8,7 @@ import kotlin.math.min
  * 纵轴存的是 **D′ 余额比例（0..1）**，不是速度倍率：纯公式不改变速度。
  */
 object StaminaCurve {
-    const val DEFAULT_MAX_DISTANCE_M = 10_000.0
+    const val DEFAULT_MAX_DISTANCE_M = 3_000.0
     const val DEFAULT_WINDOW_M = 2_000.0
     const val DEFAULT_DT_SEC = 0.25
     const val SAMPLE_DT_SEC = 0.1
