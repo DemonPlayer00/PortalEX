@@ -284,7 +284,8 @@ object MotionClock {
         }
 
         // 2) 体力：用**本拍真实推进的位移**结算（不是名义值）——旧实现同一口径
-        StaminaRuntime.tick(FakeLoc.speed, step.meters)
+        // 逐拍配速：本拍位移 / 本拍 dt（不是固定名义速度）
+        StaminaRuntime.tick(FakeLoc.speed, step.meters, dt)
         val t2 = if (timing) SystemClock.elapsedRealtimeNanos() else 0L
 
         if (!step.moved) {

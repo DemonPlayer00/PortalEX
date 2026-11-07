@@ -83,20 +83,22 @@ object StaminaRuntime {
      * 推进一拍。**只在 [config] 启用时改变倍率**；关掉体力时对外恒 1.0
      * （于是"关掉体力模拟"与"没在动"在位移计算上完全等价，调用方不需要分支）。
      */
-    fun tick(baseSpeed: Double, movedMeters: Double) {
+    fun tick(baseSpeed: Double, movedMeters: Double, dtSec: Double = Double.NaN) {
         val now = SystemClock.elapsedRealtimeNanos()
-        val last = lastTickNanos
-        lastTickNanos = now
         val c = config
         if (!c.enabled) {
+            lastTickNanos = now
             multiplier = NO_STAMINA_MODULATION
             return
         }
-        // 上限 5s：长时间冻结（进程被挂起）后不补出一个巨大的 Δt
-        if (movedMeters > 0.0) lastMovedNanos = SystemClock.elapsedRealtimeNanos()
-        // dt 由本对象自己算（见下方 KDoc）：账只能记一次 —— 若由调用方给 dt，
-        // 而 reconcileNow（读取时补账）又动过 lastTickNanos，同一段时间会被记两遍
-        val dt = (if (last == 0L) 0.0 else (now - last) / 1e9).coerceIn(0.0, 5.0)
+        // 推进时钟传入本拍真实 dt；只有补账/旧调用才回退到内部墙钟。
+        // 公式必须用「本拍位移 / 本拍 dt」的逐拍配速，不能用一个固定的名义速度。
+        val dt = if (dtSec.isFinite() && dtSec > 0.0) dtSec.coerceAtMost(5.0) else {
+            val last = lastTickNanos
+            (if (last == 0L) 0.0 else (now - last) / 1e9).coerceIn(0.0, 5.0)
+        }
+        lastTickNanos = now
+        if (movedMeters > 0.0) lastMovedNanos = now
         val before = multiplier
         multiplier = model.tick(c, dt, baseSpeed, movedMeters)
         // 可观测性：倍率**变化时**打一条（调试开关下）。没有这条日志，"体力有没有真的生效"
