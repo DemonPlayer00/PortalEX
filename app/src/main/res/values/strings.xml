@@ -67,7 +67,7 @@
     <string name="menu_cadence">Cadence &amp; Acceleration Mock</string>
     <string name="menu_angle_compass">Angle &amp; Compass Mock</string>
     <string name="stamina_enable">Enable stamina simulation</string>
-    <string name="stamina_enable_desc">Tracks D-prime balance: depletes above critical speed and recovers below it. Speed is not modified.</string>
+    <string name="stamina_enable_desc">Pace falls with D-prime balance; below critical speed D-prime recovers and pace rises again.</string>
     <string name="stamina_status">Current stamina</string>
     <string name="stamina_chart_title">Speed multiplier / distance</string>
     <string name="stamina_chart_desc">X axis: distance, Y axis: speed multiplier; pace falls with D-prime balance and recovers below CS.</string>
