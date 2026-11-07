@@ -69,8 +69,8 @@
     <string name="stamina_enable">Enable stamina simulation</string>
     <string name="stamina_enable_desc">Tracks D-prime balance: depletes above critical speed and recovers below it. Speed is not modified.</string>
     <string name="stamina_status">Current stamina</string>
-    <string name="stamina_chart_title">D-prime balance / distance</string>
-    <string name="stamina_chart_desc">X axis: distance. Y axis: D-prime balance (1.0 = full, 0 = exhausted).</string>
+    <string name="stamina_chart_title">Live stamina / time</string>
+    <string name="stamina_chart_desc">X axis: time. Solid: D-prime balance (0-100%). Dashed: actual pace (full scale 6 m/s).</string>
     <string name="cadence_page_desc">Adjust cadence with speed. Multiplier 1 means unchanged.</string>
     <string name="cadence_readout">Cadence readout</string>
     <string name="cadence_scale">Cadence multiplier</string>

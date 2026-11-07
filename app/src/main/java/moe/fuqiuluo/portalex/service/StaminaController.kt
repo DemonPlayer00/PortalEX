@@ -48,6 +48,13 @@ object StaminaController {
     @Volatile
     private var wireApplied: Boolean = false
 
+    /** 实际运行采样：时间、逐拍配速、D′ 余额 */
+    data class LiveSample(val elapsedSec: Double, val paceMps: Double, val staminaPercent: Double)
+
+    private val history = ArrayDeque<LiveSample>()
+    private var historyStartedAt = 0L
+    private var lastHistoryAt = 0L
+
     fun config(): StaminaConfig = config
 
     /** 是否有可读的模块状态（页面据此显示"未生效"而不是假数据） */
@@ -85,6 +92,9 @@ object StaminaController {
         if (lm != null) MockServiceHelper.resetStamina(lm)
         state = null
         movedAgoSec = Double.MAX_VALUE
+        history.clear()
+        historyStartedAt = 0L
+        lastHistoryAt = 0L
     }
 
     /**
@@ -97,7 +107,7 @@ object StaminaController {
         wireApplied = rely.getBoolean(Key.STAMINA_WIRE, false)
         movedAgoSec = rely.getDouble(Key.STAMINA_MOVED_AGO_SEC, Double.MAX_VALUE)
         recoverPerMinute = rely.getDouble(Key.STAMINA_RECOVER_PER_MIN, 0.0)
-        state = StaminaModel.Snapshot(
+        val snap = StaminaModel.Snapshot(
             staminaPercent = rely.getDouble(Key.STAMINA_PERCENT, 100.0),
             resting = rely.getBoolean(Key.STAMINA_RESTING, false),
             fatigueRemainingSec = rely.getDouble(Key.STAMINA_REMAINING_SEC, 0.0),
@@ -108,6 +118,17 @@ object StaminaController {
             apparentSpeed = rely.getDouble(Key.STAMINA_APPARENT_SPEED, 0.0),
             ignoredTicks = rely.getLong(Key.STAMINA_IGNORED_TICKS, 0L),
         )
+        state = snap
+        if (config.enabled) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (historyStartedAt == 0L) historyStartedAt = now
+            if (now - lastHistoryAt >= 900L) {
+                lastHistoryAt = now
+                val t = (now - historyStartedAt) / 1000.0
+                history.addLast(LiveSample(t, snap.apparentSpeed, snap.staminaPercent))
+                while (history.size > 600) history.removeFirst()
+            }
+        }
         return true
     }
 
@@ -134,6 +155,9 @@ object StaminaController {
     /** 当前恢复速率（点/分钟）—— 模块侧算好回传（公式只有一处实现） */
     fun recoveringPerMinute(): Double = recoverPerMinute
 
-    /** 当前实际速度（基础速度 × 模块回传的倍率） */
+    /** 当前实际速度（纯公式不调制速度，仍保持原值） */
     fun effectiveSpeed(baseSpeed: Double): Double = baseSpeed * snapshot().speedScale
+
+    /** 实际运行采样；没有会话时为空 */
+    fun history(): List<LiveSample> = synchronized(history) { history.toList() }
 }
