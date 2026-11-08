@@ -104,6 +104,7 @@ import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
+import moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 
@@ -333,8 +334,11 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             moe.fuqiuluo.portalex.ui.camera.CameraMockStore.routes(this)
         }
-        // 虚拟摄像头默认关：每次冷启动都清掉上次持久化的开启状态，绝不自动接管相机。
-        cameraMockEnabled = false
+        // 冷启动不直接清开关：若上次进程被杀而 cammock 还在跑，先走真实 stop。
+        // 只有 stop.sh 成功后才允许状态变 false，否则就会“按钮关闭、相机还在输出”。
+        if (cameraMockEnabled) {
+            CameraMockLifecycle.stopForLocationMockOff(this)
+        }
         requestRequiredPermissionsIfNeeded()
 
         WindowCompat.setDecorFitsSystemWindows(window, false)

@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.ext.StaminaPrefs
+import moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.sharedPrefs
@@ -126,7 +127,10 @@ object QuickLaunch {
         val wantLocation = "route" in ids || wantCamera
 
         onProgress?.invoke(ctx.getString(if (ids.isEmpty()) R.string.quick_stopping else R.string.quick_validating))
-        if (!wantCamera) ctx.cameraMockEnabled = false
+        if (!wantCamera) {
+            // 不能只写 false：cammock 的 provider 必须真正停掉，否则就是假关闭。
+            CameraMockLifecycle.stopForLocationMockOff(ctx)
+        }
 
         if (wantLocation) {
             onProgress?.invoke(ctx.getString(R.string.quick_starting_location))
