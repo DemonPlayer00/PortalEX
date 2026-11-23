@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  落在 hero 大色块上的开关的轨道色：它落在 primaryContainer 大色块上，不能用 M3 默认的
+  surfaceContainerHighest（浅色主题下与色块同色 ⇒ 轨道"消失"）。
+  改用 outline / primary 两个角色，深浅与莫奈取色下都与色块保持对比。
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="?attr/colorOutline" android:state_checked="false" />
+    <item android:color="?attr/colorPrimary" android:state_checked="true" />
+</selector>

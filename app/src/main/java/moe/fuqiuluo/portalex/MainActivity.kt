@@ -418,6 +418,13 @@ class MainActivity : AppCompatActivity() {
                             R.id.nav_gnss_mock, R.id.nav_baseband, R.id.nav_camera_mock,
                             R.id.nav_stamina, R.id.nav_peripheral_sensor
                         ).mapNotNull { navView.menu.findItem(it)?.title?.toString() }.toSet(),
+                        // 颜色走主题角色 ⇒ 莫奈取色下跟着壁纸变（灰 → outlineVariant，启动色 → primary）
+                        idleColor = MaterialColors.getColor(
+                            navView, com.google.android.material.R.attr.colorOutlineVariant
+                        ),
+                        activeColor = MaterialColors.getColor(
+                            navView, com.google.android.material.R.attr.colorPrimary
+                        ),
                     )
                     // 先加警告框，再加蚂蚁线：后者最后绘制，保证蚂蚁线永远在黄框上层。
                     val warning = DrawerWarningDecoration()

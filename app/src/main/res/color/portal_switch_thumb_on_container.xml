@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  落在 hero 大色块上的开关的滑块色：与 portal_switch_track_on_container 同一套对比关系。
+  关闭态用 colorSurface（浅色主题白滑块 / 深色主题近黑滑块）压在中性轨道上，
+  比 M3 默认的"轨道+滑块都用 outline 系"在主控色块里更容易看清。
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="?attr/colorSurface" android:state_checked="false" />
+    <item android:color="?attr/colorOnPrimary" android:state_checked="true" />
+</selector>

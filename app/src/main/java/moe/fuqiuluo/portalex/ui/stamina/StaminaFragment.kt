@@ -22,7 +22,9 @@ import moe.fuqiuluo.portalex.databinding.FragmentStaminaBinding
 import moe.fuqiuluo.portalex.ext.StaminaPrefs
 import moe.fuqiuluo.portalex.ext.reportDuration
 import moe.fuqiuluo.portalex.ext.speed
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.StaminaController
+import moe.fuqiuluo.portalex.ui.widget.HeroCardState
 import moe.fuqiuluo.portalex.ui.common.NumberRow
 import moe.fuqiuluo.portalex.ui.common.renderNumberRows
 import moe.fuqiuluo.xposed.utils.StaminaConfig
@@ -174,7 +176,9 @@ class StaminaFragment : Fragment() {
         val context = requireContext()
 
         binding.staminaSwitch.isChecked = StaminaController.config().enabled
+        refreshHero()
         binding.staminaSwitch.setOnCheckedChangeListener { _, isChecked ->
+            refreshHero(isChecked)
             val c = StaminaController.config().copy(enabled = isChecked)
             StaminaController.applyConfig(context, c)
             // 打开时复位：否则会继承上一次运行遗留的体力/休息计时，看起来像"一开就累"
@@ -218,6 +222,7 @@ class StaminaFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        if (_binding != null) refreshHero()
         // 状态每秒刷新一次（体力在跑动中持续变化；这一页只是显示，不驱动模型）
         if (refreshJob?.isActive == true) return
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
@@ -264,6 +269,16 @@ class StaminaFragment : Fragment() {
 
     private var chartConfig: StaminaConfig? = null
 
+    /**
+     * 高亮卡片：未启用 = 轻着色（主色 12%），启用 = 重着色（primaryContainer）。
+     * 与开关同一事实源，避免"开关开了但卡片没亮"的状态分叉。
+     */
+    private fun refreshHero(enabled: Boolean = binding.staminaSwitch.isChecked) {
+        // 二类功能允许"假开启"：真正生效要等路线模拟启动，卡片只认真实状态
+        val running = FeatureDependency.isClass2Running(requireContext(), enabled)
+        HeroCardState.apply(binding.staminaControlCard, running)
+    }
+
     /** 恢复出厂参数 + 重置运行时体力/统计（开关状态保留），并清掉已废弃的旧键 */
     private fun resetAllData() {
         val context = requireContext()
@@ -274,6 +289,7 @@ class StaminaFragment : Fragment() {
         StaminaController.resetStamina(context)
 
         binding.staminaSwitch.isChecked = keepEnabled
+        refreshHero()
         renderRows()
         // ⚠️ 这里**不能**只把 chartConfig 标成 defaults 就完事：生成页的曲线是"一次跑法的快照"，
         //    那样它会以为自己的采样还新鲜，继续显示用旧参数跑出来的图（真机上就是这么露馅的）。

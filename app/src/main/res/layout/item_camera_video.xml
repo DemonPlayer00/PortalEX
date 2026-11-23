@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 单个视频条目：名称 + 时长 + 标签 + 两个操作（改标签 / 删除） -->
+<!-- 单个素材条目：名称 + 类型/位置 + 标签 + 两个操作（改标签 / 删除）
+     条目本身是 M3 容器色小块（SurfaceContainerHigh），不描边、不投影：
+     层级靠"色块深浅"表达，与页面的大色块形成两档。 -->
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginBottom="6dp"
-    app:cardCornerRadius="10dp"
+    app:cardBackgroundColor="?attr/colorSurfaceContainerHigh"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="0dp"
     app:cardPreventCornerOverlap="false"
-    app:contentPadding="8dp">
+    app:contentPadding="12dp"
+    app:strokeWidth="0dp">
 
     <LinearLayout
         android:layout_width="match_parent"

@@ -24,11 +24,47 @@ data class CameraVideo(
     /** 标签：预设（晴/阴/白天/黑夜）+ 任意自定义，见 [CameraTags] */
     val tags: List<String>,
     val addedAt: Long,
-    /** 录制开始的墙钟时间（毫秒）；0 = 导入/未知 */
+    /** 录制/拍摄的墙钟时间（毫秒）；0 = 导入/未知 */
     val recordedAt: Long = 0L,
-    /** 录制期间记录的位置轨迹（wgs84，按时间排序）；导入视频为空 */
-    val track: List<CameraVideoTrackPoint> = emptyList()
+    /**
+     * 录制期间记录的位置轨迹（wgs84，按时间排序）；导入视频为空。
+     *
+     * **静止图片（[CameraMediaKind.STILL]）恰好只有一个点**：这条素材绑定在那个坐标上，
+     * 选片时它就是"一帧视频 + 一个点位"，与录像轨迹走完全相同的最近点比较。
+     */
+    val track: List<CameraVideoTrackPoint> = emptyList(),
+    /**
+     * 素材种类，见 [CameraMediaKind]。默认 [CameraMediaKind.VIDEO] ——
+     * 旧库没有这个字段，解码时也按视频处理。
+     */
+    val kind: String = CameraMediaKind.VIDEO
 )
+
+/**
+ * 素材种类。**只影响"怎么播"和"怎么展示"，不影响"怎么选"**：
+ * 选片只看坐标与时刻，两种素材在 [CameraMockSelectionEngine] 里是同一类候选。
+ *
+ *  · [VIDEO]：一段按时间轴录下来的画面（有轨迹或多点位）；
+ *  · [STILL]：一张图片。落盘时被编码成**一帧（重复两帧）的 mp4**，
+ *    因此下游（目标应用进程的播放器、cammock 的 provider）完全不需要知道它是图片 ——
+ *    对它来说这就是一段只有一帧的视频，播一次即可，不循环。
+ */
+object CameraMediaKind {
+    const val VIDEO = "video"
+    const val STILL = "still"
+
+    /** 未知/脏值一律归为视频（旧数据语义） */
+    fun normalize(raw: String?): String =
+        if (raw?.trim()?.equals(STILL, ignoreCase = true) == true) STILL else VIDEO
+
+    fun isStill(raw: String?): Boolean = normalize(raw) == STILL
+}
+
+/** 这条素材是不是静止图片（见 [CameraMediaKind]） */
+val CameraVideo.isStill: Boolean get() = CameraMediaKind.isStill(kind)
+
+/** 选片结果是不是静止图片（播放器据此只播一帧、不循环） */
+val CameraMockSelection.isStill: Boolean get() = CameraMediaKind.isStill(kind)
 
 /** 录制期间的一个路径采样点；tMs 是相对录制开始的毫秒偏移。 */
 data class CameraVideoTrackPoint(
@@ -72,7 +108,10 @@ data class CameraVideoPoint(
 data class CameraMockManifest(
     /** 摄像头模拟总开关。false = 模块侧一律不拦截（hook 即使装上也不生效） */
     val enabled: Boolean,
-    /** 标签筛选：**全含**语义（见 [CameraMockSelector.matches]）。空 = 不筛选 */
+    /**
+     * 标签筛选：空 = 不筛选；非空 = **全含**语义（素材必须带上每一个标签）。
+     * **无标签素材永远命中**（未分类不该被分类筛选排除）——见 [CameraMockSelector.matches]。
+     */
     val tagFilter: List<String>,
     val points: List<CameraVideoPoint>,
     /** 允许拦截的应用包名；空 = 不限制（凡被注入且开关打开的进程都生效） */
@@ -122,6 +161,8 @@ data class CameraMockSelection(
     val nearestDistanceM: Double = Double.NaN,
     /** 参与本次比较的候选轨迹点数量 */
     val candidateCount: Int = 0,
+    /** 素材种类，见 [CameraMediaKind]；[CameraMediaKind.STILL] 时播放器只播一帧、不循环 */
+    val kind: String = CameraMediaKind.VIDEO,
 )
 
 /** 预设标签。用户可在此基础上自由添加自定义标签（不做白名单限制）。 */

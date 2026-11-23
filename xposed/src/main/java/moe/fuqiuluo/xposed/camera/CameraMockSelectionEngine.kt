@@ -19,10 +19,16 @@ object CameraMockSelectionEngine {
     /** 同一会话保留上次视频的时刻迟滞：避免每 3 秒刷新就换片。 */
     const val VIDEO_STICKY_TIME_MS = 120_000L
 
-    /** 标签匹配：空筛选 = 全部；非空筛选 = 视频必须包含全部标签（无标签视频不命中）。 */
-    fun matches(videoTags: List<String>, filter: List<String>): Boolean {
+    /**
+     * 标签匹配。两条规则，顺序不能反：
+     *  1. **无标签 = 通配**：素材没有标签时**永远命中**，与筛选内容无关 ——
+     *     没被分类的素材不该被分类筛选排除（否则新加的图片会因为"忘了打标签"而静默失效）；
+     *  2. 非空筛选 = **全含**语义：素材必须同时带有筛选里的每一个标签（大小写不敏感）。
+     * 空筛选 = 全部命中（不筛选）。
+     */
+    fun matches(videoTags: Collection<String>, filter: Collection<String>): Boolean {
+        if (videoTags.isEmpty()) return true
         if (filter.isEmpty()) return true
-        if (videoTags.isEmpty()) return false
         return filter.all { want -> videoTags.any { it.equals(want, ignoreCase = true) } }
     }
 
@@ -97,8 +103,11 @@ object CameraMockSelectionEngine {
             pool[random.nextInt(pool.size)]
         }
         val video = chosen.video
-        val start = if (randomStart) {
+        val start = if (randomStart && !video.isStill) {
             randomStartMs(video.durationMs, random)
+        } else if (video.isStill) {
+            // 静止图片 = 一帧：起播点没有可掷骰子的自由度，恒定播第 0 毫秒
+            0L
         } else {
             if (video.durationMs > 0) chosen.startMs.coerceIn(0L, video.durationMs - 1)
             else chosen.startMs.coerceAtLeast(0L)
@@ -120,6 +129,7 @@ object CameraMockSelectionEngine {
             timeDistanceMs = if (nowMs != null) timeOfDayDistanceMs(video.recordedAt, nowMs) else Long.MAX_VALUE,
             nearestDistanceM = nearestDistance,
             candidateCount = candidates.size,
+            kind = video.kind,
         )
     }
 
@@ -175,7 +185,7 @@ object CameraMockSelectionEngine {
             videoName = video.name,
             fileName = video.file,
             durationMs = video.durationMs,
-            startMs = randomStartMs(video.durationMs, random),
+            startMs = if (video.isStill) 0L else randomStartMs(video.durationMs, random),
             distanceM = distance,
             queryLat = lat ?: Double.NaN,
             queryLon = lon ?: Double.NaN,
@@ -185,6 +195,7 @@ object CameraMockSelectionEngine {
             timeDistanceMs = if (nowMs != null) timeOfDayDistanceMs(video.recordedAt, now) else Long.MAX_VALUE,
             nearestDistanceM = nearestDistance,
             candidateCount = candidateCount,
+            kind = video.kind,
         )
     }
 
@@ -203,6 +214,10 @@ object CameraMockSelectionEngine {
 
     /**
      * system_server / native cammock 选片。
+     *
+     * 候选粒度是"素材上的一个位置"：录像的**每个轨迹点**各算一个候选，
+     * 静止图片（[CameraMediaKind.STILL]）只有它绑定的**那一个点**。两者在同一条
+     * 距离/时刻规则下比较，因此"一张图片"与"一段视频里刚好拍到这一处的那一帧"等价。
      *
      * 代价顺序（不是把时间和距离硬加权）：
      *  1. 先把路线按“当前坐标到其轨迹/锚点的最小距离”分组；
@@ -245,11 +260,15 @@ object CameraMockSelectionEngine {
                 val timeMs = if (video.recordedAt > 0L && nowMs != null) {
                     timeOfDayDistanceMs(video.recordedAt, nowMs)
                 } else Long.MAX_VALUE
-                if (video.track.isNotEmpty()) {
-                    video.track.forEach { tp ->
+                // 静止图片 = 一帧视频 + 一个点位：它只有一个候选位置（图片绑定的那一个点），
+                // 起播偏移恒为 0。录像可以有很多轨迹点，每个点各算一个候选 ——
+                // 两类素材在这一步之后完全同构，后面的距离/时刻/粘滞规则不再区分它们。
+                val points = if (video.isStill) video.track.take(1) else video.track
+                if (points.isNotEmpty()) {
+                    points.forEach { tp ->
                         val d = if (lat == null || lon == null) -1.0
                         else WorldMath.haversine(lat, lon, tp.lat, tp.lon)
-                        candidates += Cand(route, video, tp.lat, tp.lon, tp.tMs, d, timeMs)
+                        candidates += Cand(route, video, tp.lat, tp.lon, if (video.isStill) 0L else tp.tMs, d, timeMs)
                     }
                 } else {
                     val d = if (lat == null || lon == null) -1.0
@@ -312,6 +331,7 @@ object CameraMockSelectionEngine {
             nearestDistanceM = if (lat == null || lon == null) Double.NaN
             else candidates.minOf { it.distanceM },
             candidateCount = candidates.size,
+            kind = chosen.video.kind,
         )
     }
 

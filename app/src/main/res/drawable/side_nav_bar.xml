@@ -1,9 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  侧栏标题区背景：**莫奈取色的容器色渐变**（不再是写死的 #373737 灰）。
+  三档都取 M3 表面容器角色：有壁纸取色时随壁纸的色相轻微偏移，
+  没有时退回主题里定义的品牌灰；深浅色主题同名继承。
+  文字颜色必须跟着换成 onSurface 系（见 nav_header_main.xml），否则浅色下白字看不见。
+-->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <gradient
         android:angle="135"
-        android:centerColor="@color/theme_side_nav_center_color"
-        android:endColor="@color/theme_side_nav_end_color"
-        android:startColor="@color/theme_side_nav_start_color"
+        android:centerColor="?attr/colorSurfaceContainer"
+        android:endColor="?attr/colorSurfaceContainerLow"
+        android:startColor="?attr/colorSurfaceContainerHigh"
         android:type="linear" />
 </shape>

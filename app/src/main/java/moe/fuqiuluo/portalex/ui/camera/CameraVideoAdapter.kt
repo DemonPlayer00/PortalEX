@@ -8,7 +8,9 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textview.MaterialTextView
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.xposed.camera.CameraMockSelector
 import moe.fuqiuluo.xposed.camera.CameraVideo
+import moe.fuqiuluo.xposed.camera.isStill
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -21,16 +23,16 @@ class CameraVideoAdapter(
     private val onExport: (CameraVideo) -> Unit,
     private val onRetry: (CameraVideo) -> Unit
 ) : RecyclerView.Adapter<CameraVideoAdapter.ViewHolder>() {
-    private var filterTags: Set<String> = emptySet()
+    private var filterTags: List<String> = emptyList()
 
-    fun setFilterTags(tags: Set<String>) {
-        filterTags = tags
+    fun setFilterTags(tags: Collection<String>) {
+        filterTags = tags.toList()
         notifyDataSetChanged()
     }
 
+    /** 与选片引擎同一条规则（无标签永远命中、有标签全含） */
     private fun matches(video: CameraVideo): Boolean =
-        if (filterTags.isEmpty()) true
-        else video.tags.isNotEmpty() && filterTags.all { t -> video.tags.any { it.equals(t, true) } }
+        CameraMockSelector.matches(video.tags, filterTags)
 
 
     class ViewHolder(root: View) : RecyclerView.ViewHolder(root) {
@@ -62,9 +64,16 @@ class CameraVideoAdapter(
             "导入"
         }
         holder.meta.text = buildString {
-            append("时长 ").append(CameraMockFormat.duration(video.durationMs))
+            append(CameraMockFormat.mediaKind(video))
             append(" · ").append(time)
-            if (video.track.isNotEmpty()) append(" · 轨迹 ").append(video.track.size).append(" 点")
+            if (video.isStill) {
+                // 图片的价值在"它绑在哪个点"，所以这里显示绑定坐标而不是轨迹点数
+                CameraMockFormat.boundPoint(video)?.let {
+                    append(" · 绑定 ").append(CameraMockFormat.coord(it.first, it.second))
+                }
+            } else if (video.track.isNotEmpty()) {
+                append(" · 轨迹 ").append(video.track.size).append(" 点")
+            }
             append(" · 标签：").append(CameraMockFormat.tags(video.tags))
         }
         holder.itemView.alpha = if (matches(video)) 1f else 0.45f

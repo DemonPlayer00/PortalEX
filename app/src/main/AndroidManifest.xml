@@ -88,6 +88,16 @@
             android:screenOrientation="portrait" />
 
         <!--
+            现场拍摄**单帧素材**：一张照片 + 自动绑定的定位位置。
+            与录制页并列的第二种素材创建方式（图片在逻辑上等价于一帧视频 + 一个点位）。
+        -->
+        <activity
+            android:name=".ui.camera.CameraStillCaptureActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!--
             诊断探针：以 YUV_420_888 为唯一输出打开相机、抓一帧存 JPEG。
             用来单独验证「YUV 分析流」这条注入路径，并作为"多应用并发取流"的第二个会话来源。
             不导出（只有 adb/root 能起），不参与任何正常流程。

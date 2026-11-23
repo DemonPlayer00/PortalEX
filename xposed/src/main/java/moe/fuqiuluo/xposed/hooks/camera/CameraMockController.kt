@@ -11,6 +11,7 @@ import android.view.Surface
 import moe.fuqiuluo.xposed.camera.CameraMockProtocol
 import moe.fuqiuluo.xposed.camera.CameraMockSelection
 import moe.fuqiuluo.xposed.camera.CameraMockSelector
+import moe.fuqiuluo.xposed.camera.isStill
 import moe.fuqiuluo.xposed.utils.FakeLoc
 import moe.fuqiuluo.xposed.utils.Logger
 import moe.fuqiuluo.xposed.utils.PortalDiag
@@ -172,7 +173,9 @@ internal object CameraMockController {
             source = source,
             target = surface,
             startMs = picked.startMs,
-            loop = true,
+            // 静止图片就是"一帧视频"：播一次就停，画面留在宿主 Surface 上。
+            // 循环只会让同一帧反复过一遍解码器（白白吃掉宿主进程的 CPU）。
+            loop = !picked.isStill,
             listener = object : CameraVideoPlayer.Listener {
                 override fun onStarted(durationMs: Long) {
                     if (FakeLoc.enableDebugLog) {

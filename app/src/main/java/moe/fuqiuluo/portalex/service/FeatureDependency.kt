@@ -15,4 +15,15 @@ object FeatureDependency {
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
         return runCatching { MockServiceHelper.isMockStart(lm) }.getOrDefault(false)
     }
+
+    /**
+     * 二类功能（GNSS / 基带 / 体力 / 外周传感器）是否**实际在生效**：
+     * 用户开关打开了，**且**路线模拟正在运行。
+     *
+     * 与系统侧 [moe.fuqiuluo.xposed.utils.FeatureGate] 同一事实源：这些功能允许"假开启"
+     * （开关先记住意图），真正注入要等路线模拟启动。高亮卡片必须用这个结果着色，
+     * 否则会出现"卡片亮着、其实什么都没注入"的误导。
+     */
+    fun isClass2Running(ctx: Context, enabled: Boolean): Boolean =
+        enabled && isRouteActive(ctx)
 }

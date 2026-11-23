@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  摄像头模拟页：与路线模拟页同构（顶部一张状态卡 + 标签筛选 + 下方列表卡），
-  只是列表内容换成「地图视频点」。启动开关在 app 侧只做一件事：
-  把清单里的 enabled 置位并通过 provider 下发给被注入的进程 —— 没有本地服务要起。
+  摄像头模拟页（M3 大色块版）：
+    · 顶部主控区 = 一整块 primaryContainer（Portal.HeroCard），标题/状态/开关/实现管理
+      全部落在色块上，不再给每个控件单独描边或套卡片；
+    · 颜色只取主题角色（?attr/colorXxx）⇒ 莫奈取色（Android 12+）随壁纸变化，
+      低版本退回主题里的品牌灰；夜间主题同名继承；
+    · 开关用 MaterialSwitch（M3），动作按钮用 Filled / Tonal / TextButton 三档层级。
+  启动开关在 app 侧只做一件事：把清单里的 enabled 置位并通过 provider 下发给被注入的进程。
 -->
 <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -16,14 +20,16 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
+        <!-- ============ 主控大色块 ============ -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/camera_mock_card"
+            style="@style/PortalHeroCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="@dimen/page_gutter"
-            app:cardCornerRadius="@dimen/card_radius"
-            app:cardPreventCornerOverlap="false"
-            app:contentPadding="@dimen/card_padding">
+            android:layout_marginStart="@dimen/page_gutter"
+            android:layout_marginTop="@dimen/page_gutter"
+            android:layout_marginEnd="@dimen/page_gutter"
+            app:cardPreventCornerOverlap="false">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -36,24 +42,23 @@
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
-                    <TextView
+                    <!-- 页面标题已在顶栏，这里不重复；右上角只放"地图 / 说明"两个轻动作 -->
+                    <View
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/camera_mock"
-                        android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                        android:textColor="?attr/colorOnSurfaceVariant" />
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/camera_mock_map_toggle"
                         style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
-                        android:minWidth="0dp"
-                        android:insetTop="0dp"
                         android:insetBottom="0dp"
+                        android:insetTop="0dp"
+                        android:minWidth="0dp"
                         android:text="@string/camera_mock_show_map"
-                        android:textAppearance="@style/TextAppearance.Material3.LabelLarge" />
+                        android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                        android:textColor="?attr/colorOnPrimaryContainer" />
 
                     <ImageButton
                         android:id="@+id/camera_mock_info"
@@ -62,37 +67,44 @@
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:contentDescription="@string/camera_mock_info"
                         android:src="@drawable/baseline_info_outline_24"
-                        app:tint="?attr/colorOnSurfaceVariant" />
+                        app:tint="?attr/colorOnPrimaryContainer" />
                 </LinearLayout>
 
+                <!-- 状态 = 这一块里唯一的大字：用户只需要一眼看出"开没开" -->
                 <TextView
                     android:id="@+id/camera_mock_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                    android:textColor="?attr/colorOnSurface"
+                    android:layout_marginTop="6dp"
+                    android:textAppearance="@style/TextAppearance.Material3.HeadlineSmall"
+                    android:textColor="?attr/colorOnPrimaryContainer"
                     android:textStyle="bold"
                     tools:text="未启动" />
-
-                <TextView
-                    android:id="@+id/camera_mock_position"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:visibility="gone"
-                    tools:text="" />
-
-
 
                 <TextView
                     android:id="@+id/camera_mock_impl_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
+                    android:alpha="0.8"
                     android:text="需要安装摄像头实现"
                     android:textAppearance="@style/TextAppearance.Material3.BodySmall"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
+                    android:textColor="?attr/colorOnPrimaryContainer" />
 
+                <!-- M3 开关：选中 = 正在运行；文字只说明"这是什么"，不随状态改变 -->
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_camera_mock"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:minHeight="48dp"
+                    android:text="@string/camera_mock_enable"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="?attr/colorOnPrimaryContainer"
+                    app:thumbTint="@color/portal_switch_thumb_on_container"
+                    app:trackTint="@color/portal_switch_track_on_container" />
+
+                <!-- 实现管理：Tonal 按钮，处于主控色块内仍保持层级低于开关 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -104,7 +116,8 @@
                         android:id="@+id/camera_mock_import_impl"
                         style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="0dp"
-                        android:layout_height="34dp"
+                        android:layout_height="40dp"
+                        android:layout_marginEnd="6dp"
                         android:layout_weight="1"
                         android:insetBottom="0dp"
                         android:insetTop="0dp"
@@ -112,13 +125,15 @@
                         android:paddingStart="4dp"
                         android:paddingEnd="4dp"
                         android:text="导入"
-                        android:textSize="11sp" />
+                        android:textColor="?attr/colorOnPrimaryContainer"
+                        android:textSize="12sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/camera_mock_update_impl"
                         style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="0dp"
-                        android:layout_height="34dp"
+                        android:layout_height="40dp"
+                        android:layout_marginEnd="6dp"
                         android:layout_weight="1"
                         android:insetBottom="0dp"
                         android:insetTop="0dp"
@@ -126,13 +141,14 @@
                         android:paddingStart="4dp"
                         android:paddingEnd="4dp"
                         android:text="更新"
-                        android:textSize="11sp" />
+                        android:textColor="?attr/colorOnPrimaryContainer"
+                        android:textSize="12sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/camera_mock_uninstall_impl"
                         style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="0dp"
-                        android:layout_height="34dp"
+                        android:layout_height="40dp"
                         android:layout_weight="1"
                         android:insetBottom="0dp"
                         android:insetTop="0dp"
@@ -140,51 +156,31 @@
                         android:paddingStart="4dp"
                         android:paddingEnd="4dp"
                         android:text="卸载"
-                        android:textSize="11sp" />
+                        android:textColor="?attr/colorOnPrimaryContainer"
+                        android:textSize="12sp" />
 
                 </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/switch_camera_mock"
-                    style="@style/Widget.Material3.Button"
-                    android:layout_width="match_parent"
-                    android:layout_height="36dp"
-                    android:layout_marginTop="6dp"
-                    android:insetBottom="0dp"
-                    android:insetLeft="0dp"
-                    android:insetRight="0dp"
-                    android:insetTop="0dp"
-                    android:padding="6dp"
-                    android:text="@string/camera_mock_start"
-                    android:textColor="?attr/colorOnPrimary"
-                    android:textSize="12sp"
-                    app:cornerRadius="12dp"
-                    app:icon="@drawable/rounded_play_arrow_24"
-                    app:iconGravity="textStart"
-                    app:iconPadding="0dp"
-                    app:iconTint="?attr/colorOnPrimary" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
         <!--
             地图卡：与路线编辑页同一套地图操作（可拖动/缩放/切卫星图），
-            把「视频点」和「当前表象位置」画在同一张图上 —— 用户一眼就能看出
+            把「点位」和「当前表象位置」画在同一张图上 —— 用户一眼就能看出
             "现在会播哪个点"，这正是选片规则（最近命中点）的可视化。
-            默认**收起**：展开后地图会吃掉 180dp，实测把下面的列表卡（0dp/weight=1）
-            挤到只剩一条缝（点位的名字/坐标/标签全看不见）。所以做成"一键展开/收起"，
-            默认保证列表可用，要看"点在哪儿、我在哪儿"时再展开。
+            默认**收起**：展开后地图会吃掉 180dp，把下面的列表挤到只剩一条缝。
         -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/camera_mock_map_card"
+            style="@style/PortalSurfaceCard"
             android:layout_width="match_parent"
             android:layout_height="180dp"
-            android:visibility="gone"
             android:layout_marginStart="@dimen/page_gutter"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="6dp"
             android:layout_marginEnd="@dimen/page_gutter"
-            app:cardCornerRadius="@dimen/card_radius"
-            app:cardPreventCornerOverlap="false">
+            android:visibility="gone"
+            app:cardPreventCornerOverlap="false"
+            app:contentPadding="0dp">
 
             <com.baidu.mapapi.map.MapView
                 android:id="@+id/camera_mock_map"
@@ -198,10 +194,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="@dimen/history_label_margin"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:layout_marginEnd="@dimen/history_label_margin"
             android:text="@string/camera_mock_filter_label"
-            android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+            android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
             android:textColor="?attr/colorOnSurfaceVariant" />
 
         <LinearLayout
@@ -234,6 +230,7 @@
                 android:layout_height="40dp"
                 android:minWidth="0dp"
                 android:text="更多操作"
+                android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="11sp" />
 
         </LinearLayout>
@@ -245,30 +242,29 @@
             android:layout_marginStart="@dimen/history_label_margin"
             android:layout_marginTop="4dp"
             android:layout_marginEnd="@dimen/history_label_margin"
-            android:layout_marginBottom="4dp"
+            android:layout_marginBottom="6dp"
             android:text="@string/camera_point_list"
-            android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+            android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
             android:textColor="?attr/colorOnSurfaceVariant" />
 
         <!--
             列表卡：0dp + weight=1 = 「吃掉剩余高度」。**不能写 match_parent** ——
             竖屏 LinearLayout 里 match_parent 是"和父容器一样高"，上面几张卡一变高
-            （例如状态栏多出一行"当前模拟位置"）列表就被整体挤出屏幕，实测第一版就是这样：
-            明明有 1 个点位，列表里什么都看不见。
+            列表就被整体挤出屏幕。
         -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/camera_point_card"
+            style="@style/PortalSurfaceCard"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:minHeight="160dp"
             android:layout_marginStart="@dimen/page_gutter"
+            android:layout_marginTop="2dp"
             android:layout_marginEnd="@dimen/page_gutter"
-            android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"
-            app:cardCornerRadius="@dimen/card_radius"
             app:cardPreventCornerOverlap="false"
-            app:contentPadding="@dimen/card_padding">
+            app:contentPadding="8dp">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/camera_point_list"

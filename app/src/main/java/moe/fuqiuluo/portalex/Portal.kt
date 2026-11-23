@@ -5,6 +5,7 @@ import android.content.Context
 import com.baidu.location.LocationClient
 import com.baidu.mapapi.CoordType
 import com.baidu.mapapi.SDKInitializer
+import com.google.android.material.color.DynamicColors
 import moe.fuqiuluo.portalex.ext.frameRecord
 import moe.fuqiuluo.portalex.service.PortalLocationClient
 import moe.fuqiuluo.portalex.crash.CrashHandler
@@ -13,6 +14,12 @@ class Portal: Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // 莫奈取色（Monet）：Android 12+ 由壁纸生成整套 M3 语义色（含深浅色）。
+        // 必须在这里注册——DynamicColors 是 ActivityLifecycleCallbacks，晚于首个
+        // Activity 创建再调用，那一个页面就拿不到壁纸色。
+        // Android 11 及以下没有壁纸取色能力，此调用是 no-op，继续用主题里的品牌灰。
+        DynamicColors.applyToActivitiesIfAvailable(this)
 
         SDKInitializer.setAgreePrivacy(this, true)
         LocationClient.setAgreePrivacy(true)

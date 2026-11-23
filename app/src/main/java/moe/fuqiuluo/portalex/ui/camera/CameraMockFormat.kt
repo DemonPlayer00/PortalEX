@@ -1,6 +1,8 @@
 package moe.fuqiuluo.portalex.ui.camera
 
+import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
+import moe.fuqiuluo.xposed.camera.isStill
 
 /** 摄像头模拟页共用的展示格式（时长、坐标、标签行），避免每处各写一遍 */ 
 object CameraMockFormat {
@@ -19,5 +21,23 @@ object CameraMockFormat {
     fun tags(tags: List<String>): String = if (tags.isEmpty()) "无标签" else tags.joinToString(" · ")
 
     fun pointSummary(point: CameraVideoPoint): String =
-        "${coord(point.lat, point.lon)} · ${point.videos.size} 段视频"
+        "${coord(point.lat, point.lon)} · ${mediaCount(point)}"
+
+    /** 素材数量：静止图片与视频各算一条（列表标题/统计用） */
+    fun mediaCount(point: CameraVideoPoint): String {
+        val stills = point.videos.count { it.isStill }
+        val videos = point.videos.size - stills
+        return when {
+            stills > 0 && videos > 0 -> "$videos 段视频 + $stills 张图片"
+            stills > 0 -> "$stills 张图片"
+            else -> "$videos 段视频"
+        }
+    }
+
+    /** 单条素材的时长/类型行 */
+    fun mediaKind(video: CameraVideo): String = if (video.isStill) "单帧图片" else "时长 " + duration(video.durationMs)
+
+    /** 静止图片绑定的那个点（它就是这条素材唯一的轨迹点） */
+    fun boundPoint(video: CameraVideo): Pair<Double, Double>? =
+        video.track.firstOrNull()?.let { it.lat to it.lon }
 }

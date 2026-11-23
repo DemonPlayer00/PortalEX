@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  路线模拟页（M3 大色块版）：
+    · 主控区 = 一整块 primaryContainer（PortalHeroCard）：目标路线、启用开关、
+      悬浮摇杆开关都落在色块上，不再用"启动模拟"按钮模拟开关；
+    · 历史路线列表 = surfaceContainerLow 大块（PortalSurfaceCard）；
+    · 颜色只取主题角色 ⇒ 莫奈取色下随壁纸变化。
+-->
 <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -13,12 +20,13 @@
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/mock_location_card"
+            style="@style/PortalHeroCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="@dimen/card_radius"
-            android:layout_margin="@dimen/page_gutter"
-            app:cardPreventCornerOverlap="false"
-            app:contentPadding="@dimen/card_padding">
+            android:layout_marginStart="@dimen/page_gutter"
+            android:layout_marginTop="@dimen/page_gutter"
+            android:layout_marginEnd="@dimen/page_gutter"
+            app:cardPreventCornerOverlap="false">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -28,79 +36,44 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textColor="?attr/colorOnSurfaceVariant"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                    android:text="@string/target_route"/>
+                    android:text="@string/target_route"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                    android:textColor="?attr/colorOnPrimaryContainer" />
 
-                <LinearLayout
+                <TextView
+                    android:id="@+id/mock_route_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/none_route"
+                    android:textAppearance="@style/TextAppearance.Material3.HeadlineSmall"
+                    android:textColor="?attr/colorOnPrimaryContainer"
+                    android:textStyle="bold" />
+
+                <!-- M3 开关：选中 = 模拟正在运行（不再用按钮文字表达开关态） -->
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_mock"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:layout_marginBottom="10dp"
-                    android:orientation="vertical">
+                    android:minHeight="48dp"
+                    android:text="@string/route_mock_enable"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="?attr/colorOnPrimaryContainer"
+                    app:thumbTint="@color/portal_switch_thumb_on_container"
+                    app:trackTint="@color/portal_switch_track_on_container" />
 
-                    <TextView
-                        android:id="@+id/mock_route_name"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/none_route"
-                        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <LinearLayout
+                <!-- 悬浮摇杆：同一块主控区里的次级开关（状态源仍是 ViewModel.rocker） -->
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/rocker"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:baselineAligned="false"
-                    android:orientation="horizontal">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1">
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/switch_mock"
-                            android:layout_width="wrap_content"
-                            android:layout_height="40dp"
-                            android:textColor="?attr/colorOnPrimary"
-                            android:text="@string/start_mock"
-                            style="@style/Widget.Material3.Button"
-                            android:insetRight="0dp"
-                            android:insetLeft="0dp"
-                            android:insetTop="0dp"
-                            android:insetBottom="0dp"
-                            android:textSize="13sp"
-                            app:icon="@drawable/rounded_play_arrow_24"
-                            app:iconGravity="textStart"
-                            app:iconPadding="0dp"
-                            android:paddingStart="12dp"
-                                android:paddingEnd="12dp"
-                            app:iconTint="?attr/colorOnPrimary"
-                            app:cornerRadius="12dp"/>
-
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_weight="1"
-                        android:layout_height="match_parent"
-                        android:gravity="end|center">
-
-                        <CheckedTextView
-                            android:id="@+id/rocker"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:checkMark="?android:attr/listChoiceIndicatorMultiple"
-                            android:checkMarkTint="?attr/colorOnSurfaceVariant"
-                            android:checked="false"
-                            android:gravity="center"
-                            android:text="@string/rocker"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:textSize="13sp" />
-                    </LinearLayout>
-                </LinearLayout>
+                    android:minHeight="48dp"
+                    android:text="@string/rocker"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="?attr/colorOnPrimaryContainer"
+                    app:thumbTint="@color/portal_switch_thumb_on_container"
+                    app:trackTint="@color/portal_switch_track_on_container" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -109,32 +82,31 @@
             android:id="@+id/historical_route_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
             android:layout_marginStart="@dimen/history_label_margin"
+            android:layout_marginTop="8dp"
             android:layout_marginEnd="@dimen/history_label_margin"
-            android:layout_marginBottom="4dp"
-            android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:text="@string/history_route"/>
+            android:layout_marginBottom="6dp"
+            android:text="@string/history_route"
+            android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/historical_route_card"
+            style="@style/PortalSurfaceCard"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:minHeight="160dp"
-            android:layout_marginTop="@dimen/page_gutter"
-            android:layout_marginBottom="@dimen/page_gutter"
             android:layout_marginStart="@dimen/page_gutter"
             android:layout_marginEnd="@dimen/page_gutter"
-            app:cardCornerRadius="@dimen/card_radius"
+            android:layout_marginBottom="@dimen/page_gutter"
             app:cardPreventCornerOverlap="false"
-            app:contentPadding="@dimen/card_padding">
+            app:contentPadding="8dp">
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/historical_route_list"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"/>
+                android:layout_height="match_parent" />
 
         </com.google.android.material.card.MaterialCardView>
 
@@ -144,16 +116,15 @@
         android:id="@+id/fab_mock_location"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="@dimen/fab_margin"
-        android:layout_marginEnd="@dimen/fab_margin"
-        android:contentDescription="@string/follow_location"
-        app:srcCompat="@drawable/sharp_location_off_24"
-        android:backgroundTint="?attr/colorPrimaryContainer"
-        android:tint="?attr/colorOnPrimaryContainer"
-        app:fabSize="auto"
-        android:visibility="gone"
         android:layout_gravity="bottom|end"
-        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"/>
-
+        android:layout_marginEnd="@dimen/fab_margin"
+        android:layout_marginBottom="@dimen/fab_margin"
+        android:backgroundTint="?attr/colorPrimaryContainer"
+        android:contentDescription="@string/follow_location"
+        android:tint="?attr/colorOnPrimaryContainer"
+        android:visibility="gone"
+        app:fabSize="auto"
+        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"
+        app:srcCompat="@drawable/sharp_location_off_24" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

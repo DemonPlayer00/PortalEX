@@ -2,6 +2,7 @@ package moe.fuqiuluo.portalex.ui.camera
 
 import android.content.Context
 import android.net.Uri
+import moe.fuqiuluo.xposed.camera.CameraMediaKind
 import moe.fuqiuluo.xposed.camera.CameraTags
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
@@ -127,6 +128,9 @@ object CameraMockArchive {
         } ?: emptyList()
         val recordedAt = meta?.optLong("recordedAt", 0L) ?: 0L
         val durationMs = meta?.optLong("durationMs", 0L)?.coerceAtLeast(0L) ?: 0L
+        // 旧包没有 kind：按视频处理。静止图片在包里同样是一个 mp4（单帧），
+        // 只是多带了一个"它其实是一张图片"的标记，用来决定播放与展示方式。
+        val kind = CameraMediaKind.normalize(meta?.optString("kind"))
 
         val pointId = meta?.optString("pointId")?.takeIf { it.isNotBlank() }
         val pointName = meta?.optString("pointName")?.takeIf { it.isNotBlank() } ?: "导入 ${name}"
@@ -143,6 +147,7 @@ object CameraMockArchive {
             addedAt = System.currentTimeMillis(),
             recordedAt = recordedAt,
             track = CameraTags.sanitizeTrack(track),
+            kind = kind,
         )
         val points = CameraMockStore.points(context).toMutableList()
         val existingPoint = pointId?.let { pid -> points.firstOrNull { it.id == pid } }

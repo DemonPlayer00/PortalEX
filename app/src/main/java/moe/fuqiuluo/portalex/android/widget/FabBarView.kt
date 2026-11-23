@@ -294,9 +294,20 @@ class FabBarView @JvmOverloads constructor(
         return ColorStateList.valueOf(color)
     }
 
-    /** 按钮着色：选中态 = 绿色，普通 = 主题图标色 */
+    /**
+     * 按钮着色：选中态 = 主题主色（莫奈取色下随壁纸变化），普通 = 主题图标色。
+     * 主色取不到（旧主题缺 colorPrimary）时退回原来的绿色，保证选中态始终可分辨。
+     */
     private fun actionTintList(active: Boolean): ColorStateList =
-        if (active) ColorStateList.valueOf(ACTIVE_TINT) else iconTintList()
+        if (active) {
+            ColorStateList.valueOf(
+                MaterialColors.getColor(
+                    context, com.google.android.material.R.attr.colorPrimary, ACTIVE_TINT
+                )
+            )
+        } else {
+            iconTintList()
+        }
 
     companion object {
         /** 选中态着色（平滑绘制开关 / 平滑线段颜色同源） */

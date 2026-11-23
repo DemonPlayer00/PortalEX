@@ -37,6 +37,7 @@ import moe.fuqiuluo.portalex.service.StepProbe
 import moe.fuqiuluo.portalex.service.StepTickProbe
 import moe.fuqiuluo.portalex.ui.camera.CameraMockRuntime
 import moe.fuqiuluo.portalex.ui.camera.CameraMockStore
+import moe.fuqiuluo.xposed.camera.isStill
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ui.camera.cameraMockTagFilter
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -263,7 +264,11 @@ class TestFragment : Fragment() {
             appendLine()
             appendLine("═══ 摄像头模拟 ═══")
             appendLine("开关           ${if (ctx.cameraMockEnabled) "开" else "关"}")
-            appendLine("素材           ${points.size} 个视频点 / ${points.sumOf { it.videos.size }} 段视频")
+            val stillCount = points.sumOf { p -> p.videos.count { it.isStill } }
+            val videoCount = points.sumOf { it.videos.size } - stillCount
+            appendLine(
+                "素材           ${points.size} 个点位 / $videoCount 段视频 + $stillCount 张图片"
+            )
             appendLine("标签筛选       ${ctx.cameraMockTagFilter.joinToString("、").ifEmpty { "（不筛选）" }}")
             appendLine(
                 "当前表象位置   " + (CameraMockRuntime.position()?.let {

@@ -4,12 +4,14 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Point
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import android.widget.LinearLayout
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -42,6 +44,7 @@ import moe.fuqiuluo.portalex.ext.wgs84
 import moe.fuqiuluo.portalex.ui.MapControlsHost
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import moe.fuqiuluo.xposed.utils.WorldMath
+import moe.fuqiuluo.xposed.camera.CameraMockSelector
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
@@ -52,14 +55,16 @@ import java.util.concurrent.Executors
 import java.io.File
 
 /**
- * **视频点编辑页**：上半地图（准星 = 该点坐标），下半是这个点名下的视频清单
- * （应用内录制 / 外部导入 / 打标签 / 删除）。
+ * **点位编辑页**：上半地图（准星 = 该点坐标），下半是这个点名下的素材清单
+ * （应用内录制 / 手动添加图片 / 外部导入 / 打标签 / 删除）。
  *
- * 两个约定值得写下来：
+ * 三个约定值得写下来：
  *  1. **坐标取准星**（地图中心），与路线模拟页同一套交互；入库前统一转成 wgs84 ——
  *     模块侧按 wgs84 与模拟位置比距离，两边不能各用一套坐标系。
- *  2. 视频的增删**立即落盘**（它是磁盘文件，留在内存里一旦退出就成了孤儿文件），
+ *  2. 素材的增删**立即落盘**（它是磁盘文件，留在内存里一旦退出就成了孤儿文件），
  *     而名称与坐标在"保存"（或按返回键时）才提交。
+ *  3. **图片绑定的是"当前准星"这一个点**：落盘时它被编码成一帧 mp4（见
+ *     [CameraStillMedia]），因此选片/播放与视频完全同构，只是起播偏移恒为 0。
  */
 class CameraPointEditFragment : Fragment(), MapControlsHost {
 
@@ -155,6 +160,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                             put("file", video.file)
                             put("durationMs", video.durationMs)
                             put("recordedAt", video.recordedAt)
+                            put("kind", video.kind)
                             put("tags", JSONArray(video.tags))
                             put("track", JSONArray().apply {
                                 video.track.forEach { p -> put(JSONObject().apply {
@@ -178,7 +184,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 cameraLoading = null
                 if (!uiAlive()) return@runOnUiThread
                 if (ok.isSuccess) {
-                    Toast.makeText(ctx, "已导出视频与路径时间轴", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, "已导出素材与路径时间轴", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -187,6 +193,86 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     private fun exportVideo(video: CameraVideo) {
         pendingExport = video
         exportLauncher.launch("cammock-${video.name.take(40).replace(Regex("[^A-Za-z0-9._-]"), "_")}.zip")
+    }
+
+    // ---------------------------------------------------------------- 手动添加图片
+
+    /** 图片选择器：**只选图片**，位置由地图准星决定（与"坐标取准星"同一套约定） */
+    private val stillLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) addStillFromUri(uri)
+    }
+
+    private var stillBusy = false
+    private var stillExecutor = Executors.newSingleThreadExecutor()
+
+    /**
+     * 手动添加：选一张图片 → 编码成"一帧视频" → 绑定到**当前准星坐标**。
+     *
+     * 为什么位置用准星而不是再弹一个选点页：本页的整个交互就是"地图中心 = 坐标"
+     * （名称/坐标在离开时按准星落库）。多一个选点弹窗只会让"这个点在哪"出现两份答案。
+     */
+    private fun pickStill() {
+        if (stillBusy) return
+        if (working == null) {
+            Toast.makeText(requireContext(), "点位还没加载完成", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 位置取"此刻的准星"：地图还没给出有效中心时，拿到的会是默认中心，绑定就错了
+        if (crosshairWgs84() == null) {
+            Toast.makeText(requireContext(), "地图还没就绪，请稍候再添加", Toast.LENGTH_SHORT).show()
+            return
+        }
+        stillLauncher.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+
+    private fun addStillFromUri(uri: Uri) {
+        val ctx = requireContext()
+        val point = working ?: return
+        val coord = crosshairWgs84() ?: (point.lat to point.lon)
+        stillBusy = true
+        cameraLoading = (cameraLoading ?: CameraLoadingDialog(ctx)).also {
+            it.show(getString(R.string.camera_still_importing))
+        }
+        val appContext = ctx.applicationContext
+        stillExecutor.execute {
+            val video = runCatching {
+                CameraMockStore.importStill(appContext, uri, coord.first, coord.second)
+            }.onFailure {
+                android.util.Log.w("CameraPointEdit", "图片导入失败", it)
+            }.getOrNull()
+            main.post {
+                // 先复位状态再判存活：页面在编码期间被销毁时，这个标志位不能卡在 true，
+                // 否则下次进来点"添加图片"会一直没反应。
+                stillBusy = false
+                cameraLoading?.dismiss()
+                cameraLoading = null
+                if (!uiAlive()) return@post
+                val current = working ?: return@post
+                if (video == null) {
+                    Toast.makeText(ctx, R.string.camera_still_none, Toast.LENGTH_LONG).show()
+                    return@post
+                }
+                // 这个点位此前没有素材时，让点位坐标跟上图片的绑定位置：
+                // 否则"点位在这、唯一一张图在那边"，地图预览与选片会对不上。
+                val anchor = if (current.videos.isEmpty()) coord else (current.lat to current.lon)
+                working = current.copy(
+                    lat = anchor.first,
+                    lon = anchor.second,
+                    videos = (current.videos + video).sortedBy { it.recordedAt }
+                )
+                CameraMockStore.upsert(ctx, working!!)
+                refreshVideos()
+                Toast.makeText(
+                    ctx,
+                    getString(R.string.camera_still_bound, CameraMockFormat.coord(coord.first, coord.second)),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
     }
 
     private fun parseTrack(json: String?): List<CameraVideoTrackPoint> {
@@ -210,6 +296,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         savedInstanceState: Bundle?
     ): View {
         if (routeExecutor.isShutdown) routeExecutor = Executors.newSingleThreadExecutor()
+        if (stillExecutor.isShutdown) stillExecutor = Executors.newSingleThreadExecutor()
         _binding = FragmentCameraPointEditBinding.inflate(inflater, container, false)
 
         with(baiduMapViewModel) {
@@ -286,7 +373,12 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 FabBarView.Action(
                     R.drawable.baseline_control_camera_24,
                     getString(R.string.camera_record)
-                ) { startRecording() }
+                ) { startRecording() },
+                // 手动添加：选图片 + 用准星选位置（实地拍摄走主页面入口）
+                FabBarView.Action(
+                    R.drawable.baseline_add_a_photo_24,
+                    getString(R.string.camera_still_add)
+                ) { pickStill() }
             )
         )
         if (working == null) {
@@ -321,6 +413,8 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         fitToken++
         cameraLoading?.dismiss()
         cameraLoading = null
+        stillBusy = false
+        stillExecutor.shutdownNow()
         routeExecutor.shutdownNow()
         super.onDestroyView()
         _binding?.bmapView?.onDestroy()
@@ -500,9 +594,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     private fun refreshVideos() {
         if (!uiAlive()) return
         val filter = requireContext().cameraMockTagFilter
-        fun matches(v: CameraVideo): Boolean =
-            if (filter.isEmpty()) true
-            else v.tags.isNotEmpty() && filter.all { t -> v.tags.any { it.equals(t, true) } }
+        fun matches(v: CameraVideo): Boolean = CameraMockSelector.matches(v.tags, filter)
         val videos = working?.videos.orEmpty()
             .sortedWith(
                 compareByDescending<CameraVideo> { matches(it) }
@@ -510,7 +602,14 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             )
         videoAdapter.setFilterTags(filter)
         videoAdapter.replaceAll(videos)
-        binding.cameraVideoLabel.text = getString(R.string.camera_video_list) + "（${videos.size}）"
+        binding.cameraVideoLabel.text = if (videos.isEmpty()) {
+            // 空列表时把"下一步"写在这里：本页的两个入口（录制 / 添加图片）都在悬浮栏里，
+            // 不提示的话用户看到的是一整块空白卡片。
+            getString(R.string.camera_video_list) + "（0）· 用右下角「" +
+                getString(R.string.camera_still_add) + "」选图并绑定准星位置"
+        } else {
+            getString(R.string.camera_video_list) + "（${videos.size}）"
+        }
         // 还没有视频时给出下一步该干什么，而不是一个空列表
         binding.cameraVideoList.visibility = if (videos.isEmpty()) View.GONE else View.VISIBLE
         drawRoute()
@@ -563,7 +662,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             setPadding(32, 8, 32, 0)
         }
         val nameLayout = com.google.android.material.textfield.TextInputLayout(ctx).apply {
-            hint = "视频名字"
+            hint = "素材名字"
         }
         val nameEdit = com.google.android.material.textfield.TextInputEditText(ctx).apply {
             setText(video.name)
@@ -577,18 +676,19 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             setPadding(0, 12, 0, 0)
         }
         CameraMockStore.allTags(ctx).forEach { tag ->
-            val chip = com.google.android.material.chip.Chip(ctx).apply {
-                text = tag
-                isCheckable = true
-                isChecked = video.tags.any { it.equals(tag, true) }
-                setOnCheckedChangeListener { _, _ -> }
-            }
+            // M3 Filter 芯片：选中态直接用主题色药丸表达，不再手写 checkable 外观
+            val chip = LayoutInflater.from(ctx)
+                .inflate(R.layout.item_camera_tag_chip, chips, false)
+                as com.google.android.material.chip.Chip
+            chip.text = tag
+            chip.isChecked = video.tags.any { it.equals(tag, true) }
+            chip.setOnCheckedChangeListener { _, _ -> }
             chips.addView(chip)
         }
         root.addView(chips)
 
         MaterialAlertDialogBuilder(ctx)
-            .setTitle("编辑视频")
+            .setTitle("编辑素材")
             .setView(root)
             .setNegativeButton("取消", null)
             .setPositiveButton("确定") { _, _ ->
@@ -611,7 +711,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         val ctx = requireContext()
         MaterialAlertDialogBuilder(ctx)
             .setTitle(R.string.camera_video_delete)
-            .setMessage("删除后该视频文件也会从库里移除：${video.name}")
+            .setMessage("删除后该素材文件也会从库里移除：${video.name}")
             .setPositiveButton(R.string.delete) { _, _ ->
                 val point = working ?: return@setPositiveButton
                 CameraMockStore.deleteVideoFile(ctx, video.file)

@@ -1,29 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 测试 / 诊断页（M3 大色块版）：说明在主控色块里，读数落在一块容器色大块上。 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:padding="8dp">
+    android:layout_height="match_parent">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:padding="@dimen/page_gutter">
 
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/test_hint"
+        <com.google.android.material.card.MaterialCardView
+            style="@style/PortalHeroCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="12sp"
-            android:text="每秒刷新一次。数值来自系统侧（system_server）的注入层与运动学状态。" />
+            app:cardPreventCornerOverlap="false">
 
-        <com.google.android.material.textview.MaterialTextView
-            android:id="@+id/test_output"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/menu_test"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                    android:textColor="?attr/colorOnPrimaryContainer" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/test_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:alpha="0.8"
+                    android:text="每秒刷新一次。数值来自系统侧（system_server）的注入层与运动学状态。"
+                    android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                    android:textColor="?attr/colorOnPrimaryContainer" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/PortalSurfaceCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:fontFamily="monospace"
-            android:textSize="12sp"
-            android:textIsSelectable="true"
-            android:text="" />
+            android:layout_marginTop="@dimen/section_gap"
+            app:cardPreventCornerOverlap="false"
+            app:contentPadding="12dp">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/test_output"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text=""
+                android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textIsSelectable="true" />
+
+        </com.google.android.material.card.MaterialCardView>
+
     </LinearLayout>
 </ScrollView>

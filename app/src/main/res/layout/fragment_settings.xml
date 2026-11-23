@@ -18,6 +18,19 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- M3 大色块：整页设置收进一块容器色卡片，行本身不再描边/分组线 -->
+            <com.google.android.material.card.MaterialCardView
+                style="@style/PortalSurfaceCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardPreventCornerOverlap="false"
+                app:contentPadding="4dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:id="@+id/su_path_layout"
                 android:layout_width="match_parent"
@@ -81,7 +94,7 @@
                         android:text="@string/developer_mode_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/developer_mode_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -147,7 +160,7 @@
                         android:text="@string/need_open_selinux"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/selinux_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -221,7 +234,7 @@
                         android:text="@string/debug_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/debug_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -297,7 +310,7 @@
                         android:text="@string/cdma_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/cdma_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -414,7 +427,7 @@
                         android:text="@string/anti_pullback_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/loop_broadcast_location_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -449,7 +462,7 @@
                         android:text="@string/background_keepalive_desc"
                         android:textSize="11sp" />
                 </LinearLayout>
-                <com.google.android.material.switchmaterial.SwitchMaterial
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/keep_alive_switch"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -517,6 +530,9 @@
                     android:textSize="12sp"
                     android:text="@string/orientation_portrait" />
             </LinearLayout>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
         </LinearLayout>
 

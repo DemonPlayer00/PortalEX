@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  现场拍摄单帧素材页（M3 大色块版）：
+    · 预览铺满全屏（黑底，取景必须占满）；
+    · 顶部定位读数是一枚深色药丸 —— 它压在实时画面上，必须靠固定深底保证可读，
+      不参与莫奈取色；
+    · 底部操作区是一整块容器色卡片（大色块），快门 / 取消按 M3 层级摆放。
+  拍摄结果是"一张图片 + 一个点位"，不是一段轨迹。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    tools:context=".ui.camera.CameraStillCaptureActivity">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="24dp">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/camera_still_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:implementationMode="compatible"
+            app:scaleType="fitCenter" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/camera_still_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="24dp"
+        android:background="@drawable/bg_camera_still_status"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        tools:text="已定位 39.90872, 116.39750 · 拍摄后会绑定此位置" />
+
+    <com.google.android.material.card.MaterialCardView
+        style="@style/PortalSurfaceCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="24dp"
+        app:cardPreventCornerOverlap="false"
+        app:contentPadding="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/camera_still_shutter"
+                style="@style/Widget.Material3.Button"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="2.0"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:maxLines="1"
+                android:text="@string/camera_still_shutter"
+                android:textColor="?attr/colorOnPrimary"
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeTextType="uniform"
+                app:cornerRadius="26dp"
+                app:icon="@drawable/baseline_photo_camera_24"
+                app:iconGravity="textStart"
+                app:iconPadding="4dp"
+                app:iconSize="18dp"
+                app:iconTint="?attr/colorOnPrimary" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/camera_still_cancel"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="0dp"
+                android:layout_height="52dp"
+                android:layout_weight="1.0"
+                android:layout_marginStart="8dp"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:maxLines="1"
+                android:text="@string/cancel"
+                android:textSize="12sp"
+                app:autoSizeMaxTextSize="12sp"
+                app:autoSizeMinTextSize="8sp"
+                app:autoSizeTextType="uniform"
+                app:cornerRadius="26dp" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+</FrameLayout>

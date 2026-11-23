@@ -15,7 +15,9 @@ import moe.fuqiuluo.portalex.databinding.FragmentBasebandMockBinding
 import moe.fuqiuluo.portalex.ext.cellEntries
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.ext.wifiEntries
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
+import moe.fuqiuluo.portalex.ui.widget.HeroCardState
 
 /** 基站 + Wi-Fi 合并后的基带模拟页。 */
 class BasebandMockFragment : Fragment() {
@@ -35,6 +37,7 @@ class BasebandMockFragment : Fragment() {
         binding.basebandSsid.setText(prefs.getString("sim_wifi_v1", "CMCC-EDU"))
         binding.basebandBssid.setText(prefs.getString("sim_wifi_v2", "02:00:00:00:00:00"))
         binding.basebandSwitch.isChecked = prefs.getBoolean("sim_baseband_enabled", false)
+        refreshHero()
         // 监听器**不能**在这里挂：Fragment 的 view state 恢复发生在 onCreateView 之后，
         // 恢复 checked 状态会触发 OnCheckedChangeListener → 自动 push 一次配置。
         // 改为 onResume/onViewStateRestored 之后挂（见 attachSwitchListener）。
@@ -53,7 +56,7 @@ class BasebandMockFragment : Fragment() {
     /**
      * 在视图状态恢复完成后才挂开关监听器。
      *
-     * Android 会把 `SwitchMaterial` 的 checked 状态作为 view state 恢复，恢复动作发生在
+     * Android 会把 `MaterialSwitch` 的 checked 状态作为 view state 恢复，恢复动作发生在
      * onCreateView 之后；如果监听器那时已经挂上，恢复过程就会触发 `push()`，产生
      * "点进页面就改配置"的副作用。
      */
@@ -66,11 +69,14 @@ class BasebandMockFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         attachSwitchListener()
+        refreshHero()
         // 这里**不再弹** "已收集 N 条" 的 toast：它读的是历史列表，不是本次扫描，
         // 每次进页面都弹会被误认为"自动收集了附近 Wi-Fi"。
     }
 
     private fun push(enabled: Boolean) {
+        // 先让高亮卡片跟上开关（早退分支也不会留下过期着色）
+        refreshHero()
         val ctx = requireContext()
         val mcc = binding.basebandMcc.text?.toString().orEmpty()
         val mnc = binding.basebandMnc.text?.toString().orEmpty()
@@ -111,6 +117,16 @@ class BasebandMockFragment : Fragment() {
                 )
             }
         }
+    }
+
+    /** 高亮卡片：未启用 = 轻着色，启用 = 重着色（与开关同一事实源） */
+    private fun refreshHero() {
+        val b = _binding ?: return
+        // 二类功能允许"假开启"：真正生效要等路线模拟启动，卡片只认真实状态
+        val running = FeatureDependency.isClass2Running(
+            requireContext(), b.basebandSwitch.isChecked
+        )
+        HeroCardState.apply(b.basebandControlCard, running)
     }
 
     override fun onDestroyView() {

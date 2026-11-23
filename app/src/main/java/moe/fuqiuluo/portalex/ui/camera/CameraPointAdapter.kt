@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.textview.MaterialTextView
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.xposed.camera.CameraMockSelector
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 
 /** 视频点列表：名称 + 坐标/视频数 + 标签汇总；点一行进入该点的视频编辑 */
@@ -15,18 +16,16 @@ class CameraPointAdapter(
     private val onItemClicked: (CameraVideoPoint) -> Unit,
     private val onItemLongClicked: (CameraVideoPoint) -> Unit = {},
 ) : RecyclerView.Adapter<CameraPointAdapter.ViewHolder>() {
-    private var filterTags: Set<String> = emptySet()
+    private var filterTags: List<String> = emptyList()
 
-    fun setFilterTags(tags: Set<String>) {
-        filterTags = tags.map { it.lowercase() }.toSet()
+    fun setFilterTags(tags: Collection<String>) {
+        filterTags = tags.toList()
         notifyDataSetChanged()
     }
 
+    /** 与选片引擎同一条规则（无标签永远命中、有标签全含），不再在这里抄一份 */
     private fun matches(point: CameraVideoPoint): Boolean =
-        point.videos.any { v ->
-            if (filterTags.isEmpty()) true
-            else v.tags.isNotEmpty() && filterTags.all { t -> v.tags.any { it.equals(t, true) } }
-        }
+        point.videos.any { CameraMockSelector.matches(it.tags, filterTags) }
 
 
     class ViewHolder(root: View) : RecyclerView.ViewHolder(root) {

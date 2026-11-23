@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮展开条背景：全圆角矩形（pill） -->
+<!-- 悬浮展开条背景：全圆角矩形（pill），颜色取 M3 容器色 ⇒ 随莫奈取色变化 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="@color/fab_bar_bg" />
+    <solid android:color="?attr/colorSurfaceContainerHigh" />
     <corners android:radius="30dp" />
 </shape>

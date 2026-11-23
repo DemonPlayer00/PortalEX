@@ -18,11 +18,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import android.os.Build
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.ui.widget.HeroCardState
 import moe.fuqiuluo.portalex.android.widget.SatelliteData
 import moe.fuqiuluo.portalex.android.window.OverlayUtils
 import moe.fuqiuluo.portalex.ext.enableAGPS
@@ -33,6 +33,7 @@ import moe.fuqiuluo.portalex.ext.gnssFlags
 import moe.fuqiuluo.portalex.ext.gnssMockIntent
 import moe.fuqiuluo.portalex.ext.sharedPrefs
 import moe.fuqiuluo.portalex.service.ConfigSync
+import moe.fuqiuluo.portalex.service.FeatureDependency
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 
 class GnssMockFragment : Fragment() {
@@ -122,15 +123,14 @@ class GnssMockFragment : Fragment() {
         )
         binding.gnssGpsSatellites.setText(requireContext().sharedPrefs.getString("sim_gps_v2", "12"))
         refreshGnssButton()
-        binding.switchGnssMock.setOnClickListener {
+        // M3 开关：选中态 = 用户意图（与"此刻模块是否接管"解耦，见 tryOpenService 注释）
+        binding.switchGnssMock.setOnCheckedChangeListener { _, checked ->
             val ctx = requireContext()
-            if (ctx.gnssMockIntent) {
-                ctx.gnssMockIntent = false
-                tryCloseService(it as MaterialButton)
-            } else {
-                ctx.gnssMockIntent = true
-                tryOpenService(it as MaterialButton)
-            }
+            val on = ctx.gnssMockIntent ||
+                (::locationManager.isInitialized && MockServiceHelper.isGnssMockStart(locationManager))
+            if (checked == on) return@setOnCheckedChangeListener
+            ctx.gnssMockIntent = checked
+            if (checked) tryOpenService() else tryCloseService()
         }
 
         return root
@@ -144,24 +144,24 @@ class GnssMockFragment : Fragment() {
      * 注入层未就绪、悬浮窗权限缺失）。真正生效由系统侧 FeatureGate 判定，
      * 这里只负责把意图留住并在下次进入页面时补发。
      */
-    private fun tryOpenService(button: MaterialButton) {
+    private fun tryOpenService() {
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
-            keepIntentOn(button, getString(R.string.gnss_overlay_required))
+            keepIntentOn(getString(R.string.gnss_overlay_required))
             return
         }
 
         if (!MockServiceHelper.isServiceInit()) {
-            keepIntentOn(button, getString(R.string.gnss_injection_failed))
+            keepIntentOn(getString(R.string.gnss_injection_failed))
             return
         }
 
         lifecycleScope.launch {
-            button.isClickable = false
+            _binding?.switchGnssMock?.isEnabled = false
             try {
                 ConfigSync.push(requireContext(), locationManager)
                 val started = MockServiceHelper.startGnssMock(locationManager)
                 // 无论模块此刻是否接管，用户打开了就是打开了
-                updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
+                refreshGnssButton()
                 if (started) {
                     val flags = binding.gnssGpsStatusCode.text?.toString().orEmpty()
                         .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
@@ -176,14 +176,15 @@ class GnssMockFragment : Fragment() {
                     showToast("已记住：开启路线模拟后生效")
                 }
             } finally {
-                button.isClickable = true
+                _binding?.switchGnssMock?.isEnabled = true
             }
         }
     }
 
-    /** 意图已置位但暂时起不来：按钮保持"停用"态，只提示原因。 */
-    private fun keepIntentOn(button: MaterialButton, reason: String) {
-        updateMockButtonState(button, getString(R.string.gnss_stop_mock), R.drawable.rounded_play_disabled_24)
+    /** 意图已置位但暂时起不来：开关保持"开"，只提示原因。 */
+    private fun keepIntentOn(reason: String) {
+        requireContext().gnssMockIntent = true
+        refreshGnssButton()
         showToast(reason + "（已记住，条件满足后生效）")
     }
 
@@ -237,20 +238,20 @@ class GnssMockFragment : Fragment() {
         }
     }
 
-    private fun tryCloseService(button: MaterialButton) {
+    private fun tryCloseService() {
         if (!MockServiceHelper.isServiceInit()) {
-            updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
+            refreshGnssButton()
             showToast(getString(R.string.gnss_injection_failed))
             return
         }
 
         lifecycleScope.launch {
-            button.isClickable = false
+            _binding?.switchGnssMock?.isEnabled = false
             try {
                 withContext(Dispatchers.IO) {
                     if (!MockServiceHelper.isGnssMockStart(locationManager)) {
-                        // 本来就没在跑：意图已清，按钮直接复位
-                        updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
+                        // 本来就没在跑：意图已清，开关直接复位
+                        withContext(Dispatchers.Main) { refreshGnssButton() }
                         return@withContext false
                     }
 
@@ -260,15 +261,18 @@ class GnssMockFragment : Fragment() {
                         val code = flags.firstOrNull() ?: ""
                         val sats = binding.gnssGpsSatellites.text?.toString().orEmpty()
                         MockServiceHelper.setSimConfig(locationManager, "gps", false, code, sats, flags.ifEmpty { null })
-                        updateMockButtonState(button, getString(R.string.gnss_start_mock), R.drawable.rounded_play_arrow_24)
+                        withContext(Dispatchers.Main) { refreshGnssButton() }
                         return@withContext true
                     } else {
-                        showToast(getString(R.string.gnss_stop_failed))
+                        withContext(Dispatchers.Main) {
+                            refreshGnssButton()
+                            showToast(getString(R.string.gnss_stop_failed))
+                        }
                         return@withContext false
                     }
                 }
             } finally {
-                button.isClickable = true
+                _binding?.switchGnssMock?.isEnabled = true
             }
         }
     }
@@ -277,25 +281,20 @@ class GnssMockFragment : Fragment() {
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
     }
 
+    /** 开关 = 用户意图（模块侧暂时没接管也不把开关弹回去）；文字固定为"启用 GNSS 模拟" */
     private fun refreshGnssButton() {
-        // 以用户意图为准：模块侧暂时没接管（路线模拟未开等）也不把开关弹回去
-        val intent = requireContext().gnssMockIntent
-        val running = ::locationManager.isInitialized && MockServiceHelper.isGnssMockStart(locationManager)
-        val on = intent || running
-        binding.switchGnssMock.text = getString(if (on) R.string.gnss_stop_mock else R.string.gnss_start_mock)
-        ContextCompat.getDrawable(
-            requireContext(),
-            if (on) R.drawable.rounded_play_disabled_24 else R.drawable.rounded_play_arrow_24
-        )?.let { binding.switchGnssMock.icon = it }
+        val binding = _binding ?: return
+        val b = binding.switchGnssMock
+        b.text = getString(R.string.gnss_mock_enable)
+        val on = requireContext().gnssMockIntent ||
+            (::locationManager.isInitialized && MockServiceHelper.isGnssMockStart(locationManager))
+        if (b.isChecked != on) b.isChecked = on
+        // 高亮卡片只认**实际生效**：GNSS 允许"假开启"，真正注入要等路线模拟启动
+        val applied = ::locationManager.isInitialized &&
+            MockServiceHelper.isGnssMockStart(locationManager) &&
+            FeatureDependency.isRouteActive(requireContext())
+        HeroCardState.apply(binding.gnssControlCard, applied)
     }
-
-    private fun updateMockButtonState(button: MaterialButton, text: String, iconRes: Int) =
-        lifecycleScope.launch(Dispatchers.Main) {
-            button.text = text
-            ContextCompat.getDrawable(requireContext(), iconRes)?.let {
-                button.icon = it
-            }
-        }
 
     private fun setupGnssStatusCallback() {
         gnssStatusCallback = object: GnssStatus.Callback() {

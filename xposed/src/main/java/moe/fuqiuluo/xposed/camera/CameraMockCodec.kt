@@ -235,6 +235,7 @@ object CameraMockCodec {
     private const val K_CREATED_AT = "createdAt"
     private const val K_RECORDED_AT = "recordedAt"
     private const val K_TRACK = "track"
+    private const val K_KIND = "kind"
     private const val K_T = "t"
     private const val K_TP_LAT = "lat"
     private const val K_TP_LON = "lon"
@@ -311,6 +312,7 @@ object CameraMockCodec {
                 K_TAGS to CameraTags.sanitize(v.tags),
                 K_ADDED_AT to v.addedAt,
                 K_RECORDED_AT to v.recordedAt,
+                K_KIND to CameraMediaKind.normalize(v.kind),
                 K_TRACK to v.track.map { tp ->
                     linkedMapOf<String, Any?>(
                         K_T to tp.tMs,
@@ -349,7 +351,11 @@ object CameraMockCodec {
                             val lon = (m[K_TP_LON] as? Number)?.toDouble() ?: return@mapNotNull null
                             CameraVideoTrackPoint(t, lat, lon)
                         }
-                    )
+                    ),
+                    // 旧库没有 kind：按视频处理（这是升级前的唯一语义）。
+                    // 静止图片的"点位"就是它唯一的那个轨迹点；万一那个点坏了，
+                    // 选片仍会退到所属路线的锚点（与无轨迹视频同一条兜底路径）。
+                    kind = CameraMediaKind.normalize(v[K_KIND] as? String)
                 )
             )
         }

@@ -1,7 +1,6 @@
 package moe.fuqiuluo.portalex.ui.widget
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -31,6 +30,12 @@ class NavGuideRailDecoration(
     private val endTitle: String,
     /** 二类功能（随路线模拟启动的那几项）：支线末端画三角而不是圆点。 */
     private val class2Titles: Set<String>,
+    /**
+     * 蚂蚁线的两种颜色。由调用方按**主题角色**注入（未启动 = outlineVariant、
+     * 已启动 = primary），这样莫奈取色下它会跟着壁纸走，不再写死灰/蓝。
+     */
+    private val idleColor: Int = DEFAULT_IDLE_COLOR,
+    private val activeColor: Int = DEFAULT_ACTIVE_COLOR,
 ) : RecyclerView.ItemDecoration() {
 
     private var density = 1f
@@ -72,7 +77,7 @@ class NavGuideRailDecoration(
             ?: if (endContentY.isFinite()) endContentY - scroll else Float.NaN
         if (!startY.isFinite() || !endY.isFinite() || endY < startY) return
 
-        val color = if (activeProvider?.invoke() == true) COLOR_ACTIVE else COLOR_IDLE
+        val color = if (activeProvider?.invoke() == true) activeColor else idleColor
         railPaint.strokeWidth = 2f * density
         railPaint.color = color
         dotPaint.color = color
@@ -160,7 +165,8 @@ class NavGuideRailDecoration(
     }
 
     private companion object {
-        val COLOR_IDLE = Color.parseColor("#8A8A8A")
-        val COLOR_ACTIVE = Color.parseColor("#8CBAF2")
+        /** 主题取不到颜色时的兜底（保持改造前的观感） */
+        const val DEFAULT_IDLE_COLOR = 0xFF8A8A8A.toInt()
+        const val DEFAULT_ACTIVE_COLOR = 0xFF8CBAF2.toInt()
     }
 }

@@ -126,6 +126,61 @@ class CameraMockCodecTest {
     }
 
     @Test
+    fun `静止图片的种类与单点绑定能往返`() {
+        val still = CameraVideo(
+            id = "s1", name = "图片 09-12 10:00", file = "s1.mp4", durationMs = 3_000,
+            tags = listOf("白天"), addedAt = 0L, recordedAt = 1_700_000_000_000L,
+            track = listOf(CameraVideoTrackPoint(0L, 39.9087, 116.3975)),
+            kind = CameraMediaKind.STILL
+        )
+        val p = CameraVideoPoint("p1", "点位", 39.9087, 116.3975, listOf(still))
+        val out = CameraMockCodec.decode(CameraMockCodec.encode(manifest(points = listOf(p))))!!
+        val decoded = out.points[0].videos[0]
+        assertEquals(CameraMediaKind.STILL, decoded.kind)
+        assertTrue(decoded.isStill)
+        assertEquals(still, decoded)
+        assertEquals(1, decoded.track.size)
+    }
+
+    @Test
+    fun `路线库编解码保留图片种类`() {
+        val still = CameraVideo(
+            id = "s2", name = "图", file = "s2.mp4", durationMs = 3_000,
+            tags = emptyList(), addedAt = 0L, recordedAt = 1L,
+            track = listOf(CameraVideoTrackPoint(0L, 31.2, 121.5)),
+            kind = CameraMediaKind.STILL
+        )
+        val route = CameraRoute("r1", "路线", 31.2, 121.5, 7L, listOf(still))
+        val out = CameraMockCodec.decodeRoutes(CameraMockCodec.encodeRoutes(listOf(route)))
+        assertEquals(CameraMediaKind.STILL, out[0].videos[0].kind)
+        assertEquals(1, out[0].videos[0].track.size)
+    }
+
+    @Test
+    fun `旧清单没有 kind 字段时按视频解码`() {
+        val json = """
+            {"version":1,"enabled":true,"tagFilter":[],"targets":[],"updatedAt":0,"points":[
+              {"id":"p1","name":"旧点","lat":1.0,"lon":2.0,"videos":[
+                {"id":"v1","name":"旧视频","file":"v1.mp4","durationMs":1000,
+                 "tags":[],"addedAt":1,"recordedAt":0,"track":[]}
+              ]}
+            ]}
+        """.trimIndent()
+        val out = CameraMockCodec.decode(json)!!
+        assertEquals(CameraMediaKind.VIDEO, out.points[0].videos[0].kind)
+        assertFalse(out.points[0].videos[0].isStill)
+    }
+
+    @Test
+    fun `未知或大小写不同的 kind 归一化`() {
+        assertEquals(CameraMediaKind.STILL, CameraMediaKind.normalize("STILL"))
+        assertEquals(CameraMediaKind.STILL, CameraMediaKind.normalize(" still "))
+        assertEquals(CameraMediaKind.VIDEO, CameraMediaKind.normalize("gif"))
+        assertEquals(CameraMediaKind.VIDEO, CameraMediaKind.normalize(null))
+        assertEquals(CameraMediaKind.VIDEO, CameraMediaKind.normalize(""))
+    }
+
+    @Test
     fun `关闭态清单解码后 enabled 为假`() {
         val out = CameraMockCodec.decode(CameraMockCodec.encode(CameraMockManifest.DISABLED))!!
         assertFalse(out.enabled)

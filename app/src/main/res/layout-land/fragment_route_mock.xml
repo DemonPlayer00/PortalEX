@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  路线模拟页（横屏，M3 大色块版）：与竖屏同一套结构与语义 ——
+  左列是整个 primaryContainer 主控色块（目标路线 + 启用开关 + 悬浮摇杆开关），
+  右列是历史路线的容器色大块。两个布局的控件类型必须一致（否则 ViewBinding 会退化成 View）。
+-->
 <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -13,12 +18,11 @@
 
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/mock_location_card"
+            style="@style/PortalHeroCard"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            app:cardCornerRadius="@dimen/card_radius"
-            app:cardPreventCornerOverlap="false"
-            app:contentPadding="@dimen/card_padding">
+            app:cardPreventCornerOverlap="false">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -29,52 +33,44 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/target_route"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
-                    android:textColor="?attr/colorOnSurfaceVariant" />
+                    android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                    android:textColor="?attr/colorOnPrimaryContainer" />
 
                 <TextView
                     android:id="@+id/mock_route_name"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="8dp"
                     android:text="@string/none_route"
-                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
-                    android:textColor="?attr/colorOnSurface"
+                    android:textAppearance="@style/TextAppearance.Material3.HeadlineSmall"
+                    android:textColor="?attr/colorOnPrimaryContainer"
                     android:textStyle="bold" />
 
-                <com.google.android.material.button.MaterialButton
+                <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/switch_mock"
-                    style="@style/Widget.Material3.Button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="40dp"
-                    android:layout_marginTop="12dp"
-                    android:insetLeft="0dp"
-                    android:insetTop="0dp"
-                    android:insetRight="0dp"
-                    android:insetBottom="0dp"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:text="@string/start_mock"
-                    android:textColor="?attr/colorOnPrimary"
-                    android:textSize="13sp"
-                    app:cornerRadius="12dp"
-                    app:icon="@drawable/rounded_play_arrow_24"
-                    app:iconGravity="textStart"
-                    app:iconPadding="0dp"
-                    app:iconTint="?attr/colorOnPrimary" />
-
-                <CheckedTextView
-                    android:id="@+id/rocker"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:checkMark="?android:attr/listChoiceIndicatorMultiple"
-                    android:checkMarkTint="?attr/colorOnSurfaceVariant"
-                    android:checked="false"
-                    android:gravity="center"
+                    android:layout_marginTop="8dp"
+                    android:minHeight="48dp"
+                    android:saveEnabled="false"
+                    android:text="@string/route_mock_enable"
+                    android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                    android:textColor="?attr/colorOnPrimaryContainer"
+                    app:thumbTint="@color/portal_switch_thumb_on_container"
+                    app:trackTint="@color/portal_switch_track_on_container" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/rocker"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
+                    android:saveEnabled="false"
                     android:text="@string/rocker"
-                    android:textColor="?attr/colorOnSurfaceVariant"
-                    android:textSize="12sp" />
+                    android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+                    android:textColor="?attr/colorOnPrimaryContainer"
+                    app:thumbTint="@color/portal_switch_thumb_on_container"
+                    app:trackTint="@color/portal_switch_track_on_container" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -89,24 +85,25 @@
                 android:id="@+id/historical_route_label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="4dp"
+                android:layout_marginBottom="6dp"
                 android:text="@string/history_route"
-                android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+                android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
                 android:textColor="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/historical_route_card"
+                style="@style/PortalSurfaceCard"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                app:cardCornerRadius="@dimen/card_radius"
                 app:cardPreventCornerOverlap="false"
-                app:contentPadding="@dimen/card_padding">
+                app:contentPadding="8dp">
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/historical_route_list"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent" />
+
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
     </LinearLayout>

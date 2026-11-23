@@ -16,13 +16,54 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- 主控大色块：GNSS 开关（M3 开关，选中 = 已启用） -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/gnss_control_card"
+                style="@style/PortalHeroCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/page_gutter"
+                android:layout_marginTop="@dimen/page_gutter"
+                android:layout_marginEnd="@dimen/page_gutter"
+                app:cardPreventCornerOverlap="false">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/menu_gnss_mock"
+                        android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                        android:textColor="?attr/colorOnPrimaryContainer" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_gnss_mock"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:minHeight="48dp"
+                        android:saveEnabled="false"
+                        android:text="@string/gnss_mock_enable"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                        android:textColor="?attr/colorOnPrimaryContainer"
+                        app:thumbTint="@color/portal_switch_thumb_on_container"
+                        app:trackTint="@color/portal_switch_track_on_container" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- 原有的卫星信息卡片 -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/mock_gnss_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="@dimen/card_radius"
-                android:layout_margin="@dimen/page_gutter"
+                android:layout_marginStart="@dimen/page_gutter"
+                android:layout_marginTop="6dp"
+                android:layout_marginEnd="@dimen/page_gutter"
+                android:layout_marginBottom="@dimen/page_gutter"
                 app:cardPreventCornerOverlap="false"
                 app:contentPadding="@dimen/card_padding">
 
@@ -330,67 +371,17 @@
 
                     </androidx.constraintlayout.widget.ConstraintLayout>
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:baselineAligned="false"
-                        android:orientation="horizontal">
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1">
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/switch_gnss_mock"
-                                android:layout_width="wrap_content"
-                                android:layout_height="40dp"
-                                android:textColor="?attr/colorOnPrimary"
-                                android:text="@string/start_mock"
-                                style="@style/Widget.Material3.Button"
-                                android:insetRight="0dp"
-                                android:insetLeft="0dp"
-                                android:insetTop="0dp"
-                                android:insetBottom="0dp"
-                                android:textSize="13sp"
-                                app:icon="@drawable/rounded_play_arrow_24"
-                                app:iconGravity="textStart"
-                                app:iconPadding="0dp"
-                                android:paddingStart="12dp"
-                                android:paddingEnd="12dp"
-                                app:iconTint="?attr/colorOnPrimary"
-                                app:cornerRadius="12dp"/>
-
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_weight="1"
-                            android:layout_height="match_parent"
-                            android:gravity="end|center">
-
-                            <CheckedTextView
-                                android:id="@+id/random_gnss"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:checkMark="?android:attr/listChoiceIndicatorMultiple"
-                                android:checkMarkTint="?attr/colorOnSurfaceVariant"
-                                android:checked="true"
-                                android:gravity="center"
-                                android:text="@string/gnss_randomize"
-                                android:textColor="?attr/colorOnSurfaceVariant"
-                                android:textSize="13sp" />
-                        </LinearLayout>
-                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/gnss_gps_card"
+                style="@style/PortalSurfaceCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardCornerRadius="@dimen/card_radius"
-                android:layout_margin="@dimen/page_gutter"
+                android:layout_marginStart="@dimen/page_gutter"
+                android:layout_marginEnd="@dimen/page_gutter"
+                android:layout_marginBottom="@dimen/section_gap"
                 app:cardPreventCornerOverlap="false"
                 app:contentPadding="@dimen/card_padding">
 
@@ -407,6 +398,7 @@
                         android:text="@string/gnss_gps_params" />
 
                     <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.Material3.TextInputLayout.FilledBox"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -422,6 +414,7 @@
                     </com.google.android.material.textfield.TextInputLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
+                        style="@style/Widget.Material3.TextInputLayout.FilledBox"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -463,7 +456,7 @@
                         android:orientation="vertical"
                         android:padding="4dp">
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <com.google.android.material.materialswitch.MaterialSwitch
                             android:id="@+id/switch_request_geofence"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -471,7 +464,7 @@
                             android:checked="true"
                             android:padding="8dp"/>
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <com.google.android.material.materialswitch.MaterialSwitch
                             android:id="@+id/switch_get_from_location"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -479,7 +472,7 @@
                             android:padding="8dp"
                             android:text="@string/gnss_allow_location" />
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <com.google.android.material.materialswitch.MaterialSwitch
                             android:id="@+id/switch_enable_agps"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -487,7 +480,7 @@
                             android:checked="false"
                             android:padding="8dp"/>
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
+                        <com.google.android.material.materialswitch.MaterialSwitch
                             android:id="@+id/switch_enable_nmea"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"

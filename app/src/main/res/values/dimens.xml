@@ -19,7 +19,7 @@
 
     <!-- 页面视觉规范：所有模拟页共用，避免各页 6/8/10/12dp 混用 -->
     <dimen name="page_gutter">12dp</dimen>
-    <dimen name="card_radius">12dp</dimen>
+    <dimen name="card_radius">24dp</dimen>
     <dimen name="card_padding">12dp</dimen>
     <dimen name="section_gap">8dp</dimen>
 </resources>

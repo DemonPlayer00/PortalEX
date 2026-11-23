@@ -5,16 +5,13 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CheckedTextView
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.alibaba.fastjson2.JSONArray
@@ -36,6 +33,7 @@ import moe.fuqiuluo.portalex.ext.selectRoute
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.MockServiceHelper
 import moe.fuqiuluo.portalex.ui.FabBarAvoidanceHost
+import moe.fuqiuluo.portalex.ui.widget.HeroCardState
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
 import moe.fuqiuluo.xposed.utils.FakeLoc
@@ -55,53 +53,41 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
     ): View {
         _binding = FragmentRouteMockBinding.inflate(inflater, container, false)
 
-        if (mockServiceViewModel.isServiceStart()) {
-            binding.switchMock.text = getString(R.string.stop_mock)
-            ContextCompat.getDrawable(requireContext(), R.drawable.rounded_play_disabled_24)?.let {
-                binding.switchMock.icon = it
-            }
-        }
-
-        binding.switchMock.setOnClickListener {
-            if (mockServiceViewModel.isServiceStart()) {
-                tryCloseService(it as MaterialButton)
-            } else {
-                tryOpenService(it as MaterialButton)
-            }
+        refreshMockSwitch()
+        // M3 开关：选中 = 模拟正在运行。系统先把 checked 翻过去，再按真实状态决定是否切换；
+        // 被前置条件拦下（未选路线/无悬浮窗权限等）时由 refreshMockSwitch() 拨回。
+        binding.switchMock.setOnCheckedChangeListener { _, checked ->
+            if (checked == mockServiceViewModel.isServiceStart()) return@setOnCheckedChangeListener
+            if (checked) tryOpenService() else tryCloseService()
         }
 
         with(mockServiceViewModel) {
-            // 打勾框只反映悬浮摇杆真实状态（rocker.isStart 为唯一事实源）——
+            // 开关只反映悬浮摇杆真实状态（rocker.isStart 为唯一事实源）——
             // 位置模拟/路线模拟共用同一悬浮摇杆，避免盲 toggle 造成跨页状态分叉。
             binding.rocker.isChecked = rocker.isStart
-            binding.rocker.setOnClickListener {
-                if (locationManager == null) {
-                    Toast.makeText(requireContext(), "定位服务加载异常", Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
+            binding.rocker.setOnCheckedChangeListener { view, checked ->
+                if (checked == rocker.isStart) return@setOnCheckedChangeListener
+                fun revert(reason: String) {
+                    view.isChecked = false
+                    Toast.makeText(requireContext(), reason, Toast.LENGTH_SHORT).show()
                 }
-                if (!isServiceStart()) {
-                    Toast.makeText(requireContext(), "请先启动模拟", Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
-                }
+                if (locationManager == null) return@setOnCheckedChangeListener revert("定位服务加载异常")
+                if (!isServiceStart()) return@setOnCheckedChangeListener revert("请先启动模拟")
                 if (!requireContext().drawOverOtherAppsEnabled()) {
-                    Toast.makeText(requireContext(), "请授权悬浮窗权限", Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
+                    return@setOnCheckedChangeListener revert("请授权悬浮窗权限")
                 }
-
-                val checkedTextView = it as CheckedTextView
-                checkedTextView.toggle()
-                lifecycleScope.launch(Dispatchers.Main) {
-                    if (checkedTextView.isChecked) {
-                        // show() 失败（权限被回收/宿主重建）时回退勾选态，避免状态说谎
+                if (checked) {
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        // show() 失败（权限被回收/宿主重建）时回退开关态，避免状态说谎
                         if (!rocker.show()) {
-                            checkedTextView.isChecked = false
+                            view.isChecked = false
                             Toast.makeText(requireContext(), "悬浮摇杆显示失败", Toast.LENGTH_SHORT).show()
                         }
-                    } else {
-                        // 关窗 = 停一切推进：路线自动播放不经过暂停门，必须同时关 autoStatus
-                        stopMotionForFloatingHidden()
-                        rocker.hide()
                     }
+                } else {
+                    // 关窗 = 停一切推进：路线自动播放不经过暂停门，必须同时关 autoStatus
+                    stopMotionForFloatingHidden()
+                    rocker.hide()
                 }
             }
             rocker.setRockerListener(object : RockerView.Companion.OnMoveListener {
@@ -352,30 +338,35 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
     }
 
 
-    private fun tryOpenService(button: MaterialButton) {
+    private fun tryOpenService() {
         if (!OverlayUtils.hasOverlayPermissions(requireContext())) {
             showToast("请授权悬浮窗权限")
+            refreshMockSwitch()
             return
         }
 
         val selectedRoute = mockServiceViewModel.selectedRoute ?: run {
             showToast("请选择一个路线")
+            refreshMockSwitch()
             return
         }
 
         // 端点不足的脏数据路线无法播放：提前拦截，避免播放器里空转/越界
         if (selectedRoute.route.isEmpty()) {
             showToast("路线端点不足，无法播放")
+            refreshMockSwitch()
             return
         }
 
         val lm = mockServiceViewModel.locationManager ?: run {
             showToast("定位服务加载异常")
+            refreshMockSwitch()
             return
         }
 
         if (!MockServiceHelper.isServiceInit()) {
             showToast("系统服务注入失败")
+            refreshMockSwitch()
             return
         }
 
@@ -385,70 +376,73 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
             val altitude = context.altitude
             val accuracy = FakeLoc.accuracy
 
-            button.isClickable = false
+            _binding?.switchMock?.isEnabled = false
             try {
                 withContext(Dispatchers.IO) {
-                    if (MockServiceHelper.tryOpenMock(
-                            lm,
-                            speed,
-                            altitude,
-                            accuracy
-                        )
-                    ) {
-                        updateMockButtonState(
-                            button,
-                            getString(R.string.stop_mock),
-                            R.drawable.rounded_play_disabled_24
-                        )
-                    } else {
-                        showToast("模拟服务启动失败")
+                    if (!MockServiceHelper.tryOpenMock(lm, speed, altitude, accuracy)) {
+                        withContext(Dispatchers.Main) {
+                            showToast("模拟服务启动失败")
+                            refreshMockSwitch()
+                        }
                         return@withContext
                     }
 
                     // 启动模拟也属于“重新播放”：进度与位置一起回到起点。
                     // ViewModel 内部下发 set_route + set_route_playing(false)，避免瞬移。
-                    if (mockServiceViewModel.resetRouteToStart()) {
-                        showToast("路线进度已重置到起点")
-                    } else {
-                        showToast("更新路线起点位置失败")
+                    val reset = mockServiceViewModel.resetRouteToStart()
+                    withContext(Dispatchers.Main) {
+                        refreshMockSwitch()
+                        if (reset) {
+                            showToast("路线进度已重置到起点")
+                        } else {
+                            showToast("更新路线起点位置失败")
+                        }
                     }
                 }
             } finally {
-                button.isClickable = true
+                withContext(Dispatchers.Main) {
+                    _binding?.switchMock?.isEnabled = true
+                }
             }
         }
-
-
     }
 
-    private fun tryCloseService(button: MaterialButton) {
+    private fun tryCloseService() {
         val lm = mockServiceViewModel.locationManager ?: run {
             showToast("定位服务加载异常")
+            refreshMockSwitch()
             return
         }
 
         if (!MockServiceHelper.isServiceInit()) {
             showToast("系统服务注入失败")
+            refreshMockSwitch()
             return
         }
 
         lifecycleScope.launch {
-            button.isClickable = false
+            _binding?.switchMock?.isEnabled = false
             try {
                 val isClosed = withContext(Dispatchers.IO) {
                     if (!MockServiceHelper.isMockStart(lm)) {
-                        showToast("模拟服务未启动")
+                        withContext(Dispatchers.Main) {
+                            showToast("模拟服务未启动")
+                            refreshMockSwitch()
+                        }
                         return@withContext false
                     }
 
                     if (MockServiceHelper.tryCloseMock(lm)) {
-                        updateMockButtonState(button, "开始模拟", R.drawable.rounded_play_arrow_24)
                         return@withContext true
                     } else {
-                        showToast("模拟服务停止失败")
+                        withContext(Dispatchers.Main) {
+                            showToast("模拟服务停止失败")
+                            refreshMockSwitch()
+                        }
                         return@withContext false
                     }
                 }
+                refreshMockSwitch()
                 if (isClosed && mockServiceViewModel.rocker.isStart) {
                     // 停止模拟也算关窗：停一切推进（含路线自动播放）
                     mockServiceViewModel.stopMotionForFloatingHidden()
@@ -461,9 +455,20 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
                     }
                 }
             } finally {
-                button.isClickable = true
+                _binding?.switchMock?.isEnabled = true
             }
         }
+    }
+
+    /** 开关只有两个事实要同步：选中 = 模拟在跑；文字固定说明"这是什么" */
+    private fun refreshMockSwitch() {
+        val binding = _binding ?: return
+        val b = binding.switchMock
+        b.text = getString(R.string.route_mock_enable)
+        val on = mockServiceViewModel.isServiceStart()
+        if (b.isChecked != on) b.isChecked = on
+        // 高亮卡片跟着真实运行态：未启动 = 轻着色，运行中 = 重着色
+        HeroCardState.apply(binding.mockLocationCard, on)
     }
 
     override fun onDestroyView() {
@@ -482,6 +487,9 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
 
     override fun onResume() {
         super.onResume()
+
+        // 回到页面时对齐一次真实运行态（可能在别处停过模拟）：开关 + 高亮卡片一起刷新
+        if (_binding != null) refreshMockSwitch()
 
         // 历史列表给悬浮胶囊让位：页面每次可见都按当前方向重算
         avoidFabBar()
@@ -556,13 +564,5 @@ class RouteMockFragment : Fragment(), FabBarAvoidanceHost {
     private fun showToast(message: String) = lifecycleScope.launch(Dispatchers.Main) {
         Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
     }
-
-    private fun updateMockButtonState(button: MaterialButton, text: String, iconRes: Int) =
-        lifecycleScope.launch(Dispatchers.Main) {
-            button.text = text
-            ContextCompat.getDrawable(requireContext(), iconRes)?.let {
-                button.icon = it
-            }
-        }
 
 }

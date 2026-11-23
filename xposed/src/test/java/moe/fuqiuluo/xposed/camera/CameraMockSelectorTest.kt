@@ -1,6 +1,7 @@
 package moe.fuqiuluo.xposed.camera
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,8 +53,14 @@ class CameraMockSelectorTest {
         assertTrue(CameraMockSelector.matches(listOf("晴", "白天", "自定义"), listOf("白天", "晴")))
         assertTrue(CameraMockSelector.matches(listOf("sUnNy"), listOf("sunny")))
         assertTrue(!CameraMockSelector.matches(listOf("晴"), listOf("晴", "白天")))
-        // 无标签视频只在空筛选下命中
-        assertTrue(!CameraMockSelector.matches(emptyList(), listOf("白天")))
+    }
+
+    @Test
+    fun `无标签素材在任意筛选下都命中`() {
+        // 用户没给素材分类，就不该被分类筛选排除 —— 包括刚添加、还没打标签的图片
+        assertTrue(CameraMockSelector.matches(emptyList(), listOf("白天")))
+        assertTrue(CameraMockSelector.matches(emptyList(), listOf("晴", "白天", "自定义")))
+        assertTrue(CameraMockSelector.matches(emptyList(), emptyList()))
     }
 
     @Test
@@ -203,6 +210,101 @@ class CameraMockSelectorTest {
         assertEquals(0.0, picked.nearestDistanceM, 1e-3)
         assertEquals(0.0, picked.distanceM, 1e-3)
         assertTrue(picked.candidateCount > 0)
+    }
+
+    // ------------------------------------------------ 静止图片（一帧 + 一个点位）
+
+    private fun still(
+        id: String,
+        lat: Double,
+        lon: Double,
+        recordedAt: Long = 0L,
+        trackOverride: List<CameraVideoTrackPoint>? = null
+    ) = CameraVideo(
+        id = id, name = "图片-$id", file = "$id.mp4", durationMs = 3_000,
+        tags = emptyList(), addedAt = 0L, recordedAt = recordedAt,
+        track = trackOverride ?: listOf(CameraVideoTrackPoint(0L, lat, lon)),
+        kind = CameraMediaKind.STILL
+    )
+
+    private fun stillRoute(id: String, lat: Double, lon: Double, recordedAt: Long = 0L) =
+        CameraRoute(id, id, lat, lon, 0L, listOf(still("$id-v", lat, lon, recordedAt)))
+
+    @Test
+    fun `静止图片按它绑定的单点参与最近点选择`() {
+        val near = stillRoute("near", 39.9087, 116.3975)
+        val far = stillRoute("far", 39.9500, 116.3975)
+        val sel = CameraMockSelectionEngine.selectRoutes(
+            listOf(far, near), 39.9087, 116.3975, emptyList(), nowMs = 0L, random = Random(1)
+        )!!
+        assertEquals("near-v", sel.videoId)
+        assertEquals(CameraMediaKind.STILL, sel.kind)
+        assertTrue(sel.isStill)
+        // 每张图只有"它自己那一个点"，所以候选数 = 图片数
+        assertEquals(2, sel.candidateCount)
+        assertEquals(0L, sel.startMs)
+        assertEquals(0.0, sel.distanceM, 1e-3)
+    }
+
+    @Test
+    fun `静止图片的起播偏移恒为 0（时长再长也不随机到中间）`() {
+        val route = stillRoute("r", 39.9087, 116.3975)
+        (1..30).forEach { seed ->
+            val viaRoutes = CameraMockSelectionEngine.selectRoutes(
+                listOf(route), 39.9087, 116.3975, emptyList(), nowMs = 0L, random = Random(seed.toLong())
+            )!!
+            assertEquals(0L, viaRoutes.startMs)
+            val viaManifest = CameraMockSelector.select(
+                CameraMockManifest(
+                    enabled = true, tagFilter = emptyList(),
+                    points = CameraMockCodec.routesToPoints(listOf(route)),
+                    targets = emptyList(), updatedAt = 0L
+                ),
+                39.9087, 116.3975, Random(seed.toLong()), nowMs = 0L
+            )!!
+            assertEquals(0L, viaManifest.startMs)
+        }
+    }
+
+    @Test
+    fun `同一地点的图片按一天中的时刻挑最接近的那张`() {
+        val day = 24L * 60L * 60L * 1000L
+        val hour = 60L * 60L * 1000L
+        val now = 200L * day + 12L * hour
+        val noon = stillRoute("noon", 39.9087, 116.3975, recordedAt = 100L * day + 12L * hour)
+        val dawn = stillRoute("dawn", 39.9087, 116.3975, recordedAt = 100L * day + 6L * hour)
+        val sel = CameraMockSelectionEngine.selectRoutes(
+            listOf(dawn, noon), 39.9087, 116.3975, emptyList(), nowMs = now, random = Random(1)
+        )!!
+        assertEquals("noon-v", sel.videoId)
+    }
+
+    @Test
+    fun `无标签图片在标签筛选下仍可被选中`() {
+        // stillRoute 造出来的图片 tags 为空；筛选"白天"不应把它排除
+        val route = stillRoute("bare", 39.9087, 116.3975)
+        val sel = CameraMockSelectionEngine.selectRoutes(
+            listOf(route), 39.9087, 116.3975, listOf("白天"), nowMs = 0L, random = Random(1)
+        )
+        assertNotNull(sel)
+        assertEquals("bare-v", sel!!.videoId)
+        assertEquals(0L, sel.startMs)
+    }
+
+    @Test
+    fun `图片的点位坏掉时退回路线锚点而不是丢帧`() {
+        val broken = CameraVideo(
+            id = "broken-v", name = "坏图", file = "broken.mp4", durationMs = 3_000,
+            tags = emptyList(), addedAt = 0L, recordedAt = 0L,
+            track = emptyList(), kind = CameraMediaKind.STILL
+        )
+        val route = CameraRoute("r", "锚点", 39.9087, 116.3975, 0L, listOf(broken))
+        val sel = CameraMockSelectionEngine.selectRoutes(
+            listOf(route), 39.9087, 116.3975, emptyList(), nowMs = 0L, random = Random(1)
+        )!!
+        assertEquals("broken-v", sel.videoId)
+        assertEquals(39.9087, sel.selectedLat, 1e-9)
+        assertEquals(0L, sel.startMs)
     }
 
     @Test

@@ -15,6 +15,13 @@
         <item name="colorSurfaceVariant">#F0F0F0</item>
         <item name="colorOnSurfaceVariant">#5F5F5F</item>
         <item name="colorOutline">#747474</item>
+        <!-- M3 表面容器角色（大色块的分层依据）。不写就用 material 库自带的中性色，
+             与这里的品牌灰不同源；莫奈取色时这些值会被壁纸色覆盖。 -->
+        <item name="colorSurfaceContainerLowest">#FFFFFF</item>
+        <item name="colorSurfaceContainerLow">#F7F7F7</item>
+        <item name="colorSurfaceContainer">#F0F0F0</item>
+        <item name="colorSurfaceContainerHigh">#E8E8E8</item>
+        <item name="colorSurfaceContainerHighest">#E0E0E0</item>
 
         <!-- 悬浮胶囊图标色（FabBarView 取色）：浅色 90% 深度黑 -->
         <item name="portalFabIconTint">#1A1A1A</item>
@@ -31,26 +38,52 @@
         <item name="searchViewStyle">@style/Portal.SearchViewStyle</item>
         <item name="sliderStyle">@style/Portal.SliderTheme</item>
         <item name="android:popupMenuStyle">@style/PortalPopupMenuStyle</item>
-        <!-- 开关的**默认**样式：任何页面新增 SwitchMaterial/SwitchCompat 都自动与设置项一致 -->
-        <item name="switchStyle">@style/Portal.SwitchStyle</item>
+        <!-- 开关统一使用 MaterialSwitch（圆点完全落在槽内，见 components 注释）。
+             不再覆写 switchStyle：留着它只会让将来误加的 SwitchCompat 长得和别处不一样。 -->
+        <item name="materialCardViewStyle">@style/PortalCardStyle</item>
     </style>
 
     <!--
-      开关样式 = **设置项里原本那一套**，现在提升为主题默认（不再逐处重复写）。
-
-      `SwitchMaterial`/`SwitchCompat` 的默认样式取自主题属性 `switchStyle`
-      （已核对 material 1.12.0 的 `SwitchMaterial` 构造器：`this(context, attrs, R.attr.switchStyle)`）。
-      父样式必须用 **`Widget.Material3.CompoundButton.Switch`** —— 那正是 M3 主题里
-      `switchStyle` 的现值（在 material 的 themes 里核实过）；写成 `…MaterialSwitch` 会**换一套外观**
-      （实测：胶囊从 115×70px 变成 223×111px、滑块从浅色变深色），设置页那一排会跟着一起变样。
-      下面两项也正是设置页每个开关上原本逐条写的两个属性 —— 所以这里**没有引入任何新外观**。
-
-      收尾时已把散落的重复属性删干净：`fragment_settings.xml`(7)、
-      `fragment_stamina.xml`(1)、`fragment_gnss_mock.xml`(4)。新增开关也不必再写。
+      开关（统一口径）：**所有开关都用 `com.google.android.material.materialswitch.MaterialSwitch`**
+      —— 它是 M3 的"圆点完全落在槽内"那一款，与摄像头模拟页一致；`SwitchCompat`/`SwitchMaterial`
+      的滑块会压在槽外，不再使用。落在 hero 色块上的开关用
+      `@color/portal_switch_track_on_container` / `@color/portal_switch_thumb_on_container`
+      取得与色块的对比，其余位置用 MaterialSwitch 默认的主题角色颜色（莫奈取色自动跟随）。
     -->
-    <style name="Portal.SwitchStyle" parent="Widget.Material3.CompoundButton.Switch">
-        <item name="useMaterialThemeColors">true</item>
-        <item name="trackTint">@color/switch_track_tint</item>
+
+    <!--
+      M3「大色块」默认卡片：所有没显式指定样式的 MaterialCardView 都走这里
+      （surfaceContainerLow + 24dp 圆角 + 0 阴影 + 无线框）。需要主控色块时用
+      PortalHeroCard 显式覆盖；列表容器用 PortalSurfaceCard。
+    -->
+    <style name="PortalCardStyle" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">?attr/colorSurfaceContainerLow</item>
+        <item name="cardCornerRadius">24dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="strokeWidth">0dp</item>
+    </style>
+
+    <!--
+      M3「大色块」：页面主控区。整块铺 primaryContainer，按钮/开关直接落在色块上，
+      不再给每个控件单独描边或套卡片。
+
+      颜色全部走主题角色 ⇒ 莫奈取色（Android 12+）会随壁纸整块变化；
+      低版本/无壁纸取色时退回主题里固定的品牌灰。夜间主题同名继承，无需另写一份。
+    -->
+    <style name="PortalHeroCard" parent="">
+        <item name="cardBackgroundColor">?attr/colorPrimaryContainer</item>
+        <item name="cardCornerRadius">28dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="contentPadding">20dp</item>
+    </style>
+
+    <!-- 列表/内容区大色块：低饱和容器色，让内容浮在页面上而不是被边框围住 -->
+    <style name="PortalSurfaceCard" parent="">
+        <item name="cardBackgroundColor">?attr/colorSurfaceContainerLow</item>
+        <item name="cardCornerRadius">24dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="strokeWidth">0dp</item>
     </style>
 
     <!-- PopupMenu 展开动画：从右上角缩放展开/缩回（右上锚点 pivot 100%/0%） -->

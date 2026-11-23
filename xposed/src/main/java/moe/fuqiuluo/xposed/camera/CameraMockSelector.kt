@@ -6,7 +6,8 @@ import kotlin.random.Random
  * **选片引擎**：给定清单 + 当前表象位置，决定这次到底播哪一段、从第几秒起。
  *
  * 规则（用户口径，逐条落在这里，避免散进 hook 里）：
- *  1. 候选 = 标签筛选命中的视频；**命中的点**才有资格参与距离比较；
+ *  1. 候选 = 标签筛选命中的素材；**命中的点**才有资格参与距离比较
+ *     （静止图片只有它绑定的那一个点，见 [CameraMediaKind]）；
  *  2. 取"距离当前表象位置最近"的那个点；
  *  3. 该点内命中的视频**随机取一个**；
  *  4. 起播位置 = `[0, 时长)` 内的**随机整秒**；之后播到末尾回文件头继续（循环）——
@@ -18,10 +19,10 @@ import kotlin.random.Random
 object CameraMockSelector {
 
     /**
-     * 标签匹配：**全含**语义 —— 筛选里的每个标签都必须出现在视频标签里。
-     * 空筛选 = 全部命中（不筛选）；视频无标签时只在空筛选下命中。
+     * 标签匹配。**无标签 = 永远命中**（未分类的素材不被筛选排除）；
+     * 有标签时按**全含**语义比较筛选里的每一个标签，大小写不敏感；空筛选 = 全部命中。
      */
-    fun matches(videoTags: List<String>, filter: List<String>): Boolean =
+    fun matches(videoTags: Collection<String>, filter: Collection<String>): Boolean =
         CameraMockSelectionEngine.matches(videoTags, filter)
 
     /**

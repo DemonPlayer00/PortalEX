@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  侧栏头部图标外圈：**莫奈主色的细线圆框**。
+  线宽 1.5dp、无填充；与菜单图标同一种"线框"语言（菜单侧由
+  MainActivity.applyDrawerIconRings 用 LayerDrawable 生成，颜色同源）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="1.5dp"
+        android:color="?attr/colorPrimary" />
+</shape>

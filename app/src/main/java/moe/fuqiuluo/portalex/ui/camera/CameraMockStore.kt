@@ -2,11 +2,13 @@ package moe.fuqiuluo.portalex.ui.camera
 
 import android.content.Context
 import android.database.Cursor
+import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.edit
 import moe.fuqiuluo.portalex.ext.sharedPrefs
+import moe.fuqiuluo.xposed.camera.CameraMediaKind
 import moe.fuqiuluo.xposed.camera.CameraMockCodec
 import moe.fuqiuluo.xposed.camera.CameraMockManifest
 import moe.fuqiuluo.xposed.camera.CameraMockProtocol
@@ -206,6 +208,90 @@ object CameraMockStore {
     /** 默认录制名：`录制 09-12 17:34`（月-日 时:分，够用且不跨年歧义） */
     private fun defaultRecordName(): String =
         java.text.SimpleDateFormat("录制 MM-dd HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date())
+
+    // ---- 静止图片素材（图片 = 一帧视频 + 一个点位）----
+
+    /** 单帧素材的落盘目标：与录像同一个目录、同一个格式（对下游而言它就是一段视频） */
+    fun newStillFile(context: Context): File =
+        File(dir(context), "${UUID.randomUUID()}.mp4")
+
+    /**
+     * 把一张图片编码成"一帧 mp4"存进库里；失败返回 null 且不留半截文件。
+     *
+     * 编码本身可能耗时几百毫秒，调用方必须放在后台线程。
+     */
+    fun encodeStillFile(context: Context, bitmap: Bitmap): File? {
+        val file = newStillFile(context)
+        if (CameraStillMedia.encode(bitmap, file)) return file
+        deleteVideoFile(context, file.name)
+        return null
+    }
+
+    /**
+     * 登记一张已经编码好的静止图片。
+     *
+     * **它只有一个轨迹点** —— 这个点就是绑定位置。选片时它与录像的某个轨迹点
+     * 是同一类候选，区别只有"起播偏移恒为 0、只播一帧"（见 CameraMediaKind）。
+     */
+    fun registerStill(
+        context: Context,
+        file: File,
+        lat: Double,
+        lon: Double,
+        name: String? = null,
+        recordedAt: Long = 0L,
+        tags: List<String> = emptyList()
+    ): CameraVideo {
+        val probe = probeDurationMs(file)
+        val point = if (lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0) {
+            listOf(CameraVideoTrackPoint(0L, lat, lon))
+        } else {
+            emptyList()
+        }
+        return CameraVideo(
+            id = file.nameWithoutExtension,
+            // 相册里的文件名可能很长（或带一整段路径描述）：截断到列表能显示的长度
+            name = name?.trim()?.take(60)?.takeIf { it.isNotBlank() } ?: defaultStillName(),
+            file = file.name,
+            durationMs = if (probe > 0L) probe else CameraStillMedia.HOLD_MS,
+            tags = CameraTags.sanitize(tags),
+            addedAt = System.currentTimeMillis(),
+            recordedAt = recordedAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+            track = point,
+            kind = CameraMediaKind.STILL
+        )
+    }
+
+    /**
+     * 从相册/文件选择器导入一张图片，并绑定到给定坐标（手动添加的落地点）。
+     * 拍摄时间取图片 EXIF（没有就按"现在"），这样"同一地点的多张图按一天中的
+     * 时刻挑最像的那张"对相册里的旧照片同样成立。
+     */
+    fun importStill(
+        context: Context,
+        uri: Uri,
+        lat: Double,
+        lon: Double,
+        tags: List<String> = emptyList()
+    ): CameraVideo? {
+        val source = CameraStillMedia.prepareFromUri(context, uri) ?: return null
+        return try {
+            val file = encodeStillFile(context, source.bitmap) ?: return null
+            registerStill(
+                context, file, lat, lon,
+                name = source.nameHint,
+                recordedAt = source.recordedAt,
+                tags = tags
+            )
+        } finally {
+            source.bitmap.recycle()
+        }
+    }
+
+    /** 默认图片名：`图片 09-12 17:34` */
+    private fun defaultStillName(): String =
+        java.text.SimpleDateFormat("图片 MM-dd HH:mm", java.util.Locale.getDefault())
             .format(java.util.Date())
 
     private fun displayName(context: Context, uri: Uri): String? = runCatching {

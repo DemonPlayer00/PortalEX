@@ -18,6 +18,12 @@
         <item name="colorSurfaceVariant">#2A2A2A</item>
         <item name="colorOnSurfaceVariant">#A8A8A8</item>
         <item name="colorOutline">#8A8A8A</item>
+        <!-- M3 表面容器角色（大色块的分层依据）；莫奈取色时被壁纸色覆盖 -->
+        <item name="colorSurfaceContainerLowest">#0C0C0C</item>
+        <item name="colorSurfaceContainerLow">#171717</item>
+        <item name="colorSurfaceContainer">#1E1E1E</item>
+        <item name="colorSurfaceContainerHigh">#262626</item>
+        <item name="colorSurfaceContainerHighest">#303030</item>
 
         <!-- 窗口：透明状态栏 + 内容延伸 -->
         <item name="android:statusBarColor">@android:color/transparent</item>
@@ -30,8 +36,8 @@
         <item name="searchViewStyle">@style/Portal.SearchViewStyle</item>
         <item name="sliderStyle">@style/Portal.SliderTheme</item>
         <item name="android:popupMenuStyle">@style/PortalPopupMenuStyle</item>
-        <!-- 开关默认样式：与浅色主题同一个（定义在 values/themes.xml，颜色随选择器） -->
-        <item name="switchStyle">@style/Portal.SwitchStyle</item>
+        <!-- 开关统一使用 MaterialSwitch（定义口径见 values/themes.xml） -->
+        <item name="materialCardViewStyle">@style/PortalCardStyle</item>
     </style>
 
     <style name="AppTheme.Dark" parent="AppTheme" />

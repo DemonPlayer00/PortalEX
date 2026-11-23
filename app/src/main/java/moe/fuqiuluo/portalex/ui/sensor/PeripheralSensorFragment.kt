@@ -16,6 +16,8 @@ import moe.fuqiuluo.portalex.ext.orientationMock
 import moe.fuqiuluo.portalex.ext.orientationWobbleAmp
 import moe.fuqiuluo.portalex.ext.orientationWobbleRnd
 import moe.fuqiuluo.portalex.ext.sensorNoise
+import moe.fuqiuluo.portalex.service.FeatureDependency
+import moe.fuqiuluo.portalex.ui.widget.HeroCardState
 import moe.fuqiuluo.portalex.ext.speed
 import moe.fuqiuluo.portalex.service.ConfigSync
 import moe.fuqiuluo.portalex.ui.common.NumberRow
@@ -40,6 +42,16 @@ class PeripheralSensorFragment : Fragment() {
             it.start == SensorNoise.MAG || it.start == SensorNoise.ORIENT || it.start == SensorNoise.ROTVEC
         }
 
+    /** 高亮卡片：未启用 = 轻着色，启用 = 重着色（与主开关同一事实源） */
+    private fun refreshHero() {
+        val b = _binding ?: return
+        // 二类功能允许"假开启"：真正生效要等路线模拟启动，卡片只认真实状态
+        val running = FeatureDependency.isClass2Running(
+            requireContext(), b.peripheralMockSwitch.isChecked
+        )
+        HeroCardState.apply(b.peripheralControlCard, running)
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -59,6 +71,7 @@ class PeripheralSensorFragment : Fragment() {
             ctx0.orientationMock = unified
         }
         binding.peripheralMockSwitch.isChecked = unified
+        refreshHero()
         if (unified) {
             // 默认开启时也要走门禁：库缺失就提示，不允许“开关看起来开着、native 实际没加载”。
             SensorNativeGate.ensure(
@@ -68,10 +81,12 @@ class PeripheralSensorFragment : Fragment() {
                     ctx0.cadenceMock = false
                     ctx0.orientationMock = false
                     binding.peripheralMockSwitch.isChecked = false
+                    refreshHero()
                 },
             )
         }
         binding.peripheralMockSwitch.setOnCheckedChangeListener { _, checked ->
+            refreshHero()
             val ctx = requireContext()
             fun push() {
                 val r = ConfigSync.setSensorMock(
@@ -117,6 +132,7 @@ class PeripheralSensorFragment : Fragment() {
                 ctx.cadenceMock = false
                 ctx.orientationMock = false
                 binding.peripheralMockSwitch.isChecked = false
+                refreshHero()
                 refresh()
                 (activity as? moe.fuqiuluo.portalex.MainActivity)?.refreshDrawerWarnings()
             }
@@ -128,6 +144,7 @@ class PeripheralSensorFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         renderRows()
+        refreshHero()
         refresh()
     }
 
