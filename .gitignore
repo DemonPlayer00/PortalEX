@@ -21,3 +21,6 @@ app/google-services.json
 # 本地 agent 工作区（测试文件已迁出仓库，见 AGENTS 纪律）
 agent/
 
+
+# 采集到的相册/媒体副本，绝不入库
+dcim_latest/

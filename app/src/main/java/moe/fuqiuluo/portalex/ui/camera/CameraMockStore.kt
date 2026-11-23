@@ -17,6 +17,7 @@ import moe.fuqiuluo.xposed.camera.CameraTags
 import moe.fuqiuluo.xposed.camera.CameraVideo
 import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
+import moe.fuqiuluo.xposed.utils.WorldMath
 import java.io.File
 import java.util.UUID
 
@@ -204,6 +205,39 @@ object CameraMockStore {
             recordedAt = recordedAt,
             track = CameraTags.sanitizeTrack(track)
         )
+
+    /**
+     * 录制结果落库（与点位绑定）：
+     *  · 起点 80m 内已有点位 → 追加到该点位；
+     *  · 否则以起点新建一条路线。
+     *
+     * 返回点位名（用于提示）。合并阈值 80m 与旧录制入口一致：一段路线内的采样点
+     * 通常远小于该距离，而"换了个地方拍"应当成为新点位。
+     */
+    fun attachRecorded(context: Context, video: CameraVideo, lat: Double, lon: Double): String {
+        val points = points(context)
+        val nearest = points.minByOrNull { p ->
+            val end = p.videos.lastOrNull()?.track?.lastOrNull()
+            WorldMath.haversine(lat, lon, end?.lat ?: p.lat, end?.lon ?: p.lon)
+        }
+        val distance = nearest?.let { p ->
+            val end = p.videos.lastOrNull()?.track?.lastOrNull()
+            WorldMath.haversine(lat, lon, end?.lat ?: p.lat, end?.lon ?: p.lon)
+        } ?: Double.MAX_VALUE
+        if (nearest != null && distance <= 80.0) {
+            upsert(
+                context,
+                nearest.copy(videos = (nearest.videos + video).sortedBy { it.recordedAt })
+            )
+            return nearest.name
+        }
+        val name = "路线 " + java.text.SimpleDateFormat(
+            "MM-dd HH:mm", java.util.Locale.getDefault()
+        ).format(java.util.Date(video.recordedAt.takeIf { it > 0 } ?: System.currentTimeMillis()))
+        val point = newPoint(name, lat, lon)
+        upsert(context, point.copy(videos = listOf(video)))
+        return name
+    }
 
     /** 默认录制名：`录制 09-12 17:34`（月-日 时:分，够用且不跨年歧义） */
     private fun defaultRecordName(): String =

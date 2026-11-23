@@ -638,12 +638,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyMenuVisibility(destinationId: Int) {
         val menu = binding.appBarMain.toolbar.menu
-        menu.findItem(R.id.action_search)?.isVisible = destinationId == R.id.nav_home
-        menu.findItem(R.id.action_quick_add)?.isVisible = destinationId == R.id.nav_quick_launch
-        menu.findItem(R.id.action_map_controls)?.isVisible =
+        // 录制页是"全屏取景"：顶栏动作全部收起，只保留标题与系统返回
+        val capturing = destinationId == R.id.nav_camera_capture
+        menu.findItem(R.id.action_search)?.isVisible = !capturing && destinationId == R.id.nav_home
+        menu.findItem(R.id.action_quick_add)?.isVisible =
+            !capturing && destinationId == R.id.nav_quick_launch
+        menu.findItem(R.id.action_map_controls)?.isVisible = !capturing && (
             destinationId == R.id.nav_home ||
-                    destinationId == R.id.nav_route_edit ||
-                    destinationId == R.id.nav_camera_point_edit
+                destinationId == R.id.nav_route_edit ||
+                destinationId == R.id.nav_camera_point_edit
+            )
     }
 
     private fun requireFloatWindows(): Boolean {

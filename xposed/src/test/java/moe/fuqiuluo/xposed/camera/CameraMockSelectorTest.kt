@@ -18,24 +18,24 @@ class CameraMockSelectorTest {
     private fun v(id: String, tags: List<String>, durationMs: Long = 10_000, recordedAt: Long = 0L) =
         CameraVideo(id, "vid-$id", "$id.mp4", durationMs, tags, addedAt = 0L, recordedAt = recordedAt)
 
-    /** 天安门 / 王府井 / 三里屯，间距依次 ~1.6km、~5km，便于构造"最近点" */
-    private val pTiananmen = CameraVideoPoint(
-        "p-tam", "天安门", 39.908722, 116.397499,
+    /** 点位 A / B / C，间距依次 ~1.6km、~5km，便于构造"最近点" */
+    private val pPointA = CameraVideoPoint(
+        "p-a", "点位A", 39.908722, 116.397499,
         listOf(v("a", listOf("晴", "白天")), v("b", listOf("阴", "白天")))
     )
-    private val pWangfujing = CameraVideoPoint(
-        "p-wfj", "王府井", 39.915000, 116.410000,
+    private val pPointB = CameraVideoPoint(
+        "p-b", "点位B", 39.915000, 116.410000,
         listOf(v("c", listOf("白天")))
     )
-    private val pSanlitun = CameraVideoPoint(
-        "p-slt", "三里屯", 39.933000, 116.455000,
+    private val pPointC = CameraVideoPoint(
+        "p-c", "点位C", 39.933000, 116.455000,
         listOf(v("d", listOf("黑夜")))
     )
 
     private fun manifest(filter: List<String> = emptyList()) = CameraMockManifest(
         enabled = true,
         tagFilter = CameraTags.sanitize(filter),
-        points = listOf(pTiananmen, pWangfujing, pSanlitun),
+        points = listOf(pPointA, pPointB, pPointC),
         targets = emptyList(),
         updatedAt = 0L
     )
@@ -65,13 +65,13 @@ class CameraMockSelectorTest {
 
     @Test
     fun `取最近的命中点`() {
-        // 位置在天安门旁：最近点必是天安门（且筛"白天"会排除三里屯）
+        // 位置在点位 A 旁：最近点必是 A（且筛"白天"会排除点位 C）
         val sel = CameraMockSelector.select(manifest(listOf("白天")), 39.908, 116.397, Random(1))!!
-        assertEquals("p-tam", sel.pointId)
+        assertEquals("p-a", sel.pointId)
 
-        // 位置挪到王府井旁：最近点切换（天安门虽然也有"白天"，但更远）
+        // 位置挪到点位 B 旁：最近点切换（A 虽然也有"白天"，但更远）
         val sel2 = CameraMockSelector.select(manifest(listOf("白天")), 39.9151, 116.4101, Random(1))!!
-        assertEquals("p-wfj", sel2.pointId)
+        assertEquals("p-b", sel2.pointId)
     }
 
     @Test
@@ -201,12 +201,12 @@ class CameraMockSelectorTest {
     @Test
     fun `选片探针记录查询坐标与选中轨迹点`() {
         val picked = CameraMockSelector.select(
-            manifest(), pTiananmen.lat, pTiananmen.lon, Random(1), nowMs = 0L
+            manifest(), pPointA.lat, pPointA.lon, Random(1), nowMs = 0L
         )!!
-        assertEquals(pTiananmen.lat, picked.queryLat, 1e-9)
-        assertEquals(pTiananmen.lon, picked.queryLon, 1e-9)
-        assertEquals(pTiananmen.lat, picked.selectedLat, 1e-9)
-        assertEquals(pTiananmen.lon, picked.selectedLon, 1e-9)
+        assertEquals(pPointA.lat, picked.queryLat, 1e-9)
+        assertEquals(pPointA.lon, picked.queryLon, 1e-9)
+        assertEquals(pPointA.lat, picked.selectedLat, 1e-9)
+        assertEquals(pPointA.lon, picked.selectedLon, 1e-9)
         assertEquals(0.0, picked.nearestDistanceM, 1e-3)
         assertEquals(0.0, picked.distanceM, 1e-3)
         assertTrue(picked.candidateCount > 0)

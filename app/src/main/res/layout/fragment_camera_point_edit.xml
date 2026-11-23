@@ -99,6 +99,20 @@
     </com.google.android.material.textfield.TextInputLayout>
 
     <TextView
+        android:id="@+id/camera_pending_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/page_gutter"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="@dimen/page_gutter"
+        android:background="@drawable/bg_camera_pending_hint"
+        android:padding="12dp"
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        android:textColor="?attr/colorOnSecondaryContainer"
+        android:visibility="gone"
+        tools:text="已选择图片：拖动地图选择位置，点击胶囊中的「保存图片点位」" />
+
+    <TextView
         android:id="@+id/camera_video_label"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

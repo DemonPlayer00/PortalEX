@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  录制页（Fragment，与其它功能页同一套架构）：
+    · 全屏预览 + 顶部状态药丸 + 底部圆形录制键（播放 ↔ 停止）；
+    · 不再有取消按钮：系统返回 = 离开；录制中返回由 Fragment 拦截并询问 保存/不保存/继续录制；
+    · 人脸框校准 / 手动校准 放进悬浮胶囊（MainActivity 的 FabBar），与其它页一致。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    tools:context=".ui.camera.CameraCaptureFragment">
+
+    <FrameLayout
+        android:id="@+id/camera_preview_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="24dp">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/camera_preview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:implementationMode="compatible"
+            app:scaleType="fitCenter" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/camera_record_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_camera_status_pill"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        tools:text="前置 · 00:00 / 最长 120 分钟" />
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/camera_record_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="40dp"
+        android:contentDescription="@string/camera_record_start"
+        app:backgroundTint="?attr/colorPrimary"
+        app:fabCustomSize="84dp"
+        app:maxImageSize="40dp"
+        app:shapeAppearanceOverlay="@style/PortalFabCircularOverlay"
+        app:srcCompat="@drawable/rounded_play_arrow_24"
+        app:tint="?attr/colorOnPrimary" />
+
+</FrameLayout>

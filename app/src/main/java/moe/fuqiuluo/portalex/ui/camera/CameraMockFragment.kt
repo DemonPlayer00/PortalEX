@@ -14,6 +14,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.os.bundleOf
@@ -27,8 +28,6 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.R
 import moe.fuqiuluo.portalex.android.widget.FabBarView
@@ -55,9 +54,7 @@ import moe.fuqiuluo.xposed.camera.CameraVideoPoint
 
 import moe.fuqiuluo.xposed.camera.CameraMockSelector
 import moe.fuqiuluo.xposed.camera.CameraTags
-import moe.fuqiuluo.xposed.camera.CameraVideoTrackPoint
 import moe.fuqiuluo.xposed.camera.isStill
-import org.json.JSONArray
 import java.util.concurrent.Executors
 import moe.fuqiuluo.xposed.utils.WorldMath
 
@@ -75,8 +72,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
         /** 地图标记的附加数据键（点击标记 → 打开该点的编辑页） */
         private const val EXTRA_POINT_ID = "cameraPointId"
-        private const val REQUEST_CAMERA = 2001
-        private const val REQUEST_STILL = 2002
     }
 
     private var _binding: FragmentCameraMockBinding? = null
@@ -101,9 +96,18 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private var lastPoints: List<CameraVideoPoint> = emptyList()
     private var refreshToken = 0
     private var mapDrawToken = 0
-    private var pendingRecordAfterPermission = false
-    private var pendingStillAfterPermission = false
     private var resumedLibrarySync = false
+
+    /** 手动素材入口：选完图片后带着 URI 进入点位页，由那里完成位置选择与落库 */
+    private val pendingStillPicker = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        findNavController().navigate(
+            R.id.nav_camera_point_edit,
+            bundleOf(CameraPointEditFragment.ARG_PENDING_STILL to uri.toString())
+        )
+    }
     private val cammockImportLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -157,125 +161,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 Toast.makeText(ctx, result.message, Toast.LENGTH_LONG).show()
                 if (result.ok) refresh()
             }
-        }
-    }
-
-    private val recordLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode != android.app.Activity.RESULT_OK) return@registerForActivityResult
-        val data = result.data ?: return@registerForActivityResult
-        val fileName = data.getStringExtra(CameraRecordActivity.RESULT_FILE_NAME)
-            ?: return@registerForActivityResult
-        val file = CameraMockStore.videoFile(requireContext(), fileName)
-        if (!file.exists()) {
-            Toast.makeText(requireContext(), "录制文件丢失", Toast.LENGTH_SHORT).show()
-            return@registerForActivityResult
-        }
-        val track = parseTrack(data.getStringExtra(CameraRecordActivity.RESULT_TRACK_JSON))
-        val recordedAt = data.getLongExtra(CameraRecordActivity.RESULT_RECORDED_AT, 0L)
-        val start = track.firstOrNull()?.let { it.lat to it.lon }
-            ?: CameraMockRuntime.position() ?: run {
-                Toast.makeText(requireContext(), "录制没有可用位置", Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
-            }
-        val video = CameraMockStore.registerRecorded(
-            requireContext(), file, null,
-            recordedAt = recordedAt,
-            track = track
-        )
-        val points = CameraMockStore.points(requireContext())
-        val previous = points.minByOrNull { p ->
-            val end = p.videos.lastOrNull()?.track?.lastOrNull()
-            val lat = end?.lat ?: p.lat
-            val lon = end?.lon ?: p.lon
-            WorldMath.haversine(start.first, start.second, lat, lon)
-        }
-        val distance = previous?.let { p ->
-            val end = p.videos.lastOrNull()?.track?.lastOrNull()
-            val lat = end?.lat ?: p.lat
-            val lon = end?.lon ?: p.lon
-            WorldMath.haversine(start.first, start.second, lat, lon)
-        } ?: Double.MAX_VALUE
-        if (previous != null && distance <= 80.0) {
-            val merged = previous.copy(
-                videos = (previous.videos + video).sortedBy { it.recordedAt }
-            )
-            CameraMockStore.upsert(requireContext(), merged)
-            Toast.makeText(
-                requireContext(),
-                "已追加到「${previous.name}」：${track.size} 个轨迹点",
-                Toast.LENGTH_SHORT
-            ).show()
-        } else {
-            val point = CameraMockStore.newPoint(
-                "路线 " + java.text.SimpleDateFormat(
-                    "MM-dd HH:mm", java.util.Locale.getDefault()
-                ).format(java.util.Date(recordedAt.takeIf { it > 0 } ?: System.currentTimeMillis())),
-                start.first, start.second
-            )
-            CameraMockStore.upsert(requireContext(), point.copy(videos = listOf(video)))
-            Toast.makeText(
-                requireContext(),
-                "已新建路线：${track.size} 个轨迹点，视频已串联",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-        refresh()
-    }
-
-    /**
-     * 实地拍摄单帧素材的结果：返回的是**已编码好的一帧 mp4** + 拍摄时的定位位置。
-     *
-     * 落库规则与录像一致（同一地点附近就追加到已有点位，否则新建），区别是这个
-     * 点位下挂的是一条"只有一个点"的素材 —— 它在选片时等价于"一帧视频 + 一个点位"。
-     */
-    private val stillCaptureLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode != android.app.Activity.RESULT_OK) return@registerForActivityResult
-        val data = result.data ?: return@registerForActivityResult
-        val fileName = data.getStringExtra(CameraStillCaptureActivity.RESULT_FILE_NAME)
-            ?: return@registerForActivityResult
-        val lat = data.getDoubleExtra(CameraStillCaptureActivity.RESULT_LAT, Double.NaN)
-        val lon = data.getDoubleExtra(CameraStillCaptureActivity.RESULT_LON, Double.NaN)
-        val recordedAt = data.getLongExtra(CameraStillCaptureActivity.RESULT_RECORDED_AT, 0L)
-        val ctx = requireContext()
-        if (!lat.isFinite() || !lon.isFinite()) {
-            Toast.makeText(ctx, "拍摄结果没有位置，已丢弃", Toast.LENGTH_LONG).show()
-            return@registerForActivityResult
-        }
-        val file = CameraMockStore.videoFile(ctx, fileName)
-        if (!file.exists()) {
-            Toast.makeText(ctx, "图片文件丢失", Toast.LENGTH_SHORT).show()
-            return@registerForActivityResult
-        }
-        val still = CameraMockStore.registerStill(ctx, file, lat, lon, recordedAt = recordedAt)
-        attachStill(still, lat, lon)
-        refresh()
-    }
-
-    /** 单帧素材落库：附近（30m）已有点位就并入，否则为该位置新建一个点位 */
-    private fun attachStill(still: moe.fuqiuluo.xposed.camera.CameraVideo, lat: Double, lon: Double) {
-        val ctx = requireContext()
-        val points = CameraMockStore.points(ctx)
-        val nearest = points.minByOrNull { WorldMath.haversine(lat, lon, it.lat, it.lon) }
-        val distance = nearest?.let { WorldMath.haversine(lat, lon, it.lat, it.lon) }
-            ?: Double.MAX_VALUE
-        // 图片本身很小、位置精度也足够，所以"同一地点"的门槛比录像（80m）更紧。
-        if (nearest != null && distance <= 30.0) {
-            CameraMockStore.upsert(
-                ctx,
-                nearest.copy(videos = (nearest.videos + still).sortedBy { it.recordedAt })
-            )
-            Toast.makeText(ctx, "已追加到「${nearest.name}」", Toast.LENGTH_SHORT).show()
-        } else {
-            val name = "图片 " + java.text.SimpleDateFormat(
-                "MM-dd HH:mm", java.util.Locale.getDefault()
-            ).format(java.util.Date(still.recordedAt.takeIf { it > 0 } ?: System.currentTimeMillis()))
-            val point = CameraMockStore.newPoint(name, lat, lon)
-            CameraMockStore.upsert(ctx, point.copy(videos = listOf(still)))
-            Toast.makeText(ctx, "已新建点位并绑定图片", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -494,20 +379,16 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         // 录制完成自动上传；下载/预览已转移到路线编辑页。
         fabBar.setActions(
             listOf(
+                // 进入录制页（Fragment 目的地，与其它功能页同一套页面栈）
                 FabBarView.Action(
                     R.drawable.baseline_control_camera_24,
-                    getString(R.string.camera_record)
-                ) { startRecordingFromMap() },
-                // 第二种素材创建方式：一张图片 + 自动获取的当前位置
-                FabBarView.Action(
-                    R.drawable.baseline_photo_camera_24,
-                    getString(R.string.camera_still)
-                ) { startStillCapture() },
-                // 手动添加：新建点位后在详情页选位置、挑图片
+                    getString(R.string.camera_capture_action)
+                ) { openCapture() },
+                // 手动素材：先选图片，再到点位页用准星选位置（胶囊里完成整条流程）
                 FabBarView.Action(
                     R.drawable.baseline_add_a_photo_24,
-                    getString(R.string.camera_still_manual)
-                ) { openNewPoint() },
+                    getString(R.string.camera_import_still)
+                ) { pickStillForPoint() },
                 FabBarView.Action(
                     R.drawable.baseline_file_download_24,
                     getString(R.string.camera_import_archive)
@@ -520,7 +401,7 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
 
     /**
      * 地图展开时的相机图标：先确认有位置、且没有开启任何位置模拟，才进入录制。
-     * 录制期间 CameraRecordActivity 每秒采样 CameraMockRuntime.position()，
+     * 录制页每秒采样 CameraMockRuntime.position()，
      * 结果中的 track 会随视频一起落库。
      */
 
@@ -551,19 +432,14 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         return true
     }
 
-    /** 现场拍摄的两种用途；两者对位置的依赖都是硬性的，只是拒绝时的说法不同 */
-    private enum class CapturePurpose { RECORD, STILL }
-
     /**
-     * 现场拍摄（录像 / 单帧图片）共用的前置检查：
-     * 位置服务开着、虚拟摄像头关着、位置模拟关着 —— 否则拍下来的"位置"是被我们改过的。
+     * 进入录制页前的现场门禁：位置服务开着、虚拟摄像头关着、位置模拟关着 ——
+     * 否则拍下来的"位置"是被我们改过的。
      *
-     * **位置不是可选项**（设计使然，不要为了"先拍后补"删掉这些检查）：
-     *  · 录制器：视频时间轴与轨迹坐标必须来自**同一次**定位采样，二者要靠同一时钟对齐；
-     *    事后补坐标无法还原拍摄当时的时序，录出来的素材也就没法参与"按位置选片"；
-     *  · 单帧图片：位置就是它唯一绑定的点位，没有位置就没有任何选片意义。
+     * **位置不是可选项**（设计使然）：视频时间轴与轨迹坐标必须来自**同一次**定位采样，
+     * 事后补坐标无法还原拍摄当时的时序。录制页内部还会再等第一个定位点。
      */
-    private fun capturePreconditions(purpose: CapturePurpose): Boolean {
+    private fun canCapture(): Boolean {
         val context = requireContext()
         val locationManager = context.getSystemService(LocationManager::class.java)
         val locationOn = locationManager != null && (
@@ -578,39 +454,27 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 }.getOrDefault(false)
             }
             )
-        val recording = purpose == CapturePurpose.RECORD
         if (!locationOn) {
-            Toast.makeText(
-                context,
-                if (recording) "请先打开位置服务，再录制移动轨迹" else "请先打开位置服务，再拍摄素材",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(context, "请先打开位置服务，再录制移动轨迹", Toast.LENGTH_LONG).show()
             return false
         }
         if (context.cameraMockEnabled) {
-            Toast.makeText(
-                context,
-                if (recording) "请先关闭虚拟摄像头，再录制现场视频" else "请先关闭虚拟摄像头，再拍摄现场素材",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(context, "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
             return false
         }
         val lm = mockServiceViewModel.locationManager
         if (lm != null && MockServiceHelper.isMockStart(lm)) {
-            Toast.makeText(
-                context,
-                if (recording) "请先关闭位置模拟，再录制真实移动轨迹" else "请先关闭位置模拟，再拍摄现场素材",
-                Toast.LENGTH_LONG
-            ).show()
+            Toast.makeText(context, "请先关闭位置模拟，再录制真实移动轨迹", Toast.LENGTH_LONG).show()
             return false
         }
         return true
     }
 
-    private fun startRecordingFromMap() {
+    /** 进入录制页（nav_camera_capture）：保存后的归并 / 新建由录制页自己完成，返回时这里刷新。 */
+    private fun openCapture() {
         if (!ensureUploadReady()) return
-        if (!capturePreconditions(CapturePurpose.RECORD)) return
-        // 室内可能暂时没有最后已知位置；不阻塞拍摄，录制期间由融合定位补点。
+        if (!canCapture()) return
+        // 室内可能暂时没有最后已知位置；不阻塞拍摄，录制页会等融合定位。
         if (CameraMockRuntime.position() == null) {
             Toast.makeText(
                 requireContext(),
@@ -618,102 +482,17 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
                 Toast.LENGTH_LONG
             ).show()
         }
-        confirmRecording()
+        findNavController().navigate(R.id.nav_camera_capture)
     }
 
     /**
-     * 实地拍摄**单帧素材**：一张图片 + 自动获取的当前位置。
-     *
-     * 与录像共用前置检查；位置在拍摄页里由 CameraLocationSampler 现取 ——
-     * "没有位置的图片"对按位置选片毫无意义，所以拍摄页在定位就绪前不允许按快门。
+     * 手动导入图片：先选图，再进点位页用准星选位置（页面会以"待保存"模式打开，
+     * 位置确认后整条流程在胶囊里完成）。
      */
-    private fun startStillCapture() {
-        if (!capturePreconditions(CapturePurpose.STILL)) return
-        val missing = missingCapturePermissions()
-        if (missing.isNotEmpty()) {
-            pendingStillAfterPermission = true
-            requestPermissions(missing.toTypedArray(), REQUEST_STILL)
-            return
-        }
-        stillCaptureLauncher.launch(Intent(requireContext(), CameraStillCaptureActivity::class.java))
-    }
-
-    /** 手动添加入口：新建一个空点位，进详情页用准星选位置、再挑一张图片 */
-    private fun openNewPoint() {
-        findNavController().navigate(R.id.nav_camera_point_edit)
-    }
-
-    private fun missingCapturePermissions(): List<String> {
-        val missing = ArrayList<String>()
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CAMERA) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            missing += Manifest.permission.CAMERA
-        }
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_FINE_LOCATION) !=
-            PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.ACCESS_COARSE_LOCATION) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            missing += Manifest.permission.ACCESS_FINE_LOCATION
-            missing += Manifest.permission.ACCESS_COARSE_LOCATION
-        }
-        return missing
-    }
-
-    /** 拍摄前明确使用方法：脸在自拍镜头中，然后边走边录。 */
-    private fun confirmRecording() {
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle("录制路线")
-            .setMessage("请确保脸在自拍镜头中，点击开始后保持拍摄并走动；视频时间轴会同时记录移动轨迹。")
-            .setPositiveButton("开始") { _, _ -> launchRecorder() }
-            .setNegativeButton("取消", null)
-            .show()
-    }
-
-    private fun launchRecorder() {
-        val missing = missingCapturePermissions()
-        if (missing.isNotEmpty()) {
-            pendingRecordAfterPermission = true
-            requestPermissions(missing.toTypedArray(), REQUEST_CAMERA)
-            return
-        }
-        recordLauncher.launch(Intent(requireContext(), CameraRecordActivity::class.java))
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_CAMERA && pendingRecordAfterPermission) {
-            pendingRecordAfterPermission = false
-            if (missingCapturePermissions().isEmpty()) {
-                recordLauncher.launch(Intent(requireContext(), CameraRecordActivity::class.java))
-            } else {
-                Toast.makeText(requireContext(), "需要摄像头和位置权限才能录制轨迹", Toast.LENGTH_LONG).show()
-            }
-        }
-        if (requestCode == REQUEST_STILL && pendingStillAfterPermission) {
-            pendingStillAfterPermission = false
-            if (missingCapturePermissions().isEmpty()) {
-                stillCaptureLauncher.launch(Intent(requireContext(), CameraStillCaptureActivity::class.java))
-            } else {
-                Toast.makeText(requireContext(), R.string.camera_need_location_permission, Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    private fun parseTrack(json: String?): List<CameraVideoTrackPoint> {
-        if (json.isNullOrBlank()) return emptyList()
-        return runCatching {
-            val arr = JSONArray(json)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                CameraVideoTrackPoint(
-                    tMs = o.optLong("t", 0L),
-                    lat = o.optDouble("lat", Double.NaN),
-                    lon = o.optDouble("lon", Double.NaN)
-                ).takeIf { it.lat.isFinite() && it.lon.isFinite() }
-            }
-        }.getOrDefault(emptyList())
+    private fun pickStillForPoint() {
+        pendingStillPicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
     }
 
     /**

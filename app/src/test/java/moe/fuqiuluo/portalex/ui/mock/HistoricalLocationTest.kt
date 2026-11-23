@@ -19,13 +19,13 @@ class HistoricalLocationTest {
 
     @Test
     fun `普通字段往返一致`() {
-        val loc = HistoricalLocation("家", "广东省深圳市南山区某路 1 号", 22.543210, 114.057868)
+        val loc = HistoricalLocation("家", "某省某市某区某路 1 号", 22.543210, 114.057868)
         assertEquals(loc, roundtrip(loc))
     }
 
     @Test
     fun `字段含逗号时往返一致`() {
-        val loc = HistoricalLocation("公司, 分部", "北京市海淀区, 中关村大街", 39.983424, 116.322987)
+        val loc = HistoricalLocation("公司, 分部", "某市某区, 某大街", 39.983424, 116.322987)
         assertEquals(loc, roundtrip(loc))
     }
 

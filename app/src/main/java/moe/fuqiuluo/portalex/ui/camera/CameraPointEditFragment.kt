@@ -1,8 +1,5 @@
 package moe.fuqiuluo.portalex.ui.camera
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Point
 import android.net.Uri
 import android.os.Bundle
@@ -13,10 +10,8 @@ import android.widget.Toast
 import android.widget.LinearLayout
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.baidu.mapapi.map.BaiduMap
@@ -31,10 +26,11 @@ import com.baidu.mapapi.map.BitmapDescriptorFactory
 import com.baidu.mapapi.model.LatLng
 import com.baidu.mapapi.model.LatLngBounds
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import kotlinx.coroutines.launch
 import moe.fuqiuluo.portalex.MainActivity
 import moe.fuqiuluo.portalex.Portal
 import moe.fuqiuluo.portalex.R
+import moe.fuqiuluo.portalex.service.MockServiceHelper
+import androidx.core.os.bundleOf
 import moe.fuqiuluo.portalex.android.widget.FabBarView
 import moe.fuqiuluo.portalex.bdmap.setMapConfig
 import moe.fuqiuluo.portalex.databinding.FragmentCameraPointEditBinding
@@ -68,8 +64,9 @@ import java.io.File
  */
 class CameraPointEditFragment : Fragment(), MapControlsHost {
 
-    private companion object {
-        const val REQUEST_CAMERA = 1001
+    companion object {
+        /** 手动导入图片时携带的 URI：进入后先选位置，再落库（不保存直接返回则丢弃） */
+        const val ARG_PENDING_STILL = "pendingStill"
     }
 
     private var _binding: FragmentCameraPointEditBinding? = null
@@ -82,47 +79,26 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     /** 正在编辑的点（内存工作副本）；null = 还没加载（首次 onResume 时按参数或地图中心建） */
     private var working: CameraVideoPoint? = null
 
-    /** 地图是否已经给出过有效中心：没就绪前不拿"北京默认中心"去覆盖坐标 */
+    /** 地图是否已经给出过有效中心：没就绪前不拿"地图 SDK 默认中心"去覆盖坐标 */
     private var mapReady = false
     private var routeOverlay: Overlay? = null
     private var initialFitDone = false
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private var routeExecutor = Executors.newSingleThreadExecutor()
+    /** 手动导入图片：选图后进入本页先放位置，点"保存图片点位"才真正落库 */
+    private var pendingStill: Uri? = null
+    private var pendingSaved = false
+    private var locating = false
+    private var locateSampler: CameraLocationSampler? = null
+
     private var loadToken = 0
     private var routeDrawToken = 0
     private var fitToken = 0
 
-    /**
-     * 摄像头权限用**经典 requestPermissions + onRequestPermissionsResult**，
-     * 不走 `RequestPermissions`（它内部是 `registerForActivityResult`）。
-     *
-     * 实测踩过（MI6/LineageOS 15，安装后首次点「录制视频」即崩）：
-     * `registerForActivityResult` 要求"在 STARTED 之前注册"，而本页是用户点进来的，
-     * 那一刻 **Activity 已经 RESUMED** —— 在 Fragment.onCreate 里注册同样抛
-     * `IllegalStateException: LifecycleOwner ... is attempting to register while current state is RESUMED`。
-     * 经典 API 没有这个时序约束，而且本页只需要"申请一次、拿到就录"。
-     */
-    private var pendingRecordAfterPermission = false
-
-    private val recordLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val fileName = result.data?.getStringExtra(CameraRecordActivity.RESULT_FILE_NAME)
-            ?: return@registerForActivityResult
-        val file = CameraMockStore.videoFile(requireContext(), fileName)
-        if (!file.exists()) {
-            Toast.makeText(requireContext(), "录制文件丢失", Toast.LENGTH_SHORT).show()
-            return@registerForActivityResult
-        }
-        val track = parseTrack(result.data?.getStringExtra(CameraRecordActivity.RESULT_TRACK_JSON))
-        val recordedAt = result.data?.getLongExtra(CameraRecordActivity.RESULT_RECORDED_AT, 0L) ?: 0L
-        addVideo(
-            CameraMockStore.registerRecorded(
-                requireContext(), file, null,
-                recordedAt = recordedAt,
-                track = track
-            )
-        )
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        pendingStill = arguments?.getString(ARG_PENDING_STILL)
+            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
     }
 
     private var pendingExport: CameraVideo? = null
@@ -275,21 +251,6 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         }
     }
 
-    private fun parseTrack(json: String?): List<CameraVideoTrackPoint> {
-        if (json.isNullOrBlank()) return emptyList()
-        return runCatching {
-            val arr = JSONArray(json)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                CameraVideoTrackPoint(
-                    tMs = o.optLong("t", 0L),
-                    lat = o.optDouble("lat", Double.NaN),
-                    lon = o.optDouble("lon", Double.NaN)
-                ).takeIf { it.lat.isFinite() && it.lon.isFinite() }
-            }
-        }.getOrDefault(emptyList())
-    }
-
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -368,22 +329,14 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     override fun onResume() {
         super.onResume()
         if (_binding != null) binding.bmapView.onResume()
-        (activity as? MainActivity)?.fabBar?.setActions(
-            listOf(
-                FabBarView.Action(
-                    R.drawable.baseline_control_camera_24,
-                    getString(R.string.camera_record)
-                ) { startRecording() },
-                // 手动添加：选图片 + 用准星选位置（实地拍摄走主页面入口）
-                FabBarView.Action(
-                    R.drawable.baseline_add_a_photo_24,
-                    getString(R.string.camera_still_add)
-                ) { pickStill() }
-            )
-        )
+        updateFabActions()
         if (working == null) {
             loadPoint()
         } else {
+            // 从录制页回来时视频是录制页直接写入库的：用库里的最新副本刷新本页
+            if (pendingStill == null) {
+                working = CameraMockStore.point(requireContext(), working!!.id) ?: working
+            }
             refreshVideos()
             fitRouteToMap()
         }
@@ -394,7 +347,8 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         super.onPause()
         if (_binding != null) binding.bmapView.onPause()
         // 按返回键离开：名称/坐标也要落地（视频早已即时保存），否则用户改完名字白改
-        if (isRemoving || !isAdded) persistIfMeaningful()
+        // "待保存图片"模式没有点保存 = 放弃这次导入，不能留下空点位
+        if ((isRemoving || !isAdded) && !(pendingStill != null && !pendingSaved)) persistIfMeaningful()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -408,6 +362,9 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
     }
 
     override fun onDestroyView() {
+        locating = false
+        locateSampler?.stop()
+        locateSampler = null
         loadToken++
         routeDrawToken++
         fitToken++
@@ -464,6 +421,10 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 } else {
                     val center = crosshairWgs84() ?: Pair(39.908722, 116.397499)
                     working = CameraMockStore.newPoint("", center.first, center.second)
+                }
+                if (pendingStill != null) {
+                    binding.cameraPendingHint.visibility = View.VISIBLE
+                    binding.cameraPendingHint.text = getString(R.string.camera_pending_still_hint)
                 }
                 updateCoordReadout()
                 refreshVideos()
@@ -603,10 +564,14 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         videoAdapter.setFilterTags(filter)
         videoAdapter.replaceAll(videos)
         binding.cameraVideoLabel.text = if (videos.isEmpty()) {
-            // 空列表时把"下一步"写在这里：本页的两个入口（录制 / 添加图片）都在悬浮栏里，
-            // 不提示的话用户看到的是一整块空白卡片。
-            getString(R.string.camera_video_list) + "（0）· 用右下角「" +
-                getString(R.string.camera_still_add) + "」选图并绑定准星位置"
+            // 空列表时把"下一步"写在这里：入口都在悬浮胶囊里，不提示会只剩一块空白卡片。
+            if (pendingStill != null) {
+                getString(R.string.camera_video_list) + "（0）· 点胶囊「" +
+                    getString(R.string.camera_pending_save) + "」完成导入"
+            } else {
+                getString(R.string.camera_video_list) + "（0）· 用右下角「" +
+                    getString(R.string.camera_still_add) + "」选图并绑定准星位置"
+            }
         } else {
             getString(R.string.camera_video_list) + "（${videos.size}）"
         }
@@ -724,38 +689,167 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
             .also { it.setCanceledOnTouchOutside(false); it.show() }
     }
 
-    private fun startRecording() {
+    /** 进入录制页：先把当前点位落库（录制页按 pointId 追加视频），再导航过去 */
+    private fun openCapture() {
         val ctx = requireContext()
-        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            recordLauncher.launch(Intent(ctx, CameraRecordActivity::class.java))
+        val point = working ?: return
+        val lm = ctx.getSystemService(android.location.LocationManager::class.java)
+        if (ctx.cameraMockEnabled) {
+            Toast.makeText(ctx, "请先关闭虚拟摄像头，再录制现场视频", Toast.LENGTH_LONG).show()
             return
         }
-        pendingRecordAfterPermission = true
-        requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+        if (lm != null && MockServiceHelper.isMockStart(lm)) {
+            Toast.makeText(ctx, "请先关闭位置模拟，再录制真实移动轨迹", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (CameraMockStore.point(ctx, point.id) == null) {
+            val name = binding.cameraPointNameInput.text?.toString()?.trim().orEmpty()
+            working = point.copy(name = name.ifBlank { getString(R.string.camera_point_unnamed) })
+            CameraMockStore.upsert(ctx, working!!)
+        }
+        findNavController().navigate(
+            R.id.nav_camera_capture,
+            bundleOf(CameraCaptureFragment.ARG_POINT_ID to point.id)
+        )
     }
 
-    @Deprecated("经典权限回调：本页必须绕过 registerForActivityResult 的注册时序限制（见字段注释）")
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_CAMERA) return
-        val granted = grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED
-        val wanted = pendingRecordAfterPermission
-        pendingRecordAfterPermission = false
-        when {
-            granted && wanted -> recordLauncher.launch(Intent(requireContext(), CameraRecordActivity::class.java))
-            !granted -> Toast.makeText(requireContext(), "需要摄像头权限才能录制", Toast.LENGTH_SHORT).show()
+    /** 胶囊动作：定位（两种模式都有）+ 录制/添加图片，或"保存图片点位" */
+    private fun updateFabActions() {
+        val bar = (activity as? MainActivity)?.fabBar ?: return
+        val locate = FabBarView.Action(
+            R.drawable.baseline_my_location_24,
+            getString(R.string.camera_locate)
+        ) { locateMe() }
+        bar.setActions(
+            if (pendingStill != null) {
+                listOf(
+                    locate,
+                    FabBarView.Action(
+                        R.drawable.baseline_save_24,
+                        getString(R.string.camera_pending_save)
+                    ) { savePendingStill() }
+                )
+            } else {
+                listOf(
+                    locate,
+                    FabBarView.Action(
+                        R.drawable.baseline_control_camera_24,
+                        getString(R.string.camera_record)
+                    ) { openCapture() },
+                    // 手动添加：选图片 + 用准星选位置
+                    FabBarView.Action(
+                        R.drawable.baseline_add_a_photo_24,
+                        getString(R.string.camera_still_add)
+                    ) { pickStill() }
+                )
+            }
+        )
+    }
+
+    /**
+     * 定位：把地图中心移到**当前位置**（准星即取点位置，所以这也等于"把准星放回我脚下"）。
+     * 优先用模块回读的表象位置（开启模拟时就是模拟位置）；没有则短暂等待一次融合定位。
+     */
+    private fun locateMe() {
+        if (locating) return
+        CameraMockRuntime.position()?.let { position ->
+            moveMapTo(position)
+            return
+        }
+        val ctx = requireContext()
+        locating = true
+        Toast.makeText(ctx, "正在获取当前位置…", Toast.LENGTH_SHORT).show()
+        val sampler = CameraLocationSampler(ctx)
+        locateSampler = sampler
+        sampler.onLocation = { position ->
+            main.post {
+                if (!locating) return@post
+                locating = false
+                sampler.stop()
+                locateSampler = null
+                if (uiAlive()) moveMapTo(position)
+            }
+        }
+        sampler.start()
+        // 没有可用定位（室内/未授权）：别让"正在获取"停留太久
+        main.postDelayed({
+            if (locating) {
+                locating = false
+                sampler.stop()
+                locateSampler = null
+                if (uiAlive()) {
+                    Toast.makeText(requireContext(), "未获取到当前位置", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }, 5000L)
+    }
+
+    private fun moveMapTo(position: Pair<Double, Double>) {
+        val map = runCatching { binding.bmapView.map }.getOrNull() ?: return
+        runCatching {
+            val zoom = map.mapStatus?.zoom ?: 0f
+            map.setMapStatus(
+                if (zoom < 17f) {
+                    MapStatusUpdateFactory.newLatLngZoom(position.gcj02, 17f)
+                } else {
+                    MapStatusUpdateFactory.newLatLng(position.gcj02)
+                }
+            )
+        }
+        updateCoordReadout()
+        Toast.makeText(requireContext(), "已定位到当前位置", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 待保存图片：编码成单帧素材并绑定到当前准星，落库后返回上一页 */
+    private fun savePendingStill() {
+        val ctx = requireContext()
+        val uri = pendingStill ?: return
+        val point = working ?: return
+        if (stillBusy) return
+        val coord = crosshairWgs84() ?: (point.lat to point.lon)
+        stillBusy = true
+        cameraLoading = (cameraLoading ?: CameraLoadingDialog(ctx)).also {
+            it.show(getString(R.string.camera_still_importing))
+        }
+        val appContext = ctx.applicationContext
+        stillExecutor.execute {
+            val video = runCatching {
+                CameraMockStore.importStill(appContext, uri, coord.first, coord.second)
+            }.onFailure {
+                android.util.Log.w("CameraPointEdit", "图片导入失败", it)
+            }.getOrNull()
+            main.post {
+                stillBusy = false
+                cameraLoading?.dismiss()
+                cameraLoading = null
+                if (!uiAlive()) return@post
+                if (video == null) {
+                    Toast.makeText(ctx, R.string.camera_still_none, Toast.LENGTH_LONG).show()
+                    return@post
+                }
+                val typed = binding.cameraPointNameInput.text?.toString()?.trim().orEmpty()
+                working = point.copy(
+                    name = typed.ifBlank { video.name },
+                    lat = coord.first,
+                    lon = coord.second,
+                    videos = listOf(video)
+                )
+                CameraMockStore.upsert(ctx, working!!)
+                pendingSaved = true
+                pendingStill = null
+                Toast.makeText(
+                    ctx,
+                    getString(R.string.camera_still_bound, CameraMockFormat.coord(coord.first, coord.second)),
+                    Toast.LENGTH_SHORT
+                ).show()
+                findNavController().popBackStack()
+            }
         }
     }
 
     /** 名称/坐标写回库里；只有"有点内容"的点才落盘，避免空点位污染列表 */
     private fun persistIfMeaningful() {
+        if (pendingStill != null && !pendingSaved) return
         val point = working ?: return
         val name = binding.cameraPointNameInput.text?.toString()?.trim().orEmpty()
         val center = crosshairWgs84()
