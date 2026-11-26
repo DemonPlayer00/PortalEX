@@ -96,7 +96,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     private var lastPoints: List<CameraVideoPoint> = emptyList()
     private var refreshToken = 0
     private var mapDrawToken = 0
-    private var resumedLibrarySync = false
 
     /** 手动素材入口：选完图片后带着 URI 进入点位页，由那里完成位置选择与落库 */
     private val pendingStillPicker = registerForActivityResult(
@@ -346,11 +345,9 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
     override fun onResume() {
         super.onResume()
         binding.cameraMockMap.onResume()
-        // 进入素材页先做一次幂等同步，修复“库里有元数据但 system_server 为空”的情况；
+        // 有框架就自动补传（含录完刚回到本页的场景）；没有则静默失败，保留本地与"重试上传"。
         // 不依赖启动 cammock 成功，否则 provider 启动失败会把素材上传一起拖死。
-        if (!resumedLibrarySync) {
-            resumedLibrarySync = true
-            }
+        CameraAutoUpload.trigger(requireContext())
         avoidFabBar()
         updateFabActions()
         /* 页面回到前台时对齐一次产帧线程：开关可能是在别处（或上一次进程）打开的，
@@ -369,7 +366,6 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         hideCameraLoading()
         cameraExecutor.shutdownNow()
         binding.cameraMockMap.onDestroy()
-        resumedLibrarySync = false
         super.onDestroyView()
         _binding = null
     }
@@ -470,9 +466,14 @@ class CameraMockFragment : Fragment(), FabBarAvoidanceHost, MapControlsHost {
         return true
     }
 
-    /** 进入录制页（nav_camera_capture）：保存后的归并 / 新建由录制页自己完成，返回时这里刷新。 */
+    /**
+     * 进入录制页（nav_camera_capture）：保存后的归并 / 新建由录制页自己完成，返回时这里刷新。
+     *
+     * **不要求注入框架/系统服务就绪**：录制只写本地库（文件 + 偏好），
+     * 没有 system_server 时素材就以"待上传"状态留在本地，列表里照样有「重试上传 / 导出」；
+     * 等框架装好/生效后再点重试上传即可。这里只做现场拍摄的物理前提检查。
+     */
     private fun openCapture() {
-        if (!ensureUploadReady()) return
         if (!canCapture()) return
         // 室内可能暂时没有最后已知位置；不阻塞拍摄，录制页会等融合定位。
         if (CameraMockRuntime.position() == null) {

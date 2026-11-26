@@ -49,6 +49,15 @@ object CameraMockSyncClient {
         return context != null && importLibraryViaRoot(context, timeoutMs)
     }
 
+    /**
+     * 只走注入框架的导入（不触发 root）。
+     *
+     * 后台自动上传用它：没有框架时直接失败，不弹 root 授权、不执行 su；
+     * 框架就绪时与手动重试走同一条 IMPORT_LIBRARY 通道。
+     */
+    fun importLibraryViaFramework(timeoutMs: Int = 300_000): Boolean =
+        importLibraryDirect(timeoutMs)
+
     private fun importLibraryDirect(timeoutMs: Int): Boolean = runCatching {
         val socket = LocalSocket()
         try {

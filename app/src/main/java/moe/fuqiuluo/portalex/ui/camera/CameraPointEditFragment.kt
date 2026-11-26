@@ -242,6 +242,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 )
                 CameraMockStore.upsert(ctx, working!!)
                 refreshVideos()
+                CameraAutoUpload.trigger(ctx)
                 Toast.makeText(
                     ctx,
                     getString(R.string.camera_still_bound, CameraMockFormat.coord(coord.first, coord.second)),
@@ -330,6 +331,9 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
         super.onResume()
         if (_binding != null) binding.bmapView.onResume()
         updateFabActions()
+        CameraAutoUpload.trigger(requireContext()) { ok ->
+            if (ok && uiAlive()) refreshVideos()
+        }
         if (working == null) {
             loadPoint()
         } else {
@@ -589,7 +593,9 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
 
     private fun retryUpload() {
         val ctx = requireContext()
-        val ids = working?.videos.orEmpty().map { it.id }
+        // 上传的是整库：成功后就该把全库的"待上传"标记一起清掉，
+        // 否则其它点位的行会一直显示「重试上传」（虽然重复上传是幂等的）。
+        val ids = CameraMockStore.points(ctx).flatMap { it.videos }.map { it.id }
         Toast.makeText(ctx, "正在重试上传…", Toast.LENGTH_SHORT).show()
         Executors.newSingleThreadExecutor().execute {
             val result = if (CameraMockSyncClient.importLibrary(ctx)) {
@@ -609,7 +615,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                 } else {
                     Toast.makeText(
                         ctx,
-                        "重试仍失败：${result.exceptionOrNull()?.message}",
+                        "重试仍失败：${result.exceptionOrNull()?.message}（素材仍在本地，注入框架后可再试）",
                         Toast.LENGTH_LONG,
                     ).show()
                 }
@@ -835,6 +841,7 @@ class CameraPointEditFragment : Fragment(), MapControlsHost {
                     videos = listOf(video)
                 )
                 CameraMockStore.upsert(ctx, working!!)
+                CameraAutoUpload.trigger(ctx, force = true)
                 pendingSaved = true
                 pendingStill = null
                 Toast.makeText(

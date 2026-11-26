@@ -104,6 +104,7 @@ import moe.fuqiuluo.xposed.utils.PortalProtocol.Key
 import moe.fuqiuluo.portalex.ui.home.HomeFragment
 import moe.fuqiuluo.portalex.ui.notification.NotificationUtils
 import moe.fuqiuluo.portalex.ui.viewmodel.BaiduMapViewModel
+import moe.fuqiuluo.portalex.ui.camera.CameraAutoUpload
 import moe.fuqiuluo.portalex.ui.camera.CameraMockLifecycle
 import moe.fuqiuluo.portalex.ui.camera.cameraMockEnabled
 import moe.fuqiuluo.portalex.ui.viewmodel.MockServiceViewModel
@@ -795,6 +796,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (::binding.isInitialized) refreshDrawerWarnings()
+        // 应用回到前台兜底补传：用户不经过摄像头页也能把离线素材传上去
+        CameraAutoUpload.trigger(applicationContext)
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

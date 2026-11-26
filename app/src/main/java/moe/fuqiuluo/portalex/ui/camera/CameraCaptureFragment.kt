@@ -536,6 +536,8 @@ class CameraCaptureFragment : Fragment() {
         val context = requireContext()
         val track = synchronized(trackPoints) { trackPoints.toList() }
         val pointName = persistRecording(file, track)
+        // 有框架时立刻后台自动上传；没有框架则保留本地，重试按钮照常出现。
+        CameraAutoUpload.trigger(context, force = true)
         Toast.makeText(
             context,
             if (pointName != null) "已保存到「$pointName」" else "已保存录制素材",
